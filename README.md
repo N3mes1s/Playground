@@ -25,6 +25,12 @@ While this is primarily a coding agent workspace, contributions and suggestions 
 - Submit pull requests with interesting findings
 - Share feedback on experiments
 
+## Experiments
+
+| Directory | Description |
+|-----------|-------------|
+| [`vulnllm-analyzer/`](vulnllm-analyzer/) | Automated vulnerability analysis for GitHub repos using [VulnLLM-R-7B](https://github.com/ucsb-mlsec/VulnLLM-R) on Modal GPUs |
+
 ## Note
 
 Code in this repository is experimental by nature. Use at your own discretion and don't expect production-level stability or support.
