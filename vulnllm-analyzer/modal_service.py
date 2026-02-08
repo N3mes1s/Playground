@@ -49,9 +49,9 @@ Be thorough but concise in your reasoning."""
 @app.cls(
     gpu=GPU_TYPE,
     timeout=600,
-    container_idle_timeout=300,
-    allow_concurrent_inputs=10,
+    scaledown_window=300,
 )
+@modal.concurrent(max_inputs=10)
 class VulnLLMModel:
     @modal.enter()
     def load_model(self):
@@ -161,10 +161,8 @@ class VulnLLMModel:
 
 # --- FastAPI web endpoint (alternative to direct Modal method calls) ---
 
-@app.function(
-    timeout=600,
-    allow_concurrent_inputs=20,
-)
+@app.function(timeout=600)
+@modal.concurrent(max_inputs=20)
 @modal.asgi_app()
 def web_app():
     from fastapi import FastAPI, HTTPException
