@@ -68,6 +68,22 @@ def load_source_tree(root: str | Path) -> dict[str, Any]:
     return tree
 
 
+def _configure_deno_tls() -> None:
+    """Ensure Deno trusts the system CA bundle when behind a proxy.
+
+    Sets DENO_CERT from SSL_CERT_FILE if not already configured, so
+    pyodide can be downloaded through corporate/MITM proxies.
+    """
+    if "DENO_CERT" not in os.environ:
+        cert_file = os.environ.get("SSL_CERT_FILE")
+        if cert_file and Path(cert_file).is_file():
+            os.environ["DENO_CERT"] = cert_file
+    # Also ensure deno is on PATH
+    deno_home = Path.home() / ".deno" / "bin"
+    if deno_home.is_dir() and str(deno_home) not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = f"{deno_home}:{os.environ.get('PATH', '')}"
+
+
 def run_audit(
     source_path: str | Path,
     model: str = "openrouter/moonshotai/kimi-k2.5",
@@ -75,6 +91,7 @@ def run_audit(
     max_tokens: int = 16000,
     max_iterations: int = 35,
     verbose: bool = True,
+    reasoning_effort: str | None = None,
 ) -> str:
     """Run a recursive LM security audit on the given source directory.
 
@@ -85,13 +102,21 @@ def run_audit(
         max_tokens: Max tokens per LM call.
         max_iterations: Maximum REPL iterations for the RLM.
         verbose: Enable detailed execution logging.
+        reasoning_effort: Reasoning effort level for supported models (e.g. "xhigh").
 
     Returns:
         Markdown-formatted security audit report.
     """
-    lm = dspy.LM(model, max_tokens=max_tokens)
-    sub_lm = dspy.LM(sub_model, max_tokens=max_tokens) if sub_model else lm
+    lm_kwargs = {}
+    if reasoning_effort:
+        lm_kwargs["reasoning_effort"] = reasoning_effort
+
+    lm = dspy.LM(model, max_tokens=max_tokens, **lm_kwargs)
+    sub_lm_kwargs = dict(lm_kwargs)  # same reasoning effort for sub-model
+    sub_lm = dspy.LM(sub_model, max_tokens=max_tokens, **sub_lm_kwargs) if sub_model else lm
     dspy.configure(lm=lm)
+
+    _configure_deno_tls()
 
     code_scanner = dspy.RLM(
         CodeScanner,

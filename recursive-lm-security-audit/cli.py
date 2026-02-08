@@ -108,6 +108,12 @@ Examples:
         help="Write the report to a file instead of stdout",
     )
     parser.add_argument(
+        "--reasoning-effort",
+        default=None,
+        choices=["low", "medium", "high", "xhigh"],
+        help="Reasoning effort level for supported models (e.g. xhigh for GPT-5.x)",
+    )
+    parser.add_argument(
         "-q", "--quiet",
         action="store_true",
         help="Disable verbose RLM logging",
@@ -130,6 +136,8 @@ Examples:
         print(f"Model:    {args.model}")
         if args.sub_model:
             print(f"Sub-model: {args.sub_model}")
+        if args.reasoning_effort:
+            print(f"Reasoning: {args.reasoning_effort}")
         print(f"Max iterations: {args.max_iterations}")
         print()
 
@@ -140,6 +148,7 @@ Examples:
             max_tokens=args.max_tokens,
             max_iterations=args.max_iterations,
             verbose=not args.quiet,
+            reasoning_effort=args.reasoning_effort,
         )
 
         if args.output:
