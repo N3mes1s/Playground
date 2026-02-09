@@ -263,6 +263,283 @@ def safe_join(directory: str, *pathnames: str) -> str | None:
     return posixpath.join(*parts)
 ''',
     },
+    # --- 5 NEW ADVISORIES ---
+    {
+        "id": "GHSA-wphj-fx3q-84ch",
+        "package": "systeminformation",
+        "language": "javascript",
+        "vuln_type": "OS Command Injection (CWE-78)",
+        "expected_cwe": "CWE-78",
+        "filename": "lib/filesystem.js",
+        "code": r'''
+function fsSize(drive, callback) {
+  if (util.isFunction(drive)) {
+    callback = drive;
+    drive = '';
+  }
+
+  return new Promise((resolve) => {
+    process.nextTick(() => {
+      let data = [];
+      if (_linux || _freebsd || _openbsd || _netbsd || _darwin) {
+        let cmd = '';
+        if (_darwin) { cmd = 'df -kP'; }
+        if (_linux) { cmd = 'export LC_ALL=C; df -lkPTx squashfs; unset LC_ALL'; }
+        exec(cmd, { maxBuffer: 1024 * 1024 }, function (error, stdout) {
+          let lines = filterLines(stdout);
+          data = parseDf(lines);
+          if (drive) {
+            data = data.filter(item => {
+              return item.fs.toLowerCase().indexOf(drive.toLowerCase()) >= 0
+                || item.mount.toLowerCase().indexOf(drive.toLowerCase()) >= 0;
+            });
+          }
+          if (callback) { callback(data); }
+          resolve(data);
+        });
+      }
+      if (_windows) {
+        try {
+          const cmd = `Get-WmiObject Win32_logicaldisk | select Access,Caption,FileSystem,FreeSpace,Size ${drive ? '| where -property Caption -eq ' + drive : ''} | fl`;
+          util.powerShell(cmd).then((stdout, error) => {
+            if (!error) {
+              let devices = stdout.toString().split(/\n\s*\n/);
+              devices.forEach(function (device) {
+                let lines = device.split('\r\n');
+                const size = util.toInt(util.getValue(lines, 'size', ':'));
+                const free = util.toInt(util.getValue(lines, 'freespace', ':'));
+                const caption = util.getValue(lines, 'caption', ':');
+                if (size) {
+                  data.push({ fs: caption, type: util.getValue(lines, 'filesystem', ':'),
+                    size, used: size - free, available: free,
+                    use: parseFloat(((100.0 * (size - free)) / size).toFixed(2)),
+                    mount: caption });
+                }
+              });
+            }
+            if (callback) { callback(data); }
+            resolve(data);
+          });
+        } catch (e) {
+          if (callback) { callback(data); }
+          resolve(data);
+        }
+      }
+    });
+  });
+}
+''',
+    },
+    {
+        "id": "GHSA-vqfr-h8mv-ghfj",
+        "package": "h11",
+        "language": "python",
+        "vuln_type": "HTTP Request Smuggling (CWE-444)",
+        "expected_cwe": "CWE-444",
+        "filename": "h11/_readers.py",
+        "code": r'''
+class ChunkedReader:
+    def __init__(self):
+        self._bytes_in_chunk = 0
+        # After reading a chunk, we have to throw away the trailing \r\n;
+        # if this is >0 then we discard that many bytes before resuming
+        # regular de-chunkification.
+        self._bytes_to_discard = 0
+        self._reading_trailer = False
+
+    def __call__(self, buf):
+        if self._reading_trailer:
+            lines = buf.maybe_extract_lines()
+            if lines is None:
+                return None
+            return EndOfMessage(headers=list(_decode_header_lines(lines)))
+        if self._bytes_to_discard > 0:
+            data = buf.maybe_extract_at_most(self._bytes_to_discard)
+            if data is None:
+                return None
+            self._bytes_to_discard -= len(data)
+            if self._bytes_to_discard > 0:
+                return None
+            # else, fall through and read some more
+        assert self._bytes_to_discard == 0
+        if self._bytes_in_chunk == 0:
+            # We need to refill our chunk count
+            chunk_header = buf.maybe_extract_next_line()
+            if chunk_header is None:
+                return None
+            matches = validate(
+                chunk_header_re, chunk_header,
+                "illegal chunk header: {!r}", chunk_header,
+            )
+            self._bytes_in_chunk = int(matches["chunk_size"], base=16)
+            if self._bytes_in_chunk == 0:
+                self._reading_trailer = True
+                return self(buf)
+            chunk_start = True
+        else:
+            chunk_start = False
+        assert self._bytes_in_chunk > 0
+        data = buf.maybe_extract_at_most(self._bytes_in_chunk)
+        if data is None:
+            return None
+        self._bytes_in_chunk -= len(data)
+        if self._bytes_in_chunk == 0:
+            self._bytes_to_discard = 2
+            chunk_end = True
+        else:
+            chunk_end = False
+        return Data(data=data, chunk_start=chunk_start, chunk_end=chunk_end)
+''',
+    },
+    {
+        "id": "GHSA-jcrp-x7w3-ffmg",
+        "package": "djl",
+        "language": "java",
+        "vuln_type": "Path Traversal / Zip Slip (CWE-22)",
+        "expected_cwe": "CWE-22",
+        "filename": "api/src/main/java/ai/djl/util/ZipUtils.java",
+        "code": r'''
+public static void unzip(InputStream is, Path dest) throws IOException {
+    ZipInputStream zis = new ZipInputStream(new ValidationInputStream(is));
+    ZipEntry entry;
+    Set<String> set = new HashSet<>();
+    while ((entry = zis.getNextEntry()) != null) {
+        String name = removeLeadingFileSeparator(entry.getName());
+        if (name.contains("..")) {
+            throw new IOException("Malicious zip entry: " + name);
+        }
+        set.add(name);
+        Path file = dest.resolve(name).toAbsolutePath();
+        if (entry.isDirectory()) {
+            Files.createDirectories(file);
+        } else {
+            Path parentFile = file.getParent();
+            if (parentFile == null) {
+                throw new AssertionError(
+                    "Parent path should never be null: " + file);
+            }
+            Files.createDirectories(parentFile);
+            Files.copy(zis, file, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+}
+
+static String removeLeadingFileSeparator(String name) {
+    int index = 0;
+    for (; index < name.length(); index++) {
+        if (name.charAt(index) != File.separatorChar) {
+            break;
+        }
+    }
+    return name.substring(index);
+}
+''',
+    },
+    {
+        "id": "GHSA-mw26-5g2v-hqw3",
+        "package": "deepdiff",
+        "language": "python",
+        "vuln_type": "Class Pollution via getattr traversal (CWE-915)",
+        "expected_cwe": "CWE-915",
+        "filename": "deepdiff/path.py",
+        "code": r'''
+GET = "GET"
+GETATTR = "GETATTR"
+
+def _get_nested_obj(obj, elements, next_element=None):
+    for (elem, action) in elements:
+        if action == GET:
+            obj = obj[elem]
+        elif action == GETATTR:
+            obj = getattr(obj, elem)
+    return obj
+
+
+def _get_nested_obj_and_force(obj, elements, next_element=None):
+    prev_elem = None
+    prev_action = None
+    prev_obj = obj
+    for index, (elem, action) in enumerate(elements):
+        _prev_obj = obj
+        if action == GET:
+            try:
+                obj = obj[elem]
+                prev_obj = _prev_obj
+            except KeyError:
+                obj[elem] = _guess_type(elements, elem, index, next_element)
+                obj = obj[elem]
+                prev_obj = _prev_obj
+            except IndexError:
+                if isinstance(obj, list) and isinstance(elem, int) and elem >= len(obj):
+                    obj.extend([None] * (elem - len(obj)))
+                    obj.append(_guess_type(elements, elem, index, next_element))
+                    obj = obj[-1]
+                    prev_obj = _prev_obj
+        elif action == GETATTR:
+            obj = getattr(obj, elem)
+            prev_obj = _prev_obj
+        prev_elem = elem
+        prev_action = action
+    return obj
+''',
+    },
+    {
+        "id": "GHSA-5gfm-wpxj-wjgq",
+        "package": "node-forge",
+        "language": "javascript",
+        "vuln_type": "ASN.1 Validation Bypass (CWE-436)",
+        "expected_cwe": "CWE-436",
+        "filename": "lib/asn1.js",
+        "code": r'''
+asn1.validate = function(obj, v, capture, errors) {
+  var rval = false;
+
+  // ensure tag class and type are the same if specified
+  if((obj.tagClass === v.tagClass || typeof(v.tagClass) === 'undefined') &&
+    (obj.type === v.type || typeof(v.type) === 'undefined')) {
+    // ensure constructed flag is the same if specified
+    if(obj.constructed === v.constructed ||
+      typeof(v.constructed) === 'undefined') {
+      rval = true;
+
+      // handle sub values
+      if(v.value && forge.util.isArray(v.value)) {
+        var j = 0;
+        for(var i = 0; rval && i < v.value.length; ++i) {
+          rval = v.value[i].optional || false;
+          if(obj.value[j]) {
+            rval = asn1.validate(obj.value[j], v.value[i], capture, errors);
+            if(rval) {
+              ++j;
+            } else if(v.value[i].optional) {
+              rval = true;
+            }
+          }
+          if(!rval && errors) {
+            errors.push(
+              '[' + v.name + '] ' +
+              'Tag class "' + v.tagClass + '", type "' +
+              v.type + '" expected value length "' +
+              v.value.length + '", got "' +
+              obj.value.length + '"');
+          }
+        }
+      }
+
+      if(rval && capture) {
+        if(v.capture) {
+          capture[v.capture] = obj.value;
+        }
+        if(v.captureAsn1) {
+          capture[v.captureAsn1] = obj;
+        }
+      }
+    }
+  }
+  return rval;
+};
+''',
+    },
 ]
 
 
@@ -286,7 +563,7 @@ def main():
     total = len(ADVISORIES)
 
     print(f"\n{'=' * 72}")
-    print(f"  VulnLLM-R Benchmark: 5 Real GitHub Security Advisories")
+    print(f"  VulnLLM-R Benchmark: {total} Real GitHub Security Advisories")
     print(f"  Mode: {mode}")
     print(f"{'=' * 72}\n")
 

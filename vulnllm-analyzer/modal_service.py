@@ -88,6 +88,14 @@ CWE_DB = {
     "CWE-134": "Use of Externally-Controlled Format String",
     "CWE-400": "Uncontrolled Resource Consumption",
     "CWE-1336": "Improper Neutralization of Special Elements Used in a Template Engine",
+    # HTTP protocol
+    "CWE-444": "Inconsistent Interpretation of HTTP Requests ('HTTP Request Smuggling')",
+    # Cryptographic
+    "CWE-436": "Interpretation Conflict (ASN.1 / Certificate Validation Bypass)",
+    # Resource management
+    "CWE-770": "Allocation of Resources Without Limits or Throttling",
+    # Dynamic attribute control
+    "CWE-915": "Improperly Controlled Modification of Dynamically-Determined Object Attributes ('Class Pollution')",
 }
 
 # CWE-specific detection constraints (from VulnLLM-R paper, enhanced)
@@ -103,16 +111,19 @@ CWE_CONSTRAINTS = {
     "CWE-502": "Check if deserialization functions (pickle.loads, ObjectMapper.readValue, unserialize) process untrusted input without type restrictions.",
     "CWE-913": "Check if reflection or introspection APIs (Introspector.getBeanInfo, getMethod().invoke()) are used without security restrictions, especially in sandbox/template engine contexts. If getBeanInfo is called on user-controlled objects without filtering dangerous methods (getClass, etc.), it IS vulnerable.",
     "CWE-1336": "Check if template engines allow access to dangerous objects or methods that could lead to code execution or sandbox escape.",
+    "CWE-444": "Check if HTTP parsers handle chunked transfer-encoding strictly per RFC 7230. Specifically: does the parser validate that chunk footers are exactly \\r\\n? If any 2 bytes are accepted as the footer (instead of strictly \\r\\n), different parsers will disagree on message boundaries, enabling request smuggling.",
+    "CWE-436": "Check if ASN.1 or certificate validation performs tag-class/type checks BEFORE recursing into sub-structures. If optional fields that fail validation still trigger recursive parsing or capture, malformed inputs can be reinterpreted as subsequent mandatory fields, bypassing signature verification.",
+    "CWE-915": "Check if object traversal functions (getattr, obj[elem]) validate attribute names before accessing them. Specifically: can a user pass dunder attributes (__globals__, __builtins__, __class__) as path elements? If getattr(obj, elem) is called without checking for __ prefixes, arbitrary Python internals can be accessed/modified (class pollution). Also check if safety sets (SAFE_TO_IMPORT) are mutable (set vs frozenset).",
 }
 
 # Language-specific CWE focus sets
 LANGUAGE_CWES = {
     "c": ["CWE-120", "CWE-121", "CWE-122", "CWE-125", "CWE-787", "CWE-416", "CWE-415", "CWE-476", "CWE-190", "CWE-134", "CWE-78", "CWE-22", "CWE-362", "CWE-367", "CWE-59"],
     "cpp": ["CWE-120", "CWE-121", "CWE-122", "CWE-125", "CWE-787", "CWE-416", "CWE-415", "CWE-476", "CWE-190", "CWE-134", "CWE-78", "CWE-22", "CWE-362", "CWE-367", "CWE-59"],
-    "python": ["CWE-78", "CWE-79", "CWE-89", "CWE-94", "CWE-22", "CWE-502", "CWE-200", "CWE-400", "CWE-367", "CWE-362", "CWE-59", "CWE-67", "CWE-20", "CWE-74", "CWE-1336"],
-    "java": ["CWE-78", "CWE-79", "CWE-89", "CWE-94", "CWE-502", "CWE-22", "CWE-200", "CWE-284", "CWE-913", "CWE-917", "CWE-1336", "CWE-20", "CWE-74"],
-    "javascript": ["CWE-79", "CWE-94", "CWE-1321", "CWE-78", "CWE-22", "CWE-89", "CWE-200", "CWE-400", "CWE-74", "CWE-20", "CWE-502"],
-    "typescript": ["CWE-79", "CWE-94", "CWE-1321", "CWE-78", "CWE-22", "CWE-89", "CWE-200", "CWE-400", "CWE-74", "CWE-20", "CWE-502"],
+    "python": ["CWE-78", "CWE-79", "CWE-89", "CWE-94", "CWE-22", "CWE-502", "CWE-200", "CWE-400", "CWE-367", "CWE-362", "CWE-59", "CWE-67", "CWE-20", "CWE-74", "CWE-1336", "CWE-444", "CWE-915"],
+    "java": ["CWE-78", "CWE-79", "CWE-89", "CWE-94", "CWE-502", "CWE-22", "CWE-200", "CWE-284", "CWE-913", "CWE-917", "CWE-1336", "CWE-20", "CWE-74", "CWE-770"],
+    "javascript": ["CWE-79", "CWE-94", "CWE-1321", "CWE-78", "CWE-22", "CWE-89", "CWE-200", "CWE-400", "CWE-74", "CWE-20", "CWE-502", "CWE-436"],
+    "typescript": ["CWE-79", "CWE-94", "CWE-1321", "CWE-78", "CWE-22", "CWE-89", "CWE-200", "CWE-400", "CWE-74", "CWE-20", "CWE-502", "CWE-436"],
 }
 
 
