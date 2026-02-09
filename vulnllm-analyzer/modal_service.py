@@ -178,6 +178,76 @@ You need to output whether the code is vulnerable and the type of vulnerability 
     return prompt
 
 
+def build_focused_cwe_prompt(code: str, language: str, filename: str, cwe_id: str) -> str:
+    """Build a prompt focused on a SINGLE CWE for deep per-CWE analysis."""
+    desc = CWE_DB.get(cwe_id, cwe_id)
+    constraint = CWE_CONSTRAINTS.get(cwe_id, "")
+
+    prompt = f"""\
+You are an expert security auditor specializing in {cwe_id}: {desc}.
+Your ONLY task is to determine if the following code is vulnerable to {cwe_id}.
+
+## Code from `{filename}` ({language}):
+```{language}
+{code}
+```
+
+## Your Analysis Task
+Focus EXCLUSIVELY on {cwe_id}. Ignore all other vulnerability types.
+
+Step 1: What specific attack input would exploit {cwe_id} in this code? Be concrete.
+Step 2: Trace that attack input through every code path. Does the code block it at every point?
+Step 3: If there is ANY code path where the attack succeeds, the code IS vulnerable.
+
+{f"## Detection Rule for {cwe_id}:" if constraint else ""}
+{constraint}
+
+IMPORTANT: Do not assume upstream validation exists. Analyze ONLY the code shown.
+If the code lacks an explicit defense, it IS vulnerable. An incomplete check IS a vulnerability.
+
+## Final Answer
+#judge: <yes/no>
+#type: {cwe_id} (if yes) or N/A (if no)"""
+
+    return prompt
+
+
+def build_critique_prompt(code: str, language: str, filename: str,
+                          cwe_id: str, initial_analysis: str) -> str:
+    """Build a self-critique prompt that challenges an initial 'not vulnerable' verdict."""
+    desc = CWE_DB.get(cwe_id, cwe_id)
+    constraint = CWE_CONSTRAINTS.get(cwe_id, "")
+
+    prompt = f"""\
+A security researcher analyzed this code and concluded it is NOT vulnerable to {cwe_id}: {desc}.
+
+## Code from `{filename}` ({language}):
+```{language}
+{code}
+```
+
+## The researcher's analysis:
+{initial_analysis[:2000]}
+
+## Your Task: Devil's Advocate
+You are a red team security expert. Your job is to find flaws in the researcher's reasoning.
+
+1. What attack vectors did the researcher MISS or DISMISS too quickly?
+2. Are there edge cases, platform differences, or race conditions the researcher overlooked?
+3. Does the code actually block ALL variants of the attack, or just the obvious ones?
+
+{f"## Key detection rule for {cwe_id}:" if constraint else ""}
+{constraint}
+
+After your critical review, give your INDEPENDENT verdict:
+
+## Final Answer
+#judge: <yes/no>
+#type: {cwe_id} (if yes) or N/A (if no)"""
+
+    return prompt
+
+
 def parse_verdict(response_text: str) -> tuple[str, str]:
     """Parse #judge and #type from the structured response."""
     judge_match = re.search(r"#judge:\s*(yes|no)", response_text, re.IGNORECASE)
@@ -343,6 +413,169 @@ class VulnLLMModel:
         }
 
     @modal.method()
+    def analyze_deep(self, code: str, language: str, filename: str,
+                     top_k_cwes: int = 5) -> dict:
+        """
+        Deep analysis combining per-CWE focused passes + self-critique + any-of-N voting.
+
+        Strategy:
+        1. Discovery: 2 broad passes (temp=0.6) to identify candidate CWEs
+        2. Per-CWE focused: for top-K candidate CWEs, run a SEPARATE pass
+           focused exclusively on that one CWE with its detection constraint
+        3. Self-critique: for each CWE where focused pass said "not vulnerable",
+           run a devil's-advocate refutation pass
+        4. Voting: if ANY pass (discovery, focused, or critique) says VULNERABLE
+           for a given CWE, include it in the findings
+        """
+        code = self._truncate(code)
+        lang_key = language.lower()
+        base_cwes = list(LANGUAGE_CWES.get(lang_key, LANGUAGE_CWES.get("python", [])))
+
+        # ---- Phase 1: Discovery (broad, high-temp) ----
+        discovery_conversations = []
+        for _ in range(2):
+            user_prompt = build_user_prompt(code, language, filename, base_cwes)
+            discovery_conversations.append([
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ])
+
+        discovery_responses = self._run_inference(
+            discovery_conversations, self.discovery_sampling_params
+        )
+
+        # Collect CWE candidates from discovery
+        candidate_cwes = set()
+        discovery_hits = {}
+        for resp in discovery_responses:
+            cwe_matches = re.findall(r"CWE-\d+", resp.upper())
+            candidate_cwes.update(cwe_matches)
+            verdict, det_cwe = parse_verdict(resp)
+            if verdict == "VULNERABLE" and det_cwe != "N/A":
+                discovery_hits[det_cwe] = resp
+
+        # Also include CWEs that have constraints (most likely to find something)
+        for cwe_id in base_cwes:
+            if cwe_id in CWE_CONSTRAINTS:
+                candidate_cwes.add(cwe_id)
+
+        # Rank by: has constraint > mentioned in discovery > others
+        def cwe_priority(cwe):
+            score = 0
+            if cwe in CWE_CONSTRAINTS:
+                score += 2
+            if cwe in candidate_cwes:
+                score += 1
+            if cwe in discovery_hits:
+                score += 3
+            return -score
+
+        ranked_cwes = sorted(candidate_cwes, key=cwe_priority)[:top_k_cwes]
+
+        # ---- Phase 2: Per-CWE focused analysis ----
+        focused_conversations = []
+        focused_cwe_ids = []
+        for cwe_id in ranked_cwes:
+            prompt = build_focused_cwe_prompt(code, language, filename, cwe_id)
+            focused_conversations.append([
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ])
+            focused_cwe_ids.append(cwe_id)
+
+        focused_responses = self._run_inference(focused_conversations)
+
+        # Collect focused results
+        focused_results = {}
+        critique_needed = []
+        for i, resp in enumerate(focused_responses):
+            cwe_id = focused_cwe_ids[i]
+            verdict, _ = parse_verdict(resp)
+            focused_results[cwe_id] = {"verdict": verdict, "analysis": resp}
+            if verdict != "VULNERABLE":
+                critique_needed.append((cwe_id, resp))
+
+        # ---- Phase 3: Self-critique for "not vulnerable" verdicts ----
+        critique_conversations = []
+        critique_cwe_ids = []
+        for cwe_id, initial_analysis in critique_needed:
+            prompt = build_critique_prompt(
+                code, language, filename, cwe_id, initial_analysis
+            )
+            critique_conversations.append([
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ])
+            critique_cwe_ids.append(cwe_id)
+
+        critique_results = {}
+        if critique_conversations:
+            critique_responses = self._run_inference(
+                critique_conversations, self.discovery_sampling_params
+            )
+            for i, resp in enumerate(critique_responses):
+                cwe_id = critique_cwe_ids[i]
+                verdict, _ = parse_verdict(resp)
+                critique_results[cwe_id] = {"verdict": verdict, "analysis": resp}
+
+        # ---- Phase 4: Any-of-N voting ----
+        # A CWE is flagged if ANY phase found it vulnerable
+        flagged_cwes = {}
+        # From discovery
+        for cwe_id, resp in discovery_hits.items():
+            flagged_cwes[cwe_id] = "discovery"
+        # From focused
+        for cwe_id, result in focused_results.items():
+            if result["verdict"] == "VULNERABLE":
+                flagged_cwes[cwe_id] = "focused"
+        # From critique
+        for cwe_id, result in critique_results.items():
+            if result["verdict"] == "VULNERABLE":
+                flagged_cwes[cwe_id] = "critique"
+
+        # Build final verdict
+        if flagged_cwes:
+            verdict = "VULNERABLE"
+            # Pick the CWE flagged with highest confidence
+            # Priority: focused > critique > discovery
+            best_cwe = None
+            for phase in ["focused", "critique", "discovery"]:
+                for cwe_id, source in flagged_cwes.items():
+                    if source == phase:
+                        best_cwe = cwe_id
+                        break
+                if best_cwe:
+                    break
+            detected_cwe = best_cwe or list(flagged_cwes.keys())[0]
+        else:
+            verdict = "NOT VULNERABLE"
+            detected_cwe = "N/A"
+
+        # Build analysis summary
+        analysis_parts = []
+        if flagged_cwes:
+            analysis_parts.append(f"VULNERABLE: {', '.join(flagged_cwes.keys())}")
+            for cwe_id, source in flagged_cwes.items():
+                analysis_parts.append(f"\n--- {cwe_id} (flagged by {source} pass) ---")
+                if source == "focused":
+                    analysis_parts.append(focused_results[cwe_id]["analysis"][:500])
+                elif source == "critique":
+                    analysis_parts.append(critique_results[cwe_id]["analysis"][:500])
+                elif cwe_id in discovery_hits:
+                    analysis_parts.append(discovery_hits[cwe_id][:500])
+
+        return {
+            "filename": filename,
+            "language": language,
+            "verdict": verdict,
+            "detected_cwe": detected_cwe,
+            "flagged_cwes": flagged_cwes,
+            "candidate_cwes": sorted(candidate_cwes),
+            "focused_cwes": focused_cwe_ids,
+            "analysis": "\n".join(analysis_parts) if analysis_parts else "No vulnerabilities found.",
+        }
+
+    @modal.method()
     def analyze_batch(self, items: list[dict]) -> list[dict]:
         """Analyze multiple code snippets in a batch with CWE-aware prompting."""
         conversations = []
@@ -411,6 +644,7 @@ def web_app():
         filename: str = "unknown"
         cwe_hints: list[str] | None = None
         multipass: bool = False
+        deep: bool = False
 
     class BatchAnalyzeRequest(BaseModel):
         items: list[AnalyzeRequest]
@@ -422,6 +656,8 @@ def web_app():
     @api.post("/analyze", dependencies=[Depends(verify_token)])
     async def analyze(req: AnalyzeRequest):
         try:
+            if req.deep:
+                return model.analyze_deep.remote(req.code, req.language, req.filename)
             if req.multipass:
                 return model.analyze_multipass.remote(req.code, req.language, req.filename)
             return model.analyze.remote(req.code, req.language, req.filename, req.cwe_hints)

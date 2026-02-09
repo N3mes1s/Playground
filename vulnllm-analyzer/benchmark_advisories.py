@@ -270,12 +270,18 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--multipass", action="store_true", help="Use multi-pass analysis")
+    parser.add_argument("--deep", action="store_true", help="Use deep analysis (per-CWE focused + self-critique + voting)")
     args = parser.parse_args()
 
     VulnLLMModel = modal.Cls.from_name("vulnllm-analyzer", "VulnLLMModel")
     model = VulnLLMModel()
 
-    mode = "multi-pass" if args.multipass else "single-pass (CWE-aware)"
+    if args.deep:
+        mode = "deep (per-CWE focused + critique + voting)"
+    elif args.multipass:
+        mode = "multi-pass"
+    else:
+        mode = "single-pass (CWE-aware)"
     results = []
     total = len(ADVISORIES)
 
@@ -289,7 +295,13 @@ def main():
         print(f"         Expected: {adv['vuln_type']}")
         start = time.time()
 
-        if args.multipass:
+        if args.deep:
+            result = model.analyze_deep.remote(
+                code=adv["code"],
+                language=adv["language"],
+                filename=adv["filename"],
+            )
+        elif args.multipass:
             result = model.analyze_multipass.remote(
                 code=adv["code"],
                 language=adv["language"],
@@ -310,6 +322,10 @@ def main():
         print(f"         Verdict:  {result['verdict']} [{icon}] (CWE: {detected_cwe}, {elapsed:.1f}s)")
         if "discovered_cwes" in result:
             print(f"         Discovery pass CWEs: {result['discovered_cwes']}")
+        if "flagged_cwes" in result and result["flagged_cwes"]:
+            print(f"         Flagged CWEs: {result['flagged_cwes']}")
+        if "focused_cwes" in result:
+            print(f"         Focused analysis on: {result['focused_cwes']}")
         print()
 
         results.append({
