@@ -47,8 +47,8 @@ SKIP_DIRS = {
     "third_party", "thirdparty", "3rdparty", "external",
 }
 
-# Max file size to analyze (100KB) -- larger files are usually generated
-MAX_FILE_SIZE = 100_000
+# Max file size to analyze (50KB)
+MAX_FILE_SIZE = 50_000
 
 # Max files to analyze per repo (avoid runaway costs)
 MAX_FILES = 200
