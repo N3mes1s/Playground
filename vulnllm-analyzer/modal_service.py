@@ -108,13 +108,119 @@ CWE_CONSTRAINTS = {
     "CWE-367": "Look for gaps between security checks and the actual use of a resource. Check if file operations use O_NOFOLLOW to prevent symlink attacks between check and use. In file lock implementations, check if _release() can be exploited: if an attacker replaces the lock file with a symlink AFTER it is opened but BEFORE it is unlinked, the unlink follows the symlink and deletes an arbitrary file.",
     "CWE-362": "Identify shared resources accessed without proper synchronization. Look for race windows between checking a condition and acting on it.",
     "CWE-1321": "Check if object property paths are validated before use with operations like set, unset, merge, or defaultsDeep. Specifically check: can a user pass '__proto__' or 'constructor' as a path segment? If castPath/toKey do NOT filter these reserved keys, the code IS vulnerable to prototype pollution. The absence of a blocklist for __proto__/constructor/prototype means VULNERABLE.",
-    "CWE-502": "Check if deserialization functions (pickle.loads, ObjectMapper.readValue, unserialize) process untrusted input without type restrictions.",
+    "CWE-502": "Check if deserialization functions (pickle.loads, pickle.load, yaml.load, yaml.unsafe_load, ObjectMapper.readValue, readObject, unserialize, marshal.loads) process externally-sourced data. pickle is inherently unsafe for untrusted data even with HMAC signature verification.",
     "CWE-913": "Check if reflection or introspection APIs (Introspector.getBeanInfo, getMethod().invoke()) are used without security restrictions, especially in sandbox/template engine contexts. If getBeanInfo is called on user-controlled objects without filtering dangerous methods (getClass, etc.), it IS vulnerable.",
     "CWE-1336": "Check if template engines allow access to dangerous objects or methods that could lead to code execution or sandbox escape.",
     "CWE-444": "Check if HTTP parsers handle chunked transfer-encoding strictly per RFC 7230. Specifically: does the parser validate that chunk footers are exactly \\r\\n? If any 2 bytes are accepted as the footer (instead of strictly \\r\\n), different parsers will disagree on message boundaries, enabling request smuggling.",
     "CWE-436": "Check if ASN.1 or certificate validation performs tag-class/type checks BEFORE recursing into sub-structures. If optional fields that fail validation still trigger recursive parsing or capture, malformed inputs can be reinterpreted as subsequent mandatory fields, bypassing signature verification.",
     "CWE-915": "Check if object traversal functions (getattr, obj[elem]) validate attribute names before accessing them. Specifically: can a user pass dunder attributes (__globals__, __builtins__, __class__) as path elements? If getattr(obj, elem) is called without checking for __ prefixes, arbitrary Python internals can be accessed/modified (class pollution). Also check if safety sets (SAFE_TO_IMPORT) are mutable (set vs frozenset).",
 }
+
+# Code-level relevance patterns: CWE is only relevant if code matches at least ONE pattern.
+# CWEs not listed here are always considered relevant (safe default).
+# This is a structural filter — prevents running focused analysis for CWEs
+# that clearly don't apply (e.g., CWE-22 path traversal on code that does no file I/O).
+CWE_CODE_PATTERNS = {
+    # Filesystem CWEs — only relevant if code touches the filesystem
+    "CWE-22": [
+        # Python
+        r"\bopen\s*\(", r"\bos\.path\b", r"\bos\.stat\b", r"\bos\.access\b",
+        r"\bos\.walk\b", r"\bos\.listdir\b", r"\bshutil\.", r"\bpathlib\b",
+        r"\bos\.rename\b", r"\bos\.remove\b", r"\bos\.unlink\b", r"\bos\.makedirs\b",
+        r"\btarfile\b",
+        # Java
+        r"\bZip\w+\b", r"\bFiles\.\w+\b", r"\.resolve\s*\(",
+        r"\bnew\s+File\b", r"\bFile\w*Stream\b",
+        # JS/Node
+        r"\bfs\.\w+\b", r"\.extractall\b", r"\.extract\b",
+    ],
+    "CWE-59": [
+        # Python
+        r"\bos\.path\b", r"\bos\.stat\b", r"\bos\.lstat\b", r"\bos\.access\b",
+        r"\bos\.unlink\b", r"\bos\.remove\b", r"\bos\.symlink\b", r"\bos\.link\b",
+        r"\bopen\s*\(", r"\bshutil\.", r"\bpathlib\b", r"\bos\.rename\b",
+        r"\bunlink\s*\(", r"\bsymlink\b",
+        # Java
+        r"\bFiles\.\w+\b", r"\.resolve\s*\(", r"\bnew\s+File\b",
+        # JS/Node
+        r"\bfs\.\w+\b",
+    ],
+    "CWE-67": [
+        # Python
+        r"\bos\.path\b", r"\bopen\s*\(", r"\bpathlib\b", r"\bos\.stat\b",
+        r"\bos\.access\b", r"\bos\.rename\b",
+        # Java
+        r"\bFiles\.\w+\b", r"\.resolve\s*\(", r"\bnew\s+File\b",
+        # JS/Node
+        r"\bfs\.\w+\b",
+    ],
+    "CWE-367": [
+        r"\bos\.\w+\b", r"\bopen\s*\(", r"\bpathlib\b", r"\block\b",
+        r"\bunlink\b", r"\bos\.remove\b", r"\bstat\s*\(", r"\baccess\s*\(",
+        r"\bFiles\.\w+\b", r"\.resolve\s*\(",
+    ],
+    # Deserialization — only relevant if code deserializes
+    "CWE-502": [
+        r"\bpickle\b", r"\bunpickle\b", r"\byaml\.load\b", r"\byaml\.unsafe_load\b",
+        r"\bObjectMapper\b", r"\breadValue\b", r"\bmarshal\.loads?\b",
+        r"\bjsonpickle\b", r"\bshelve\b", r"\bdill\b",
+        r"\bunserializ", r"\bdeserializ",
+        r"\bObjectInputStream\b", r"\breadObject\b",
+    ],
+    # SQL injection — only relevant if code does SQL
+    "CWE-89": [
+        r"\bSELECT\s", r"\bINSERT\s", r"\bUPDATE\s", r"\bDELETE\s",
+        r"\bsql\b", r"\bcursor\.\w*execute\b", r"\bquery\s*\(",
+    ],
+    # Command injection — only relevant if code executes system commands
+    "CWE-78": [
+        r"\bos\.system\b", r"\bos\.popen\b", r"\bsubprocess\b",
+        r"\bshell\s*=\s*True\b", r"\bPopen\b", r"\bsystem\s*\(",
+        r"\bRuntime\..*exec\b", r"\bchild_process\b", r"\bexecSync\b",
+        r"\bspawn\b",
+    ],
+    # CWE-1321 (Prototype Pollution) NOT filtered — JS/TS-only via LANGUAGE_CWES
+    # and hard to pattern-match (lodash uses castPath/toKey, not literal __proto__).
+    # Code injection — only relevant if code has eval/exec/compile or template execution
+    "CWE-94": [
+        r"\beval\s*\(", r"\bexec\s*\(", r"\bcompile\s*\(",
+        r"\bnew\s+Function\s*\(", r"\bProcessBuilder\b",
+        r"\bReflect\b", r"\bIntrospector\b",
+        r"\btemplate\b", r"\brender\b",
+    ],
+    # Template injection — only relevant if code uses template engines
+    "CWE-1336": [
+        r"\btemplate\b", r"\brender\b", r"\bTemplate\b", r"\bJinja\b",
+        r"\bMustache\b", r"\bHandlebars\b", r"\bFreemarker\b",
+        r"\bexec\s*\(", r"\bcompile\s*\(",
+    ],
+    # Class pollution — only relevant if code does dynamic attribute access
+    "CWE-915": [
+        r"\bgetattr\s*\(", r"\bsetattr\s*\(", r"__globals__", r"__builtins__",
+        r"__class__", r"__import__", r"\battr\b",
+    ],
+}
+
+
+def filter_relevant_cwes(code: str, cwe_ids: list[str]) -> list[str]:
+    """Filter CWEs to only those relevant to the code based on API/pattern matching.
+
+    CWEs without defined relevance patterns are always included (safe default).
+    This prevents false positives from running CWE-22 on string-parsing code, etc.
+    """
+    relevant = []
+    for cwe_id in cwe_ids:
+        patterns = CWE_CODE_PATTERNS.get(cwe_id)
+        if patterns is None:
+            # No patterns defined → always relevant (safe default)
+            relevant.append(cwe_id)
+            continue
+        for pattern in patterns:
+            if re.search(pattern, code, re.IGNORECASE):
+                relevant.append(cwe_id)
+                break
+    return relevant
+
 
 # Language-specific CWE focus sets
 LANGUAGE_CWES = {
@@ -483,6 +589,9 @@ class VulnLLMModel:
 
         ranked_cwes = sorted(candidate_cwes, key=cwe_priority)[:top_k_cwes]
 
+        # ---- Relevance filter: skip CWEs that don't match code patterns ----
+        ranked_cwes = filter_relevant_cwes(code, ranked_cwes)
+
         # ---- Phase 2: Per-CWE focused analysis ----
         focused_conversations = []
         focused_cwe_ids = []
@@ -494,7 +603,9 @@ class VulnLLMModel:
             ])
             focused_cwe_ids.append(cwe_id)
 
-        focused_responses = self._run_inference(focused_conversations)
+        focused_responses = (
+            self._run_inference(focused_conversations) if focused_conversations else []
+        )
 
         # Collect focused results
         focused_results = {}
@@ -531,10 +642,13 @@ class VulnLLMModel:
 
         # ---- Phase 4: Any-of-N voting ----
         # A CWE is flagged if ANY phase found it vulnerable
+        # Discovery hits are also filtered for relevance
+        relevant_set = set(filter_relevant_cwes(code, list(discovery_hits.keys())))
         flagged_cwes = {}
-        # From discovery
+        # From discovery (only if code-relevant)
         for cwe_id, resp in discovery_hits.items():
-            flagged_cwes[cwe_id] = "discovery"
+            if cwe_id in relevant_set:
+                flagged_cwes[cwe_id] = "discovery"
         # From focused
         for cwe_id, result in focused_results.items():
             if result["verdict"] == "VULNERABLE":
@@ -582,7 +696,7 @@ class VulnLLMModel:
             "detected_cwe": detected_cwe,
             "flagged_cwes": flagged_cwes,
             "candidate_cwes": sorted(candidate_cwes),
-            "focused_cwes": focused_cwe_ids,
+            "focused_cwes": focused_cwe_ids,  # after relevance filtering
             "analysis": "\n".join(analysis_parts) if analysis_parts else "No vulnerabilities found.",
         }
 
