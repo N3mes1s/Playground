@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
@@ -312,11 +313,15 @@ def load_patterns() -> list[dict]:
     return []
 
 
+_pattern_lock = threading.Lock()
+
+
 def save_pattern(pattern: dict) -> None:
-    """Append a new learned pattern."""
-    patterns = load_patterns()
-    patterns.append(pattern)
-    PATTERNS_FILE.write_text(json.dumps(patterns, indent=2))
+    """Append a new learned pattern (thread-safe)."""
+    with _pattern_lock:
+        patterns = load_patterns()
+        patterns.append(pattern)
+        PATTERNS_FILE.write_text(json.dumps(patterns, indent=2))
     print(f"[benchmark] Saved new pattern to {PATTERNS_FILE} ({len(patterns)} total)")
 
 
@@ -699,6 +704,15 @@ def main():
     if not ids:
         parser.error("No advisory IDs provided. Use positional args or --batch file.")
 
+    # When writing structured output, redirect all progress to stderr
+    if args.output:
+        import builtins
+        _orig_print = builtins.print
+        def _stderr_print(*a, **kw):
+            kw.setdefault("file", sys.stderr)
+            _orig_print(*a, **kw)
+        builtins.print = _stderr_print
+
     if len(ids) == 1:
         result = run_benchmark(
             advisory_id=ids[0],
@@ -734,8 +748,13 @@ def main():
                 "improved": r.improved,
             }
             out_data.append(d)
-        Path(args.output).write_text(json.dumps(out_data, indent=2))
-        print(f"\nResults written to {args.output}")
+        output_json = json.dumps(out_data, indent=2)
+        if args.output == "/dev/stdout":
+            # Write clean JSON to stdout for batch runner to parse
+            sys.stdout.write(output_json)
+        else:
+            Path(args.output).write_text(output_json)
+            print(f"\nResults written to {args.output}", file=sys.stderr)
 
 
 if __name__ == "__main__":

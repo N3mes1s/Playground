@@ -1,0 +1,1233 @@
+[
+  {
+    "ghsa": "GHSA-4jqp-9qjv-57m2",
+    "severity": "critical",
+    "ecosystem": "pip",
+    "package": "keylime",
+    "summary": "Keylime Missing Authentication for Critical Function and Improper Authentication",
+    "cwes": [],
+    "patched": "",
+    "repo": "https://github.com/keylime/keylime"
+  },
+  {
+    "ghsa": "GHSA-4f84-67cv-qrv3",
+    "severity": "critical",
+    "ecosystem": "pip",
+    "package": "dydx-v4-client",
+    "summary": "A single post-release of dydx-v4-client contained obfuscated multi-stage loader",
+    "cwes": [
+      "CWE-506"
+    ],
+    "patched": "",
+    "repo": "https://github.com/lenktn/lenktn-dydx-v4-python"
+  },
+  {
+    "ghsa": "GHSA-2ww3-72rp-wpp4",
+    "severity": "critical",
+    "ecosystem": "nuget",
+    "package": "Microsoft.SemanticKernel.Core",
+    "summary": "Semantic Kernel has Arbitrary File Write via AI Agent Function Calling in .NET S",
+    "cwes": [
+      "CWE-22"
+    ],
+    "patched": "",
+    "repo": "https://github.com/microsoft/semantic-kernel"
+  },
+  {
+    "ghsa": "GHSA-25fp-8w8p-mx36",
+    "severity": "critical",
+    "ecosystem": "composer",
+    "package": "devcode-it/openstamanager",
+    "summary": "OpenSTAManager has an OS Command Injection in P7M File Processing",
+    "cwes": [
+      "CWE-78"
+    ],
+    "patched": "",
+    "repo": "https://github.com/devcode-it/openstamanager"
+  },
+  {
+    "ghsa": "GHSA-gg64-xxr9-qhjp",
+    "severity": "critical",
+    "ecosystem": "go",
+    "package": "gogs.io/gogs",
+    "summary": "Gogs's update .git/config file allows remote command execution",
+    "cwes": [
+      "CWE-78"
+    ],
+    "patched": "",
+    "repo": "https://github.com/gogs/gogs"
+  },
+  {
+    "ghsa": "GHSA-7x3h-rm86-3342",
+    "severity": "critical",
+    "ecosystem": "npm",
+    "package": "@nyariv/sandboxjs",
+    "summary": "@nyariv/sandboxjs vulnerable to sandbox escape via TOCTOU bug on keys in propert",
+    "cwes": [
+      "CWE-74",
+      "CWE-367"
+    ],
+    "patched": "",
+    "repo": "https://github.com/nyariv/SandboxJS"
+  },
+  {
+    "ghsa": "GHSA-xx6w-jxg9-2wh8",
+    "severity": "critical",
+    "ecosystem": "npm",
+    "package": "@payloadcms/drizzle",
+    "summary": "@payloadcms/drizzle has SQL Injection in JSON/RichText Queries on PostgreSQL/SQL",
+    "cwes": [
+      "CWE-89"
+    ],
+    "patched": "",
+    "repo": "https://github.com/payloadcms/payload"
+  },
+  {
+    "ghsa": "GHSA-x9p2-77v6-6vhf",
+    "severity": "critical",
+    "ecosystem": "go",
+    "package": "github.com/dunglas/frankenphp",
+    "summary": "FrankenPHP has delayed propagation of security fixes in upstream base images",
+    "cwes": [
+      "CWE-1395"
+    ],
+    "patched": "",
+    "repo": "https://github.com/php/frankenphp"
+  },
+  {
+    "ghsa": "GHSA-ggxw-g3cp-mgf8",
+    "severity": "critical",
+    "ecosystem": "npm",
+    "package": "fuxa-server",
+    "summary": "FUXA Unauthenticated Remote Arbitrary Device Tag Write",
+    "cwes": [
+      "CWE-862"
+    ],
+    "patched": "",
+    "repo": "https://github.com/frangoteam/FUXA"
+  },
+  {
+    "ghsa": "GHSA-74vm-8frp-7w68",
+    "severity": "critical",
+    "ecosystem": "pip",
+    "package": "epyt-flow",
+    "summary": "EPyT-Flow vulnerable to unsafe JSON deserialization (__type__)",
+    "cwes": [
+      "CWE-502"
+    ],
+    "patched": "",
+    "repo": "https://github.com/WaterFutures/EPyT-Flow"
+  },
+  {
+    "ghsa": "GHSA-jr3w-9vfr-c746",
+    "severity": "critical",
+    "ecosystem": "go",
+    "package": "github.com/rancher/local-path-provisioner",
+    "summary": "Local Path Provisioner vulnerable to Path Traversal via parameters.pathPattern",
+    "cwes": [
+      "CWE-23"
+    ],
+    "patched": "",
+    "repo": "https://github.com/rancher/local-path-provisioner"
+  },
+  {
+    "ghsa": "GHSA-h3q6-jfrg-3x6q",
+    "severity": "critical",
+    "ecosystem": "npm",
+    "package": "survey-pdf",
+    "summary": "survey-pdf Upgraded jsPDF Version Due to Security Vulnerability",
+    "cwes": [
+      "CWE-35",
+      "CWE-73"
+    ],
+    "patched": "",
+    "repo": "https://github.com/surveyjs/survey-pdf"
+  },
+  {
+    "ghsa": "GHSA-8398-gmmx-564h",
+    "severity": "critical",
+    "ecosystem": "npm",
+    "package": "n8n",
+    "summary": "n8n has a Python sandbox escape",
+    "cwes": [
+      "CWE-693"
+    ],
+    "patched": "",
+    "repo": "https://github.com/n8n-io/n8n"
+  },
+  {
+    "ghsa": "GHSA-8jmm-3xwx-w974",
+    "severity": "critical",
+    "ecosystem": "go",
+    "package": "github.com/alist-org/alist/v3",
+    "summary": "Alist has Insecure TLS Config",
+    "cwes": [
+      "CWE-295"
+    ],
+    "patched": "",
+    "repo": "https://github.com/AlistGo/alist"
+  },
+  {
+    "ghsa": "GHSA-hrr4-3wgr-68x3",
+    "severity": "critical",
+    "ecosystem": "go",
+    "package": "github.com/navidrome/navidrome",
+    "summary": "Navidrome affected by Denial of Service and disk exhaustion via oversized `size`",
+    "cwes": [
+      "CWE-400",
+      "CWE-770",
+      "CWE-789"
+    ],
+    "patched": "",
+    "repo": "https://github.com/navidrome/navidrome"
+  },
+  {
+    "ghsa": "GHSA-xqg6-98cw-gxhq",
+    "severity": "critical",
+    "ecosystem": "npm",
+    "package": "@builder.io/qwik-city",
+    "summary": "Prototype Pollution via FormData Processing in Qwik City",
+    "cwes": [
+      "CWE-1321"
+    ],
+    "patched": "",
+    "repo": "https://github.com/QwikDev/qwik"
+  },
+  {
+    "ghsa": "GHSA-gjx9-j8f8-7j74",
+    "severity": "critical",
+    "ecosystem": "maven",
+    "package": "com.hubspot.jinjava:jinjava",
+    "summary": "JinJava Bypass through ForTag leads to Arbitrary Java Execution",
+    "cwes": [
+      "CWE-1336"
+    ],
+    "patched": "",
+    "repo": "https://github.com/HubSpot/jinjava"
+  },
+  {
+    "ghsa": "GHSA-rxrv-835q-v5mh",
+    "severity": "critical",
+    "ecosystem": "npm",
+    "package": "locutus",
+    "summary": "locutus is vulnerable to Prototype Pollution",
+    "cwes": [
+      "CWE-1321"
+    ],
+    "patched": "",
+    "repo": "https://github.com/locutusjs/locutus"
+  },
+  {
+    "ghsa": "GHSA-gp56-f67f-m4px",
+    "severity": "critical",
+    "ecosystem": "composer",
+    "package": "ci4-cms-erp/ci4ms",
+    "summary": "CI4MS Vulnerable to Remote Code Execution (RCE) via Arbitrary File Creation and ",
+    "cwes": [
+      "CWE-94",
+      "CWE-434"
+    ],
+    "patched": "",
+    "repo": "https://github.com/ci4-cms-erp/ci4ms"
+  },
+  {
+    "ghsa": "GHSA-gc24-px2r-5qmf",
+    "severity": "critical",
+    "ecosystem": "pip",
+    "package": "bambuddy",
+    "summary": "Bambuddy Uses Hardcoded Secret Key + Many API Endpoints do not Require Authentic",
+    "cwes": [
+      "CWE-306",
+      "CWE-321"
+    ],
+    "patched": "",
+    "repo": "https://github.com/maziggy/bambuddy"
+  },
+  {
+    "ghsa": "GHSA-x34r-63hx-w57f",
+    "severity": "critical",
+    "ecosystem": "pip",
+    "package": "langroid",
+    "summary": "Langroid has WAF Bypass Leading to RCE in TableChatAgent",
+    "cwes": [
+      "CWE-94"
+    ],
+    "patched": "",
+    "repo": "https://github.com/langroid/langroid"
+  },
+  {
+    "ghsa": "GHSA-p8gp-2w28-mhwg",
+    "severity": "critical",
+    "ecosystem": "npm",
+    "package": "@signalk/set-system-time",
+    "summary": "Signal K set-system-time plugin vulnerable to RCE - Command Injection",
+    "cwes": [
+      "CWE-78"
+    ],
+    "patched": "",
+    "repo": "https://github.com/SignalK/signalk-server"
+  },
+  {
+    "ghsa": "GHSA-4r2x-xpjr-7cvv",
+    "severity": "critical",
+    "ecosystem": "pip",
+    "package": "vllm",
+    "summary": "vLLM has RCE In Video Processing",
+    "cwes": [
+      "CWE-122",
+      "CWE-532"
+    ],
+    "patched": "",
+    "repo": "https://github.com/vllm-project/vllm"
+  },
+  {
+    "ghsa": "GHSA-wj3h-wx8g-x699",
+    "severity": "critical",
+    "ecosystem": "maven",
+    "package": "ai.h2o:h2o-core",
+    "summary": "H2O has an External Control of File Name or Path vulnerability",
+    "cwes": [
+      "CWE-73"
+    ],
+    "patched": "",
+    "repo": "https://github.com/h2oai/h2o-3"
+  },
+  {
+    "ghsa": "GHSA-gch2-phqh-fg9q",
+    "severity": "critical",
+    "ecosystem": "npm",
+    "package": "@orval/core",
+    "summary": "Orval has Code Injection via unsanitized x-enum-descriptions using JS comments",
+    "cwes": [
+      "CWE-84",
+      "CWE-94"
+    ],
+    "patched": "",
+    "repo": "https://github.com/orval-labs/orval"
+  },
+  {
+    "ghsa": "GHSA-jfpc-wj3m-qw2m",
+    "severity": "critical",
+    "ecosystem": "pip",
+    "package": "cai-framework",
+    "summary": "CAI find_file Agent Tool has Command Injection Vulnerability Through Argument In",
+    "cwes": [
+      "CWE-78"
+    ],
+    "patched": "",
+    "repo": "https://github.com/aliasrobotics/cai"
+  },
+  {
+    "ghsa": "GHSA-2733-6c58-pf27",
+    "severity": "critical",
+    "ecosystem": "npm",
+    "package": "deephas",
+    "summary": "deepHas vulnerable to Prototype Pollution via constructor.prototype",
+    "cwes": [
+      "CWE-1321"
+    ],
+    "patched": "",
+    "repo": "https://github.com/sharpred/deepHas"
+  },
+  {
+    "ghsa": "GHSA-vg9h-jx4v-cwx2",
+    "severity": "critical",
+    "ecosystem": "pip",
+    "package": "dfir-unfurl",
+    "summary": "Unfurl's debug mode cannot be disabled due to string config parsing (Werkzeug de",
+    "cwes": [
+      "CWE-489"
+    ],
+    "patched": "",
+    "repo": "https://github.com/obsidianforensics/unfurl"
+  },
+  {
+    "ghsa": "GHSA-c4jr-5q7w-f6r9",
+    "severity": "critical",
+    "ecosystem": "go",
+    "package": "github.com/siyuan-note/siyuan/kernel",
+    "summary": "SiYuan has Arbitrary File Write via /api/file/copyFile leading to RCE",
+    "cwes": [
+      "CWE-22"
+    ],
+    "patched": "",
+    "repo": "https://github.com/siyuan-note/siyuan"
+  },
+  {
+    "ghsa": "GHSA-w9pf-h6m6-v89h",
+    "severity": "critical",
+    "ecosystem": "nuget",
+    "package": "DotNetNuke.Core",
+    "summary": "DotNetNuke.Core Vulnerable to Stored XSS via Module Title",
+    "cwes": [
+      "CWE-79"
+    ],
+    "patched": "",
+    "repo": "https://github.com/dnnsoftware/Dnn.Platform"
+  },
+  {
+    "ghsa": "GHSA-5w5r-mf82-595p",
+    "severity": "critical",
+    "ecosystem": "rust",
+    "package": "capnp",
+    "summary": "Cap'n Proto has Undefined Behavior in constant::Reader and StructSchema",
+    "cwes": [
+      "CWE-758"
+    ],
+    "patched": "",
+    "repo": "https://github.com/capnproto/capnproto-rust"
+  },
+  {
+    "ghsa": "GHSA-8p9x-46gm-qfx2",
+    "severity": "critical",
+    "ecosystem": "go",
+    "package": "github.com/kyverno/kyverno",
+    "summary": "Kyverno Cross-Namespace Privilege Escalation via Policy apiCall",
+    "cwes": [
+      "CWE-269",
+      "CWE-918"
+    ],
+    "patched": "",
+    "repo": "https://github.com/kyverno/kyverno"
+  },
+  {
+    "ghsa": "GHSA-cr3w-cw5w-h3fj",
+    "severity": "critical",
+    "ecosystem": "npm",
+    "package": "@saltcorn/server",
+    "summary": "Saltcorn's Reflected XSS and Command Injection vulnerabilities can be chained fo",
+    "cwes": [
+      "CWE-77",
+      "CWE-79"
+    ],
+    "patched": "",
+    "repo": "https://github.com/saltcorn/saltcorn"
+  },
+  {
+    "ghsa": "GHSA-99p7-6v5w-7xg8",
+    "severity": "critical",
+    "ecosystem": "npm",
+    "package": "vm2",
+    "summary": "vm2 has a Sandbox Escape",
+    "cwes": [
+      "CWE-94",
+      "CWE-693",
+      "CWE-913"
+    ],
+    "patched": "",
+    "repo": "https://github.com/patriksimek/vm2"
+  },
+  {
+    "ghsa": "GHSA-796p-j2gh-9m2q",
+    "severity": "critical",
+    "ecosystem": "rust",
+    "package": "dcap-qvl",
+    "summary": "dcap-qvl has Missing Verification for QE Identity",
+    "cwes": [
+      "CWE-295",
+      "CWE-347"
+    ],
+    "patched": "",
+    "repo": "https://github.com/Phala-Network/dcap-qvl"
+  },
+  {
+    "ghsa": "GHSA-77p9-w6pj-rmvg",
+    "severity": "critical",
+    "ecosystem": "maven",
+    "package": "org.apache.continuum:continuum",
+    "summary": "Apache Continuum vulnerable to Command Injection through Installations REST API",
+    "cwes": [
+      "CWE-77"
+    ],
+    "patched": "",
+    "repo": "https://github.com/apache/continuum"
+  },
+  {
+    "ghsa": "GHSA-pgx9-497m-6c4v",
+    "severity": "critical",
+    "ecosystem": "npm",
+    "package": "sm-crypto",
+    "summary": "sm-crypto Affected by Private Key Recovery in SM2-PKE",
+    "cwes": [
+      "CWE-345"
+    ],
+    "patched": "",
+    "repo": "https://github.com/JuneAndGreen/sm-crypto"
+  },
+  {
+    "ghsa": "GHSA-m27r-m6rx-mhm4",
+    "severity": "critical",
+    "ecosystem": "composer",
+    "package": "laravel/reverb",
+    "summary": "Laravel Redis Horizontal Scaling Insecure Deserialization",
+    "cwes": [
+      "CWE-502"
+    ],
+    "patched": "",
+    "repo": "https://github.com/laravel/reverb"
+  },
+  {
+    "ghsa": "GHSA-63m5-974w-448v",
+    "severity": "critical",
+    "ecosystem": "go",
+    "package": "github.com/fleetdm/fleet",
+    "summary": "Fleet has a JWT signature bypass vulnerability in Azure AD MDM enrollment ",
+    "cwes": [
+      "CWE-347"
+    ],
+    "patched": "",
+    "repo": "https://github.com/fleetdm/fleet"
+  },
+  {
+    "ghsa": "GHSA-7jc7-g598-2p64",
+    "severity": "critical",
+    "ecosystem": "maven",
+    "package": "fr.opensagres.xdocreport:fr.opensagres.xdocreport.document",
+    "summary": "XDocReport affected by an XML External Entity (XXE) vulnerability",
+    "cwes": [
+      "CWE-611"
+    ],
+    "patched": "",
+    "repo": "https://github.com/opensagres/xdocreport"
+  },
+  {
+    "ghsa": "GHSA-r8w2-w357-9pjv",
+    "severity": "critical",
+    "ecosystem": "maven",
+    "package": "fr.opensagres.xdocreport:fr.opensagres.xdocreport.template.freemarker",
+    "summary": "XDocReport affected by a Server-Side Template Injection (SSTI) vulnerability",
+    "cwes": [
+      "CWE-1336"
+    ],
+    "patched": "",
+    "repo": "https://github.com/opensagres/xdocreport"
+  },
+  {
+    "ghsa": "GHSA-4gpc-rhpj-9443",
+    "severity": "critical",
+    "ecosystem": "npm",
+    "package": "@lobehub/chat",
+    "summary": "Lobe Chat affected by Cross-Site Scripting(XSS) that can escalate to Remote Code",
+    "cwes": [
+      "CWE-94"
+    ],
+    "patched": "",
+    "repo": "https://github.com/lobehub/lobe-chat"
+  },
+  {
+    "ghsa": "GHSA-77v3-r3jw-j2v2",
+    "severity": "critical",
+    "ecosystem": "go",
+    "package": "github.com/external-secrets/external-secrets",
+    "summary": "External Secrets Operator insecurely retrieves secrets through the getSecretKey ",
+    "cwes": [
+      "CWE-863"
+    ],
+    "patched": "",
+    "repo": "https://github.com/external-secrets/external-secrets"
+  },
+  {
+    "ghsa": "GHSA-232v-j27c-5pp6",
+    "severity": "critical",
+    "ecosystem": "npm",
+    "package": "@mcpjam/inspector",
+    "summary": "REC in MCPJam inspector due to HTTP Endpoint exposes",
+    "cwes": [
+      "CWE-306"
+    ],
+    "patched": "",
+    "repo": "https://github.com/MCPJam/inspector"
+  },
+  {
+    "ghsa": "GHSA-5882-5rx9-xgxp",
+    "severity": "critical",
+    "ecosystem": "pip",
+    "package": "Crawl4AI",
+    "summary": "Crawl4AI is Vulnerable to Remote Code Execution in Docker API via Hooks Paramete",
+    "cwes": [
+      "CWE-94"
+    ],
+    "patched": "",
+    "repo": "https://github.com/unclecode/crawl4ai"
+  },
+  {
+    "ghsa": "GHSA-5379-f5hf-w38v",
+    "severity": "critical",
+    "ecosystem": "rust",
+    "package": "deno",
+    "summary": "Deno node:crypto doesn't finalize cipher",
+    "cwes": [
+      "CWE-325"
+    ],
+    "patched": "",
+    "repo": "https://github.com/denoland/deno"
+  },
+  {
+    "ghsa": "GHSA-gjqq-6r35-w3r8",
+    "severity": "critical",
+    "ecosystem": "go",
+    "package": "github.com/getarcaneapp/arcane/backend",
+    "summary": "Arcane Has a Command Injection in Arcane Updater Lifecycle Labels That Enables R",
+    "cwes": [
+      "CWE-78"
+    ],
+    "patched": "",
+    "repo": "https://github.com/getarcaneapp/arcane"
+  },
+  {
+    "ghsa": "GHSA-7qm7-455j-5p63",
+    "severity": "critical",
+    "ecosystem": "npm",
+    "package": "enclave-vm",
+    "summary": "enclave-vm Vulnerable to Sandbox Escape via Host Error Prototype Chain",
+    "cwes": [
+      "CWE-94"
+    ],
+    "patched": "",
+    "repo": "https://github.com/agentfront/enclave"
+  },
+  {
+    "ghsa": "GHSA-vrgw-pc9c-qrrc",
+    "severity": "critical",
+    "ecosystem": "nuget",
+    "package": "UmbracoForms",
+    "summary": "UmbracoForms Vulnerable to Remote Code Execution via Untrusted WSDL Compilation ",
+    "cwes": [
+      "CWE-94",
+      "CWE-502",
+      "CWE-829",
+      "CWE-915"
+    ],
+    "patched": "",
+    "repo": "https://github.com/umbraco/Umbraco.Forms.Issues"
+  },
+  {
+    "ghsa": "GHSA-mwr6-3gp8-9jmj",
+    "severity": "critical",
+    "ecosystem": "npm",
+    "package": "@orval/mcp",
+    "summary": "orval MCP client is vulnerable to a code injection attack.",
+    "cwes": [
+      "CWE-77"
+    ],
+    "patched": "",
+    "repo": "https://github.com/orval-labs/orval"
+  },
+  {
+    "ghsa": "GHSA-w757-4qv9-mghp",
+    "severity": "critical",
+    "ecosystem": "rubygems",
+    "package": "openc3",
+    "summary": "openc3-api Vulnerable to Unauthenticated Remote Code Execution",
+    "cwes": [
+      "CWE-95"
+    ],
+    "patched": "",
+    "repo": "https://github.com/OpenC3/cosmos"
+  },
+  {
+    "ghsa": "GHSA-7x99-8x99-xc54",
+    "severity": "critical",
+    "ecosystem": "pip",
+    "package": "uni2ts",
+    "summary": "Salesforce Uni2TS has a Code Injection vulnerability",
+    "cwes": [
+      "CWE-94"
+    ],
+    "patched": "",
+    "repo": "https://github.com/SalesforceAIResearch/uni2ts"
+  },
+  {
+    "ghsa": "GHSA-78h3-63c4-5fqc",
+    "severity": "critical",
+    "ecosystem": "go",
+    "package": "github.com/Tencent/WeKnora",
+    "summary": "WeKnora has Command\u00a0Injection\u00a0in\u00a0MCP stdio\u00a0test",
+    "cwes": [
+      "CWE-77"
+    ],
+    "patched": "",
+    "repo": "https://github.com/Tencent/WeKnora"
+  },
+  {
+    "ghsa": "GHSA-2g22-wg49-fgv5",
+    "severity": "critical",
+    "ecosystem": "maven",
+    "package": "org.xwiki.contrib:macro-fullcalendar-pom",
+    "summary": "XWiki Full Calendar Macro vulnerable to SQL injection through Calendar.JSONServi",
+    "cwes": [
+      "CWE-89"
+    ],
+    "patched": "",
+    "repo": "https://github.com/xwiki-contrib/macro-fullcalendar"
+  },
+  {
+    "ghsa": "GHSA-jm7w-5684-pvh8",
+    "severity": "critical",
+    "ecosystem": "maven",
+    "package": "com.alibaba:fastjson",
+    "summary": "FASTJSON Includes Functionality from Untrusted Control Sphere ",
+    "cwes": [
+      "CWE-829"
+    ],
+    "patched": "",
+    "repo": "https://github.com/alibaba/fastjson"
+  },
+  {
+    "ghsa": "GHSA-9583-h5hc-x8cw",
+    "severity": "critical",
+    "ecosystem": "npm",
+    "package": "@react-router/node",
+    "summary": "React Router has Path Traversal in File Session Storage",
+    "cwes": [
+      "CWE-22"
+    ],
+    "patched": "",
+    "repo": "https://github.com/remix-run/react-router"
+  },
+  {
+    "ghsa": "GHSA-vj87-jj27-4h9c",
+    "severity": "critical",
+    "ecosystem": "pip",
+    "package": "wolfssl",
+    "summary": "wolfSSL Python module vulnerable to Improper Authentication",
+    "cwes": [
+      "CWE-287"
+    ],
+    "patched": "",
+    "repo": "https://github.com/wolfSSL/wolfssl-py"
+  },
+  {
+    "ghsa": "GHSA-h4rf-624j-gj33",
+    "severity": "critical",
+    "ecosystem": "pip",
+    "package": "terminal-controller",
+    "summary": "terminal-controller-mcp vulnerable to Command Injection",
+    "cwes": [
+      "CWE-77"
+    ],
+    "patched": "",
+    "repo": "https://github.com/GongRzhe/terminal-controller-mcp"
+  },
+  {
+    "ghsa": "GHSA-j382-5jj3-vw4j",
+    "severity": "critical",
+    "ecosystem": "maven",
+    "package": "io.undertow:undertow-core",
+    "summary": "Undertow HTTP server core doesn't properly validate the Host header in incoming ",
+    "cwes": [
+      "CWE-20"
+    ],
+    "patched": "",
+    "repo": "https://github.com/undertow-io/undertow"
+  },
+  {
+    "ghsa": "GHSA-rwp9-5g7q-73q3",
+    "severity": "critical",
+    "ecosystem": "go",
+    "package": "github.com/openflagr/flagr",
+    "summary": "OpenFlagr contains an authentication bypass vulnerability in the HTTP middleware",
+    "cwes": [
+      "CWE-306",
+      "CWE-425"
+    ],
+    "patched": "",
+    "repo": "https://github.com/openflagr/flagr"
+  },
+  {
+    "ghsa": "GHSA-6g8q-hp2j-gvwv",
+    "severity": "critical",
+    "ecosystem": "go",
+    "package": "github.com/harvester/harvester-installer",
+    "summary": "Harvest May Expose OS Default SSH Login Password Via SUSE Virtualization Interac",
+    "cwes": [
+      "CWE-1188"
+    ],
+    "patched": "",
+    "repo": "https://github.com/harvester/harvester"
+  },
+  {
+    "ghsa": "GHSA-f8cm-6447-x5h2",
+    "severity": "critical",
+    "ecosystem": "npm",
+    "package": "jspdf",
+    "summary": "jsPDF has Local File Inclusion/Path Traversal vulnerability",
+    "cwes": [
+      "CWE-22",
+      "CWE-35",
+      "CWE-73"
+    ],
+    "patched": "",
+    "repo": "https://github.com/parallax/jsPDF"
+  },
+  {
+    "ghsa": "GHSA-gvq6-hvvp-h34h",
+    "severity": "critical",
+    "ecosystem": "npm",
+    "package": "@adonisjs/bodyparser",
+    "summary": "AdonisJS Path Traversal in Multipart File Handling",
+    "cwes": [
+      "CWE-22"
+    ],
+    "patched": "",
+    "repo": "https://github.com/adonisjs/core"
+  },
+  {
+    "ghsa": "GHSA-fq56-hvg6-wvm5",
+    "severity": "critical",
+    "ecosystem": "npm",
+    "package": "signalk-server",
+    "summary": "Signal K Server vulnerable to JWT Token Theft via WebSocket Enumeration and Unau",
+    "cwes": [
+      "CWE-288"
+    ],
+    "patched": "",
+    "repo": "https://github.com/SignalK/signalk-server"
+  },
+  {
+    "ghsa": "GHSA-h956-rh7x-ppgj",
+    "severity": "critical",
+    "ecosystem": "rust",
+    "package": "rustfs",
+    "summary": "RustFS has a gRPC Hardcoded Token Authentication Bypass",
+    "cwes": [
+      "CWE-287",
+      "CWE-798"
+    ],
+    "patched": "",
+    "repo": "https://github.com/rustfs/rustfs"
+  },
+  {
+    "ghsa": "GHSA-6vj3-p34w-xxjp",
+    "severity": "critical",
+    "ecosystem": "npm",
+    "package": "apidoc-core",
+    "summary": "apidoc-core has a prototype pollution vulnerability",
+    "cwes": [
+      "CWE-1321"
+    ],
+    "patched": "",
+    "repo": "https://github.com/apidoc/apidoc-core"
+  },
+  {
+    "ghsa": "GHSA-c67j-w6g6-q2cm",
+    "severity": "critical",
+    "ecosystem": "pip",
+    "package": "langchain-core",
+    "summary": "LangChain serialization injection vulnerability enables secret extraction in dum",
+    "cwes": [
+      "CWE-502"
+    ],
+    "patched": "",
+    "repo": "https://github.com/langchain-ai/langchain"
+  },
+  {
+    "ghsa": "GHSA-8vcg-cfxj-p5m3",
+    "severity": "critical",
+    "ecosystem": "pip",
+    "package": "Weblate",
+    "summary": "Weblate is vulnerable to RCE through Git config file overwrite",
+    "cwes": [
+      "CWE-20",
+      "CWE-22"
+    ],
+    "patched": "",
+    "repo": "https://github.com/WeblateOrg/weblate"
+  },
+  {
+    "ghsa": "GHSA-f6mr-38g8-39rg",
+    "severity": "critical",
+    "ecosystem": "go",
+    "package": "github.com/ollama/ollama",
+    "summary": "Ollama Platform has missing authentication enabling attackers to perform model m",
+    "cwes": [
+      "CWE-284",
+      "CWE-306"
+    ],
+    "patched": "",
+    "repo": "https://github.com/ollama/ollama"
+  },
+  {
+    "ghsa": "GHSA-w3j8-9p3j-3wjx",
+    "severity": "critical",
+    "ecosystem": "composer",
+    "package": "pagekit/pagekit",
+    "summary": "Pagekit CMS has an Insecure Direct Object Reference (IDOR) in its User Role comp",
+    "cwes": [
+      "CWE-639"
+    ],
+    "patched": "",
+    "repo": "https://github.com/pagekit/pagekit"
+  },
+  {
+    "ghsa": "GHSA-wxrw-gvg8-fqjp",
+    "severity": "high",
+    "ecosystem": "go",
+    "package": "github.com/bishopfox/sliver",
+    "summary": "Sliver has DNS C2 OTP Bypass that Allows Unauthenticated Session Flooding and De",
+    "cwes": [
+      "CWE-306",
+      "CWE-400"
+    ],
+    "patched": "",
+    "repo": "https://github.com/BishopFox/sliver"
+  },
+  {
+    "ghsa": "GHSA-86x4-wp9f-wrr9",
+    "severity": "high",
+    "ecosystem": "go",
+    "package": "antrea.io/antrea",
+    "summary": "Antrea has invalid enforcement order for network policy rules caused by integer ",
+    "cwes": [
+      "CWE-287",
+      "CWE-770"
+    ],
+    "patched": "",
+    "repo": "https://github.com/antrea-io/antrea"
+  },
+  {
+    "ghsa": "GHSA-69x3-g4r3-p962",
+    "severity": "high",
+    "ecosystem": "go",
+    "package": "github.com/slackhq/nebula",
+    "summary": "Blocklist Bypass possible via ECDSA Signature Malleability",
+    "cwes": [
+      "CWE-347"
+    ],
+    "patched": "",
+    "repo": "https://github.com/slackhq/nebula"
+  },
+  {
+    "ghsa": "GHSA-w67g-2h6v-vjgq",
+    "severity": "high",
+    "ecosystem": "rubygems",
+    "package": "phlex",
+    "summary": "Phlex XSS protection bypass via attribute splatting, dynamic tags, and href valu",
+    "cwes": [
+      "CWE-79"
+    ],
+    "patched": "",
+    "repo": "https://github.com/yippee-fun/phlex"
+  },
+  {
+    "ghsa": "GHSA-ff64-7w26-62rf",
+    "severity": "high",
+    "ecosystem": "npm",
+    "package": "@anthropic-ai/claude-code",
+    "summary": "Claude Code has Sandbox Escape via Persistent Configuration Injection in setting",
+    "cwes": [
+      "CWE-501",
+      "CWE-668"
+    ],
+    "patched": "",
+    "repo": "https://github.com/anthropics/claude-code"
+  },
+  {
+    "ghsa": "GHSA-vf6j-c56p-cq58",
+    "severity": "high",
+    "ecosystem": "pip",
+    "package": "mcp-salesforce-connector",
+    "summary": "MCP-Salesforce's arbitrary attribute access leads to disclosure of Salesforce au",
+    "cwes": [
+      "CWE-200"
+    ],
+    "patched": "",
+    "repo": "https://github.com/smn2gnt/MCP-Salesforce"
+  },
+  {
+    "ghsa": "GHSA-wjp5-868j-wqv7",
+    "severity": "high",
+    "ecosystem": "pip",
+    "package": "pydantic-ai",
+    "summary": "Pydantic AI has Stored XSS via Path Traversal in Web UI CDN URL",
+    "cwes": [
+      "CWE-22",
+      "CWE-79"
+    ],
+    "patched": "",
+    "repo": "https://github.com/pydantic/pydantic-ai"
+  },
+  {
+    "ghsa": "GHSA-ffx7-34p2-vm3w",
+    "severity": "high",
+    "ecosystem": "go",
+    "package": "github.com/mattermost/mattermost-plugin-confluence",
+    "summary": "Mattermost Confluence plugin doesn't properly escape user-controlled display nam",
+    "cwes": [
+      "CWE-79"
+    ],
+    "patched": "",
+    "repo": "https://github.com/mattermost/mattermost-plugin-confluence"
+  },
+  {
+    "ghsa": "GHSA-vf5j-r2hw-2hrw",
+    "severity": "high",
+    "ecosystem": "go",
+    "package": "github.com/opencloud-eu/opencloud",
+    "summary": "OpenCloud Affected by Public Link Exploit",
+    "cwes": [
+      "CWE-22"
+    ],
+    "patched": "",
+    "repo": "https://github.com/opencloud-eu/opencloud"
+  },
+  {
+    "ghsa": "GHSA-f632-vm87-2m2f",
+    "severity": "high",
+    "ecosystem": "rust",
+    "package": "qdrant",
+    "summary": "qdrant has arbitrary file write via `/logger` endpoint",
+    "cwes": [
+      "CWE-73"
+    ],
+    "patched": "",
+    "repo": "https://github.com/qdrant/qdrant"
+  },
+  {
+    "ghsa": "GHSA-87fh-rc96-6fr6",
+    "severity": "high",
+    "ecosystem": "rubygems",
+    "package": "spree_api",
+    "summary": "Unauthenticated Spree Commerce users can access all guest addresses",
+    "cwes": [
+      "CWE-284",
+      "CWE-639"
+    ],
+    "patched": "",
+    "repo": "https://github.com/spree/spree"
+  },
+  {
+    "ghsa": "GHSA-p6pv-q7rc-g4h9",
+    "severity": "high",
+    "ecosystem": "rubygems",
+    "package": "spree_storefront",
+    "summary": "Unauthenticated Spree Commerce users can view completed guest orders by Order ID",
+    "cwes": [
+      "CWE-639"
+    ],
+    "patched": "",
+    "repo": "https://github.com/spree/spree"
+  },
+  {
+    "ghsa": "GHSA-9ffm-fxg3-xrhh",
+    "severity": "high",
+    "ecosystem": "pip",
+    "package": "nicegui",
+    "summary": "NiceGUI's Path Traversal via Unsanitized FileUpload.name Enables Arbitrary File ",
+    "cwes": [
+      "CWE-22",
+      "CWE-601"
+    ],
+    "patched": "",
+    "repo": "https://github.com/zauberzeug/nicegui"
+  },
+  {
+    "ghsa": "GHSA-9j2f-3rj3-wgpg",
+    "severity": "high",
+    "ecosystem": "go",
+    "package": "github.com/opencloud-eu/reva/v2",
+    "summary": "OpenCloud Reva has a Public Link Exploit",
+    "cwes": [
+      "CWE-22",
+      "CWE-863"
+    ],
+    "patched": "",
+    "repo": "https://github.com/opencloud-eu/reva"
+  },
+  {
+    "ghsa": "GHSA-3p7x-94q9-jq9x",
+    "severity": "high",
+    "ecosystem": "pip",
+    "package": "pgadmin4",
+    "summary": "pgadmin4 affected by a Restore restriction bypass via key disclosure vulnerabili",
+    "cwes": [
+      "CWE-639"
+    ],
+    "patched": "",
+    "repo": "https://github.com/pgadmin-org/pgadmin4"
+  },
+  {
+    "ghsa": "GHSA-8x3w-qj7j-gqhf",
+    "severity": "high",
+    "ecosystem": "rust",
+    "package": "openmls",
+    "summary": "openmls has improper tag validation",
+    "cwes": [
+      "CWE-754"
+    ],
+    "patched": "",
+    "repo": "https://github.com/openmls/openmls"
+  },
+  {
+    "ghsa": "GHSA-g55j-c2v4-pjcg",
+    "severity": "high",
+    "ecosystem": "npm",
+    "package": "openclaw",
+    "summary": "OpenClaw vulnerable to Unauthenticated Local RCE via WebSocket config.apply",
+    "cwes": [
+      "CWE-20",
+      "CWE-78",
+      "CWE-306"
+    ],
+    "patched": "",
+    "repo": "https://github.com/openclaw/openclaw"
+  },
+  {
+    "ghsa": "GHSA-345p-7cg4-v4c7",
+    "severity": "high",
+    "ecosystem": "npm",
+    "package": "@modelcontextprotocol/sdk",
+    "summary": "@modelcontextprotocol/sdk has cross-client data leak via shared server/transport",
+    "cwes": [
+      "CWE-362"
+    ],
+    "patched": "",
+    "repo": "https://github.com/modelcontextprotocol/typescript-sdk"
+  },
+  {
+    "ghsa": "GHSA-8jx2-rhfh-q928",
+    "severity": "high",
+    "ecosystem": "npm",
+    "package": "@coding-solo/godot-mcp",
+    "summary": "godot-mcp has Command Injection via unsanitized projectPath",
+    "cwes": [
+      "CWE-78"
+    ],
+    "patched": "",
+    "repo": "https://github.com/Coding-Solo/godot-mcp"
+  },
+  {
+    "ghsa": "GHSA-8wpc-j9q9-j5m2",
+    "severity": "high",
+    "ecosystem": "go",
+    "package": "github.com/devtron-labs/devtron",
+    "summary": " Devtron Attributes API Unauthorized Access Leading to API Token Signing Key Lea",
+    "cwes": [
+      "CWE-862"
+    ],
+    "patched": "",
+    "repo": "https://github.com/devtron-labs/devtron"
+  },
+  {
+    "ghsa": "GHSA-mp6q-xf9x-fwf7",
+    "severity": "high",
+    "ecosystem": "npm",
+    "package": "apollo-server",
+    "summary": "Apollo Serve vulnerable to Denial of Service with `startStandaloneServer`",
+    "cwes": [
+      "CWE-1333"
+    ],
+    "patched": "",
+    "repo": "https://github.com/apollographql/apollo-server"
+  },
+  {
+    "ghsa": "GHSA-9h3p-52vh-959w",
+    "severity": "high",
+    "ecosystem": "go",
+    "package": "k8s.io/ingress-nginx",
+    "summary": "ingress-nginx's `nginx.ingress.kubernetes.io/auth-method` Ingress annotation can",
+    "cwes": [
+      "CWE-20"
+    ],
+    "patched": "",
+    "repo": "https://github.com/kubernetes/ingress-nginx"
+  },
+  {
+    "ghsa": "GHSA-rf4g-89h5-crcr",
+    "severity": "high",
+    "ecosystem": "go",
+    "package": "chainguard.dev/melange",
+    "summary": "melange affected by potential host command execution via license-check YAML mode",
+    "cwes": [
+      "CWE-78"
+    ],
+    "patched": "",
+    "repo": "https://github.com/chainguard-dev/melange"
+  },
+  {
+    "ghsa": "GHSA-f4w5-5xv9-85f6",
+    "severity": "high",
+    "ecosystem": "go",
+    "package": "chainguard-dev/apko",
+    "summary": "apko affected by potential unbounded resource consumption in expandapk.ExpandApk",
+    "cwes": [
+      "CWE-400"
+    ],
+    "patched": "",
+    "repo": "https://github.com/chainguard-dev/apko"
+  },
+  {
+    "ghsa": "GHSA-5g94-c2wx-8pxw",
+    "severity": "high",
+    "ecosystem": "go",
+    "package": "chainguard.dev/apko",
+    "summary": "apko has a path traversal in apko dirFS which allows filesystem writes outside b",
+    "cwes": [
+      "CWE-23"
+    ],
+    "patched": "",
+    "repo": "https://github.com/chainguard-dev/apko"
+  },
+  {
+    "ghsa": "GHSA-7h2j-956f-4vf2",
+    "severity": "high",
+    "ecosystem": "npm",
+    "package": "@isaacs/brace-expansion",
+    "summary": "@isaacs/brace-expansion has Uncontrolled Resource Consumption",
+    "cwes": [
+      "CWE-1333"
+    ],
+    "patched": "",
+    "repo": "https://github.com/isaacs/brace-expansion"
+  },
+  {
+    "ghsa": "GHSA-fjm6-8xp2-4fwc",
+    "severity": "high",
+    "ecosystem": "pip",
+    "package": "boltz",
+    "summary": "Boltz contains an insecure deserialization vulnerability in its molecule loading",
+    "cwes": [
+      "CWE-502"
+    ],
+    "patched": "",
+    "repo": "https://github.com/jwohlwend/boltz"
+  },
+  {
+    "ghsa": "GHSA-8x2r-v9x5-3qgh",
+    "severity": "high",
+    "ecosystem": "pip",
+    "package": "pdfminer.six",
+    "summary": "Duplicate Advisory: Insecure Deserialization (pickle) in pdfminer.six CMap Loade",
+    "cwes": [
+      "CWE-502"
+    ],
+    "patched": "",
+    "repo": "https://github.com/pdfminer/pdfminer.six"
+  },
+  {
+    "ghsa": "GHSA-pqqg-5f4f-8952",
+    "severity": "high",
+    "ecosystem": "composer",
+    "package": "facturascripts/facturascripts",
+    "summary": "FacturaScripts has SQL Injection in Autocomplete Actions",
+    "cwes": [
+      "CWE-20",
+      "CWE-89",
+      "CWE-943"
+    ],
+    "patched": "",
+    "repo": "https://github.com/NeoRazorX/facturascripts"
+  },
+  {
+    "ghsa": "GHSA-cc8f-xg8v-72m3",
+    "severity": "high",
+    "ecosystem": "npm",
+    "package": "compressing",
+    "summary": "Compressing Vulnerable to Arbitrary File Write via Symlink Extraction",
+    "cwes": [
+      "CWE-59"
+    ],
+    "patched": "",
+    "repo": "https://github.com/node-modules/compressing"
+  }
+]
