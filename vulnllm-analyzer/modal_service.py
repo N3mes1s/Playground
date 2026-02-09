@@ -116,112 +116,6 @@ CWE_CONSTRAINTS = {
     "CWE-915": "Check if object traversal functions (getattr, obj[elem]) validate attribute names before accessing them. Specifically: can a user pass dunder attributes (__globals__, __builtins__, __class__) as path elements? If getattr(obj, elem) is called without checking for __ prefixes, arbitrary Python internals can be accessed/modified (class pollution). Also check if safety sets (SAFE_TO_IMPORT) are mutable (set vs frozenset).",
 }
 
-# Code-level relevance patterns: CWE is only relevant if code matches at least ONE pattern.
-# CWEs not listed here are always considered relevant (safe default).
-# This is a structural filter — prevents running focused analysis for CWEs
-# that clearly don't apply (e.g., CWE-22 path traversal on code that does no file I/O).
-CWE_CODE_PATTERNS = {
-    # Filesystem CWEs — only relevant if code touches the filesystem
-    "CWE-22": [
-        # Python
-        r"\bopen\s*\(", r"\bos\.path\b", r"\bos\.stat\b", r"\bos\.access\b",
-        r"\bos\.walk\b", r"\bos\.listdir\b", r"\bshutil\.", r"\bpathlib\b",
-        r"\bos\.rename\b", r"\bos\.remove\b", r"\bos\.unlink\b", r"\bos\.makedirs\b",
-        r"\btarfile\b",
-        # Java
-        r"\bZip\w+\b", r"\bFiles\.\w+\b", r"\.resolve\s*\(",
-        r"\bnew\s+File\b", r"\bFile\w*Stream\b",
-        # JS/Node
-        r"\bfs\.\w+\b", r"\.extractall\b", r"\.extract\b",
-    ],
-    "CWE-59": [
-        # Python
-        r"\bos\.path\b", r"\bos\.stat\b", r"\bos\.lstat\b", r"\bos\.access\b",
-        r"\bos\.unlink\b", r"\bos\.remove\b", r"\bos\.symlink\b", r"\bos\.link\b",
-        r"\bopen\s*\(", r"\bshutil\.", r"\bpathlib\b", r"\bos\.rename\b",
-        r"\bunlink\s*\(", r"\bsymlink\b",
-        # Java
-        r"\bFiles\.\w+\b", r"\.resolve\s*\(", r"\bnew\s+File\b",
-        # JS/Node
-        r"\bfs\.\w+\b",
-    ],
-    "CWE-67": [
-        # Python
-        r"\bos\.path\b", r"\bopen\s*\(", r"\bpathlib\b", r"\bos\.stat\b",
-        r"\bos\.access\b", r"\bos\.rename\b",
-        # Java
-        r"\bFiles\.\w+\b", r"\.resolve\s*\(", r"\bnew\s+File\b",
-        # JS/Node
-        r"\bfs\.\w+\b",
-    ],
-    "CWE-367": [
-        r"\bos\.\w+\b", r"\bopen\s*\(", r"\bpathlib\b", r"\block\b",
-        r"\bunlink\b", r"\bos\.remove\b", r"\bstat\s*\(", r"\baccess\s*\(",
-        r"\bFiles\.\w+\b", r"\.resolve\s*\(",
-    ],
-    # Deserialization — only relevant if code deserializes
-    "CWE-502": [
-        r"\bpickle\b", r"\bunpickle\b", r"\byaml\.load\b", r"\byaml\.unsafe_load\b",
-        r"\bObjectMapper\b", r"\breadValue\b", r"\bmarshal\.loads?\b",
-        r"\bjsonpickle\b", r"\bshelve\b", r"\bdill\b",
-        r"\bunserializ", r"\bdeserializ",
-        r"\bObjectInputStream\b", r"\breadObject\b",
-    ],
-    # SQL injection — only relevant if code does SQL
-    "CWE-89": [
-        r"\bSELECT\s", r"\bINSERT\s", r"\bUPDATE\s", r"\bDELETE\s",
-        r"\bsql\b", r"\bcursor\.\w*execute\b", r"\bquery\s*\(",
-    ],
-    # Command injection — only relevant if code executes system commands
-    "CWE-78": [
-        r"\bos\.system\b", r"\bos\.popen\b", r"\bsubprocess\b",
-        r"\bshell\s*=\s*True\b", r"\bPopen\b", r"\bsystem\s*\(",
-        r"\bRuntime\..*exec\b", r"\bchild_process\b", r"\bexecSync\b",
-        r"\bspawn\b",
-    ],
-    # CWE-1321 (Prototype Pollution) NOT filtered — JS/TS-only via LANGUAGE_CWES
-    # and hard to pattern-match (lodash uses castPath/toKey, not literal __proto__).
-    # Code injection — only relevant if code has eval/exec/compile or template execution
-    "CWE-94": [
-        r"\beval\s*\(", r"\bexec\s*\(", r"\bcompile\s*\(",
-        r"\bnew\s+Function\s*\(", r"\bProcessBuilder\b",
-        r"\bReflect\b", r"\bIntrospector\b",
-        r"\btemplate\b", r"\brender\b",
-    ],
-    # Template injection — only relevant if code uses template engines
-    "CWE-1336": [
-        r"\btemplate\b", r"\brender\b", r"\bTemplate\b", r"\bJinja\b",
-        r"\bMustache\b", r"\bHandlebars\b", r"\bFreemarker\b",
-        r"\bexec\s*\(", r"\bcompile\s*\(",
-    ],
-    # Class pollution — only relevant if code does dynamic attribute access
-    "CWE-915": [
-        r"\bgetattr\s*\(", r"\bsetattr\s*\(", r"__globals__", r"__builtins__",
-        r"__class__", r"__import__", r"\battr\b",
-    ],
-}
-
-
-def filter_relevant_cwes(code: str, cwe_ids: list[str]) -> list[str]:
-    """Filter CWEs to only those relevant to the code based on API/pattern matching.
-
-    CWEs without defined relevance patterns are always included (safe default).
-    This prevents false positives from running CWE-22 on string-parsing code, etc.
-    """
-    relevant = []
-    for cwe_id in cwe_ids:
-        patterns = CWE_CODE_PATTERNS.get(cwe_id)
-        if patterns is None:
-            # No patterns defined → always relevant (safe default)
-            relevant.append(cwe_id)
-            continue
-        for pattern in patterns:
-            if re.search(pattern, code, re.IGNORECASE):
-                relevant.append(cwe_id)
-                break
-    return relevant
-
-
 # Language-specific CWE focus sets
 LANGUAGE_CWES = {
     "c": ["CWE-120", "CWE-121", "CWE-122", "CWE-125", "CWE-787", "CWE-416", "CWE-415", "CWE-476", "CWE-190", "CWE-134", "CWE-78", "CWE-22", "CWE-362", "CWE-367", "CWE-59"],
@@ -363,6 +257,44 @@ After your critical review, give your INDEPENDENT verdict:
 #type: {cwe_id} (if yes) or N/A (if no)"""
 
     return prompt
+
+
+def build_triage_prompt(code: str, language: str, cwe_ids: list[str]) -> str:
+    """Build a lightweight prompt that asks the LLM which CWEs are relevant to the code.
+
+    This replaces hardcoded regex patterns — the LLM understands code semantics
+    across all languages and can generalize to new patterns without maintenance.
+    """
+    cwe_list = "\n".join(f"- {cid}: {CWE_DB.get(cid, cid)}" for cid in cwe_ids)
+
+    return f"""\
+You are a security triage assistant. Given a code snippet, identify which CWEs from the list below are RELEVANT to analyze.
+
+A CWE is RELEVANT if the code performs operations related to that vulnerability class.
+A CWE is NOT RELEVANT if the code clearly does not perform that type of operation.
+
+Examples:
+- CWE-22 (Path Traversal): relevant for code doing file I/O, NOT for code that only parses strings
+- CWE-502 (Deserialization): relevant for code using pickle/yaml/readObject, NOT for code doing HTTP routing
+- CWE-89 (SQL Injection): relevant for code building SQL queries, NOT for code handling cookies
+- CWE-1321 (Prototype Pollution): relevant for code doing dynamic property traversal on objects
+
+## Code ({language}):
+```{language}
+{code}
+```
+
+## CWEs to evaluate:
+{cwe_list}
+
+## Output
+List ONLY the relevant CWE IDs, one per line. No explanations needed.
+If none are relevant, output: NONE"""
+
+
+def parse_triage_response(response_text: str) -> list[str]:
+    """Extract CWE IDs from a triage response."""
+    return re.findall(r"CWE-\d+", response_text.upper())
 
 
 def parse_verdict(response_text: str) -> tuple[str, str]:
@@ -533,16 +465,18 @@ class VulnLLMModel:
     def analyze_deep(self, code: str, language: str, filename: str,
                      top_k_cwes: int = 5) -> dict:
         """
-        Deep analysis combining per-CWE focused passes + self-critique + any-of-N voting.
+        Deep analysis combining LLM triage + per-CWE focused passes + self-critique + voting.
 
         Strategy:
         1. Discovery: 2 broad passes (temp=0.6) to identify candidate CWEs
-        2. Per-CWE focused: for top-K candidate CWEs, run a SEPARATE pass
+        2. Triage: ask the LLM which candidate CWEs are actually relevant
+           to this code (replaces hardcoded regex patterns — generalizes
+           across all languages without maintenance)
+        3. Per-CWE focused: for each relevant CWE, run a SEPARATE pass
            focused exclusively on that one CWE with its detection constraint
-        3. Self-critique: for each CWE where focused pass said "not vulnerable",
+        4. Self-critique: for each CWE where focused pass said "not vulnerable",
            run a devil's-advocate refutation pass
-        4. Voting: if ANY pass (discovery, focused, or critique) says VULNERABLE
-           for a given CWE, include it in the findings
+        5. Voting: if ANY pass says VULNERABLE for a given CWE, include it
         """
         code = self._truncate(code)
         lang_key = language.lower()
@@ -589,8 +523,15 @@ class VulnLLMModel:
 
         ranked_cwes = sorted(candidate_cwes, key=cwe_priority)[:top_k_cwes]
 
-        # ---- Relevance filter: skip CWEs that don't match code patterns ----
-        ranked_cwes = filter_relevant_cwes(code, ranked_cwes)
+        # ---- Triage: ask the LLM which CWEs are relevant to this code ----
+        triage_prompt = build_triage_prompt(code, language, ranked_cwes)
+        triage_resp = self._run_inference([[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": triage_prompt},
+        ]])
+        relevant_cwes = set(parse_triage_response(triage_resp[0]))
+        # Keep CWEs the triage says are relevant, plus any discovery already flagged
+        ranked_cwes = [c for c in ranked_cwes if c in relevant_cwes or c in discovery_hits]
 
         # ---- Phase 2: Per-CWE focused analysis ----
         focused_conversations = []
@@ -642,12 +583,11 @@ class VulnLLMModel:
 
         # ---- Phase 4: Any-of-N voting ----
         # A CWE is flagged if ANY phase found it vulnerable
-        # Discovery hits are also filtered for relevance
-        relevant_set = set(filter_relevant_cwes(code, list(discovery_hits.keys())))
+        # Discovery hits are filtered by the triage (relevant_cwes)
         flagged_cwes = {}
-        # From discovery (only if code-relevant)
+        # From discovery (only if triage confirmed relevant)
         for cwe_id, resp in discovery_hits.items():
-            if cwe_id in relevant_set:
+            if cwe_id in relevant_cwes:
                 flagged_cwes[cwe_id] = "discovery"
         # From focused
         for cwe_id, result in focused_results.items():
