@@ -3,6 +3,7 @@
 CLI entry point for the Recursive LM Security Auditor.
 
 Supports scanning local directories or cloning a GitHub repository for analysis.
+Automatically uses parallel scanning for large codebases.
 
 Usage:
     # Scan a local directory
@@ -10,6 +11,9 @@ Usage:
 
     # Scan a GitHub repo
     python cli.py https://github.com/OWASP/DVSA
+
+    # Scan a large repo in parallel (auto-detected, or force with --parallel)
+    python cli.py https://github.com/n8n-io/n8n --parallel --workers 3
 
     # Scan with a specific model
     python cli.py https://github.com/OWASP/DVSA --model openrouter/x-ai/grok-4
@@ -28,7 +32,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-from scanner import run_audit
+from scanner import run_audit, load_source_tree, _configure_deno_tls
+from parallel_scanner import run_parallel_audit, _tree_size, _tree_file_count, MAX_CHUNK_CHARS
+
+
+# Auto-parallel threshold: repos above this size get parallel scanning
+AUTO_PARALLEL_CHARS = 2_000_000  # ~2MB of source
 
 
 def clone_repo(repo_url: str, target_dir: str, branch: str | None = None) -> Path:
@@ -66,6 +75,7 @@ def main() -> None:
 Examples:
   %(prog)s /path/to/local/project
   %(prog)s https://github.com/OWASP/DVSA
+  %(prog)s https://github.com/n8n-io/n8n --parallel --workers 3
   %(prog)s https://github.com/org/repo --branch develop
   %(prog)s ./my-app --model openrouter/x-ai/grok-4 -o report.md
         """,
@@ -119,6 +129,30 @@ Examples:
         help="Disable verbose RLM logging",
     )
 
+    # Parallel scanning options
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Force parallel scanning mode (auto-detected for large repos)",
+    )
+    parser.add_argument(
+        "--no-parallel",
+        action="store_true",
+        help="Force single-scan mode even for large repos",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=3,
+        help="Max concurrent RLM scans in parallel mode (default: 3)",
+    )
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=MAX_CHUNK_CHARS,
+        help=f"Max characters per chunk in parallel mode (default: {MAX_CHUNK_CHARS:,})",
+    )
+
     args = parser.parse_args()
     tmp_dir = None
 
@@ -139,17 +173,44 @@ Examples:
         if args.reasoning_effort:
             print(f"Reasoning: {args.reasoning_effort}")
         print(f"Max iterations: {args.max_iterations}")
+
+        # Decide scanning mode: parallel or single
+        use_parallel = args.parallel
+        if not use_parallel and not args.no_parallel:
+            # Auto-detect: probe source tree size
+            _configure_deno_tls()
+            tree = load_source_tree(source_path)
+            size = _tree_size(tree)
+            files = _tree_file_count(tree)
+            if size > AUTO_PARALLEL_CHARS:
+                print(f"Large codebase detected ({files} files, {size:,} chars) -- using parallel mode")
+                use_parallel = True
+
+        print(f"Mode:     {'parallel' if use_parallel else 'single'}")
         print()
 
-        report = run_audit(
-            source_path=source_path,
-            model=args.model,
-            sub_model=args.sub_model,
-            max_tokens=args.max_tokens,
-            max_iterations=args.max_iterations,
-            verbose=not args.quiet,
-            reasoning_effort=args.reasoning_effort,
-        )
+        if use_parallel:
+            report = run_parallel_audit(
+                source_path=source_path,
+                model=args.model,
+                sub_model=args.sub_model,
+                max_tokens=args.max_tokens,
+                max_iterations=args.max_iterations,
+                max_workers=args.workers,
+                verbose=not args.quiet,
+                reasoning_effort=args.reasoning_effort,
+                max_chunk_chars=args.chunk_size,
+            )
+        else:
+            report = run_audit(
+                source_path=source_path,
+                model=args.model,
+                sub_model=args.sub_model,
+                max_tokens=args.max_tokens,
+                max_iterations=args.max_iterations,
+                verbose=not args.quiet,
+                reasoning_effort=args.reasoning_effort,
+            )
 
         if args.output:
             out = Path(args.output)
