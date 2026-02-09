@@ -1,2 +1,5 @@
 # Reference files downloaded during research
-dnsclient.go
+*.go
+
+# Sliver source files fetched for scanning (not our code)
+vulnllm-analyzer/sliver-src/
