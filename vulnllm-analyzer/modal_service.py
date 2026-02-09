@@ -4,18 +4,22 @@ Modal GPU service for VulnLLM-R-7B vulnerability analysis.
 Deploys the UCSB-SURFI/VulnLLM-R-7B model on Modal with GPU acceleration
 using vLLM for fast inference.
 
-Usage:
-    # Deploy the service (creates a persistent endpoint):
-    modal deploy modal_service.py
+Uses the official VulnLLM-R prompt strategy:
+- Structured 4-step chain-of-thought reasoning
+- CWE-aware policy constraints per language
+- Strict #judge/#type output format
+- Multi-pass analysis: discovery pass -> enriched final pass
 
-    # Run ephemerally for testing:
+Usage:
+    modal deploy modal_service.py
     modal serve modal_service.py
 """
 
+import re
 import modal
 
 MODEL_ID = "UCSB-SURFI/VulnLLM-R-7B"
-GPU_TYPE = "A100-40GB"  # 40GB VRAM, ample room for 7B model + large context
+GPU_TYPE = "A100-40GB"
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
@@ -30,20 +34,172 @@ image = (
 
 app = modal.App("vulnllm-analyzer", image=image)
 
-SYSTEM_PROMPT = """\
-You are VulnLLM-R, an advanced vulnerability detection model specialized in \
-analyzing source code for security vulnerabilities. Analyze the provided code \
-step-by-step using chain-of-thought reasoning.
+# --- Prompt templates matching VulnLLM-R's official test harness ---
 
-For each code snippet:
-1. Identify what the code does
-2. Analyze potential vulnerability patterns (buffer overflows, injection, \
-authentication issues, etc.)
-3. Reference relevant CWE identifiers when applicable
-4. Provide a clear verdict: VULNERABLE or NOT VULNERABLE
-5. If vulnerable, explain the risk and suggest a fix
+# System prompt for Qwen-based models (VulnLLM-R is fine-tuned from Qwen2.5-7B)
+SYSTEM_PROMPT = "You are a helpful and harmless assistant. You are Qwen developed by Alibaba. You should think step-by-step."
 
-Be thorough but concise in your reasoning."""
+# Structured CoT procedure from the paper (enhanced with adversarial thinking)
+COT_PROCEDURE = """\
+Please think step by step and follow the following procedure.
+Step 1: Understand the code and identify key instructions and program states.
+Step 2: For EACH relevant CWE, think like an attacker: what specific malicious input would you craft to exploit this code? Be concrete (e.g., pass "__proto__" as path, create a symlink at the lock path, supply "CON.txt" as filename).
+Step 3: Trace the malicious input through the code. Does ANY code path fail to block it? A missing check IS a vulnerability even if the code works correctly for benign inputs.
+Step 4: If the code lacks an explicit defense against a specific attack vector, it IS vulnerable. Do not assume upstream validation exists. Do not dismiss incomplete checks as "not a security flaw". An incomplete mitigation IS a vulnerability.
+You should STRICTLY structure your response as follows:"""
+
+# CWE descriptions for policy-guided detection
+CWE_DB = {
+    # Memory safety
+    "CWE-120": "Buffer Copy without Checking Size of Input ('Classic Buffer Overflow')",
+    "CWE-121": "Stack-based Buffer Overflow",
+    "CWE-122": "Heap-based Buffer Overflow",
+    "CWE-125": "Out-of-bounds Read",
+    "CWE-787": "Out-of-bounds Write",
+    "CWE-416": "Use After Free",
+    "CWE-415": "Double Free",
+    "CWE-476": "NULL Pointer Dereference",
+    "CWE-190": "Integer Overflow or Wraparound",
+    # Injection
+    "CWE-74": "Improper Neutralization of Special Elements in Output Used by a Downstream Component ('Injection')",
+    "CWE-78": "Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')",
+    "CWE-79": "Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')",
+    "CWE-89": "Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')",
+    "CWE-94": "Improper Control of Generation of Code ('Code Injection')",
+    "CWE-917": "Improper Neutralization of Special Elements used in an Expression Language Statement ('Expression Language Injection')",
+    "CWE-1321": "Improperly Controlled Modification of Object Prototype Attributes ('Prototype Pollution')",
+    # Path traversal / file handling
+    "CWE-22": "Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')",
+    "CWE-59": "Improper Link Resolution Before File Access ('Link Following')",
+    "CWE-67": "Improper Handling of Windows Device Names",
+    "CWE-73": "External Control of File Name or Path",
+    # Race conditions
+    "CWE-362": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')",
+    "CWE-367": "Time-of-check Time-of-use (TOCTOU) Race Condition",
+    # Auth / access control
+    "CWE-200": "Exposure of Sensitive Information to an Unauthorized Actor",
+    "CWE-284": "Improper Access Control",
+    "CWE-287": "Improper Authentication",
+    "CWE-306": "Missing Authentication for Critical Function",
+    "CWE-502": "Deserialization of Untrusted Data",
+    "CWE-913": "Improper Control of Dynamically-Managed Code Resources",
+    # Input validation
+    "CWE-20": "Improper Input Validation",
+    "CWE-134": "Use of Externally-Controlled Format String",
+    "CWE-400": "Uncontrolled Resource Consumption",
+    "CWE-1336": "Improper Neutralization of Special Elements Used in a Template Engine",
+}
+
+# CWE-specific detection constraints (from VulnLLM-R paper, enhanced)
+CWE_CONSTRAINTS = {
+    "CWE-22": "Confirm that the code includes checks for path traversal sequences like '../' or absolute paths. Verify that user-controlled paths are sanitized before use in file operations. Check if archive extraction validates member paths against the target directory.",
+    "CWE-59": "Check if file operations follow symbolic links without validation. Look for missing O_NOFOLLOW flags in open() calls. Verify that the code checks if a path is a symlink before operating on it. Check if unlink/delete operations could be tricked via symlink replacement.",
+    "CWE-67": "Check if Windows reserved device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9) are properly detected regardless of file extensions (e.g. 'CON.txt' or 'NUL.anything'), trailing spaces, colons (e.g. 'CON:'), alternate data streams, or Unicode variants. A check that only matches the bare device name without extension is INCOMPLETE and VULNERABLE.",
+    "CWE-78": "Look for user-controlled input passed to system(), exec(), popen(), or subprocess without proper escaping or validation.",
+    "CWE-94": "Check if untrusted input can reach code execution functions like eval(), exec(), or reflection-based method invocation without sandbox restrictions. In template engines, check if user-controlled iteration or property access can invoke arbitrary methods.",
+    "CWE-367": "Look for gaps between security checks and the actual use of a resource. Check if file operations use O_NOFOLLOW to prevent symlink attacks between check and use. In file lock implementations, check if _release() can be exploited: if an attacker replaces the lock file with a symlink AFTER it is opened but BEFORE it is unlinked, the unlink follows the symlink and deletes an arbitrary file.",
+    "CWE-362": "Identify shared resources accessed without proper synchronization. Look for race windows between checking a condition and acting on it.",
+    "CWE-1321": "Check if object property paths are validated before use with operations like set, unset, merge, or defaultsDeep. Specifically check: can a user pass '__proto__' or 'constructor' as a path segment? If castPath/toKey do NOT filter these reserved keys, the code IS vulnerable to prototype pollution. The absence of a blocklist for __proto__/constructor/prototype means VULNERABLE.",
+    "CWE-502": "Check if deserialization functions (pickle.loads, ObjectMapper.readValue, unserialize) process untrusted input without type restrictions.",
+    "CWE-913": "Check if reflection or introspection APIs (Introspector.getBeanInfo, getMethod().invoke()) are used without security restrictions, especially in sandbox/template engine contexts. If getBeanInfo is called on user-controlled objects without filtering dangerous methods (getClass, etc.), it IS vulnerable.",
+    "CWE-1336": "Check if template engines allow access to dangerous objects or methods that could lead to code execution or sandbox escape.",
+}
+
+# Language-specific CWE focus sets
+LANGUAGE_CWES = {
+    "c": ["CWE-120", "CWE-121", "CWE-122", "CWE-125", "CWE-787", "CWE-416", "CWE-415", "CWE-476", "CWE-190", "CWE-134", "CWE-78", "CWE-22", "CWE-362", "CWE-367", "CWE-59"],
+    "cpp": ["CWE-120", "CWE-121", "CWE-122", "CWE-125", "CWE-787", "CWE-416", "CWE-415", "CWE-476", "CWE-190", "CWE-134", "CWE-78", "CWE-22", "CWE-362", "CWE-367", "CWE-59"],
+    "python": ["CWE-78", "CWE-79", "CWE-89", "CWE-94", "CWE-22", "CWE-502", "CWE-200", "CWE-400", "CWE-367", "CWE-362", "CWE-59", "CWE-67", "CWE-20", "CWE-74", "CWE-1336"],
+    "java": ["CWE-78", "CWE-79", "CWE-89", "CWE-94", "CWE-502", "CWE-22", "CWE-200", "CWE-284", "CWE-913", "CWE-917", "CWE-1336", "CWE-20", "CWE-74"],
+    "javascript": ["CWE-79", "CWE-94", "CWE-1321", "CWE-78", "CWE-22", "CWE-89", "CWE-200", "CWE-400", "CWE-74", "CWE-20", "CWE-502"],
+    "typescript": ["CWE-79", "CWE-94", "CWE-1321", "CWE-78", "CWE-22", "CWE-89", "CWE-200", "CWE-400", "CWE-74", "CWE-20", "CWE-502"],
+}
+
+
+def build_user_prompt(code: str, language: str, filename: str, cwe_focus: list[str] | None = None, extra_constraints: str = "") -> str:
+    """Build the user prompt matching VulnLLM-R's official format."""
+
+    # CWE policy section
+    if cwe_focus:
+        policy = "You should only focus on checking and reasoning if the code contains one of the following CWEs, or other CWE if you think it is more relevant:\n"
+        for cwe_id in cwe_focus:
+            desc = CWE_DB.get(cwe_id, "")
+            if desc:
+                policy += f"- {cwe_id}: {desc}\n"
+    else:
+        policy = ""
+
+    # Collect CWE-specific constraints for focused CWEs
+    constraint_text = ""
+    if cwe_focus:
+        constraints = []
+        for cwe_id in cwe_focus:
+            if cwe_id in CWE_CONSTRAINTS:
+                constraints.append(f"- {cwe_id}: {CWE_CONSTRAINTS[cwe_id]}")
+        if constraints:
+            constraint_text = "- Apply these vulnerability-specific checks:\n" + "\n".join(constraints)
+
+    if extra_constraints:
+        constraint_text += "\n" + extra_constraints
+
+    prompt = f"""\
+You are an advanced vulnerability detection model. \
+Your task is to check if a specific vulnerability exists in a given piece of code. \
+You need to output whether the code is vulnerable and the type of vulnerability present with cwe id (CWE-xx).
+
+## You are given the following code snippet from `{filename}` ({language}):
+```{language}
+{code}
+```
+
+{policy}
+{COT_PROCEDURE}
+
+## Final Answer
+#judge: <yes/no>
+#type: <vulnerability type>
+
+## Additional Constraint:
+- If `#judge: yes`, then `#type:` **must contain exactly one CWE**.
+- If `#judge: yes`, the model must output **only the most probable CWE** related to the given code snippet.
+{constraint_text}
+
+## Example
+- If the code is vulnerable to a CWE-79, you should finally output:
+## Final Answer
+#judge: yes
+#type: CWE-79
+
+- If the code does not contain vulnerabilities related to the given CWE, you should finally output:
+## Final Answer
+#judge: no
+#type: N/A"""
+
+    return prompt
+
+
+def parse_verdict(response_text: str) -> tuple[str, str]:
+    """Parse #judge and #type from the structured response."""
+    judge_match = re.search(r"#judge:\s*(yes|no)", response_text, re.IGNORECASE)
+    type_match = re.search(r"#type:\s*(CWE-\d+|N/A)", response_text, re.IGNORECASE)
+
+    if judge_match:
+        is_vulnerable = judge_match.group(1).lower() == "yes"
+        cwe = type_match.group(1).upper() if type_match else "UNKNOWN"
+        verdict = "VULNERABLE" if is_vulnerable else "NOT VULNERABLE"
+    else:
+        # Fallback to free-text parsing
+        text_lower = response_text.lower()
+        if "vulnerable" in text_lower and "not vulnerable" not in text_lower:
+            verdict = "VULNERABLE"
+        elif "not vulnerable" in text_lower:
+            verdict = "NOT VULNERABLE"
+        else:
+            verdict = "UNCERTAIN"
+        cwe_matches = re.findall(r"CWE-\d+", response_text.upper())
+        cwe = cwe_matches[0] if cwe_matches else "N/A"
+
+    return verdict, cwe
 
 
 @app.cls(
@@ -70,93 +226,150 @@ class VulnLLMModel:
             top_p=0.95,
             stop=["<|im_end|>"],
         )
+        # Higher temperature for discovery passes (more diverse hypotheses)
+        self.discovery_sampling_params = SamplingParams(
+            max_tokens=4096,
+            temperature=0.6,
+            top_p=0.95,
+            stop=["<|im_end|>"],
+        )
 
     def _truncate(self, code: str, max_chars: int = 6000) -> str:
-        """Truncate code to fit within model context window."""
         if len(code) <= max_chars:
             return code
         return code[:max_chars] + "\n// ... truncated ...\n"
 
-    @modal.method()
-    def analyze(self, code: str, language: str, filename: str) -> dict:
-        """Analyze a single code snippet for vulnerabilities."""
-        from vllm import SamplingParams
-
-        code = self._truncate(code)
-        user_prompt = (
-            f"Analyze the following {language} code from file `{filename}` "
-            f"for security vulnerabilities.\n\nCode:\n```{language}\n{code}\n```\n\n"
-            "Please provide your step-by-step reasoning followed by your final verdict."
+    def _run_inference(self, conversations: list[list[dict]], sampling_params=None) -> list[str]:
+        """Run vLLM inference on a list of conversations."""
+        outputs = self.llm.chat(
+            messages=conversations,
+            sampling_params=sampling_params or self.sampling_params,
         )
+        return [o.outputs[0].text for o in outputs]
 
+    @modal.method()
+    def analyze(self, code: str, language: str, filename: str,
+                cwe_hints: list[str] | None = None) -> dict:
+        """Analyze a single code snippet with CWE-aware prompting."""
+        code = self._truncate(code)
+
+        # Use language-specific CWEs + any provided hints
+        lang_key = language.lower()
+        cwe_focus = list(LANGUAGE_CWES.get(lang_key, LANGUAGE_CWES.get("python", [])))
+        if cwe_hints:
+            for cwe in cwe_hints:
+                if cwe not in cwe_focus:
+                    cwe_focus.append(cwe)
+
+        user_prompt = build_user_prompt(code, language, filename, cwe_focus)
         conversation = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ]
 
-        outputs = self.llm.chat(
-            messages=[conversation],
-            sampling_params=self.sampling_params,
-        )
+        responses = self._run_inference([conversation])
+        response_text = responses[0]
+        verdict, cwe = parse_verdict(response_text)
 
-        response_text = outputs[0].outputs[0].text
+        return {
+            "filename": filename,
+            "language": language,
+            "verdict": verdict,
+            "detected_cwe": cwe,
+            "analysis": response_text,
+        }
 
-        # Parse verdict from response
-        text_lower = response_text.lower()
-        if "vulnerable" in text_lower and "not vulnerable" not in text_lower:
-            verdict = "VULNERABLE"
-        elif "not vulnerable" in text_lower:
-            verdict = "NOT VULNERABLE"
-        else:
+    @modal.method()
+    def analyze_multipass(self, code: str, language: str, filename: str,
+                          num_passes: int = 3) -> dict:
+        """
+        Multi-pass analysis matching VulnLLM-R's multi_run_with_related_cwe strategy.
+
+        Passes 1..N-1: Discovery -- broad scan with higher temperature to collect CWE hypotheses
+        Pass N: Enriched -- re-analyze focusing on discovered CWEs with full constraints
+        """
+        code = self._truncate(code)
+        lang_key = language.lower()
+        base_cwes = list(LANGUAGE_CWES.get(lang_key, LANGUAGE_CWES.get("python", [])))
+
+        # --- Discovery passes (higher temperature for diverse hypotheses) ---
+        collected_cwes = set()
+        discovery_verdicts = []
+        discovery_conversations = []
+        for _ in range(num_passes - 1):
+            user_prompt = build_user_prompt(code, language, filename, base_cwes)
+            discovery_conversations.append([
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ])
+
+        if discovery_conversations:
+            discovery_responses = self._run_inference(
+                discovery_conversations, self.discovery_sampling_params
+            )
+            for resp in discovery_responses:
+                cwe_matches = re.findall(r"CWE-\d+", resp.upper())
+                collected_cwes.update(cwe_matches)
+                verdict, _ = parse_verdict(resp)
+                discovery_verdicts.append(verdict)
+
+        # --- Enriched final run (low temperature, precise) ---
+        enriched_cwes = list(base_cwes)
+        for cwe in collected_cwes:
+            if cwe not in enriched_cwes:
+                enriched_cwes.append(cwe)
+
+        user_prompt = build_user_prompt(code, language, filename, enriched_cwes)
+        final_conversation = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        final_responses = self._run_inference([final_conversation])
+        response_text = final_responses[0]
+        verdict, cwe = parse_verdict(response_text)
+
+        # If any discovery pass found VULNERABLE but final didn't, flag as UNCERTAIN
+        if verdict == "NOT VULNERABLE" and "VULNERABLE" in discovery_verdicts:
             verdict = "UNCERTAIN"
 
         return {
             "filename": filename,
             "language": language,
             "verdict": verdict,
+            "detected_cwe": cwe,
+            "discovered_cwes": sorted(collected_cwes),
             "analysis": response_text,
         }
 
     @modal.method()
     def analyze_batch(self, items: list[dict]) -> list[dict]:
-        """Analyze multiple code snippets in a batch for throughput."""
-        from vllm import SamplingParams
-
+        """Analyze multiple code snippets in a batch with CWE-aware prompting."""
         conversations = []
         for item in items:
             code = self._truncate(item['code'])
-            user_prompt = (
-                f"Analyze the following {item['language']} code from file "
-                f"`{item['filename']}` for security vulnerabilities.\n\n"
-                f"Code:\n```{item['language']}\n{code}\n```\n\n"
-                "Please provide your step-by-step reasoning followed by your final verdict."
-            )
+            lang_key = item['language'].lower()
+            cwe_focus = LANGUAGE_CWES.get(lang_key, LANGUAGE_CWES.get("python", []))
+            cwe_hints = item.get("cwe_hints")
+            if cwe_hints:
+                cwe_focus = list(cwe_focus) + [c for c in cwe_hints if c not in cwe_focus]
+
+            user_prompt = build_user_prompt(code, item['language'], item['filename'], cwe_focus)
             conversations.append([
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ])
 
-        outputs = self.llm.chat(
-            messages=conversations,
-            sampling_params=self.sampling_params,
-        )
+        responses = self._run_inference(conversations)
 
         results = []
-        for i, output in enumerate(outputs):
-            response_text = output.outputs[0].text
-            text_lower = response_text.lower()
-
-            if "vulnerable" in text_lower and "not vulnerable" not in text_lower:
-                verdict = "VULNERABLE"
-            elif "not vulnerable" in text_lower:
-                verdict = "NOT VULNERABLE"
-            else:
-                verdict = "UNCERTAIN"
-
+        for i, response_text in enumerate(responses):
+            verdict, cwe = parse_verdict(response_text)
             results.append({
                 "filename": items[i]["filename"],
                 "language": items[i]["language"],
                 "verdict": verdict,
+                "detected_cwe": cwe,
                 "analysis": response_text,
             })
 
@@ -168,12 +381,6 @@ class VulnLLMModel:
 
 
 # --- FastAPI web endpoint (authenticated via bearer token) ---
-#
-# To use this endpoint, first create a Modal secret named "vulnllm-api-key":
-#     modal secret create vulnllm-api-key API_KEY=<your-chosen-key>
-#
-# Then pass the key in every request:
-#     curl -H "Authorization: Bearer <your-chosen-key>" https://...modal.run/health
 
 @app.function(
     timeout=600,
@@ -184,11 +391,11 @@ class VulnLLMModel:
 def web_app():
     import os
 
-    from fastapi import Depends, FastAPI, HTTPException, Request
+    from fastapi import Depends, FastAPI, HTTPException
     from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
     from pydantic import BaseModel
 
-    api = FastAPI(title="VulnLLM Analyzer API", version="1.0.0")
+    api = FastAPI(title="VulnLLM Analyzer API", version="2.0.0")
     model = VulnLLMModel()
     security = HTTPBearer()
 
@@ -202,6 +409,8 @@ def web_app():
         code: str
         language: str = "c"
         filename: str = "unknown"
+        cwe_hints: list[str] | None = None
+        multipass: bool = False
 
     class BatchAnalyzeRequest(BaseModel):
         items: list[AnalyzeRequest]
@@ -213,7 +422,9 @@ def web_app():
     @api.post("/analyze", dependencies=[Depends(verify_token)])
     async def analyze(req: AnalyzeRequest):
         try:
-            return model.analyze.remote(req.code, req.language, req.filename)
+            if req.multipass:
+                return model.analyze_multipass.remote(req.code, req.language, req.filename)
+            return model.analyze.remote(req.code, req.language, req.filename, req.cwe_hints)
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 

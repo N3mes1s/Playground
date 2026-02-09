@@ -267,14 +267,21 @@ def safe_join(directory: str, *pathnames: str) -> str | None:
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--multipass", action="store_true", help="Use multi-pass analysis")
+    args = parser.parse_args()
+
     VulnLLMModel = modal.Cls.from_name("vulnllm-analyzer", "VulnLLMModel")
     model = VulnLLMModel()
 
+    mode = "multi-pass" if args.multipass else "single-pass (CWE-aware)"
     results = []
     total = len(ADVISORIES)
 
     print(f"\n{'=' * 72}")
     print(f"  VulnLLM-R Benchmark: 5 Real GitHub Security Advisories")
+    print(f"  Mode: {mode}")
     print(f"{'=' * 72}\n")
 
     for i, adv in enumerate(ADVISORIES):
@@ -282,22 +289,34 @@ def main():
         print(f"         Expected: {adv['vuln_type']}")
         start = time.time()
 
-        result = model.analyze.remote(
-            code=adv["code"],
-            language=adv["language"],
-            filename=adv["filename"],
-        )
+        if args.multipass:
+            result = model.analyze_multipass.remote(
+                code=adv["code"],
+                language=adv["language"],
+                filename=adv["filename"],
+                num_passes=4,
+            )
+        else:
+            result = model.analyze.remote(
+                code=adv["code"],
+                language=adv["language"],
+                filename=adv["filename"],
+            )
         elapsed = time.time() - start
 
         detected = result["verdict"] == "VULNERABLE"
         icon = "HIT" if detected else "MISS"
-        print(f"         Verdict:  {result['verdict']} [{icon}] ({elapsed:.1f}s)")
+        detected_cwe = result.get("detected_cwe", "N/A")
+        print(f"         Verdict:  {result['verdict']} [{icon}] (CWE: {detected_cwe}, {elapsed:.1f}s)")
+        if "discovered_cwes" in result:
+            print(f"         Discovery pass CWEs: {result['discovered_cwes']}")
         print()
 
         results.append({
             **adv,
             "code": "(omitted)",
             "verdict": result["verdict"],
+            "detected_cwe": detected_cwe,
             "detected": detected,
             "analysis": result["analysis"],
             "elapsed_seconds": round(elapsed, 1),
