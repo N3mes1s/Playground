@@ -23,6 +23,12 @@ Usage:
 
     # Save report to a file
     python cli.py ./my-app -o report.md
+
+    # Scan AND validate (deep-think about each finding)
+    python cli.py ./my-app --validate -o report.md
+
+    # Validate an existing report against source code
+    python cli.py --validate-report raw-report.md --source ./my-app -o validated.md
 """
 
 import argparse
@@ -34,6 +40,7 @@ from pathlib import Path
 
 from scanner import run_audit, load_source_tree, _configure_deno_tls
 from parallel_scanner import run_parallel_audit, _tree_size, _tree_file_count, MAX_CHUNK_CHARS
+from validator import validate_report
 
 
 # Auto-parallel threshold: repos above this size get parallel scanning
@@ -78,11 +85,14 @@ Examples:
   %(prog)s https://github.com/n8n-io/n8n --parallel --workers 3
   %(prog)s https://github.com/org/repo --branch develop
   %(prog)s ./my-app --model openrouter/x-ai/grok-4 -o report.md
+  %(prog)s ./my-app --validate -o validated-report.md
+  %(prog)s --validate-report raw.md --source ./my-app -o validated.md
         """,
     )
 
     parser.add_argument(
         "target",
+        nargs="?",
         help="Local path or GitHub/Git URL of the repository to scan",
     )
     parser.add_argument(
@@ -153,7 +163,90 @@ Examples:
         help=f"Max characters per chunk in parallel mode (default: {MAX_CHUNK_CHARS:,})",
     )
 
+    # Validation options
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="After scanning, run adversarial validation on each finding (deep-think pass)",
+    )
+    parser.add_argument(
+        "--validate-report",
+        default=None,
+        metavar="REPORT.md",
+        help="Validate an existing raw report instead of scanning (requires --source)",
+    )
+    parser.add_argument(
+        "--source",
+        default=None,
+        help="Source code path for validation (used with --validate-report)",
+    )
+    parser.add_argument(
+        "--validate-iterations",
+        type=int,
+        default=20,
+        help="Max RLM iterations per finding during validation (default: 20)",
+    )
+
     args = parser.parse_args()
+
+    # Handle --validate-report mode (standalone validation of existing report)
+    if args.validate_report:
+        if not args.source and not args.target:
+            print("Error: --validate-report requires --source or a target path", file=sys.stderr)
+            sys.exit(1)
+
+        source = args.source or args.target
+        report_path = Path(args.validate_report)
+        if not report_path.is_file():
+            print(f"Error: {report_path} not found", file=sys.stderr)
+            sys.exit(1)
+
+        raw_report = report_path.read_text()
+        tmp_dir = None
+
+        try:
+            if is_git_url(source):
+                tmp_dir = tempfile.mkdtemp(prefix="rlm-validate-")
+                source_path = clone_repo(source, tmp_dir, branch=args.branch)
+            else:
+                source_path = Path(source).resolve()
+
+            print(f"Validating report: {report_path}")
+            print(f"Source code:       {source_path}")
+            print(f"Model:             {args.model}")
+            print()
+
+            report = validate_report(
+                raw_report=raw_report,
+                source_path=str(source_path),
+                model=args.model,
+                sub_model=args.sub_model,
+                max_tokens=args.max_tokens,
+                max_iterations=args.validate_iterations,
+                verbose=not args.quiet,
+                project_name=source_path.name,
+            )
+
+            if args.output:
+                out = Path(args.output)
+                out.write_text(report)
+                print(f"\nValidated report written to {out}")
+            else:
+                print("\n" + "=" * 80)
+                print("VALIDATED SECURITY AUDIT REPORT")
+                print("=" * 80 + "\n")
+                print(report)
+
+        finally:
+            if tmp_dir and Path(tmp_dir).exists():
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        return
+
+    # Normal scan mode -- target is required
+    if not args.target:
+        parser.error("target is required (or use --validate-report for standalone validation)")
+
     tmp_dir = None
 
     try:
@@ -173,6 +266,8 @@ Examples:
         if args.reasoning_effort:
             print(f"Reasoning: {args.reasoning_effort}")
         print(f"Max iterations: {args.max_iterations}")
+        if args.validate:
+            print(f"Validation: enabled (devil's advocate pass)")
 
         # Decide scanning mode: parallel or single
         use_parallel = args.parallel
@@ -190,7 +285,7 @@ Examples:
         print()
 
         if use_parallel:
-            report = run_parallel_audit(
+            raw_report = run_parallel_audit(
                 source_path=source_path,
                 model=args.model,
                 sub_model=args.sub_model,
@@ -202,7 +297,7 @@ Examples:
                 max_chunk_chars=args.chunk_size,
             )
         else:
-            report = run_audit(
+            raw_report = run_audit(
                 source_path=source_path,
                 model=args.model,
                 sub_model=args.sub_model,
@@ -211,6 +306,25 @@ Examples:
                 verbose=not args.quiet,
                 reasoning_effort=args.reasoning_effort,
             )
+
+        # Validation pass
+        if args.validate:
+            print("\n" + "=" * 80)
+            print("PHASE 2: ADVERSARIAL VALIDATION")
+            print("=" * 80 + "\n")
+
+            report = validate_report(
+                raw_report=raw_report,
+                source_path=str(source_path),
+                model=args.model,
+                sub_model=args.sub_model,
+                max_tokens=args.max_tokens,
+                max_iterations=args.validate_iterations,
+                verbose=not args.quiet,
+                project_name=source_path.name,
+            )
+        else:
+            report = raw_report
 
         if args.output:
             out = Path(args.output)

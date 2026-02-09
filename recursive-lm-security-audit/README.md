@@ -11,6 +11,9 @@ Based on [Kevin Madura's experiment](https://kmad.ai/Recursive-Language-Models-S
 3. The RLM generates Python code in a sandboxed REPL to explore the source tree
 4. It recursively calls `llm_query()` to analyze individual files/sections for vulnerabilities
 5. Results are synthesized into a structured markdown security audit report
+6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST the vulnerability, then delivers a verdict: CONFIRMED, DOWNGRADED, or DISMISSED
+
+The validation phase exists because raw scanners produce ~50%+ false positives. A pattern like "read-only user triggers decryption" looks suspicious, but if that's the only way the feature can work, it's not a vulnerability -- it's the design. The validator asks: *"Does the attacker gain anything they don't already have?"*
 
 ## Setup
 
@@ -60,24 +63,31 @@ python cli.py https://github.com/org/repo -o audit-report.md
 python cli.py https://github.com/org/repo --branch develop
 ```
 
-### All options
+### Scan + validate (recommended)
 
+Runs the scanner, then subjects each finding to adversarial validation:
+
+```bash
+python cli.py https://github.com/org/repo --validate -o report.md
 ```
-usage: cli.py [-h] [--model MODEL] [--sub-model SUB_MODEL]
-              [--max-tokens MAX_TOKENS] [--max-iterations MAX_ITERATIONS]
-              [--branch BRANCH] [-o OUTPUT] [-q] target
 
-positional arguments:
-  target                Local path or GitHub/Git URL of the repository to scan
+### Validate an existing report
 
-options:
-  --model MODEL         Primary LM model identifier (default: openrouter/moonshotai/kimi-k2.5)
-  --sub-model SUB_MODEL Model for recursive sub-queries (defaults to same as --model)
-  --max-tokens N        Max tokens per LM call (default: 16000)
-  --max-iterations N    Maximum REPL iterations for the RLM (default: 35)
-  --branch BRANCH       Git branch to clone (default: default branch)
-  -o, --output FILE     Write the report to a file instead of stdout
-  -q, --quiet           Disable verbose RLM logging
+Already have a raw report? Run just the validation pass:
+
+```bash
+python cli.py --validate-report raw-report.md --source /path/to/source -o validated.md
+
+# Or against a GitHub repo
+python cli.py --validate-report raw-report.md --source https://github.com/org/repo -o validated.md
+```
+
+### Large repos (parallel scanning)
+
+Auto-detected for repos >2MB of source. Force with `--parallel`:
+
+```bash
+python cli.py https://github.com/n8n-io/n8n --parallel --workers 3 --validate
 ```
 
 ## What it detects
@@ -95,12 +105,39 @@ From the original experiment against OWASP DVSA (6/10 vulnerability categories f
 
 Specific findings include: RCE via `eval()`, command injection, insecure deserialization, and privilege escalation vectors.
 
+## Architecture
+
+```
+scan phase          validate phase          output
+┌─────────┐        ┌──────────────┐        ┌────────┐
+│ RLM     │───────▶│ Extract      │───────▶│ Final  │
+│ Scanner │ raw    │ findings     │ parsed │ Report │
+│         │ report │              │        │        │
+│ (or     │        │ For each:    │        │ Only   │
+│ parallel│        │  Prosecution │        │ real   │
+│ chunks) │        │  Defense     │        │ vulns  │
+│         │        │  Verdict     │        │        │
+└─────────┘        └──────────────┘        └────────┘
+                   ▲ uses RLM to read
+                   │ actual source code
+```
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `scanner.py` | Core RLM scanner (CodeScanner signature, source tree loader) |
+| `parallel_scanner.py` | Chunking + concurrent scanning for large repos |
+| `validator.py` | Adversarial validation (prosecution/defense/verdict per finding) |
+| `cli.py` | CLI entry point with all flags |
+
 ## Limitations
 
 - Static analysis only -- cannot detect runtime/timing-dependent vulnerabilities
 - Does not assess external dependency CVEs (use `pip-audit`, `npm audit`, etc. for that)
 - Not a replacement for a proper human security audit or penetration test
 - Cost and quality depend heavily on the chosen model
+- Validation adds ~1 RLM call per finding (worth it for reducing false positives)
 
 ## Cost
 
