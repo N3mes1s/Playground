@@ -114,16 +114,21 @@ CWE_CONSTRAINTS = {
     "CWE-444": "Check if HTTP parsers handle chunked transfer-encoding strictly per RFC 7230. Specifically: does the parser validate that chunk footers are exactly \\r\\n? If any 2 bytes are accepted as the footer (instead of strictly \\r\\n), different parsers will disagree on message boundaries, enabling request smuggling.",
     "CWE-436": "Check if ASN.1 or certificate validation performs tag-class/type checks BEFORE recursing into sub-structures. If optional fields that fail validation still trigger recursive parsing or capture, malformed inputs can be reinterpreted as subsequent mandatory fields, bypassing signature verification.",
     "CWE-915": "Check if object traversal functions (getattr, obj[elem]) validate attribute names before accessing them. Specifically: can a user pass dunder attributes (__globals__, __builtins__, __class__) as path elements? If getattr(obj, elem) is called without checking for __ prefixes, arbitrary Python internals can be accessed/modified (class pollution). Also check if safety sets (SAFE_TO_IMPORT) are mutable (set vs frozenset).",
+    "CWE-400": "Check if resource allocation (memory, sessions, connections, buffers, goroutines, file descriptors) can be triggered by external input without limits. Look for unbounded map/slice growth, session creation without caps, or request handling without rate-limiting. If an unauthenticated client can cause unbounded server-side allocation, it IS vulnerable.",
+    "CWE-306": "Check if critical functions (session creation, resource allocation, admin operations) can be invoked without authentication. Look for handlers that allocate server-side state (sessions, connections, memory) based on unauthenticated network input. If an attacker can trigger resource allocation without proving identity, it IS vulnerable.",
+    "CWE-287": "Check if authentication mechanisms can be bypassed or are missing. Look for auth checks that can be disabled via configuration flags, TOTP/OTP validation that is skipped, or authentication that happens after resource allocation instead of before.",
 }
 
 # Language-specific CWE focus sets
+# For unknown languages, all CWE_DB keys are used as base set.
 LANGUAGE_CWES = {
-    "c": ["CWE-120", "CWE-121", "CWE-122", "CWE-125", "CWE-787", "CWE-416", "CWE-415", "CWE-476", "CWE-190", "CWE-134", "CWE-78", "CWE-22", "CWE-362", "CWE-367", "CWE-59"],
-    "cpp": ["CWE-120", "CWE-121", "CWE-122", "CWE-125", "CWE-787", "CWE-416", "CWE-415", "CWE-476", "CWE-190", "CWE-134", "CWE-78", "CWE-22", "CWE-362", "CWE-367", "CWE-59"],
-    "python": ["CWE-78", "CWE-79", "CWE-89", "CWE-94", "CWE-22", "CWE-502", "CWE-200", "CWE-400", "CWE-367", "CWE-362", "CWE-59", "CWE-67", "CWE-20", "CWE-74", "CWE-1336", "CWE-444", "CWE-915"],
-    "java": ["CWE-78", "CWE-79", "CWE-89", "CWE-94", "CWE-502", "CWE-22", "CWE-200", "CWE-284", "CWE-913", "CWE-917", "CWE-1336", "CWE-20", "CWE-74", "CWE-770"],
-    "javascript": ["CWE-79", "CWE-94", "CWE-1321", "CWE-78", "CWE-22", "CWE-89", "CWE-200", "CWE-400", "CWE-74", "CWE-20", "CWE-502", "CWE-436"],
-    "typescript": ["CWE-79", "CWE-94", "CWE-1321", "CWE-78", "CWE-22", "CWE-89", "CWE-200", "CWE-400", "CWE-74", "CWE-20", "CWE-502", "CWE-436"],
+    "c": ["CWE-120", "CWE-121", "CWE-122", "CWE-125", "CWE-787", "CWE-416", "CWE-415", "CWE-476", "CWE-190", "CWE-134", "CWE-78", "CWE-22", "CWE-362", "CWE-367", "CWE-59", "CWE-200", "CWE-287", "CWE-306", "CWE-400"],
+    "cpp": ["CWE-120", "CWE-121", "CWE-122", "CWE-125", "CWE-787", "CWE-416", "CWE-415", "CWE-476", "CWE-190", "CWE-134", "CWE-78", "CWE-22", "CWE-362", "CWE-367", "CWE-59", "CWE-200", "CWE-287", "CWE-306", "CWE-400"],
+    "python": ["CWE-78", "CWE-79", "CWE-89", "CWE-94", "CWE-22", "CWE-502", "CWE-200", "CWE-400", "CWE-367", "CWE-362", "CWE-59", "CWE-67", "CWE-20", "CWE-74", "CWE-1336", "CWE-444", "CWE-915", "CWE-287", "CWE-306"],
+    "java": ["CWE-78", "CWE-79", "CWE-89", "CWE-94", "CWE-502", "CWE-22", "CWE-200", "CWE-284", "CWE-913", "CWE-917", "CWE-1336", "CWE-20", "CWE-74", "CWE-770", "CWE-287", "CWE-306", "CWE-400"],
+    "javascript": ["CWE-79", "CWE-94", "CWE-1321", "CWE-78", "CWE-22", "CWE-89", "CWE-200", "CWE-400", "CWE-74", "CWE-20", "CWE-502", "CWE-436", "CWE-287", "CWE-306"],
+    "typescript": ["CWE-79", "CWE-94", "CWE-1321", "CWE-78", "CWE-22", "CWE-89", "CWE-200", "CWE-400", "CWE-74", "CWE-20", "CWE-502", "CWE-436", "CWE-287", "CWE-306"],
+    "go": ["CWE-78", "CWE-79", "CWE-89", "CWE-94", "CWE-22", "CWE-502", "CWE-200", "CWE-400", "CWE-362", "CWE-367", "CWE-59", "CWE-20", "CWE-74", "CWE-287", "CWE-306", "CWE-770"],
 }
 
 
@@ -270,14 +275,18 @@ def build_triage_prompt(code: str, language: str, cwe_ids: list[str]) -> str:
     return f"""\
 You are a security triage assistant. Given a code snippet, identify which CWEs from the list below are RELEVANT to analyze.
 
-A CWE is RELEVANT if the code performs operations related to that vulnerability class.
-A CWE is NOT RELEVANT if the code clearly does not perform that type of operation.
+A CWE is RELEVANT if the code could plausibly contain that type of vulnerability.
+A CWE is NOT RELEVANT if the code clearly does not involve that category of operation.
+
+IMPORTANT: For "missing protection" CWEs (authentication, authorization, rate-limiting), the code is RELEVANT if it handles requests, sessions, or resources that SHOULD be protected — even if no protection is currently present. The absence of protection IS the vulnerability.
 
 Examples:
 - CWE-22 (Path Traversal): relevant for code doing file I/O, NOT for code that only parses strings
 - CWE-502 (Deserialization): relevant for code using pickle/yaml/readObject, NOT for code doing HTTP routing
 - CWE-89 (SQL Injection): relevant for code building SQL queries, NOT for code handling cookies
 - CWE-1321 (Prototype Pollution): relevant for code doing dynamic property traversal on objects
+- CWE-306 (Missing Auth): relevant for code handling network requests or allocating sessions/resources
+- CWE-400 (Resource Exhaustion): relevant for code allocating memory, sessions, connections, or buffers
 
 ## Code ({language}):
 ```{language}
@@ -323,7 +332,7 @@ def parse_verdict(response_text: str) -> tuple[str, str]:
 
 @app.cls(
     gpu=GPU_TYPE,
-    timeout=600,
+    timeout=900,
     scaledown_window=300,
 )
 @modal.concurrent(max_inputs=10)
@@ -374,7 +383,7 @@ class VulnLLMModel:
 
         # Use language-specific CWEs + any provided hints
         lang_key = language.lower()
-        cwe_focus = list(LANGUAGE_CWES.get(lang_key, LANGUAGE_CWES.get("python", [])))
+        cwe_focus = list(LANGUAGE_CWES.get(lang_key, list(CWE_DB.keys())))
         if cwe_hints:
             for cwe in cwe_hints:
                 if cwe not in cwe_focus:
@@ -409,7 +418,7 @@ class VulnLLMModel:
         """
         code = self._truncate(code)
         lang_key = language.lower()
-        base_cwes = list(LANGUAGE_CWES.get(lang_key, LANGUAGE_CWES.get("python", [])))
+        base_cwes = list(LANGUAGE_CWES.get(lang_key, list(CWE_DB.keys())))
 
         # --- Discovery passes (higher temperature for diverse hypotheses) ---
         collected_cwes = set()
@@ -480,7 +489,7 @@ class VulnLLMModel:
         """
         code = self._truncate(code)
         lang_key = language.lower()
-        base_cwes = list(LANGUAGE_CWES.get(lang_key, LANGUAGE_CWES.get("python", [])))
+        base_cwes = list(LANGUAGE_CWES.get(lang_key, list(CWE_DB.keys())))
 
         # ---- Phase 1: Discovery (broad, high-temp) ----
         discovery_conversations = []
@@ -521,17 +530,20 @@ class VulnLLMModel:
                 score += 3
             return -score
 
-        ranked_cwes = sorted(candidate_cwes, key=cwe_priority)[:top_k_cwes]
+        # Send a wider set to triage (3× top_k) so it can evaluate CWEs
+        # that the discovery might not have surfaced (e.g. auth CWEs)
+        triage_candidates = sorted(candidate_cwes, key=cwe_priority)[:top_k_cwes * 3]
 
         # ---- Triage: ask the LLM which CWEs are relevant to this code ----
-        triage_prompt = build_triage_prompt(code, language, ranked_cwes)
+        triage_prompt = build_triage_prompt(code, language, triage_candidates)
         triage_resp = self._run_inference([[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": triage_prompt},
         ]])
         relevant_cwes = set(parse_triage_response(triage_resp[0]))
         # Keep CWEs the triage says are relevant, plus any discovery already flagged
-        ranked_cwes = [c for c in ranked_cwes if c in relevant_cwes or c in discovery_hits]
+        # Then cap at top_k for focused passes
+        ranked_cwes = [c for c in triage_candidates if c in relevant_cwes or c in discovery_hits][:top_k_cwes]
 
         # ---- Phase 2: Per-CWE focused analysis ----
         focused_conversations = []
@@ -647,7 +659,7 @@ class VulnLLMModel:
         for item in items:
             code = self._truncate(item['code'])
             lang_key = item['language'].lower()
-            cwe_focus = LANGUAGE_CWES.get(lang_key, LANGUAGE_CWES.get("python", []))
+            cwe_focus = LANGUAGE_CWES.get(lang_key, list(CWE_DB.keys()))
             cwe_hints = item.get("cwe_hints")
             if cwe_hints:
                 cwe_focus = list(cwe_focus) + [c for c in cwe_hints if c not in cwe_focus]
@@ -681,7 +693,7 @@ class VulnLLMModel:
 # --- FastAPI web endpoint (authenticated via bearer token) ---
 
 @app.function(
-    timeout=600,
+    timeout=900,
     secrets=[modal.Secret.from_name("vulnllm-api-key", required_keys=["API_KEY"])],
 )
 @modal.concurrent(max_inputs=20)
