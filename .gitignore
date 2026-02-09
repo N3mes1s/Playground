@@ -1,3 +1,9 @@
 __pycache__/
 *.pyc
 .env
+
+# Reference files downloaded during research
+*.go
+
+# Sliver source files fetched for scanning (not our code)
+vulnllm-analyzer/sliver-src/
