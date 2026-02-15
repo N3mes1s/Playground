@@ -191,6 +191,57 @@ pub fn sha256_simple(data: &[u8]) -> [u8; 32] {
     result
 }
 
+/// HMAC-SHA256 implementation.
+/// Shared utility used by WhatsApp webhook verification and other modules.
+pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
+    let block_size = 64;
+
+    // If key is longer than block size, hash it
+    let key_block = if key.len() > block_size {
+        let hash = sha256_simple(key);
+        let mut block = [0u8; 64];
+        block[..32].copy_from_slice(&hash);
+        block
+    } else {
+        let mut block = [0u8; 64];
+        block[..key.len()].copy_from_slice(key);
+        block
+    };
+
+    // Inner padding
+    let mut ipad = [0x36u8; 64];
+    for i in 0..64 {
+        ipad[i] ^= key_block[i];
+    }
+
+    // Outer padding
+    let mut opad = [0x5cu8; 64];
+    for i in 0..64 {
+        opad[i] ^= key_block[i];
+    }
+
+    // inner_hash = SHA256(ipad || data)
+    let mut inner_input = Vec::with_capacity(64 + data.len());
+    inner_input.extend_from_slice(&ipad);
+    inner_input.extend_from_slice(data);
+    let inner_hash = sha256_simple(&inner_input);
+
+    // outer_hash = SHA256(opad || inner_hash)
+    let mut outer_input = Vec::with_capacity(64 + 32);
+    outer_input.extend_from_slice(&opad);
+    outer_input.extend_from_slice(&inner_hash);
+    sha256_simple(&outer_input)
+}
+
+/// Hex-encode bytes to a lowercase hex string.
+pub fn hex_encode(data: &[u8]) -> String {
+    let mut s = String::with_capacity(data.len() * 2);
+    for &b in data {
+        s.push_str(&format!("{:02x}", b));
+    }
+    s
+}
+
 fn constant_time_str_eq(a: &str, b: &str) -> bool {
     constant_time_bytes_eq(a.as_bytes(), b.as_bytes())
 }

@@ -237,8 +237,33 @@ impl SecurityPolicy {
     }
 
     fn check_rate_limit(&self) -> Result<(), String> {
-        // In a real implementation, this would use the sliding window
-        // For now, just a count check
+        // One hour in TSC ticks (~2 GHz): 3600s * 2_000_000_000
+        const ONE_HOUR_TICKS: u64 = 7_200_000_000_000;
+
+        let now = crate::kernel::rdtsc();
+
+        // Count actions within the sliding window (last hour)
+        let recent_count = self.action_timestamps.iter()
+            .filter(|&&ts| now.saturating_sub(ts) < ONE_HOUR_TICKS)
+            .count();
+
+        if recent_count >= self.rate_limit_actions_per_hour as usize {
+            return Err(format!(
+                "rate limit exceeded: {} actions in the last hour (limit: {})",
+                recent_count, self.rate_limit_actions_per_hour
+            ));
+        }
+
         Ok(())
+    }
+
+    /// Record an action for rate limiting purposes.
+    pub fn record_action(&mut self) {
+        const ONE_HOUR_TICKS: u64 = 7_200_000_000_000;
+        let now = crate::kernel::rdtsc();
+        self.action_timestamps.push(now);
+
+        // Prune old entries outside the window to prevent unbounded growth
+        self.action_timestamps.retain(|&ts| now.saturating_sub(ts) < ONE_HOUR_TICKS);
     }
 }

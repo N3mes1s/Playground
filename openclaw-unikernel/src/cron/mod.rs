@@ -114,6 +114,19 @@ pub fn tick() {
                     crate::kprintln!("[cron] executing job {}: {}", job.name, job.command);
                     job.last_run = now;
                     job.run_count += 1;
+
+                    // Execute the command through the shell tool
+                    let args = alloc::format!(
+                        "{{\"command\":\"{}\"}}",
+                        job.command.replace('"', "\\\"")
+                    );
+                    let result = crate::tools::shell_execute(&args);
+                    if result.success {
+                        crate::kprintln!("[cron] job {} completed: {}", job.name, result.output);
+                    } else {
+                        crate::kprintln!("[cron] job {} failed: {}", job.name, result.output);
+                        job.error_count += 1;
+                    }
                 }
             }
         }

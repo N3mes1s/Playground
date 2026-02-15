@@ -14,6 +14,7 @@
 //! - GET  /identity       — Get AIEOS identity JSON
 
 use alloc::string::String;
+use alloc::vec::Vec;
 use alloc::format;
 
 /// Start the HTTP gateway on the given port.
@@ -25,7 +26,6 @@ pub fn start(port: u16) {
         // Listen for TCP connections on the port
         match crate::net::tcp::listen(port) {
             Ok(listener_id) => {
-                // Process incoming connections
                 process_connections(listener_id);
             }
             Err(e) => {
@@ -36,12 +36,140 @@ pub fn start(port: u16) {
     }));
 }
 
-fn process_connections(_listener_id: usize) {
-    // In a full implementation, this would:
-    // 1. Accept incoming TCP connections
-    // 2. Read HTTP request
-    // 3. Route to handler
-    // 4. Send HTTP response
+/// Accept and process incoming HTTP connections.
+fn process_connections(listener_id: usize) {
+    loop {
+        // Try to accept a pending connection from the listener
+        let conn_id = match crate::net::tcp::accept(listener_id) {
+            Some(id) => id,
+            None => {
+                // No pending connection — yield and retry
+                crate::kernel::sched::yield_now();
+                continue;
+            }
+        };
+
+        // Read the raw HTTP request from the TCP connection
+        let mut request_buf = [0u8; 8192];
+        let mut total_read = 0;
+        let mut retries = 0;
+        let max_retries = 500;
+
+        while total_read < request_buf.len() && retries < max_retries {
+            let n = crate::net::tcp::recv(conn_id, &mut request_buf[total_read..]);
+            if n > 0 {
+                total_read += n as usize;
+                // Check if we've received the end of HTTP headers
+                if contains_header_end(&request_buf[..total_read]) {
+                    // Check Content-Length to see if we need more body data
+                    let header_str = core::str::from_utf8(&request_buf[..total_read]).unwrap_or("");
+                    let header_end = find_header_end(header_str).unwrap_or(total_read);
+                    let content_length = extract_content_length(header_str);
+                    let body_received = total_read.saturating_sub(header_end);
+                    if body_received >= content_length {
+                        break;
+                    }
+                }
+            } else if n == 0 {
+                break; // Connection closed
+            } else {
+                retries += 1;
+                crate::kernel::sched::yield_now();
+            }
+        }
+
+        if total_read == 0 {
+            crate::net::tcp::close(conn_id);
+            continue;
+        }
+
+        // Parse the HTTP request
+        let raw = core::str::from_utf8(&request_buf[..total_read]).unwrap_or("");
+        let (method, path, body, auth) = parse_http_request(raw);
+
+        // Route to handler
+        let response = handle_request(&method, &path, &body, auth.as_deref());
+
+        // Build HTTP response
+        let status_text = match response.status {
+            200 => "OK",
+            201 => "Created",
+            202 => "Accepted",
+            400 => "Bad Request",
+            401 => "Unauthorized",
+            404 => "Not Found",
+            500 => "Internal Server Error",
+            _ => "OK",
+        };
+
+        let response_str = format!(
+            "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            response.status, status_text,
+            response.body.len(),
+            response.body
+        );
+
+        // Send response back over TCP
+        crate::net::tcp::send(conn_id, response_str.as_bytes());
+        crate::net::tcp::close(conn_id);
+    }
+}
+
+/// Check if the buffer contains the HTTP header terminator (\r\n\r\n).
+fn contains_header_end(buf: &[u8]) -> bool {
+    buf.windows(4).any(|w| w == b"\r\n\r\n")
+}
+
+/// Find the byte offset of the header/body boundary.
+fn find_header_end(s: &str) -> Option<usize> {
+    s.find("\r\n\r\n").map(|pos| pos + 4)
+}
+
+/// Extract Content-Length header value.
+fn extract_content_length(headers: &str) -> usize {
+    for line in headers.lines() {
+        let lower = line.to_ascii_lowercase();
+        if let Some(rest) = lower.strip_prefix("content-length:") {
+            if let Ok(len) = rest.trim().parse::<usize>() {
+                return len;
+            }
+        }
+    }
+    0
+}
+
+/// Parse an HTTP request into (method, path, body, auth_header).
+fn parse_http_request(raw: &str) -> (String, String, String, Option<String>) {
+    let mut lines = raw.lines();
+
+    // Request line: "GET /path HTTP/1.1"
+    let request_line = lines.next().unwrap_or("");
+    let mut parts = request_line.split_whitespace();
+    let method = String::from(parts.next().unwrap_or("GET"));
+    let path = String::from(parts.next().unwrap_or("/"));
+
+    // Parse headers
+    let mut auth = None;
+    let mut in_headers = true;
+    let mut body_lines = Vec::new();
+
+    for line in lines {
+        if in_headers {
+            if line.is_empty() || line == "\r" {
+                in_headers = false;
+                continue;
+            }
+            let lower = line.to_ascii_lowercase();
+            if lower.starts_with("authorization:") {
+                auth = Some(String::from(line[14..].trim()));
+            }
+        } else {
+            body_lines.push(line);
+        }
+    }
+
+    let body = body_lines.join("\n");
+    (method, path, body, auth)
 }
 
 /// Handle an HTTP request and return the response.
@@ -71,15 +199,18 @@ struct HttpResponse {
 fn handle_health() -> HttpResponse {
     let heap = crate::kernel::mm::heap_stats();
     let mem_count = crate::memory::global().lock().count();
+    let metrics = crate::observability::snapshot();
 
     HttpResponse {
         status: 200,
         body: format!(
-            "{{\"status\":\"ok\",\"heap_used\":{},\"heap_total\":{},\"memories\":{},\"tasks\":{}}}",
+            "{{\"status\":\"ok\",\"heap_used\":{},\"heap_total\":{},\"memories\":{},\"tasks\":{},\"requests\":{},\"errors\":{}}}",
             heap.used_bytes,
             heap.total_bytes,
             mem_count,
-            crate::kernel::sched::task_count()
+            crate::kernel::sched::task_count(),
+            metrics.total_requests,
+            metrics.total_errors
         ),
     }
 }
@@ -123,7 +254,9 @@ fn handle_webhook(body: &str, auth: Option<&str>) -> HttpResponse {
         };
     }
 
-    // The actual processing happens asynchronously through the channel system
+    // Inject the message into the webhook channel's pending queue
+    crate::channels::inject_webhook_message(&message, "webhook-api");
+
     HttpResponse {
         status: 202,
         body: String::from("{\"status\":\"accepted\"}"),
@@ -142,8 +275,8 @@ fn handle_whatsapp_verify(query: &str) -> HttpResponse {
 }
 
 fn handle_whatsapp_message(body: &str) -> HttpResponse {
-    // HMAC-SHA256 verification would happen here
-    let _ = body;
+    // Inject as a webhook message for the WhatsApp channel to process
+    crate::channels::inject_webhook_message(body, "whatsapp-webhook");
     HttpResponse {
         status: 200,
         body: String::from("{\"status\":\"ok\"}"),
@@ -151,7 +284,6 @@ fn handle_whatsapp_message(body: &str) -> HttpResponse {
 }
 
 fn handle_doctor(auth: Option<&str>) -> HttpResponse {
-    // Doctor endpoint requires authentication
     let token = auth.and_then(|a| a.strip_prefix("Bearer "));
     match token {
         Some(t) if crate::security::validate_token(t) => {}

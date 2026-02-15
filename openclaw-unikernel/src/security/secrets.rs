@@ -187,7 +187,8 @@ fn chacha20_block(key: &[u8; 32], nonce: &[u8; 12], counter: u32) -> [u8; 64] {
 }
 
 /// ChaCha20 stream cipher (encrypt = decrypt).
-fn chacha20_encrypt(key: &[u8; 32], nonce: &[u8; 12], data: &[u8]) -> Vec<u8> {
+/// Public for use by the TLS module.
+pub fn chacha20_encrypt(key: &[u8; 32], nonce: &[u8; 12], data: &[u8]) -> Vec<u8> {
     let mut output = Vec::with_capacity(data.len());
     let mut counter: u32 = 1; // Counter starts at 1 (0 is for Poly1305)
 
@@ -204,8 +205,9 @@ fn chacha20_encrypt(key: &[u8; 32], nonce: &[u8; 12], data: &[u8]) -> Vec<u8> {
 
 // ── Poly1305 MAC ───────────────────────────────────────────────────────────
 
-/// Simplified Poly1305 MAC (produces a 16-byte authentication tag).
-fn poly1305_mac(key: &[u8; 32], nonce: &[u8; 12], data: &[u8]) -> [u8; 16] {
+/// Poly1305 MAC (produces a 16-byte authentication tag).
+/// Public for use by the TLS module.
+pub fn poly1305_mac(key: &[u8; 32], nonce: &[u8; 12], data: &[u8]) -> [u8; 16] {
     // Generate Poly1305 key from ChaCha20 block 0
     let poly_block = chacha20_block(key, nonce, 0);
     let mut r = [0u8; 16];
@@ -255,7 +257,7 @@ fn poly1305_mac(key: &[u8; 32], nonce: &[u8; 12], data: &[u8]) -> [u8; 16] {
 // ── Utilities ──────────────────────────────────────────────────────────────
 
 /// Constant-time comparison (prevents timing attacks).
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }

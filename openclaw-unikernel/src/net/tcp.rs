@@ -232,17 +232,265 @@ pub fn close(conn_id: usize) {
     }
 }
 
-/// Process incoming TCP segments.
+/// Accept a pending connection on a listening socket.
+/// Returns the connection ID if a client has completed the handshake.
+pub fn accept(listener_id: usize) -> Option<usize> {
+    process_incoming();
+
+    unsafe {
+        if let Some(ref conns) = CONNECTIONS {
+            let listener = conns.get(&listener_id)?;
+            if listener.state != TcpState::Listen {
+                return None;
+            }
+            let listen_port = listener.local_port;
+
+            // Find an Established connection on the same local port
+            for (id, conn) in conns.iter() {
+                if *id != listener_id
+                    && conn.local_port == listen_port
+                    && conn.state == TcpState::Established
+                {
+                    return Some(*id);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Process incoming TCP segments from the NIC.
+///
+/// Reads raw Ethernet frames from the virtio-net ring buffer, parses
+/// through the Ethernet → IPv4 → TCP pipeline, matches to an existing
+/// connection or creates a new one for SYN on a listening port, and
+/// drives the TCP state machine.
 pub fn process_incoming() {
-    // In a real implementation, this would read from the virtio-net device
-    // and process incoming packets. For the unikernel framework, this is
-    // the hook point where the NIC driver delivers packets.
-    //
-    // The flow is:
-    // 1. NIC delivers Ethernet frame
-    // 2. Parse Ethernet → IPv4 → TCP headers
-    // 3. Match to connection by (src_ip, src_port, dst_port)
-    // 4. Process according to TCP state machine
+    // Read raw frame from the virtio-net device ring buffer
+    let raw_frame = match read_nic_frame() {
+        Some(frame) => frame,
+        None => return,
+    };
+
+    // Parse Ethernet → IPv4 → TCP
+    let eth = match super::EthFrame::parse(&raw_frame) {
+        Some(f) if f.ether_type == super::EtherType::Ipv4 as u16 => f,
+        _ => return,
+    };
+    let ip = match super::Ipv4Packet::parse(&eth.payload) {
+        Some(p) if p.protocol == super::IpProtocol::Tcp as u8 => p,
+        _ => return,
+    };
+    let tcp_data = &ip.payload;
+    if tcp_data.len() < 20 {
+        return;
+    }
+
+    let src_port = ((tcp_data[0] as u16) << 8) | (tcp_data[1] as u16);
+    let dst_port = ((tcp_data[2] as u16) << 8) | (tcp_data[3] as u16);
+    let seq_num = u32::from_be_bytes([tcp_data[4], tcp_data[5], tcp_data[6], tcp_data[7]]);
+    let ack_num = u32::from_be_bytes([tcp_data[8], tcp_data[9], tcp_data[10], tcp_data[11]]);
+    let data_offset = ((tcp_data[12] >> 4) as usize) * 4;
+    let tcp_flags = tcp_data[13];
+    let window = ((tcp_data[14] as u16) << 8) | (tcp_data[15] as u16);
+    let payload = if data_offset < tcp_data.len() { &tcp_data[data_offset..] } else { &[] };
+
+    unsafe {
+        if let Some(ref mut conns) = CONNECTIONS {
+            // Match existing connection by (local_port, remote_port, remote_ip)
+            let matched_id = conns.iter()
+                .find(|(_, c)| {
+                    c.local_port == dst_port && c.remote_port == src_port
+                        && c.remote_ip == ip.src_ip
+                })
+                .map(|(id, _)| *id);
+
+            if let Some(id) = matched_id {
+                if let Some(conn) = conns.get_mut(&id) {
+                    process_segment(conn, tcp_flags, seq_num, ack_num, window, payload);
+                }
+            } else if tcp_flags & flags::SYN != 0 {
+                // New incoming SYN — check for a listener on this port
+                let has_listener = conns.values()
+                    .any(|c| c.state == TcpState::Listen && c.local_port == dst_port);
+
+                if has_listener {
+                    let new_id = NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed);
+                    let mut new_conn = TcpConnection::new(new_id, ip.src_ip, src_port);
+                    new_conn.local_port = dst_port;
+                    new_conn.rcv_nxt = seq_num.wrapping_add(1);
+                    new_conn.state = TcpState::SynReceived;
+
+                    // Send SYN-ACK
+                    let syn_ack = build_segment(&new_conn, flags::SYN | flags::ACK, &[]);
+                    transmit_segment(&new_conn, &syn_ack);
+                    new_conn.snd_nxt = new_conn.snd_nxt.wrapping_add(1);
+
+                    conns.insert(new_id, new_conn);
+                }
+            }
+        }
+    }
+}
+
+/// Drive the TCP state machine for a received segment.
+fn process_segment(
+    conn: &mut TcpConnection,
+    tcp_flags: u8,
+    seq_num: u32,
+    ack_num: u32,
+    window: u16,
+    payload: &[u8],
+) {
+    conn.last_activity = crate::kernel::rdtsc();
+
+    match conn.state {
+        TcpState::SynSent => {
+            if tcp_flags & flags::SYN != 0 && tcp_flags & flags::ACK != 0 {
+                conn.rcv_nxt = seq_num.wrapping_add(1);
+                conn.snd_una = ack_num;
+                conn.snd_wnd = window;
+                conn.state = TcpState::Established;
+                let ack = build_segment(conn, flags::ACK, &[]);
+                transmit_segment(conn, &ack);
+            } else if tcp_flags & flags::RST != 0 {
+                conn.state = TcpState::Closed;
+            }
+        }
+        TcpState::SynReceived => {
+            if tcp_flags & flags::ACK != 0 {
+                conn.snd_una = ack_num;
+                conn.snd_wnd = window;
+                conn.state = TcpState::Established;
+            }
+        }
+        TcpState::Established => {
+            if tcp_flags & flags::RST != 0 {
+                conn.state = TcpState::Closed;
+                return;
+            }
+            conn.snd_una = ack_num;
+            conn.snd_wnd = window;
+
+            if !payload.is_empty() {
+                conn.recv_buf.extend_from_slice(payload);
+                conn.rcv_nxt = seq_num.wrapping_add(payload.len() as u32);
+                let ack = build_segment(conn, flags::ACK, &[]);
+                transmit_segment(conn, &ack);
+            }
+            if tcp_flags & flags::FIN != 0 {
+                conn.rcv_nxt = conn.rcv_nxt.wrapping_add(1);
+                conn.state = TcpState::CloseWait;
+                let ack = build_segment(conn, flags::ACK, &[]);
+                transmit_segment(conn, &ack);
+            }
+        }
+        TcpState::FinWait1 => {
+            if tcp_flags & flags::ACK != 0 && tcp_flags & flags::FIN != 0 {
+                conn.rcv_nxt = seq_num.wrapping_add(1);
+                let ack = build_segment(conn, flags::ACK, &[]);
+                transmit_segment(conn, &ack);
+                conn.state = TcpState::TimeWait;
+            } else if tcp_flags & flags::ACK != 0 {
+                conn.state = TcpState::FinWait2;
+            } else if tcp_flags & flags::FIN != 0 {
+                conn.rcv_nxt = seq_num.wrapping_add(1);
+                let ack = build_segment(conn, flags::ACK, &[]);
+                transmit_segment(conn, &ack);
+                conn.state = TcpState::TimeWait;
+            }
+        }
+        TcpState::FinWait2 => {
+            if tcp_flags & flags::FIN != 0 {
+                conn.rcv_nxt = seq_num.wrapping_add(1);
+                let ack = build_segment(conn, flags::ACK, &[]);
+                transmit_segment(conn, &ack);
+                conn.state = TcpState::TimeWait;
+            }
+        }
+        TcpState::LastAck => {
+            if tcp_flags & flags::ACK != 0 {
+                conn.state = TcpState::Closed;
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Read a raw Ethernet frame from the virtio-net receive ring.
+/// Returns None if no frame is pending in the ring buffer.
+/// Public for use by the DNS resolver for receiving UDP responses.
+pub fn read_nic_frame() -> Option<Vec<u8>> {
+    unsafe {
+        if NET_RX_RING_BASE == 0 {
+            return None; // NIC not initialized
+        }
+
+        let used_idx = core::ptr::read_volatile(
+            (NET_RX_RING_BASE + NET_RX_USED_OFFSET) as *const u16
+        );
+
+        if used_idx == NET_RX_LAST_SEEN {
+            return None;
+        }
+
+        let desc_idx = (NET_RX_LAST_SEEN as usize) % NET_RX_RING_SIZE;
+        let buf_addr = core::ptr::read_volatile(
+            (NET_RX_RING_BASE + desc_idx * 16) as *const u64
+        ) as *const u8;
+        let buf_len = core::ptr::read_volatile(
+            (NET_RX_RING_BASE + desc_idx * 16 + 8) as *const u32
+        ) as usize;
+
+        if buf_addr.is_null() || buf_len == 0 || buf_len > 2048 {
+            NET_RX_LAST_SEEN = NET_RX_LAST_SEEN.wrapping_add(1);
+            return None;
+        }
+
+        let mut frame = Vec::with_capacity(buf_len);
+        for i in 0..buf_len {
+            frame.push(core::ptr::read_volatile(buf_addr.add(i)));
+        }
+
+        NET_RX_LAST_SEEN = NET_RX_LAST_SEEN.wrapping_add(1);
+        core::ptr::write_volatile(
+            (NET_RX_RING_BASE + NET_RX_AVAIL_OFFSET) as *mut u16,
+            NET_RX_LAST_SEEN,
+        );
+
+        Some(frame)
+    }
+}
+
+// Virtio-net receive ring buffer state
+static mut NET_RX_RING_BASE: usize = 0;
+static mut NET_RX_LAST_SEEN: u16 = 0;
+const NET_RX_RING_SIZE: usize = 256;
+const NET_RX_USED_OFFSET: usize = 4096;
+const NET_RX_AVAIL_OFFSET: usize = 2048;
+
+// Virtio-net transmit ring buffer state
+static mut NET_TX_RING_BASE: usize = 0;
+static mut NET_TX_NEXT_DESC: u16 = 0;
+static mut NET_TX_NOTIFY_ADDR: usize = 0;
+const NET_TX_RING_SIZE: usize = 256;
+const NET_TX_AVAIL_OFFSET: usize = 2048;
+
+/// Initialize virtio-net receive ring base address.
+pub fn init_nic_rx(ring_base: usize) {
+    unsafe {
+        NET_RX_RING_BASE = ring_base;
+        NET_RX_LAST_SEEN = 0;
+    }
+}
+
+/// Initialize virtio-net transmit ring base address.
+pub fn init_nic_tx(ring_base: usize, notify_addr: usize) {
+    unsafe {
+        NET_TX_RING_BASE = ring_base;
+        NET_TX_NEXT_DESC = 0;
+        NET_TX_NOTIFY_ADDR = notify_addr;
+    }
 }
 
 /// Build a TCP segment.
@@ -295,13 +543,57 @@ fn transmit_segment(conn: &TcpConnection, segment: &[u8]) {
         segment.to_vec(),
     );
 
-    let _frame = super::EthFrame {
+    let frame = super::EthFrame {
         dst_mac: [0xFF; 6], // Would be resolved via ARP
         src_mac: super::config().mac_addr,
         ether_type: super::EtherType::Ipv4 as u16,
         payload: ip_packet.serialize(),
     };
 
-    // In a full implementation, this would write to the virtio-net device.
-    // The frame is ready to be transmitted.
+    let frame_bytes = frame.serialize();
+    send_raw_frame(&frame_bytes);
+}
+
+/// Send a raw Ethernet frame through the virtio-net transmit ring.
+/// Also used by the DNS resolver for sending UDP packets.
+pub fn send_raw_frame(frame: &[u8]) {
+    unsafe {
+        if NET_TX_RING_BASE == 0 {
+            return; // NIC not initialized
+        }
+
+        let desc_idx = (NET_TX_NEXT_DESC as usize) % NET_TX_RING_SIZE;
+
+        // Write frame data to the descriptor's buffer
+        let buf_addr = core::ptr::read_volatile(
+            (NET_TX_RING_BASE + desc_idx * 16) as *const u64
+        ) as *mut u8;
+
+        if buf_addr.is_null() {
+            return;
+        }
+
+        let len = core::cmp::min(frame.len(), 2048);
+        for i in 0..len {
+            core::ptr::write_volatile(buf_addr.add(i), frame[i]);
+        }
+
+        // Write the length to the descriptor
+        core::ptr::write_volatile(
+            (NET_TX_RING_BASE + desc_idx * 16 + 8) as *mut u32,
+            len as u32,
+        );
+
+        // Advance the available ring index
+        NET_TX_NEXT_DESC = NET_TX_NEXT_DESC.wrapping_add(1);
+        core::ptr::write_volatile(
+            (NET_TX_RING_BASE + NET_TX_AVAIL_OFFSET) as *mut u16,
+            NET_TX_NEXT_DESC,
+        );
+
+        // Notify the device (write to the queue notify register)
+        if NET_TX_NOTIFY_ADDR != 0 {
+            core::ptr::write_volatile(NET_TX_NOTIFY_ADDR as *mut u32, 1);
+        }
+    }
 }

@@ -47,7 +47,9 @@ pub fn tick() {
     crate::kprintln!("[heartbeat] executing {} tasks", tasks.len());
     for task in &tasks {
         crate::kprintln!("[heartbeat] task: {}", task);
-        // Tasks would be fed to the agent for processing
+        // Inject the task as a webhook message so the daemon picks it up
+        // and routes it through the agent
+        crate::channels::inject_webhook_message(task, "heartbeat");
     }
 }
 

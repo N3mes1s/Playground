@@ -104,6 +104,9 @@ pub fn run() -> ! {
     // ── Create the agent ─────────────────────────────────────────────────
     let mut agent = Agent::new(provider, tool_registry, system_prompt);
 
+    // ── Initialize webhook message queue ───────────────────────────────
+    channels::init_webhook_queue();
+
     // ── Create and start channels ────────────────────────────────────────
     let mut active_channels: Vec<Box<dyn Channel>> = Vec::new();
 
@@ -189,6 +192,16 @@ pub fn run() -> ! {
                     crate::kprintln!("[daemon] send error on {}: {}", channel.name(), e);
                 }
             }
+        }
+
+        // Drain webhook messages (from gateway HTTP endpoints and heartbeat)
+        let webhook_msgs = channels::drain_webhook_messages();
+        for msg in webhook_msgs {
+            let response = agent.process_message(&msg);
+            crate::kprintln!(
+                "[daemon] webhook response for {}: {} bytes",
+                msg.channel, response.len()
+            );
         }
 
         // Run scheduler tick (cooperative tasks)

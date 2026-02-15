@@ -107,6 +107,12 @@ impl ToolRegistry {
     }
 }
 
+/// Execute a shell command directly (used by cron and heartbeat).
+pub fn shell_execute(arguments: &str) -> ToolResult {
+    let tool = shell::ShellTool::new();
+    tool.execute(arguments)
+}
+
 /// Create the default tool registry with all built-in tools.
 pub fn create_default_registry() -> ToolRegistry {
     let cfg = crate::config::get();

@@ -8,8 +8,8 @@
 //! - Injection detection
 
 mod policy;
-mod secrets;
-mod pairing;
+pub mod secrets;
+pub mod pairing;
 
 pub use policy::{SecurityPolicy, AutonomyLevel};
 pub use secrets::SecretStore;

@@ -27,6 +27,48 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use alloc::format;
 
+// ── Global webhook message queue ────────────────────────────────────────────
+// Messages injected by the HTTP gateway for webhook-based channels.
+
+static mut WEBHOOK_QUEUE: Option<Vec<ChannelMessage>> = None;
+
+/// Initialize the webhook message queue.
+pub fn init_webhook_queue() {
+    unsafe {
+        WEBHOOK_QUEUE = Some(Vec::new());
+    }
+}
+
+/// Inject a message from the HTTP gateway into the webhook queue.
+/// Called by the gateway for POST /webhook and POST /whatsapp endpoints.
+pub fn inject_webhook_message(content: &str, source: &str) {
+    let msg = ChannelMessage {
+        id: format!("{}-{}", source, crate::kernel::rdtsc()),
+        channel: String::from(source),
+        sender: String::from(source),
+        content: String::from(content),
+        timestamp: crate::kernel::rdtsc(),
+        metadata: MessageMetadata::default(),
+    };
+
+    unsafe {
+        if let Some(ref mut queue) = WEBHOOK_QUEUE {
+            queue.push(msg);
+        }
+    }
+}
+
+/// Drain all pending webhook messages (called by the daemon's polling loop).
+pub fn drain_webhook_messages() -> Vec<ChannelMessage> {
+    unsafe {
+        if let Some(ref mut queue) = WEBHOOK_QUEUE {
+            core::mem::take(queue)
+        } else {
+            Vec::new()
+        }
+    }
+}
+
 /// A message received from or sent to a channel.
 #[derive(Debug, Clone)]
 pub struct ChannelMessage {

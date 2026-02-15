@@ -3,11 +3,17 @@
 //! Wraps a primary provider with fallback chains and retry logic.
 //! If the primary fails, it tries fallback providers in order.
 //! Each attempt uses exponential backoff.
+//!
+//! Circuit breaker pattern tracks provider health:
+//! - Closed: Normal operation, requests pass through
+//! - Open: Provider is unhealthy, requests are blocked
+//! - HalfOpen: Probing recovery, allow one test request
 
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use alloc::format;
+use core::cell::UnsafeCell;
 use super::{Provider, Message, ToolSpec, CompletionResponse, ProviderConfig};
 
 /// Retry configuration.
@@ -81,6 +87,10 @@ impl ProviderHealth {
 
         if self.consecutive_failures >= self.failure_threshold {
             self.state = CircuitState::Open;
+            crate::kprintln!(
+                "[circuit] opened after {} consecutive failures",
+                self.consecutive_failures
+            );
         }
     }
 
@@ -89,8 +99,9 @@ impl ProviderHealth {
             CircuitState::Closed => true,
             CircuitState::Open => {
                 let now = crate::kernel::rdtsc();
-                if now - self.last_failure_tsc >= self.recovery_timeout_ticks {
+                if now.saturating_sub(self.last_failure_tsc) >= self.recovery_timeout_ticks {
                     self.state = CircuitState::HalfOpen;
+                    crate::kprintln!("[circuit] transitioning to half-open for probe");
                     true
                 } else {
                     false
@@ -101,12 +112,32 @@ impl ProviderHealth {
     }
 }
 
+/// Interior-mutable health wrapper.
+/// Safe in the unikernel's cooperative single-threaded scheduler.
+struct HealthCell(UnsafeCell<ProviderHealth>);
+
+// Safety: The unikernel uses cooperative scheduling with no preemption.
+// Only one task runs at a time, so there are no data races.
+unsafe impl Send for HealthCell {}
+unsafe impl Sync for HealthCell {}
+
+impl HealthCell {
+    fn new() -> Self {
+        HealthCell(UnsafeCell::new(ProviderHealth::new()))
+    }
+
+    fn get(&self) -> &mut ProviderHealth {
+        // Safety: Single-threaded cooperative scheduler — no concurrent access
+        unsafe { &mut *self.0.get() }
+    }
+}
+
 /// A resilient provider that wraps a primary + fallback chain.
 pub struct ResilientProvider {
     primary: Box<dyn Provider>,
     fallbacks: Vec<Box<dyn Provider>>,
-    primary_health: ProviderHealth,
-    fallback_health: Vec<ProviderHealth>,
+    primary_health: HealthCell,
+    fallback_health: Vec<HealthCell>,
     retry_config: RetryConfig,
 }
 
@@ -115,7 +146,7 @@ impl ResilientProvider {
         ResilientProvider {
             primary,
             fallbacks: Vec::new(),
-            primary_health: ProviderHealth::new(),
+            primary_health: HealthCell::new(),
             fallback_health: Vec::new(),
             retry_config: RetryConfig::default(),
         }
@@ -124,7 +155,7 @@ impl ResilientProvider {
     /// Add a fallback provider to the chain.
     pub fn with_fallback(mut self, provider: Box<dyn Provider>) -> Self {
         self.fallbacks.push(provider);
-        self.fallback_health.push(ProviderHealth::new());
+        self.fallback_health.push(HealthCell::new());
         self
     }
 
@@ -185,33 +216,39 @@ impl Provider for ResilientProvider {
         messages: &[Message],
         tools: &[ToolSpec],
     ) -> Result<CompletionResponse, String> {
-        // Try primary provider if circuit is not open
-        // Note: We can't call should_attempt on &self since it needs &mut self,
-        // so we check the state directly
-        if self.primary_health.state != CircuitState::Open {
+        // Try primary provider if circuit breaker allows it
+        let primary_health = self.primary_health.get();
+        if primary_health.should_attempt() {
             match self.try_provider(&*self.primary, messages, tools) {
                 Ok(response) => {
+                    primary_health.record_success();
                     return Ok(response);
                 }
                 Err(e) => {
+                    primary_health.record_failure();
                     crate::kprintln!(
-                        "[resilient] primary provider '{}' failed: {}",
-                        self.primary.name(), e
+                        "[resilient] primary '{}' failed (failures: {}): {}",
+                        self.primary.name(),
+                        primary_health.consecutive_failures,
+                        e
                     );
                 }
             }
         } else {
             crate::kprintln!(
-                "[resilient] primary provider '{}' circuit is open, skipping",
+                "[resilient] primary '{}' circuit is open, skipping",
                 self.primary.name()
             );
         }
 
         // Try fallback providers in order
         for (i, fallback) in self.fallbacks.iter().enumerate() {
-            if i < self.fallback_health.len()
-                && self.fallback_health[i].state == CircuitState::Open
-            {
+            if i >= self.fallback_health.len() {
+                continue;
+            }
+
+            let health = self.fallback_health[i].get();
+            if !health.should_attempt() {
                 crate::kprintln!(
                     "[resilient] fallback '{}' circuit is open, skipping",
                     fallback.name()
@@ -220,18 +257,22 @@ impl Provider for ResilientProvider {
             }
 
             crate::kprintln!(
-                "[resilient] trying fallback provider '{}' ({}/{})",
+                "[resilient] trying fallback '{}' ({}/{})",
                 fallback.name(), i + 1, self.fallbacks.len()
             );
 
             match self.try_provider(&**fallback, messages, tools) {
                 Ok(response) => {
+                    health.record_success();
                     return Ok(response);
                 }
                 Err(e) => {
+                    health.record_failure();
                     crate::kprintln!(
-                        "[resilient] fallback '{}' failed: {}",
-                        fallback.name(), e
+                        "[resilient] fallback '{}' failed (failures: {}): {}",
+                        fallback.name(),
+                        health.consecutive_failures,
+                        e
                     );
                 }
             }
