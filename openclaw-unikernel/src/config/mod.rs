@@ -239,7 +239,8 @@ fn parse_f32(s: &str) -> Option<f32> {
         let int_part = parse_u32(parts[0])? as f32;
         let frac_str = parts[1];
         let frac_part = parse_u32(frac_str)? as f32;
-        let divisor = 10f32.powi(frac_str.len() as i32);
+        let mut divisor = 1.0f32;
+        for _ in 0..frac_str.len() { divisor *= 10.0; }
         Some(int_part + frac_part / divisor)
     } else {
         parse_u32(s).map(|v| v as f32)

@@ -34,9 +34,9 @@ impl EmailChannel {
 
         EmailChannel {
             smtp_host: get_extra("smtp_host", "smtp.gmail.com"),
-            smtp_port: get_extra("smtp_port", "465").parse().unwrap_or(465),
+            smtp_port: crate::util::parse_usize(&get_extra("smtp_port", "465")).unwrap_or(465) as u16,
             imap_host: get_extra("imap_host", "imap.gmail.com"),
-            imap_port: get_extra("imap_port", "993").parse().unwrap_or(993),
+            imap_port: crate::util::parse_usize(&get_extra("imap_port", "993")).unwrap_or(993) as u16,
             username: get_extra("username", ""),
             password: get_extra("password", ""),
             from_address: get_extra("from", ""),
@@ -94,7 +94,7 @@ impl EmailChannel {
                 let uids: Vec<u32> = search_line
                     .split_whitespace()
                     .skip(2) // skip "* SEARCH"
-                    .filter_map(|s| s.parse().ok())
+                    .filter_map(|s| crate::util::parse_u64(s).map(|v| v as u32))
                     .collect();
 
                 // Fetch each message
@@ -125,13 +125,13 @@ impl EmailChannel {
     fn parse_email_message(&mut self, uid: u32, raw: &str) {
         // Extract From header
         let from = raw.lines()
-            .find(|l| l.to_ascii_lowercase().starts_with("from:"))
+            .find(|l| crate::util::starts_with_ci(l, "from:"))
             .map(|l| String::from(l[5..].trim()))
             .unwrap_or_else(|| String::from("unknown"));
 
         // Extract Subject
         let subject = raw.lines()
-            .find(|l| l.to_ascii_lowercase().starts_with("subject:"))
+            .find(|l| crate::util::starts_with_ci(l, "subject:"))
             .map(|l| String::from(l[8..].trim()))
             .unwrap_or_default();
 
@@ -146,9 +146,9 @@ impl EmailChannel {
 
         // Check allowlist
         if !self.config.allowed_users.is_empty() {
-            let from_lower = from.to_ascii_lowercase();
+            let from_lower = crate::util::ascii_lowercase(&from);
             let allowed = self.config.allowed_users.iter()
-                .any(|u| from_lower.contains(&u.to_ascii_lowercase()));
+                .any(|u| from_lower.contains(&crate::util::ascii_lowercase(u)));
             if !allowed {
                 return;
             }

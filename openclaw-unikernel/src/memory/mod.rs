@@ -72,7 +72,7 @@ pub trait Memory: Send {
     fn recall(&self, query: &str, limit: usize) -> Vec<SearchResult>;
     fn forget(&mut self, key: &str) -> bool;
     fn list(&self, category: Option<MemoryCategory>) -> Vec<MemoryEntry>;
-    fn count(&self) -> usize;
+    fn entry_count(&self) -> usize;
 }
 
 // ── In-Kernel Memory Store ─────────────────────────────────────────────────
@@ -121,9 +121,14 @@ pub fn global() -> &'static SpinLock<InKernelMemory> {
 }
 
 impl InKernelMemory {
+    /// Get the number of stored memory entries.
+    pub fn entry_count(&self) -> usize {
+        self.entries.len()
+    }
+
     /// Tokenize text into searchable terms.
     fn tokenize(text: &str) -> Vec<String> {
-        text.to_ascii_lowercase()
+        crate::util::ascii_lowercase(text)
             .split(|c: char| !c.is_alphanumeric())
             .filter(|s| s.len() >= 2)
             .map(String::from)
@@ -203,7 +208,7 @@ impl InKernelMemory {
             // Inverse document frequency
             let n = self.total_docs as f32;
             let idf = if df > 0.0 {
-                ((n - df + 0.5) / (df + 0.5) + 1.0).ln()
+                crate::util::ln_f32((n - df + 0.5) / (df + 0.5) + 1.0)
             } else {
                 0.0
             };
@@ -231,7 +236,7 @@ impl InKernelMemory {
             norm_b += b[i] * b[i];
         }
 
-        let denom = norm_a.sqrt() * norm_b.sqrt();
+        let denom = crate::util::sqrt_f32(norm_a) * crate::util::sqrt_f32(norm_b);
         if denom == 0.0 { 0.0 } else { dot / denom }
     }
 
@@ -346,7 +351,7 @@ impl Memory for InKernelMemory {
             .collect()
     }
 
-    fn count(&self) -> usize {
+    fn entry_count(&self) -> usize {
         self.entries.len()
     }
 }

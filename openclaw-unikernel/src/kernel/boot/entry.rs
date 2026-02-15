@@ -3,7 +3,7 @@
 //! The very first code that executes. Sets up the stack and calls `kernel_main`.
 //! This uses a naked function to avoid any Rust prologue — we control the ABI entirely.
 
-use core::arch::asm;
+use core::arch::naked_asm;
 
 /// Multiboot2 header — placed in `.multiboot_header` section by the linker script.
 /// GRUB and QEMU's `-kernel` flag recognize this.
@@ -23,24 +23,21 @@ extern "C" {
 }
 
 /// Assembly entry point. Sets up the stack pointer and jumps to `kernel_main`.
-#[naked]
+#[unsafe(naked)]
 #[no_mangle]
 #[link_section = ".text"]
 pub unsafe extern "C" fn _start() -> ! {
-    unsafe {
-        asm!(
-            // Set up the stack
-            "lea rsp, [rip + {stack_top}]",
-            // Clear the frame pointer for clean backtraces
-            "xor rbp, rbp",
-            // Call into Rust
-            "call kernel_main",
-            // If kernel_main returns (it shouldn't), halt
-            "2:",
-            "hlt",
-            "jmp 2b",
-            stack_top = sym __stack_top,
-            options(noreturn)
-        );
-    }
+    naked_asm!(
+        // Set up the stack
+        "lea rsp, [rip + {stack_top}]",
+        // Clear the frame pointer for clean backtraces
+        "xor rbp, rbp",
+        // Call into Rust
+        "call kernel_main",
+        // If kernel_main returns (it shouldn't), halt
+        "2:",
+        "hlt",
+        "jmp 2b",
+        stack_top = sym __stack_top,
+    );
 }

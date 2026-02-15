@@ -48,6 +48,93 @@ pub fn format_bytes(bytes: usize) -> String {
     }
 }
 
+// ── no_std compatibility helpers ─────────────────────────────────────────────
+
+/// Convert a string to ASCII lowercase (no_std replacement for `.to_ascii_lowercase()`).
+pub fn ascii_lowercase(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        if b >= b'A' && b <= b'Z' {
+            result.push((b + 32) as char);
+        } else {
+            result.push(b as char);
+        }
+    }
+    result
+}
+
+/// Check if a byte slice starts with a prefix, case-insensitive.
+pub fn starts_with_ci(s: &str, prefix: &str) -> bool {
+    if s.len() < prefix.len() { return false; }
+    let sb = s.as_bytes();
+    let pb = prefix.as_bytes();
+    for i in 0..pb.len() {
+        let a = if sb[i] >= b'A' && sb[i] <= b'Z' { sb[i] + 32 } else { sb[i] };
+        let b = if pb[i] >= b'A' && pb[i] <= b'Z' { pb[i] + 32 } else { pb[i] };
+        if a != b { return false; }
+    }
+    true
+}
+
+/// Parse a usize from a decimal string (no_std replacement for `.parse::<usize>()`).
+pub fn parse_usize(s: &str) -> Option<usize> {
+    let s = s.trim();
+    if s.is_empty() { return None; }
+    let mut result: usize = 0;
+    for &b in s.as_bytes() {
+        if b < b'0' || b > b'9' { return None; }
+        result = result.checked_mul(10)?;
+        result = result.checked_add((b - b'0') as usize)?;
+    }
+    Some(result)
+}
+
+/// Parse a u64 from a decimal string.
+pub fn parse_u64(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if s.is_empty() { return None; }
+    let mut result: u64 = 0;
+    for &b in s.as_bytes() {
+        if b < b'0' || b > b'9' { return None; }
+        result = result.checked_mul(10)?;
+        result = result.checked_add((b - b'0') as u64)?;
+    }
+    Some(result)
+}
+
+/// Approximate natural logarithm for f32 (no_std compatible).
+/// Uses the identity ln(x) = (x-1) - (x-1)^2/2 + ... for values near 1,
+/// plus range reduction.
+pub fn ln_f32(x: f32) -> f32 {
+    if x <= 0.0 { return -1e10; } // Sentinel for invalid input
+    // Decompose x = m * 2^e where 1 <= m < 2
+    let bits = x.to_bits();
+    let exponent = ((bits >> 23) & 0xFF) as i32 - 127;
+    let mantissa_bits = (bits & 0x007FFFFF) | 0x3F800000;
+    let m = f32::from_bits(mantissa_bits);
+    // ln(x) = ln(m) + e * ln(2)
+    // For m in [1, 2), use Padé approximation: ln(m) ≈ 2*(m-1)/(m+1) * (1 + (m-1)^2/(3*(m+1)^2))
+    let t = (m - 1.0) / (m + 1.0);
+    let t2 = t * t;
+    let ln_m = 2.0 * t * (1.0 + t2 / 3.0 + t2 * t2 / 5.0);
+    ln_m + (exponent as f32) * 0.6931472 // ln(2) ≈ 0.6931472
+}
+
+/// Approximate square root for f32 (no_std compatible).
+/// Uses the "fast inverse square root" + Newton iterations.
+pub fn sqrt_f32(x: f32) -> f32 {
+    if x <= 0.0 { return 0.0; }
+    // Initial estimate using bit manipulation
+    let mut bits = x.to_bits();
+    bits = 0x1FBD1DF5 + (bits >> 1);
+    let mut y = f32::from_bits(bits);
+    // Three Newton-Raphson iterations for accuracy
+    y = 0.5 * (y + x / y);
+    y = 0.5 * (y + x / y);
+    y = 0.5 * (y + x / y);
+    y
+}
+
 /// Check if a string looks like a JSON object.
 pub fn is_json_object(s: &str) -> bool {
     let trimmed = s.trim();

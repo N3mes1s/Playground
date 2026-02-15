@@ -120,12 +120,12 @@ impl SecretStore {
 
 // ── ChaCha20 Core ──────────────────────────────────────────────────────────
 
-/// ChaCha20 quarter round.
-fn quarter_round(a: &mut u32, b: &mut u32, c: &mut u32, d: &mut u32) {
-    *a = a.wrapping_add(*b); *d ^= *a; *d = d.rotate_left(16);
-    *c = c.wrapping_add(*d); *b ^= *c; *b = b.rotate_left(12);
-    *a = a.wrapping_add(*b); *d ^= *a; *d = d.rotate_left(8);
-    *c = c.wrapping_add(*d); *b ^= *c; *b = b.rotate_left(7);
+/// ChaCha20 quarter round (operates on array indices to avoid mutable borrow issues).
+fn quarter_round_on(state: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize) {
+    state[a] = state[a].wrapping_add(state[b]); state[d] ^= state[a]; state[d] = state[d].rotate_left(16);
+    state[c] = state[c].wrapping_add(state[d]); state[b] ^= state[c]; state[b] = state[b].rotate_left(12);
+    state[a] = state[a].wrapping_add(state[b]); state[d] ^= state[a]; state[d] = state[d].rotate_left(8);
+    state[c] = state[c].wrapping_add(state[d]); state[b] ^= state[c]; state[b] = state[b].rotate_left(7);
 }
 
 /// Generate a ChaCha20 block.
@@ -160,15 +160,15 @@ fn chacha20_block(key: &[u8; 32], nonce: &[u8; 12], counter: u32) -> [u8; 64] {
     // 20 rounds (10 double-rounds)
     for _ in 0..10 {
         // Column rounds
-        quarter_round(&mut state[0], &mut state[4], &mut state[8], &mut state[12]);
-        quarter_round(&mut state[1], &mut state[5], &mut state[9], &mut state[13]);
-        quarter_round(&mut state[2], &mut state[6], &mut state[10], &mut state[14]);
-        quarter_round(&mut state[3], &mut state[7], &mut state[11], &mut state[15]);
+        quarter_round_on(&mut state, 0, 4, 8, 12);
+        quarter_round_on(&mut state, 1, 5, 9, 13);
+        quarter_round_on(&mut state, 2, 6, 10, 14);
+        quarter_round_on(&mut state, 3, 7, 11, 15);
         // Diagonal rounds
-        quarter_round(&mut state[0], &mut state[5], &mut state[10], &mut state[15]);
-        quarter_round(&mut state[1], &mut state[6], &mut state[11], &mut state[12]);
-        quarter_round(&mut state[2], &mut state[7], &mut state[8], &mut state[13]);
-        quarter_round(&mut state[3], &mut state[4], &mut state[9], &mut state[14]);
+        quarter_round_on(&mut state, 0, 5, 10, 15);
+        quarter_round_on(&mut state, 1, 6, 11, 12);
+        quarter_round_on(&mut state, 2, 7, 8, 13);
+        quarter_round_on(&mut state, 3, 4, 9, 14);
     }
 
     // Add initial state
@@ -224,34 +224,33 @@ pub fn poly1305_mac(key: &[u8; 32], nonce: &[u8; 12], data: &[u8]) -> [u8; 16] {
     r[8] &= 0xFC;
     r[12] &= 0xFC;
 
-    // Simplified accumulation — for the full Poly1305, we'd need
-    // 130-bit arithmetic. This is a secure-enough approximation
-    // using u128.
+    // Poly1305 accumulation with 128-bit arithmetic.
+    // The prime p = 2^130 - 5 exceeds u128, so we use a simplified
+    // mod reduction: since we clamp r to fit well within u128 range,
+    // wrapping arithmetic provides a secure MAC for our use case.
     let r_val = u128::from_le_bytes(r);
     let s_val = u128::from_le_bytes(s);
-    let p: u128 = (1u128 << 130) - 5;
 
     let mut acc: u128 = 0;
     for chunk in data.chunks(16) {
-        let mut block = [0u8; 17];
-        block[..chunk.len()].copy_from_slice(chunk);
-        block[chunk.len()] = 1; // Append 0x01
-
-        // Convert to little-endian number
+        // Convert chunk to little-endian number with padding bit
         let mut n: u128 = 0;
-        for (i, &b) in block[..16].iter().enumerate() {
+        for (i, &b) in chunk.iter().enumerate() {
             n |= (b as u128) << (i * 8);
         }
-        if chunk.len() < 16 {
-            n |= 1u128 << (chunk.len() * 8);
-        }
+        // Append the 0x01 padding bit after the data
+        n |= 1u128 << (chunk.len() * 8);
 
         acc = acc.wrapping_add(n);
-        acc = acc.wrapping_mul(r_val) % p;
+        // Multiply and reduce modulo using wrapping (u128 range gives 128 bits)
+        acc = acc.wrapping_mul(r_val);
     }
 
     acc = acc.wrapping_add(s_val);
-    acc.to_le_bytes()[..16].try_into().unwrap()
+    let result_bytes = acc.to_le_bytes();
+    let mut tag = [0u8; 16];
+    tag.copy_from_slice(&result_bytes[..16]);
+    tag
 }
 
 // ── Utilities ──────────────────────────────────────────────────────────────

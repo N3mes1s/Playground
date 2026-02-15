@@ -19,13 +19,13 @@ impl OllamaProvider {
 
         let host = config
             .api_base_url
-            .as_deref()
-            .unwrap_or("localhost:11434");
+            .clone()
+            .unwrap_or_else(|| String::from("localhost:11434"));
 
         OllamaProvider {
             client: OpenAiCompatibleClient::new(
                 config,
-                host,
+                &host,
                 "/api/chat",
             ),
         }

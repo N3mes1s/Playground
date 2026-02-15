@@ -128,9 +128,9 @@ fn find_header_end(s: &str) -> Option<usize> {
 /// Extract Content-Length header value.
 fn extract_content_length(headers: &str) -> usize {
     for line in headers.lines() {
-        let lower = line.to_ascii_lowercase();
-        if let Some(rest) = lower.strip_prefix("content-length:") {
-            if let Ok(len) = rest.trim().parse::<usize>() {
+        if crate::util::starts_with_ci(line, "content-length:") {
+            let rest = &line["content-length:".len()..];
+            if let Some(len) = crate::util::parse_usize(rest) {
                 return len;
             }
         }
@@ -159,8 +159,7 @@ fn parse_http_request(raw: &str) -> (String, String, String, Option<String>) {
                 in_headers = false;
                 continue;
             }
-            let lower = line.to_ascii_lowercase();
-            if lower.starts_with("authorization:") {
+            if crate::util::starts_with_ci(line, "authorization:") {
                 auth = Some(String::from(line[14..].trim()));
             }
         } else {
@@ -198,7 +197,7 @@ struct HttpResponse {
 
 fn handle_health() -> HttpResponse {
     let heap = crate::kernel::mm::heap_stats();
-    let mem_count = crate::memory::global().lock().count();
+    let mem_count = crate::memory::global().lock().entry_count();
     let metrics = crate::observability::snapshot();
 
     HttpResponse {

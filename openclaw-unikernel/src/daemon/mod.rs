@@ -142,7 +142,7 @@ pub fn run() -> ! {
         let tunnel_extra = cfg.env_vars.get("TUNNEL_EXTRA")
             .map(|s| s.as_str());
         let mut tunnel = crate::tunnel::create(&tunnel_type, &tunnel_token, tunnel_extra);
-        match tunnel.start() {
+        match tunnel.start(cfg.gateway_port) {
             Ok(url) => crate::kprintln!("[daemon] tunnel started: {}", url),
             Err(e) => crate::kprintln!("[daemon] tunnel error: {}", e),
         }
@@ -171,7 +171,7 @@ pub fn run() -> ! {
     crate::kprintln!("[daemon] all services started, entering main loop");
     crate::kprintln!("[daemon] provider: {} ({}) [resilient]", cfg.provider, cfg.model);
     crate::kprintln!("[daemon] channels: {:?}", cfg.channels);
-    crate::kprintln!("[daemon] memory entries: {}", crate::memory::global().lock().count());
+    crate::kprintln!("[daemon] memory entries: {}", crate::memory::global().lock().entry_count());
     crate::kprintln!("[daemon] integrations: {}", crate::integrations::summary());
 
     let mut tick_count: u64 = 0;
@@ -248,7 +248,7 @@ pub fn run() -> ! {
         // Health status (every ~1000000 ticks)
         if tick_count % 1000000 == 0 {
             let heap = crate::kernel::mm::heap_stats();
-            let mem_count = crate::memory::global().lock().count();
+            let mem_count = crate::memory::global().lock().entry_count();
             let metrics = crate::observability::snapshot();
             crate::kprintln!(
                 "[health] heap: {}/{} | memories: {} | tasks: {} | history: {} | reqs: {} | errors: {}",

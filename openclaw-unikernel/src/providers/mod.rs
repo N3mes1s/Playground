@@ -464,7 +464,8 @@ pub fn create(config: ProviderConfig) -> Box<dyn Provider> {
         )),
         _ => {
             // Default to OpenAI-compatible with custom base URL
-            if let Some(ref base_url) = config.api_base_url {
+            let base_url_clone = config.api_base_url.clone();
+            if let Some(ref base_url) = base_url_clone {
                 let host = extract_host(base_url).unwrap_or("localhost");
                 let path = extract_path(base_url).unwrap_or("/v1/chat/completions");
                 Box::new(openai::OpenAiProvider::with_base(config, host, path))

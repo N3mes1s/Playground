@@ -139,7 +139,7 @@ fn parse_heading(line: &str) -> Option<(usize, String)> {
         }
     }
     if level > 0 && level <= 6 {
-        let text = line[level..].trim().to_string();
+        let text = String::from(line[level..].trim());
         if !text.is_empty() {
             return Some((level, text));
         }

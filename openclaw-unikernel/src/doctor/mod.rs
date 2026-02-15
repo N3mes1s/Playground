@@ -241,7 +241,7 @@ fn check_model_config() -> CheckResult {
 
 fn check_memory_system() -> CheckResult {
     let mem = crate::memory::global().lock();
-    let count = mem.count();
+    let count = mem.entry_count();
 
     if count == 0 {
         CheckResult {

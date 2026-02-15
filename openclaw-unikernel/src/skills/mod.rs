@@ -62,7 +62,7 @@ fn parse_toml_skill(name: &str, content: &str) -> Option<Skill> {
         .unwrap_or_else(|| String::from("(no description)"));
     let trigger = extract_toml_value(content, "trigger");
     let prompt = extract_toml_value(content, "prompt")
-        .unwrap_or_else(|| content.to_string());
+        .unwrap_or_else(|| String::from(content));
 
     Some(Skill {
         name: String::from(name),

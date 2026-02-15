@@ -169,9 +169,9 @@ impl Response {
 
     /// Get a header value by name (case-insensitive).
     pub fn header(&self, name: &str) -> Option<&str> {
-        let name_lower = name.to_ascii_lowercase();
+        let name_lower = crate::util::ascii_lowercase(name);
         for (key, value) in &self.headers {
-            if key.to_ascii_lowercase() == name_lower {
+            if crate::util::ascii_lowercase(key) == name_lower {
                 return Some(value.as_str());
             }
         }
@@ -235,8 +235,7 @@ pub fn request(req: &Request) -> Result<Response, &'static str> {
                             // Extract Content-Length
                             let header_text = &text[..header_end];
                             for line in header_text.split("\r\n") {
-                                let lower = line.to_ascii_lowercase();
-                                if lower.starts_with("content-length:") {
+                                if crate::util::starts_with_ci(line, "content-length:") {
                                     if let Some(val) = line.split(':').nth(1) {
                                         content_length = parse_u16(val.trim()).map(|v| v as usize);
                                     }

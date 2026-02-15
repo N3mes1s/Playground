@@ -128,8 +128,8 @@ fn parse_embedding_response(body: &[u8]) -> Result<Vec<f32>, String> {
 /// Parse a float string like "0.0234" or "-1.5e-3".
 fn parse_f32_full(s: &str) -> Option<f32> {
     let s = s.trim();
-    let negative = s.starts_with('-');
-    let s = if negative || s.starts_with('+') { &s[1..] } else { s };
+    let negative = s.as_bytes().first() == Some(&b'-');
+    let s = if negative || s.as_bytes().first() == Some(&b'+') { &s[1..] } else { s };
 
     // Check for scientific notation
     let (mantissa_str, exponent) = if let Some(e_pos) = s.find(|c: char| c == 'e' || c == 'E') {
@@ -145,13 +145,13 @@ fn parse_f32_full(s: &str) -> Option<f32> {
         let int_part = if dot > 0 { parse_u64(&mantissa_str[..dot])? } else { 0 };
         let frac_str = &mantissa_str[dot + 1..];
         let frac_val = if frac_str.is_empty() { 0u64 } else { parse_u64(frac_str)? };
-        let frac_div = 10f32.powi(frac_str.len() as i32);
+        let frac_div = pow10f(frac_str.len() as i32);
         int_part as f32 + frac_val as f32 / frac_div
     } else {
         parse_u64(mantissa_str)? as f32
     };
 
-    let result = val * 10f32.powi(exponent);
+    let result = val * pow10f(exponent);
     Some(if negative { -result } else { result })
 }
 
@@ -165,9 +165,21 @@ fn parse_u64(s: &str) -> Option<u64> {
     Some(result)
 }
 
+/// Compute 10^n as f32 for small exponents (no_std compatible).
+fn pow10f(n: i32) -> f32 {
+    if n == 0 { return 1.0; }
+    let mut result = 1.0f32;
+    if n > 0 {
+        for _ in 0..n { result *= 10.0; }
+    } else {
+        for _ in 0..(-n) { result /= 10.0; }
+    }
+    result
+}
+
 fn parse_i32(s: &str) -> Option<i32> {
-    let negative = s.starts_with('-');
-    let s = if negative || s.starts_with('+') { &s[1..] } else { s };
+    let negative = s.as_bytes().first() == Some(&b'-');
+    let s = if negative || s.as_bytes().first() == Some(&b'+') { &s[1..] } else { s };
     let val = parse_u64(s)? as i32;
     Some(if negative { -val } else { val })
 }

@@ -171,7 +171,7 @@ fn deduplicate(memory: &mut InKernelMemory, threshold: f32) -> usize {
 
 /// Enforce maximum total entry count by evicting oldest low-access entries.
 fn enforce_limit(memory: &mut InKernelMemory, max_entries: usize) -> usize {
-    let total = memory.count();
+    let total = memory.entry_count();
     if total <= max_entries {
         return 0;
     }

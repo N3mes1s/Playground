@@ -140,7 +140,7 @@ fn parse_cron_interval(cron: &str) -> u64 {
     // Check minute field for */N pattern
     if let Some(min_field) = parts.first() {
         if let Some(interval) = min_field.strip_prefix("*/") {
-            if let Ok(minutes) = interval.parse::<u64>() {
+            if let Some(minutes) = crate::util::parse_u64(interval) {
                 // ~2 GHz TSC: 1 minute ≈ 120_000_000_000 ticks
                 return minutes * 120_000_000_000;
             }

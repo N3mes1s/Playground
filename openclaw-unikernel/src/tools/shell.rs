@@ -63,7 +63,7 @@ impl ShellTool {
             "head" => {
                 if let Some(path) = parts.last() {
                     let n = if parts.len() > 2 && parts[1] == "-n" {
-                        parts[2].parse().unwrap_or(10)
+                        crate::util::parse_usize(parts[2]).unwrap_or(10)
                     } else {
                         10
                     };
@@ -84,7 +84,7 @@ impl ShellTool {
             "tail" => {
                 if let Some(path) = parts.last() {
                     let n: usize = if parts.len() > 2 && parts[1] == "-n" {
-                        parts[2].parse().unwrap_or(10)
+                        crate::util::parse_usize(parts[2]).unwrap_or(10)
                     } else {
                         10
                     };

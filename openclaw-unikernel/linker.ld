@@ -1,11 +1,9 @@
 /* OpenClaw Unikernel — Linker Script
- * Maps the kernel into the higher-half of virtual memory.
+ * Identity-mapped kernel at low physical addresses.
  * Entry point: _start (defined in src/kernel/boot/entry.rs)
  */
 
 ENTRY(_start)
-
-KERNEL_OFFSET = 0xFFFFFF8000000000;
 
 SECTIONS
 {
@@ -17,31 +15,31 @@ SECTIONS
         KEEP(*(.multiboot_header))
     }
 
-    /* Kernel code mapped at higher-half */
-    . = KERNEL_OFFSET + 2M;
+    /* Kernel sections starting at 2 MiB */
+    . = 2M;
 
-    .text ALIGN(4K) :  AT(ADDR(.text) - KERNEL_OFFSET)
+    .text ALIGN(4K) :
     {
         __text_start = .;
         *(.text .text.*)
         __text_end = .;
     }
 
-    .rodata ALIGN(4K) : AT(ADDR(.rodata) - KERNEL_OFFSET)
+    .rodata ALIGN(4K) :
     {
         __rodata_start = .;
         *(.rodata .rodata.*)
         __rodata_end = .;
     }
 
-    .data ALIGN(4K) : AT(ADDR(.data) - KERNEL_OFFSET)
+    .data ALIGN(4K) :
     {
         __data_start = .;
         *(.data .data.*)
         __data_end = .;
     }
 
-    .bss ALIGN(4K) : AT(ADDR(.bss) - KERNEL_OFFSET)
+    .bss ALIGN(4K) :
     {
         __bss_start = .;
         *(.bss .bss.*)
@@ -55,7 +53,7 @@ SECTIONS
     . += 64K;
     __stack_top = .;
 
-    /* Heap region: 16 MiB initial, growable */
+    /* Heap region: 16 MiB initial */
     . = ALIGN(4K);
     __heap_start = .;
     . += 16M;
