@@ -142,9 +142,17 @@ fn dns_query(hostname: &str) -> Result<[u8; 4], &'static str> {
     let ip_packet = super::Ipv4Packet::new(dns_server, super::IpProtocol::Udp as u8, udp_packet);
     let ip_bytes = ip_packet.serialize();
 
-    // Build Ethernet frame (destination = gateway MAC for off-link traffic)
+    // Build Ethernet frame (destination = gateway MAC for routed traffic)
+    // Use the learned gateway MAC, fall back to broadcast
+    let dst_mac = unsafe {
+        if super::tcp::GATEWAY_MAC_LEARNED {
+            super::tcp::GATEWAY_MAC
+        } else {
+            [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+        }
+    };
     let frame = super::EthFrame {
-        dst_mac: [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF], // Broadcast (ARP would give real MAC)
+        dst_mac,
         src_mac: net_cfg.mac_addr,
         ether_type: super::EtherType::Ipv4 as u16,
         payload: ip_bytes,

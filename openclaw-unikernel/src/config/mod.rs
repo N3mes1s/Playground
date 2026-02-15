@@ -85,9 +85,19 @@ pub fn init() {
          Rust unikernel. You have no operating system — you ARE the operating system. \
          Your network stack, memory system, and security engine are all part of you.");
     ramfs_write("/workspace/config.toml",
-        "[agent]\nprovider = \"openai\"\nmodel = \"gpt-4o\"\n\n\
+        "[agent]\nprovider = \"openai\"\nmodel = \"gpt-4o\"\n\
+         api_key = \"OPENAI_API_KEY\"\n\n\
          [autonomy]\nlevel = \"supervised\"\n\n\
          [memory]\nbackend = \"in-kernel\"\n");
+
+    // Apply the config.toml so the API key is actually loaded
+    let toml_content = ramfs_read("/workspace/config.toml").unwrap_or_default();
+    let parsed = parse_toml(&toml_content);
+    update(|c| {
+        c.api_key = parsed.api_key;
+        c.provider = parsed.provider;
+        c.model = parsed.model;
+    });
 }
 
 /// Get a copy of the current configuration.

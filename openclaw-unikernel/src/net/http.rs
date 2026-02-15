@@ -99,8 +99,8 @@ impl Request {
             buf.extend_from_slice(b"\r\n");
         }
 
-        // Connection: keep-alive
-        buf.extend_from_slice(b"Connection: keep-alive\r\n");
+        // Connection: close (we don't do keep-alive through the proxy)
+        buf.extend_from_slice(b"Connection: close\r\n");
         buf.extend_from_slice(b"User-Agent: OpenClaw-Unikernel/0.1.0\r\n");
 
         // End of headers
@@ -202,19 +202,61 @@ fn parse_u16(s: &str) -> Option<u16> {
     Some(result)
 }
 
-/// Perform an HTTPS request.
-pub fn request(req: &Request) -> Result<Response, &'static str> {
-    // Resolve hostname to IP
-    let ip = super::dns::resolve(&req.host)?;
+/// Simple usize parser (no_std) — handles arbitrarily large Content-Length.
+fn parse_usize(s: &str) -> Option<usize> {
+    let mut result: usize = 0;
+    if s.is_empty() {
+        return None;
+    }
+    for c in s.chars() {
+        if !c.is_ascii_digit() {
+            return None;
+        }
+        result = result.checked_mul(10)?;
+        result = result.checked_add((c as u8 - b'0') as usize)?;
+    }
+    Some(result)
+}
 
-    // Establish TLS connection
+/// Perform an HTTP/HTTPS request.
+/// If the HTTP_PROXY is configured, routes through a plain-HTTP proxy instead of TLS.
+pub fn request(req: &Request) -> Result<Response, &'static str> {
+    // Check if we should use a plain-HTTP proxy (e.g., gateway-side TLS proxy)
+    let proxy_ip = crate::net::config().gateway; // 10.0.2.2
+    let proxy_port: u16 = 8080;
+
+    // Try plain HTTP through the proxy first (avoids TLS handshake complexity)
+    match request_plain_http(req, proxy_ip, proxy_port) {
+        Ok(resp) => return Ok(resp),
+        Err(e) => {
+            crate::kprintln!("[http] proxy failed ({}), trying direct TLS", e);
+        }
+    }
+
+    // Fallback: direct HTTPS (requires working TLS)
+    let ip = super::dns::resolve(&req.host)?;
     let mut tls = super::tls::connect(ip, 443, &req.host)?;
 
-    // Send HTTP request
     let raw_request = req.serialize();
     tls.send(&raw_request)?;
 
-    // Read response (up to 1 MiB)
+    let response_buf = read_http_response_tcp(|buf| tls.recv(buf))?;
+    tls.close()?;
+
+    Response::parse(&response_buf)
+}
+
+/// Perform a plain HTTP request over TCP (no TLS).
+fn request_plain_http(req: &Request, ip: [u8; 4], port: u16) -> Result<Response, &'static str> {
+    let conn_id = super::tcp::connect(ip, port)?;
+
+    // Send the HTTP request
+    let raw_request = req.serialize();
+    super::tcp::send(conn_id, &raw_request);
+
+    // Read the response — poll aggressively and wait up to 30 seconds
+    let timeout_ticks = 60_000_000_000u64; // ~30 sec at 2 GHz
+    let start = crate::kernel::rdtsc();
     let mut response_buf = Vec::with_capacity(65536);
     let mut read_buf = [0u8; 4096];
     let mut headers_done = false;
@@ -222,17 +264,102 @@ pub fn request(req: &Request) -> Result<Response, &'static str> {
     let mut body_received = 0usize;
 
     loop {
-        match tls.recv(&mut read_buf) {
-            Ok(0) => break,
+        // Check timeout
+        if crate::kernel::rdtsc().saturating_sub(start) > timeout_ticks {
+            crate::kprintln!("[http] response timeout after {} bytes", response_buf.len());
+            break;
+        }
+
+        // Poll for incoming network frames
+        super::tcp::process_incoming();
+
+        let n = super::tcp::recv(conn_id, &mut read_buf);
+        if n > 0 {
+            response_buf.extend_from_slice(&read_buf[..n as usize]);
+
+            if !headers_done {
+                if let Ok(text) = core::str::from_utf8(&response_buf) {
+                    if let Some(header_end) = text.find("\r\n\r\n") {
+                        headers_done = true;
+                        let header_text = &text[..header_end];
+                        for line in header_text.split("\r\n") {
+                            if crate::util::starts_with_ci(line, "content-length:") {
+                                if let Some(val) = line.split(':').nth(1) {
+                                    content_length = parse_usize(val.trim());
+                                }
+                            }
+                        }
+                        body_received = response_buf.len() - header_end - 4;
+                        // headers parsed
+                    }
+                }
+            } else {
+                body_received += n as usize;
+            }
+
+            if headers_done {
+                if let Some(cl) = content_length {
+                    if body_received >= cl {
+                        break;
+                    }
+                }
+            }
+
+            if response_buf.len() > 1_048_576 {
+                break;
+            }
+        } else if n == 0 {
+            // Connection closed by remote
+            if headers_done || !response_buf.is_empty() {
+                break;
+            }
+        }
+        // n < 0 means no data yet — keep polling
+    }
+
+    super::tcp::close(conn_id);
+
+    if response_buf.is_empty() {
+        return Err("empty response");
+    }
+
+    Response::parse(&response_buf)
+}
+
+/// Read a full HTTP response using a generic reader function.
+fn read_http_response_tcp<F>(mut reader: F) -> Result<Vec<u8>, &'static str>
+where
+    F: FnMut(&mut [u8]) -> Result<usize, &'static str>,
+{
+    let mut response_buf = Vec::with_capacity(65536);
+    let mut read_buf = [0u8; 4096];
+    let mut headers_done = false;
+    let mut content_length: Option<usize> = None;
+    let mut body_received = 0usize;
+    let mut retries = 0;
+    let max_retries = 5000;
+
+    loop {
+        match reader(&mut read_buf) {
+            Ok(0) => {
+                if headers_done {
+                    break;
+                }
+                retries += 1;
+                if retries > max_retries {
+                    break;
+                }
+                core::hint::spin_loop();
+                continue;
+            }
             Ok(n) => {
+                retries = 0;
                 response_buf.extend_from_slice(&read_buf[..n]);
 
-                // Check if we've received all headers
                 if !headers_done {
                     if let Ok(text) = core::str::from_utf8(&response_buf) {
                         if let Some(header_end) = text.find("\r\n\r\n") {
                             headers_done = true;
-                            // Extract Content-Length
                             let header_text = &text[..header_end];
                             for line in header_text.split("\r\n") {
                                 if crate::util::starts_with_ci(line, "content-length:") {
@@ -248,7 +375,6 @@ pub fn request(req: &Request) -> Result<Response, &'static str> {
                     body_received += n;
                 }
 
-                // Check if we've received the full body
                 if headers_done {
                     if let Some(cl) = content_length {
                         if body_received >= cl {
@@ -257,18 +383,24 @@ pub fn request(req: &Request) -> Result<Response, &'static str> {
                     }
                 }
 
-                // Safety limit
                 if response_buf.len() > 1_048_576 {
                     break;
                 }
             }
-            Err(_) => break,
+            Err(_) => {
+                retries += 1;
+                if retries > max_retries || headers_done {
+                    break;
+                }
+                core::hint::spin_loop();
+            }
         }
     }
 
-    tls.close()?;
-
-    Response::parse(&response_buf)
+    if response_buf.is_empty() {
+        return Err("empty response");
+    }
+    Ok(response_buf)
 }
 
 /// Convenience: POST JSON to an HTTPS endpoint.

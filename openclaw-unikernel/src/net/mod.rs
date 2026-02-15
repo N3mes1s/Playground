@@ -15,6 +15,7 @@ pub mod tcp;
 pub mod tls;
 pub mod http;
 pub mod dns;
+pub mod virtio;
 
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -55,6 +56,13 @@ pub fn init() {
     tcp::init();
     dns::init();
 
+    // Probe PCI and initialize virtio-net device
+    if virtio::init() {
+        crate::kernel::console::puts("[net] virtio-net NIC active\n");
+    } else {
+        crate::kernel::console::puts("[net] WARNING: no NIC found, networking will not work\n");
+    }
+
     NET_INITIALIZED.store(true, Ordering::SeqCst);
 }
 
@@ -66,6 +74,14 @@ pub fn config() -> &'static NetConfig {
 /// Check if the network stack is ready.
 pub fn is_ready() -> bool {
     NET_INITIALIZED.load(Ordering::Relaxed)
+}
+
+/// Poll the network for incoming frames.
+/// Should be called frequently from the main loop.
+pub fn poll() {
+    if NET_INITIALIZED.load(Ordering::Relaxed) {
+        tcp::process_incoming();
+    }
 }
 
 // ── Ethernet Frame ─────────────────────────────────────────────────────────

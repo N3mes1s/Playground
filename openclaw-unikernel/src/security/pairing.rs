@@ -72,9 +72,8 @@ impl PairingManager {
 
     /// Validate a bearer token.
     pub fn validate_token(&self, token: &str) -> bool {
-        // Strip "zc_" prefix if present
-        let token_data = token.strip_prefix("zc_").unwrap_or(token);
-        let hash = sha256_simple(token_data.as_bytes());
+        // Hash the full token as-is (including "zc_" prefix) to match how it was stored
+        let hash = sha256_simple(token.as_bytes());
 
         for stored_hash in &self.token_hashes {
             if constant_time_bytes_eq(&hash, stored_hash) {

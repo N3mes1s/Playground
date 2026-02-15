@@ -17,102 +17,110 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use alloc::format;
 
+/// Listener ID, stored after first listen call
+static mut LISTENER_ID: Option<usize> = None;
+
 /// Start the HTTP gateway on the given port.
 pub fn start(port: u16) {
     crate::kprintln!("[gateway] starting on port {}", port);
 
-    // Spawn a listener task in the cooperative scheduler
-    crate::kernel::sched::spawn("gateway", alloc::boxed::Box::new(move || {
-        // Listen for TCP connections on the port
-        match crate::net::tcp::listen(port) {
-            Ok(listener_id) => {
-                process_connections(listener_id);
-            }
-            Err(e) => {
-                crate::kprintln!("[gateway] listen error: {}", e);
-            }
+    // Create the TCP listener immediately
+    match crate::net::tcp::listen(port) {
+        Ok(listener_id) => {
+            unsafe { LISTENER_ID = Some(listener_id); }
         }
+        Err(e) => {
+            crate::kprintln!("[gateway] listen error: {}", e);
+        }
+    }
+
+    // Spawn a non-blocking task: each poll handles at most one connection
+    crate::kernel::sched::spawn("gateway", alloc::boxed::Box::new(move || {
+        gateway_poll();
         false // Never completes
     }));
 }
 
-/// Accept and process incoming HTTP connections.
-fn process_connections(listener_id: usize) {
-    loop {
-        // Try to accept a pending connection from the listener
-        let conn_id = match crate::net::tcp::accept(listener_id) {
-            Some(id) => id,
-            None => {
-                // No pending connection — yield and retry
-                crate::kernel::sched::yield_now();
-                continue;
-            }
-        };
+/// Non-blocking gateway poll: try to accept one connection and handle it.
+/// Returns immediately if no connection is pending.
+fn gateway_poll() {
+    let listener_id = match unsafe { LISTENER_ID } {
+        Some(id) => id,
+        None => return,
+    };
 
-        // Read the raw HTTP request from the TCP connection
-        let mut request_buf = [0u8; 8192];
-        let mut total_read = 0;
-        let mut retries = 0;
-        let max_retries = 500;
+    // Try to accept a pending connection
+    let conn_id = match crate::net::tcp::accept(listener_id) {
+        Some(id) => id,
+        None => return, // No pending connection — return to scheduler
+    };
 
-        while total_read < request_buf.len() && retries < max_retries {
-            let n = crate::net::tcp::recv(conn_id, &mut request_buf[total_read..]);
-            if n > 0 {
-                total_read += n as usize;
-                // Check if we've received the end of HTTP headers
-                if contains_header_end(&request_buf[..total_read]) {
-                    // Check Content-Length to see if we need more body data
-                    let header_str = core::str::from_utf8(&request_buf[..total_read]).unwrap_or("");
-                    let header_end = find_header_end(header_str).unwrap_or(total_read);
-                    let content_length = extract_content_length(header_str);
-                    let body_received = total_read.saturating_sub(header_end);
-                    if body_received >= content_length {
-                        break;
-                    }
+    // Read the raw HTTP request (with network polling while waiting)
+    let mut request_buf = [0u8; 8192];
+    let mut total_read = 0;
+    let mut retries = 0;
+    let max_retries = 500;
+
+    while total_read < request_buf.len() && retries < max_retries {
+        // Poll network to receive more data
+        crate::net::tcp::process_incoming();
+
+        let n = crate::net::tcp::recv(conn_id, &mut request_buf[total_read..]);
+        if n > 0 {
+            total_read += n as usize;
+            // Check if we've received the end of HTTP headers
+            if contains_header_end(&request_buf[..total_read]) {
+                let header_str = core::str::from_utf8(&request_buf[..total_read]).unwrap_or("");
+                let header_end = find_header_end(header_str).unwrap_or(total_read);
+                let content_length = extract_content_length(header_str);
+                let body_received = total_read.saturating_sub(header_end);
+                if body_received >= content_length {
+                    break;
                 }
-            } else if n == 0 {
-                break; // Connection closed
-            } else {
-                retries += 1;
-                crate::kernel::sched::yield_now();
             }
+        } else if n == 0 {
+            break; // Connection closed
+        } else {
+            retries += 1;
+            // Brief yield to prevent busy-spinning, but keep polling network
+            core::hint::spin_loop();
         }
-
-        if total_read == 0 {
-            crate::net::tcp::close(conn_id);
-            continue;
-        }
-
-        // Parse the HTTP request
-        let raw = core::str::from_utf8(&request_buf[..total_read]).unwrap_or("");
-        let (method, path, body, auth) = parse_http_request(raw);
-
-        // Route to handler
-        let response = handle_request(&method, &path, &body, auth.as_deref());
-
-        // Build HTTP response
-        let status_text = match response.status {
-            200 => "OK",
-            201 => "Created",
-            202 => "Accepted",
-            400 => "Bad Request",
-            401 => "Unauthorized",
-            404 => "Not Found",
-            500 => "Internal Server Error",
-            _ => "OK",
-        };
-
-        let response_str = format!(
-            "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            response.status, status_text,
-            response.body.len(),
-            response.body
-        );
-
-        // Send response back over TCP
-        crate::net::tcp::send(conn_id, response_str.as_bytes());
-        crate::net::tcp::close(conn_id);
     }
+
+    if total_read == 0 {
+        crate::net::tcp::close(conn_id);
+        return;
+    }
+
+    // Parse the HTTP request
+    let raw = core::str::from_utf8(&request_buf[..total_read]).unwrap_or("");
+    let (method, path, body, auth) = parse_http_request(raw);
+
+    // Route to handler
+    let response = handle_request(&method, &path, &body, auth.as_deref());
+
+    // Build HTTP response
+    let status_text = match response.status {
+        200 => "OK",
+        201 => "Created",
+        202 => "Accepted",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        404 => "Not Found",
+        500 => "Internal Server Error",
+        _ => "OK",
+    };
+
+    let response_str = format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        response.status, status_text,
+        response.body.len(),
+        response.body
+    );
+
+    // Send response back over TCP
+    crate::net::tcp::send(conn_id, response_str.as_bytes());
+    crate::net::tcp::close(conn_id);
 }
 
 /// Check if the buffer contains the HTTP header terminator (\r\n\r\n).
@@ -183,6 +191,7 @@ fn handle_request(method: &str, path: &str, body: &str, auth: Option<&str>) -> H
         ("GET", "/export") => handle_export(auth),
         ("POST", "/import") => handle_import(body, auth),
         ("GET", "/identity") => handle_identity(),
+        ("POST", "/config") => handle_config_update(body, auth),
         _ => HttpResponse {
             status: 404,
             body: String::from("{\"error\":\"not found\"}"),
@@ -347,6 +356,35 @@ fn handle_import(body: &str, auth: Option<&str>) -> HttpResponse {
             status: 400,
             body: format!("{{\"error\":\"{}\"}}", e),
         },
+    }
+}
+
+fn handle_config_update(body: &str, auth: Option<&str>) -> HttpResponse {
+    let token = auth.and_then(|a| a.strip_prefix("Bearer "));
+    match token {
+        Some(t) if crate::security::validate_token(t) => {}
+        _ => {
+            return HttpResponse {
+                status: 401,
+                body: String::from("{\"error\":\"unauthorized\"}"),
+            };
+        }
+    }
+
+    // Parse JSON fields: api_key, provider, model
+    if let Some(key) = crate::providers::extract_json_string(body, "api_key") {
+        crate::config::update(|c| c.api_key = key.clone());
+    }
+    if let Some(provider) = crate::providers::extract_json_string(body, "provider") {
+        crate::config::update(|c| c.provider = provider.clone());
+    }
+    if let Some(model) = crate::providers::extract_json_string(body, "model") {
+        crate::config::update(|c| c.model = model.clone());
+    }
+
+    HttpResponse {
+        status: 200,
+        body: String::from("{\"status\":\"config updated\"}"),
     }
 }
 

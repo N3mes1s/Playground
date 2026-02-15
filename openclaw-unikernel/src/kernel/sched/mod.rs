@@ -97,9 +97,8 @@ pub fn tick() -> usize {
             None => return 0,
         };
 
+        // Pop-and-push-back in-place to avoid allocating a new VecDeque
         let len = queue.len();
-        let mut remaining = VecDeque::with_capacity(len);
-
         for _ in 0..len {
             if let Some(mut task) = queue.pop_front() {
                 let done = task.poll();
@@ -107,15 +106,14 @@ pub fn tick() -> usize {
                     if let Some(ref mut completed) = COMPLETED {
                         completed.push(task.id);
                     }
+                    // Task dropped — not pushed back
                 } else {
-                    remaining.push_back(task);
+                    queue.push_back(task);
                 }
             }
         }
 
-        let count = remaining.len();
-        *queue = remaining;
-        count
+        queue.len()
     }
 }
 

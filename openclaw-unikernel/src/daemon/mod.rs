@@ -180,6 +180,9 @@ pub fn run() -> ! {
     loop {
         tick_count += 1;
 
+        // Poll network for incoming frames (ARP, TCP, etc.)
+        crate::net::poll();
+
         // Poll all channels for new messages
         for channel in active_channels.iter_mut() {
             let messages = channel.poll_messages();

@@ -3,8 +3,8 @@
 //! A minimal TCP stack for the unikernel. Supports:
 //! - Active open (client connections — what we need for LLM APIs)
 //! - Passive open (server — for the gateway)
-//! - Basic flow control with sliding window
-//! - Retransmission with exponential backoff
+//! - ARP response (required for QEMU SLIRP networking)
+//! - TCP checksum (pseudo-header based)
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -41,26 +41,20 @@ pub struct TcpConnection {
     pub local_port: u16,
     pub remote_port: u16,
     pub remote_ip: [u8; 4],
-    /// Send sequence variables
-    pub snd_una: u32,   // Oldest unacknowledged
-    pub snd_nxt: u32,   // Next to send
-    pub snd_wnd: u16,   // Send window
-    /// Receive sequence variables
-    pub rcv_nxt: u32,   // Next expected
-    pub rcv_wnd: u16,   // Receive window
-    /// Buffers
+    pub snd_una: u32,
+    pub snd_nxt: u32,
+    pub snd_wnd: u16,
+    pub rcv_nxt: u32,
+    pub rcv_wnd: u16,
     pub send_buf: Vec<u8>,
     pub recv_buf: Vec<u8>,
-    /// Retransmission
     pub retransmit_count: u8,
     pub last_activity: u64,
 }
 
 impl TcpConnection {
     pub fn new(id: usize, remote_ip: [u8; 4], remote_port: u16) -> Self {
-        // Use a pseudo-random initial sequence number based on TSC
         let isn = (crate::kernel::rdtsc() & 0xFFFFFFFF) as u32;
-
         TcpConnection {
             id,
             state: TcpState::Closed,
@@ -105,7 +99,9 @@ pub fn connect(remote_ip: [u8; 4], remote_port: u16) -> Result<usize, &'static s
     let id = NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed);
     let mut conn = TcpConnection::new(id, remote_ip, remote_port);
 
-    // Send SYN
+    crate::kprintln!("[tcp] connect to {}.{}.{}.{}:{} (conn {})",
+        remote_ip[0], remote_ip[1], remote_ip[2], remote_ip[3], remote_port, id);
+
     let syn = build_segment(&conn, flags::SYN, &[]);
     transmit_segment(&conn, &syn);
     conn.snd_nxt = conn.snd_nxt.wrapping_add(1);
@@ -117,9 +113,8 @@ pub fn connect(remote_ip: [u8; 4], remote_port: u16) -> Result<usize, &'static s
         }
     }
 
-    // Wait for SYN-ACK (with timeout)
     let start = crate::kernel::rdtsc();
-    let timeout_ticks = 10_000_000_000u64; // ~5 seconds at 2GHz
+    let timeout_ticks = 10_000_000_000u64;
 
     loop {
         crate::kernel::sched::yield_now();
@@ -139,7 +134,6 @@ pub fn connect(remote_ip: [u8; 4], remote_port: u16) -> Result<usize, &'static s
         }
 
         if crate::kernel::rdtsc() - start > timeout_ticks {
-            // Clean up
             unsafe {
                 if let Some(ref mut conns) = CONNECTIONS {
                     conns.remove(&id);
@@ -175,10 +169,8 @@ pub fn send(conn_id: usize, data: &[u8]) -> isize {
                     return -1;
                 }
 
-                // Buffer the data
                 conn.send_buf.extend_from_slice(data);
 
-                // Send in MSS-sized chunks (1460 bytes for standard Ethernet)
                 let mss = 1460;
                 while !conn.send_buf.is_empty() {
                     let end = core::cmp::min(conn.send_buf.len(), mss);
@@ -202,9 +194,9 @@ pub fn recv(conn_id: usize, buf: &mut [u8]) -> isize {
             if let Some(conn) = conns.get_mut(&conn_id) {
                 if conn.recv_buf.is_empty() {
                     if conn.state != TcpState::Established {
-                        return 0; // EOF
+                        return 0;
                     }
-                    return -1; // Would block
+                    return -1;
                 }
 
                 let len = core::cmp::min(buf.len(), conn.recv_buf.len());
@@ -233,7 +225,6 @@ pub fn close(conn_id: usize) {
 }
 
 /// Accept a pending connection on a listening socket.
-/// Returns the connection ID if a client has completed the handshake.
 pub fn accept(listener_id: usize) -> Option<usize> {
     process_incoming();
 
@@ -245,7 +236,6 @@ pub fn accept(listener_id: usize) -> Option<usize> {
             }
             let listen_port = listener.local_port;
 
-            // Find an Established connection on the same local port
             for (id, conn) in conns.iter() {
                 if *id != listener_id
                     && conn.local_port == listen_port
@@ -259,28 +249,276 @@ pub fn accept(listener_id: usize) -> Option<usize> {
     None
 }
 
-/// Process incoming TCP segments from the NIC.
-///
-/// Reads raw Ethernet frames from the virtio-net ring buffer, parses
-/// through the Ethernet → IPv4 → TCP pipeline, matches to an existing
-/// connection or creates a new one for SYN on a listening port, and
-/// drives the TCP state machine.
-pub fn process_incoming() {
-    // Read raw frame from the virtio-net device ring buffer
-    let raw_frame = match read_nic_frame() {
-        Some(frame) => frame,
-        None => return,
-    };
+// ── Virtio-net NIC state ────────────────────────────────────────────────
 
-    // Parse Ethernet → IPv4 → TCP
-    let eth = match super::EthFrame::parse(&raw_frame) {
-        Some(f) if f.ether_type == super::EtherType::Ipv4 as u16 => f,
-        _ => return,
-    };
+const VIRTIO_NET_HDR_SIZE: usize = 10;
+const BUF_SIZE: usize = 2048;
+const QUEUE_SIZE: usize = 256;
+const AVAIL_OFFSET: usize = QUEUE_SIZE * 16;
+const USED_OFFSET: usize = 8192;
+
+// RX state
+static mut RX_QUEUE_BASE: usize = 0;
+static mut RX_BUFS_BASE: usize = 0;
+static mut RX_QUEUE_SIZE: usize = 0;
+static mut RX_LAST_USED: u16 = 0;
+
+// TX state
+static mut TX_QUEUE_BASE: usize = 0;
+static mut TX_BUFS_BASE: usize = 0;
+static mut TX_QUEUE_SIZE: usize = 0;
+static mut TX_AVAIL_IDX: u16 = 0;
+static mut TX_IO_BASE: u16 = 0;
+
+// Learned gateway MAC (from ARP replies)
+pub static mut GATEWAY_MAC: [u8; 6] = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+pub static mut GATEWAY_MAC_LEARNED: bool = false;
+
+// Debug counter
+
+/// Called by virtio.rs after queue setup.
+pub fn init_nic_rx_virtio(queue_base: usize, bufs_base: usize, size: usize) {
+    unsafe {
+        RX_QUEUE_BASE = queue_base;
+        RX_BUFS_BASE = bufs_base;
+        RX_QUEUE_SIZE = size;
+        RX_LAST_USED = 0;
+    }
+}
+
+pub fn init_nic_tx_virtio(queue_base: usize, bufs_base: usize, size: usize, io_base: u16) {
+    unsafe {
+        TX_QUEUE_BASE = queue_base;
+        TX_BUFS_BASE = bufs_base;
+        TX_QUEUE_SIZE = size;
+        TX_AVAIL_IDX = 0;
+        TX_IO_BASE = io_base;
+    }
+}
+
+// Keep old stubs for backward compat
+pub fn init_nic_rx(_: usize) {}
+pub fn init_nic_tx(_: usize, _: usize) {}
+
+/// Read a raw Ethernet frame from the virtio-net RX queue.
+pub fn read_nic_frame() -> Option<Vec<u8>> {
+    unsafe {
+        if RX_QUEUE_BASE == 0 {
+            return None;
+        }
+
+        // Read and clear ISR to acknowledge any pending notifications
+        let _isr = super::virtio::read_isr();
+
+        let used_idx = core::ptr::read_volatile(
+            (RX_QUEUE_BASE + USED_OFFSET + 2) as *const u16,
+        );
+
+        if used_idx == RX_LAST_USED {
+            return None;
+        }
+
+        let used_entry = RX_QUEUE_BASE + USED_OFFSET + 4
+            + ((RX_LAST_USED as usize) % RX_QUEUE_SIZE) * 8;
+        let desc_id = core::ptr::read_volatile(used_entry as *const u32) as usize;
+        let total_len = core::ptr::read_volatile((used_entry + 4) as *const u32) as usize;
+
+        if desc_id >= RX_QUEUE_SIZE || total_len <= VIRTIO_NET_HDR_SIZE || total_len > BUF_SIZE {
+            RX_LAST_USED = RX_LAST_USED.wrapping_add(1);
+            re_enqueue_rx(desc_id);
+            return None;
+        }
+
+        let buf_addr = RX_BUFS_BASE + desc_id * BUF_SIZE;
+        let frame_len = total_len - VIRTIO_NET_HDR_SIZE;
+        let frame_start = buf_addr + VIRTIO_NET_HDR_SIZE;
+
+        let mut frame = Vec::with_capacity(frame_len);
+        for i in 0..frame_len {
+            frame.push(core::ptr::read_volatile((frame_start + i) as *const u8));
+        }
+
+        RX_LAST_USED = RX_LAST_USED.wrapping_add(1);
+        re_enqueue_rx(desc_id);
+
+        Some(frame)
+    }
+}
+
+unsafe fn re_enqueue_rx(desc_id: usize) {
+    let avail_idx = core::ptr::read_volatile(
+        (RX_QUEUE_BASE + AVAIL_OFFSET + 2) as *const u16,
+    );
+    let ring_slot = (avail_idx as usize) % RX_QUEUE_SIZE;
+    core::ptr::write_volatile(
+        (RX_QUEUE_BASE + AVAIL_OFFSET + 4 + ring_slot * 2) as *mut u16,
+        desc_id as u16,
+    );
+    core::ptr::write_volatile(
+        (RX_QUEUE_BASE + AVAIL_OFFSET + 2) as *mut u16,
+        avail_idx.wrapping_add(1),
+    );
+    // Notify device (queue 0 = receiveq)
+    if TX_IO_BASE != 0 {
+        core::arch::asm!(
+            "out dx, ax",
+            in("dx") TX_IO_BASE + 0x10u16,
+            in("ax") 0u16,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+}
+
+/// Send a raw Ethernet frame via the virtio-net TX queue.
+pub fn send_raw_frame(frame: &[u8]) {
+    unsafe {
+        if TX_QUEUE_BASE == 0 || frame.is_empty() {
+            return;
+        }
+
+        let desc_idx = (TX_AVAIL_IDX as usize) % TX_QUEUE_SIZE;
+        let buf_addr = TX_BUFS_BASE + desc_idx * BUF_SIZE;
+        let total_len = VIRTIO_NET_HDR_SIZE + frame.len();
+
+        if total_len > BUF_SIZE {
+            return;
+        }
+
+        // Virtio-net header (10 bytes of zeros)
+        for i in 0..VIRTIO_NET_HDR_SIZE {
+            core::ptr::write_volatile((buf_addr + i) as *mut u8, 0);
+        }
+        // Ethernet frame data
+        for i in 0..frame.len() {
+            core::ptr::write_volatile(
+                (buf_addr + VIRTIO_NET_HDR_SIZE + i) as *mut u8,
+                frame[i],
+            );
+        }
+
+        // Update descriptor length
+        let desc_addr = TX_QUEUE_BASE + desc_idx * 16;
+        core::ptr::write_volatile((desc_addr + 8) as *mut u32, total_len as u32);
+        core::ptr::write_volatile((desc_addr + 12) as *mut u16, 0); // flags = read
+        core::ptr::write_volatile((desc_addr + 14) as *mut u16, 0); // no chain
+
+        // Add to available ring
+        let avail_idx = TX_AVAIL_IDX;
+        let ring_slot = (avail_idx as usize) % TX_QUEUE_SIZE;
+        core::ptr::write_volatile(
+            (TX_QUEUE_BASE + AVAIL_OFFSET + 4 + ring_slot * 2) as *mut u16,
+            desc_idx as u16,
+        );
+        TX_AVAIL_IDX = avail_idx.wrapping_add(1);
+        core::ptr::write_volatile(
+            (TX_QUEUE_BASE + AVAIL_OFFSET + 2) as *mut u16,
+            TX_AVAIL_IDX,
+        );
+
+        // Notify device (queue 1 = transmitq)
+        if TX_IO_BASE != 0 {
+            core::arch::asm!(
+                "out dx, ax",
+                in("dx") TX_IO_BASE + 0x10u16,
+                in("ax") 1u16,
+                options(nomem, nostack, preserves_flags)
+            );
+        }
+    }
+}
+
+// ── Packet Processing ───────────────────────────────────────────────────
+
+/// Process incoming network frames: ARP + TCP.
+/// Drains all available frames from the RX queue.
+pub fn process_incoming() {
+    // Process up to 32 frames per call to avoid starving the caller
+    for _ in 0..32 {
+        let raw_frame = match read_nic_frame() {
+            Some(frame) => frame,
+            None => return,
+        };
+
+        let eth = match super::EthFrame::parse(&raw_frame) {
+            Some(f) => f,
+            None => continue,
+        };
+
+        match eth.ether_type {
+            0x0806 => handle_arp(&eth.payload),
+            0x0800 => handle_ipv4(&eth),
+            _ => {}
+        }
+    }
+}
+
+fn handle_arp(data: &[u8]) {
+    if data.len() < 28 {
+        return;
+    }
+
+    let operation = ((data[6] as u16) << 8) | data[7] as u16;
+    let sender_ip = [data[14], data[15], data[16], data[17]];
+    let gw_ip = super::config().gateway;
+
+    // Learn gateway MAC from any ARP packet from the gateway IP
+    if sender_ip == gw_ip {
+        unsafe {
+            GATEWAY_MAC.copy_from_slice(&data[8..14]);
+            if !GATEWAY_MAC_LEARNED {
+                GATEWAY_MAC_LEARNED = true;
+                crate::kprintln!("[net] learned gateway MAC: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+                    GATEWAY_MAC[0], GATEWAY_MAC[1], GATEWAY_MAC[2],
+                    GATEWAY_MAC[3], GATEWAY_MAC[4], GATEWAY_MAC[5]);
+            }
+        }
+    }
+
+    if operation == 1 {
+        // ARP Request - respond if it's for our IP
+        let target_ip = [data[24], data[25], data[26], data[27]];
+        let our_ip = super::config().ip_addr;
+        if target_ip != our_ip {
+            return;
+        }
+
+        crate::kprintln!("[net] ARP request for our IP, sending reply");
+
+        let cfg = super::config();
+        let mut reply = Vec::with_capacity(28);
+        reply.extend_from_slice(&[0x00, 0x01]); // HW type: Ethernet
+        reply.extend_from_slice(&[0x08, 0x00]); // Proto: IPv4
+        reply.extend_from_slice(&[6, 4]);       // HW/Proto sizes
+        reply.extend_from_slice(&[0x00, 0x02]); // Op: Reply
+        reply.extend_from_slice(&cfg.mac_addr);
+        reply.extend_from_slice(&cfg.ip_addr);
+        reply.extend_from_slice(&data[8..14]);  // Target MAC (sender of request)
+        reply.extend_from_slice(&data[14..18]); // Target IP (sender of request)
+
+        let mut dst_mac = [0u8; 6];
+        dst_mac.copy_from_slice(&data[8..14]);
+
+        let frame = super::EthFrame {
+            dst_mac,
+            src_mac: cfg.mac_addr,
+            ether_type: 0x0806,
+            payload: reply,
+        };
+
+        send_raw_frame(&frame.serialize());
+    } else if operation == 2 {
+        // ARP Reply - we already learned the MAC above
+        crate::kprintln!("[net] ARP reply from {}.{}.{}.{}",
+            sender_ip[0], sender_ip[1], sender_ip[2], sender_ip[3]);
+    }
+}
+
+fn handle_ipv4(eth: &super::EthFrame) {
     let ip = match super::Ipv4Packet::parse(&eth.payload) {
         Some(p) if p.protocol == super::IpProtocol::Tcp as u8 => p,
         _ => return,
     };
+
     let tcp_data = &ip.payload;
     if tcp_data.len() < 20 {
         return;
@@ -293,14 +531,19 @@ pub fn process_incoming() {
     let data_offset = ((tcp_data[12] >> 4) as usize) * 4;
     let tcp_flags = tcp_data[13];
     let window = ((tcp_data[14] as u16) << 8) | (tcp_data[15] as u16);
-    let payload = if data_offset < tcp_data.len() { &tcp_data[data_offset..] } else { &[] };
+    let payload = if data_offset < tcp_data.len() {
+        &tcp_data[data_offset..]
+    } else {
+        &[]
+    };
 
     unsafe {
         if let Some(ref mut conns) = CONNECTIONS {
-            // Match existing connection by (local_port, remote_port, remote_ip)
-            let matched_id = conns.iter()
+            let matched_id = conns
+                .iter()
                 .find(|(_, c)| {
-                    c.local_port == dst_port && c.remote_port == src_port
+                    c.local_port == dst_port
+                        && c.remote_port == src_port
                         && c.remote_ip == ip.src_ip
                 })
                 .map(|(id, _)| *id);
@@ -310,8 +553,8 @@ pub fn process_incoming() {
                     process_segment(conn, tcp_flags, seq_num, ack_num, window, payload);
                 }
             } else if tcp_flags & flags::SYN != 0 {
-                // New incoming SYN — check for a listener on this port
-                let has_listener = conns.values()
+                let has_listener = conns
+                    .values()
                     .any(|c| c.state == TcpState::Listen && c.local_port == dst_port);
 
                 if has_listener {
@@ -321,7 +564,6 @@ pub fn process_incoming() {
                     new_conn.rcv_nxt = seq_num.wrapping_add(1);
                     new_conn.state = TcpState::SynReceived;
 
-                    // Send SYN-ACK
                     let syn_ack = build_segment(&new_conn, flags::SYN | flags::ACK, &[]);
                     transmit_segment(&new_conn, &syn_ack);
                     new_conn.snd_nxt = new_conn.snd_nxt.wrapping_add(1);
@@ -333,7 +575,6 @@ pub fn process_incoming() {
     }
 }
 
-/// Drive the TCP state machine for a received segment.
 fn process_segment(
     conn: &mut TcpConnection,
     tcp_flags: u8,
@@ -417,183 +658,95 @@ fn process_segment(
     }
 }
 
-/// Read a raw Ethernet frame from the virtio-net receive ring.
-/// Returns None if no frame is pending in the ring buffer.
-/// Public for use by the DNS resolver for receiving UDP responses.
-pub fn read_nic_frame() -> Option<Vec<u8>> {
-    unsafe {
-        if NET_RX_RING_BASE == 0 {
-            return None; // NIC not initialized
-        }
+// ── Segment building and transmission ───────────────────────────────────
 
-        let used_idx = core::ptr::read_volatile(
-            (NET_RX_RING_BASE + NET_RX_USED_OFFSET) as *const u16
-        );
-
-        if used_idx == NET_RX_LAST_SEEN {
-            return None;
-        }
-
-        let desc_idx = (NET_RX_LAST_SEEN as usize) % NET_RX_RING_SIZE;
-        let buf_addr = core::ptr::read_volatile(
-            (NET_RX_RING_BASE + desc_idx * 16) as *const u64
-        ) as *const u8;
-        let buf_len = core::ptr::read_volatile(
-            (NET_RX_RING_BASE + desc_idx * 16 + 8) as *const u32
-        ) as usize;
-
-        if buf_addr.is_null() || buf_len == 0 || buf_len > 2048 {
-            NET_RX_LAST_SEEN = NET_RX_LAST_SEEN.wrapping_add(1);
-            return None;
-        }
-
-        let mut frame = Vec::with_capacity(buf_len);
-        for i in 0..buf_len {
-            frame.push(core::ptr::read_volatile(buf_addr.add(i)));
-        }
-
-        NET_RX_LAST_SEEN = NET_RX_LAST_SEEN.wrapping_add(1);
-        core::ptr::write_volatile(
-            (NET_RX_RING_BASE + NET_RX_AVAIL_OFFSET) as *mut u16,
-            NET_RX_LAST_SEEN,
-        );
-
-        Some(frame)
-    }
-}
-
-// Virtio-net receive ring buffer state
-static mut NET_RX_RING_BASE: usize = 0;
-static mut NET_RX_LAST_SEEN: u16 = 0;
-const NET_RX_RING_SIZE: usize = 256;
-const NET_RX_USED_OFFSET: usize = 4096;
-const NET_RX_AVAIL_OFFSET: usize = 2048;
-
-// Virtio-net transmit ring buffer state
-static mut NET_TX_RING_BASE: usize = 0;
-static mut NET_TX_NEXT_DESC: u16 = 0;
-static mut NET_TX_NOTIFY_ADDR: usize = 0;
-const NET_TX_RING_SIZE: usize = 256;
-const NET_TX_AVAIL_OFFSET: usize = 2048;
-
-/// Initialize virtio-net receive ring base address.
-pub fn init_nic_rx(ring_base: usize) {
-    unsafe {
-        NET_RX_RING_BASE = ring_base;
-        NET_RX_LAST_SEEN = 0;
-    }
-}
-
-/// Initialize virtio-net transmit ring base address.
-pub fn init_nic_tx(ring_base: usize, notify_addr: usize) {
-    unsafe {
-        NET_TX_RING_BASE = ring_base;
-        NET_TX_NEXT_DESC = 0;
-        NET_TX_NOTIFY_ADDR = notify_addr;
-    }
-}
-
-/// Build a TCP segment.
 fn build_segment(conn: &TcpConnection, tcp_flags: u8, payload: &[u8]) -> Vec<u8> {
+    let cfg = super::config();
     let mut segment = Vec::with_capacity(20 + payload.len());
 
-    // Source port
     segment.push((conn.local_port >> 8) as u8);
     segment.push(conn.local_port as u8);
-    // Destination port
     segment.push((conn.remote_port >> 8) as u8);
     segment.push(conn.remote_port as u8);
-    // Sequence number
     segment.push((conn.snd_nxt >> 24) as u8);
     segment.push((conn.snd_nxt >> 16) as u8);
     segment.push((conn.snd_nxt >> 8) as u8);
     segment.push(conn.snd_nxt as u8);
-    // Acknowledgment number
     segment.push((conn.rcv_nxt >> 24) as u8);
     segment.push((conn.rcv_nxt >> 16) as u8);
     segment.push((conn.rcv_nxt >> 8) as u8);
     segment.push(conn.rcv_nxt as u8);
-    // Data offset (5 × 4 = 20 bytes header) + reserved
-    segment.push(0x50);
-    // Flags
+    segment.push(0x50); // data offset = 5 words
     segment.push(tcp_flags);
-    // Window size
     segment.push((conn.rcv_wnd >> 8) as u8);
     segment.push(conn.rcv_wnd as u8);
-    // Checksum (placeholder)
+    segment.push(0x00); // checksum placeholder
     segment.push(0x00);
+    segment.push(0x00); // urgent pointer
     segment.push(0x00);
-    // Urgent pointer
-    segment.push(0x00);
-    segment.push(0x00);
-
-    // Payload
     segment.extend_from_slice(payload);
 
-    // TODO: compute TCP checksum with pseudo-header
+    // Compute TCP checksum with pseudo-header
+    let tcp_len = segment.len() as u16;
+    let checksum = tcp_checksum(&cfg.ip_addr, &conn.remote_ip, &segment, tcp_len);
+    segment[16] = (checksum >> 8) as u8;
+    segment[17] = checksum as u8;
 
     segment
 }
 
-/// Transmit a TCP segment by wrapping it in IPv4 and Ethernet.
+fn tcp_checksum(src_ip: &[u8; 4], dst_ip: &[u8; 4], segment: &[u8], tcp_len: u16) -> u16 {
+    let mut sum: u32 = 0;
+
+    // Pseudo-header
+    sum += ((src_ip[0] as u32) << 8) | (src_ip[1] as u32);
+    sum += ((src_ip[2] as u32) << 8) | (src_ip[3] as u32);
+    sum += ((dst_ip[0] as u32) << 8) | (dst_ip[1] as u32);
+    sum += ((dst_ip[2] as u32) << 8) | (dst_ip[3] as u32);
+    sum += 6u32; // Protocol = TCP
+    sum += tcp_len as u32;
+
+    // TCP header + data
+    let mut i = 0;
+    while i + 1 < segment.len() {
+        sum += ((segment[i] as u32) << 8) | (segment[i + 1] as u32);
+        i += 2;
+    }
+    if i < segment.len() {
+        sum += (segment[i] as u32) << 8;
+    }
+
+    while (sum >> 16) != 0 {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+
+    !sum as u16
+}
+
 fn transmit_segment(conn: &TcpConnection, segment: &[u8]) {
+    let cfg = super::config();
+
     let ip_packet = super::Ipv4Packet::new(
         conn.remote_ip,
         super::IpProtocol::Tcp as u8,
         segment.to_vec(),
     );
 
+    // Use learned gateway MAC, or broadcast if not yet learned
+    let dst_mac = unsafe {
+        if GATEWAY_MAC_LEARNED {
+            GATEWAY_MAC
+        } else {
+            [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+        }
+    };
+
     let frame = super::EthFrame {
-        dst_mac: [0xFF; 6], // Would be resolved via ARP
-        src_mac: super::config().mac_addr,
+        dst_mac,
+        src_mac: cfg.mac_addr,
         ether_type: super::EtherType::Ipv4 as u16,
         payload: ip_packet.serialize(),
     };
 
-    let frame_bytes = frame.serialize();
-    send_raw_frame(&frame_bytes);
-}
-
-/// Send a raw Ethernet frame through the virtio-net transmit ring.
-/// Also used by the DNS resolver for sending UDP packets.
-pub fn send_raw_frame(frame: &[u8]) {
-    unsafe {
-        if NET_TX_RING_BASE == 0 {
-            return; // NIC not initialized
-        }
-
-        let desc_idx = (NET_TX_NEXT_DESC as usize) % NET_TX_RING_SIZE;
-
-        // Write frame data to the descriptor's buffer
-        let buf_addr = core::ptr::read_volatile(
-            (NET_TX_RING_BASE + desc_idx * 16) as *const u64
-        ) as *mut u8;
-
-        if buf_addr.is_null() {
-            return;
-        }
-
-        let len = core::cmp::min(frame.len(), 2048);
-        for i in 0..len {
-            core::ptr::write_volatile(buf_addr.add(i), frame[i]);
-        }
-
-        // Write the length to the descriptor
-        core::ptr::write_volatile(
-            (NET_TX_RING_BASE + desc_idx * 16 + 8) as *mut u32,
-            len as u32,
-        );
-
-        // Advance the available ring index
-        NET_TX_NEXT_DESC = NET_TX_NEXT_DESC.wrapping_add(1);
-        core::ptr::write_volatile(
-            (NET_TX_RING_BASE + NET_TX_AVAIL_OFFSET) as *mut u16,
-            NET_TX_NEXT_DESC,
-        );
-
-        // Notify the device (write to the queue notify register)
-        if NET_TX_NOTIFY_ADDR != 0 {
-            core::ptr::write_volatile(NET_TX_NOTIFY_ADDR as *mut u32, 1);
-        }
-    }
+    send_raw_frame(&frame.serialize());
 }
