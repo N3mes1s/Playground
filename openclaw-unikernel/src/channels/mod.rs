@@ -32,6 +32,65 @@ use alloc::format;
 
 static mut WEBHOOK_QUEUE: Option<Vec<ChannelMessage>> = None;
 
+// ── Webhook response store ──────────────────────────────────────────────
+// Stores agent responses so they can be polled via GET /messages.
+
+static mut RESPONSE_QUEUE: Option<Vec<WebhookResponse>> = None;
+
+/// A stored webhook response.
+#[derive(Debug, Clone)]
+pub struct WebhookResponse {
+    pub user_message: String,
+    pub agent_response: String,
+    pub timestamp: u64,
+}
+
+/// Initialize the response store (called alongside webhook queue init).
+pub fn init_response_store() {
+    unsafe {
+        RESPONSE_QUEUE = Some(Vec::new());
+    }
+}
+
+/// Push an agent response into the store.
+pub fn push_response(user_msg: &str, response: &str) {
+    unsafe {
+        if let Some(ref mut queue) = RESPONSE_QUEUE {
+            queue.push(WebhookResponse {
+                user_message: String::from(user_msg),
+                agent_response: String::from(response),
+                timestamp: crate::kernel::rdtsc(),
+            });
+            // Keep at most 50 responses
+            if queue.len() > 50 {
+                queue.remove(0);
+            }
+        }
+    }
+}
+
+/// Drain all responses (returns and clears the queue).
+pub fn drain_responses() -> Vec<WebhookResponse> {
+    unsafe {
+        if let Some(ref mut queue) = RESPONSE_QUEUE {
+            core::mem::take(queue)
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+/// Peek at all responses without draining.
+pub fn peek_responses() -> Vec<WebhookResponse> {
+    unsafe {
+        if let Some(ref queue) = RESPONSE_QUEUE {
+            queue.clone()
+        } else {
+            Vec::new()
+        }
+    }
+}
+
 /// Initialize the webhook message queue.
 pub fn init_webhook_queue() {
     unsafe {

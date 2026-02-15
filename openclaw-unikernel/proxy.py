@@ -81,8 +81,11 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
     do_DELETE = _proxy
     do_PATCH = _proxy
 
+class ReusableHTTPServer(http.server.HTTPServer):
+    allow_reuse_address = True
+
 if __name__ == '__main__':
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8080
-    server = http.server.HTTPServer(('0.0.0.0', port), ProxyHandler)
+    server = ReusableHTTPServer(('0.0.0.0', port), ProxyHandler)
     print(f"[proxy] listening on 0.0.0.0:{port}", file=sys.stderr)
     server.serve_forever()

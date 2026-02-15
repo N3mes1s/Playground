@@ -29,6 +29,21 @@ use alloc::format;
 pub struct Message {
     pub role: Role,
     pub content: String,
+    /// For role=tool: the ID of the tool call this is a result for
+    pub tool_call_id: Option<String>,
+    /// For role=assistant: tool calls the model requested
+    pub tool_calls: Option<Vec<ToolCall>>,
+}
+
+impl Message {
+    pub fn new(role: Role, content: &str) -> Self {
+        Message {
+            role,
+            content: String::from(content),
+            tool_call_id: None,
+            tool_calls: None,
+        }
+    }
 }
 
 /// Message roles.
@@ -158,18 +173,47 @@ impl OpenAiCompatibleClient {
     pub fn build_request_json(&self, messages: &[Message], tools: &[ToolSpec]) -> String {
         let mut json = String::from("{");
 
-        // Model
-        json.push_str(&format!("\"model\":\"{}\",", self.config.model));
+        // Model — read live config to support runtime model switching
+        let live_model = crate::config::get().model.clone();
+        let model = if live_model.is_empty() { &self.config.model } else { &live_model };
+        json.push_str(&format!("\"model\":\"{}\",", model));
 
         // Messages
         json.push_str("\"messages\":[");
         for (i, msg) in messages.iter().enumerate() {
             if i > 0 { json.push(','); }
-            json.push_str(&format!(
-                "{{\"role\":\"{}\",\"content\":{}}}",
-                msg.role.as_str(),
-                json_string_escape(&msg.content)
-            ));
+            json.push('{');
+            json.push_str(&format!("\"role\":\"{}\"", msg.role.as_str()));
+
+            // For assistant messages with tool_calls, content may be null
+            if msg.role == Role::Assistant && msg.tool_calls.is_some() {
+                if msg.content.is_empty() {
+                    json.push_str(",\"content\":null");
+                } else {
+                    json.push_str(&format!(",\"content\":{}", json_string_escape(&msg.content)));
+                }
+                // Serialize tool_calls array
+                if let Some(ref calls) = msg.tool_calls {
+                    json.push_str(",\"tool_calls\":[");
+                    for (j, tc) in calls.iter().enumerate() {
+                        if j > 0 { json.push(','); }
+                        json.push_str(&format!(
+                            "{{\"id\":\"{}\",\"type\":\"function\",\"function\":{{\"name\":\"{}\",\"arguments\":{}}}}}",
+                            tc.id, tc.name, json_string_escape(&tc.arguments)
+                        ));
+                    }
+                    json.push(']');
+                }
+            } else if msg.role == Role::Tool {
+                json.push_str(&format!(",\"content\":{}", json_string_escape(&msg.content)));
+                if let Some(ref tc_id) = msg.tool_call_id {
+                    json.push_str(&format!(",\"tool_call_id\":\"{}\"", tc_id));
+                }
+            } else {
+                json.push_str(&format!(",\"content\":{}", json_string_escape(&msg.content)));
+            }
+
+            json.push('}');
         }
         json.push_str("],");
 
@@ -208,11 +252,19 @@ impl OpenAiCompatibleClient {
     ) -> Result<CompletionResponse, String> {
         let body = self.build_request_json(messages, tools);
 
+        // Read live API key from global config (supports runtime updates via POST /config)
+        let live_key = crate::config::get().api_key.clone();
+        let api_key = if live_key.is_empty() || live_key == "OPENAI_API_KEY" {
+            &self.config.api_key
+        } else {
+            &live_key
+        };
+
         let response = crate::net::http::post_json(
             &self.host,
             &self.path,
             &body,
-            Some(&self.config.api_key),
+            Some(api_key),
         )
         .map_err(|e| String::from(e))?;
 
@@ -272,11 +324,17 @@ fn extract_tool_calls(json: &str) -> Vec<ToolCall> {
         let rest = &json[start..];
         if let Some(arr_start) = rest.find('[') {
             let arr_rest = &rest[arr_start..];
-            // Parse each tool call object
-            let mut depth = 0;
+            // Parse each tool call object in the array
+            // depth starts at 1 because we're inside the [ bracket
+            let mut depth: i32 = 1;
             let mut obj_start = None;
-            for (i, c) in arr_rest.char_indices() {
+            for (i, c) in arr_rest.char_indices().skip(1) {
                 match c {
+                    '[' => { depth += 1; }
+                    ']' => {
+                        depth -= 1;
+                        if depth <= 0 { break; }
+                    }
                     '{' => {
                         if depth == 1 && obj_start.is_none() {
                             obj_start = Some(i);
@@ -295,7 +353,6 @@ fn extract_tool_calls(json: &str) -> Vec<ToolCall> {
                             }
                         }
                     }
-                    ']' if depth <= 1 => break,
                     _ => {}
                 }
             }

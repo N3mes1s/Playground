@@ -44,10 +44,7 @@ impl Provider for OpenAiProvider {
 
     fn health_check(&self) -> Result<(), String> {
         // Send a minimal request to verify connectivity
-        let test_messages = [Message {
-            role: Role::User,
-            content: String::from("ping"),
-        }];
+        let test_messages = [Message::new(Role::User, "ping")];
 
         let config_backup = self.client.config.clone();
         let mut test_config = config_backup;

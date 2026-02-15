@@ -104,8 +104,9 @@ pub fn run() -> ! {
     // ── Create the agent ─────────────────────────────────────────────────
     let mut agent = Agent::new(provider, tool_registry, system_prompt);
 
-    // ── Initialize webhook message queue ───────────────────────────────
+    // ── Initialize webhook message queue + response store ──────────────
     channels::init_webhook_queue();
+    channels::init_response_store();
 
     // ── Create and start channels ────────────────────────────────────────
     let mut active_channels: Vec<Box<dyn Channel>> = Vec::new();
@@ -200,11 +201,14 @@ pub fn run() -> ! {
         // Drain webhook messages (from gateway HTTP endpoints and heartbeat)
         let webhook_msgs = channels::drain_webhook_messages();
         for msg in webhook_msgs {
+            let user_content = msg.content.clone();
             let response = agent.process_message(&msg);
             crate::kprintln!(
                 "[daemon] webhook response for {}: {} bytes",
                 msg.channel, response.len()
             );
+            // Store response so it can be retrieved via GET /messages
+            channels::push_response(&user_content, &response);
         }
 
         // Run scheduler tick (cooperative tasks)

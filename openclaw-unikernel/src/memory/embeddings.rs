@@ -64,11 +64,19 @@ impl EmbeddingProvider for OpenAiEmbeddingProvider {
             crate::providers::json_string_escape(text)
         );
 
+        // Read live API key from global config (supports runtime updates via POST /config)
+        let live_key = crate::config::get().api_key.clone();
+        let api_key = if live_key.is_empty() || live_key == "OPENAI_API_KEY" {
+            &self.api_key
+        } else {
+            &live_key
+        };
+
         let response = crate::net::http::post_json(
             &self.host,
             &self.path,
             &body,
-            Some(&self.api_key),
+            Some(api_key),
         ).map_err(|e| String::from(e))?;
 
         if !response.is_success() {

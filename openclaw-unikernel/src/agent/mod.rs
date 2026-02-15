@@ -73,10 +73,7 @@ impl Agent {
         let context = self.build_context(&msg.content);
 
         // Add user message to history
-        self.history.push(Message {
-            role: Role::User,
-            content: msg.content.clone(),
-        });
+        self.history.push(Message::new(Role::User, &msg.content));
 
         // Send to LLM with tool loop
         let response = self.completion_loop(&context);
@@ -91,10 +88,7 @@ impl Agent {
         }
 
         // Add to conversation history
-        self.history.push(Message {
-            role: Role::Assistant,
-            content: response.clone(),
-        });
+        self.history.push(Message::new(Role::Assistant, &response));
 
         // Trim history if too long
         while self.history.len() > self.max_history {
@@ -109,10 +103,7 @@ impl Agent {
         let mut messages = Vec::new();
 
         // System prompt
-        messages.push(Message {
-            role: Role::System,
-            content: self.system_prompt.clone(),
-        });
+        messages.push(Message::new(Role::System, &self.system_prompt));
 
         // Memory context
         let mem = memory::global();
@@ -130,10 +121,7 @@ impl Agent {
             }
             memory_context.push_str("[End memory context]\n");
 
-            messages.push(Message {
-                role: Role::System,
-                content: memory_context,
-            });
+            messages.push(Message::new(Role::System, &memory_context));
         }
 
         drop(mem); // Release the lock
@@ -172,13 +160,13 @@ impl Agent {
                 return response.content.unwrap_or_else(|| String::from("(no response)"));
             }
 
-            // Execute tool calls
-            if let Some(ref content) = response.content {
-                messages.push(Message {
-                    role: Role::Assistant,
-                    content: content.clone(),
-                });
-            }
+            // Execute tool calls — add assistant message with tool_calls, then tool results
+            messages.push(Message {
+                role: Role::Assistant,
+                content: response.content.clone().unwrap_or_default(),
+                tool_call_id: None,
+                tool_calls: Some(response.tool_calls.clone()),
+            });
 
             for tool_call in &response.tool_calls {
                 crate::kprintln!("[agent] tool call: {}({})",
@@ -193,15 +181,12 @@ impl Agent {
                     crate::util::truncate(&result.output, 80)
                 );
 
-                // Add tool result to messages
+                // Add tool result with proper tool_call_id for OpenAI
                 messages.push(Message {
                     role: Role::Tool,
-                    content: format!(
-                        "[Tool: {} | ID: {}]\n{}",
-                        tool_call.name,
-                        tool_call.id,
-                        result.output
-                    ),
+                    content: result.output,
+                    tool_call_id: Some(tool_call.id.clone()),
+                    tool_calls: None,
                 });
             }
         }

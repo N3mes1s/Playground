@@ -192,6 +192,7 @@ fn handle_request(method: &str, path: &str, body: &str, auth: Option<&str>) -> H
         ("POST", "/import") => handle_import(body, auth),
         ("GET", "/identity") => handle_identity(),
         ("POST", "/config") => handle_config_update(body, auth),
+        ("GET", "/messages") => handle_messages(auth),
         _ => HttpResponse {
             status: 404,
             body: String::from("{\"error\":\"not found\"}"),
@@ -386,6 +387,57 @@ fn handle_config_update(body: &str, auth: Option<&str>) -> HttpResponse {
         status: 200,
         body: String::from("{\"status\":\"config updated\"}"),
     }
+}
+
+fn handle_messages(auth: Option<&str>) -> HttpResponse {
+    let token = auth.and_then(|a| a.strip_prefix("Bearer "));
+    match token {
+        Some(t) if crate::security::validate_token(t) => {}
+        _ => {
+            return HttpResponse {
+                status: 401,
+                body: String::from("{\"error\":\"unauthorized\"}"),
+            };
+        }
+    }
+
+    let responses = crate::channels::drain_responses();
+    let mut json = String::from("[");
+    for (i, r) in responses.iter().enumerate() {
+        if i > 0 { json.push(','); }
+        // Escape the strings for JSON
+        let user_esc = json_escape(&r.user_message);
+        let agent_esc = json_escape(&r.agent_response);
+        json.push_str(&format!(
+            "{{\"user\":\"{}\",\"agent\":\"{}\",\"ts\":{}}}",
+            user_esc, agent_esc, r.timestamp
+        ));
+    }
+    json.push(']');
+
+    HttpResponse {
+        status: 200,
+        body: json,
+    }
+}
+
+/// Escape special characters for JSON string values.
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 16);
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                out.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 fn handle_identity() -> HttpResponse {
