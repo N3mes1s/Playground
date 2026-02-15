@@ -20,7 +20,7 @@ use crate::tools::ToolRegistry;
 use crate::memory::{self, MemoryCategory, Memory};
 
 /// Maximum number of tool-call rounds before forcing a response.
-const MAX_TOOL_ROUNDS: usize = 10;
+const MAX_TOOL_ROUNDS: usize = 3; // Keep tight for memory efficiency during long autonomous runs
 
 /// Maximum memory context entries per turn.
 const MAX_MEMORY_CONTEXT: usize = 5;
@@ -182,9 +182,17 @@ impl Agent {
                 );
 
                 // Add tool result with proper tool_call_id for OpenAI
+                // Truncate tool output to prevent context bloat during long runs
+                let truncated_output = if result.output.len() > 1000 {
+                    let mut trunc = crate::util::truncate(&result.output, 1000);
+                    trunc.push_str("\n...(truncated)");
+                    trunc
+                } else {
+                    result.output
+                };
                 messages.push(Message {
                     role: Role::Tool,
-                    content: result.output,
+                    content: truncated_output,
                     tool_call_id: Some(tool_call.id.clone()),
                     tool_calls: None,
                 });

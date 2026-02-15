@@ -49,7 +49,7 @@ impl Default for AgentConfig {
             model: String::from("gpt-4o"),
             api_key: String::new(),
             temperature: 0.7,
-            max_tokens: 4096,
+            max_tokens: 512, // Conservative for long autonomous runs
             gateway_port: 3000,
             gateway_host: String::from("0.0.0.0"),
             autonomy_level: String::from("supervised"),
