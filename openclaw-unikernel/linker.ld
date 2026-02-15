@@ -13,6 +13,7 @@ SECTIONS
     .boot :
     {
         KEEP(*(.multiboot_header))
+        *(.boot_text)
     }
 
     /* Kernel sections starting at 2 MiB */
