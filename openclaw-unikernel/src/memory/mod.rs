@@ -272,11 +272,32 @@ impl InKernelMemory {
     }
 }
 
+/// Maximum number of memory entries before eviction kicks in.
+const MAX_MEMORY_ENTRIES: usize = 50;
+
 impl Memory for InKernelMemory {
     fn store(&mut self, key: &str, content: &str, category: MemoryCategory) -> Result<(), String> {
         // Remove old entry if it exists
         if let Some(old) = self.entries.remove(key) {
             self.unindex_document(key, &old.content);
+        }
+
+        // Evict oldest non-core entries if we're at capacity
+        while self.entries.len() >= MAX_MEMORY_ENTRIES {
+            // Find the oldest non-core entry
+            let victim = self.entries.iter()
+                .filter(|(_, e)| e.category != MemoryCategory::Core)
+                .min_by_key(|(_, e)| e.timestamp)
+                .map(|(k, _)| k.clone());
+
+            if let Some(victim_key) = victim {
+                if let Some(old) = self.entries.remove(&victim_key) {
+                    self.unindex_document(&victim_key, &old.content);
+                    crate::kprintln!("[memory] evicted: {}", victim_key);
+                }
+            } else {
+                break; // All entries are core, can't evict
+            }
         }
 
         let entry = MemoryEntry {

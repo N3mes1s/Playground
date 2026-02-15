@@ -19,11 +19,11 @@ use crate::channels::{self, ChannelMessage};
 use crate::tools::ToolRegistry;
 use crate::memory::{self, MemoryCategory, Memory};
 
-/// Maximum number of tool-call rounds before forcing a response.
-const MAX_TOOL_ROUNDS: usize = 3; // Keep tight for memory efficiency during long autonomous runs
+/// Maximum number of tool-call rounds before stopping.
+const MAX_TOOL_ROUNDS: usize = 3;
 
 /// Maximum memory context entries per turn.
-const MAX_MEMORY_CONTEXT: usize = 5;
+const MAX_MEMORY_CONTEXT: usize = 3;
 
 /// The agent state.
 pub struct Agent {
@@ -78,8 +78,8 @@ impl Agent {
         // Send to LLM with tool loop
         let response = self.completion_loop(&context);
 
-        // Store assistant response in memory
-        {
+        // Store assistant response in memory (only if meaningful)
+        if response.len() > 30 {
             let mem = memory::global();
             let mut mem = mem.lock();
             let key = format!("assistant-{}", crate::kernel::rdtsc());
@@ -135,9 +135,11 @@ impl Agent {
     }
 
     /// The main completion loop — handles tool calls iteratively.
+    /// Returns either a text response or a summary of tool actions.
     fn completion_loop(&self, initial_context: &[Message]) -> String {
         let mut messages: Vec<Message> = initial_context.to_vec();
         let tool_specs = self.tools.specs();
+        let mut tool_log: Vec<String> = Vec::new();
 
         for round in 0..MAX_TOOL_ROUNDS {
             crate::kprintln!("[agent] LLM request (round {})", round + 1);
@@ -157,10 +159,18 @@ impl Agent {
 
             // If no tool calls, return the content
             if response.tool_calls.is_empty() {
-                return response.content.unwrap_or_else(|| String::from("(no response)"));
+                let text = response.content.unwrap_or_else(|| String::from("(no response)"));
+                // If we have tool results and text, combine them
+                if !tool_log.is_empty() && text.len() > 5 {
+                    return format!("{}\n\nActions: {}", text, tool_log.join(", "));
+                }
+                return text;
             }
 
-            // Execute tool calls — add assistant message with tool_calls, then tool results
+            // If model returned text AND tool calls, capture it
+            let _content_text = response.content.clone().unwrap_or_default();
+
+            // Execute tool calls
             messages.push(Message {
                 role: Role::Assistant,
                 content: response.content.clone().unwrap_or_default(),
@@ -181,10 +191,13 @@ impl Agent {
                     crate::util::truncate(&result.output, 80)
                 );
 
+                // Log what was done
+                tool_log.push(format!("{}:{}", tool_call.name,
+                    if result.success { "ok" } else { "err" }));
+
                 // Add tool result with proper tool_call_id for OpenAI
-                // Truncate tool output to prevent context bloat during long runs
-                let truncated_output = if result.output.len() > 1000 {
-                    let mut trunc = crate::util::truncate(&result.output, 1000);
+                let truncated_output = if result.output.len() > 500 {
+                    let mut trunc = crate::util::truncate(&result.output, 500);
                     trunc.push_str("\n...(truncated)");
                     trunc
                 } else {
@@ -199,7 +212,9 @@ impl Agent {
             }
         }
 
-        String::from("I've reached the maximum number of tool call rounds. Please rephrase your request.")
+        // Tool rounds exhausted — return summary of actions taken
+        crate::kprintln!("[agent] tool rounds exhausted, {} actions taken", tool_log.len());
+        format!("Actions completed: {}", tool_log.join(", "))
     }
 
     /// Get conversation history length.
@@ -209,6 +224,6 @@ impl Agent {
 
     /// Clear conversation history.
     pub fn clear_history(&mut self) {
-        self.history.clear();
+        self.history.clear()
     }
 }

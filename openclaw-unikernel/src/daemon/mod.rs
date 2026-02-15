@@ -64,23 +64,23 @@ pub fn run() -> ! {
         ))
     };
 
-    // ── Set up embedding provider for vector search ──────────────────────
-    {
-        let api_key = cfg.env_vars.get("OPENAI_API_KEY")
-            .or_else(|| Some(&cfg.api_key))
-            .cloned()
-            .unwrap_or_default();
-        let model = cfg.env_vars.get("EMBEDDING_MODEL")
-            .cloned()
-            .unwrap_or_else(|| String::from("text-embedding-3-small"));
-        let custom_url = cfg.env_vars.get("EMBEDDING_URL").map(|s| s.as_str());
-        let embedding_provider = crate::memory::embeddings::create_provider(
-            &api_key, &model, custom_url,
-        );
-        let mem = crate::memory::global();
-        let mut mem = mem.lock();
-        mem.set_embedding_provider(embedding_provider);
-    }
+    // ── Embedding provider disabled for long autonomous runs ──────────────
+    // BM25 keyword search is sufficient and avoids extra HTTP round-trips
+    // that consume heap due to allocator fragmentation.
+    // To re-enable: uncomment the block below.
+    // {
+    //     let api_key = cfg.env_vars.get("OPENAI_API_KEY")
+    //         .or_else(|| Some(&cfg.api_key))
+    //         .cloned()
+    //         .unwrap_or_default();
+    //     let model = String::from("text-embedding-3-small");
+    //     let embedding_provider = crate::memory::embeddings::create_provider(
+    //         &api_key, &model, None,
+    //     );
+    //     let mem = crate::memory::global();
+    //     let mut mem = mem.lock();
+    //     mem.set_embedding_provider(embedding_provider);
+    // }
 
     // ── Create the tool registry ─────────────────────────────────────────
     let tool_registry = tools::create_default_registry();
@@ -215,6 +215,12 @@ pub fn run() -> ! {
         // Drain webhook messages (from gateway HTTP endpoints and heartbeat)
         let webhook_msgs = channels::drain_webhook_messages();
         for msg in webhook_msgs {
+            // Clear history before heartbeat cycles — each task is self-contained
+            // and doesn't need previous heartbeat conversations bloating context
+            if msg.channel == "heartbeat" {
+                agent.clear_history();
+            }
+
             let user_content = msg.content.clone();
             let response = agent.process_message(&msg);
             crate::kprintln!(
