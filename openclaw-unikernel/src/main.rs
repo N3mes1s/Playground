@@ -62,6 +62,10 @@ mod observability;
 mod onboard;
 mod integrations;
 mod util;
+mod tunnel;
+mod migration;
+mod doctor;
+mod identity;
 
 use core::panic::PanicInfo;
 use kernel::console;

@@ -4,6 +4,8 @@
 //! Each skill has a name, description, and optional trigger patterns.
 //! Skills are injected into the system prompt.
 
+pub mod git_sync;
+
 use alloc::string::String;
 use alloc::vec::Vec;
 

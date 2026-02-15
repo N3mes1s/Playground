@@ -103,7 +103,7 @@ fn generate_token() -> String {
 
 /// Simplified SHA-256 (Merkle-Damgard construction).
 /// This is a minimal implementation for token hashing.
-fn sha256_simple(data: &[u8]) -> [u8; 32] {
+pub fn sha256_simple(data: &[u8]) -> [u8; 32] {
     // SHA-256 initial hash values
     let mut h: [u32; 8] = [
         0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,

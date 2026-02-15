@@ -17,6 +17,10 @@ mod cli;
 mod webhook;
 mod telegram;
 mod discord;
+mod slack;
+mod matrix;
+mod whatsapp;
+mod email;
 
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -162,6 +166,10 @@ pub fn create(config: ChannelConfig) -> Box<dyn Channel> {
         "webhook" => Box::new(webhook::WebhookChannel::new(config)),
         "telegram" => Box::new(telegram::TelegramChannel::new(config)),
         "discord" => Box::new(discord::DiscordChannel::new(config)),
+        "slack" => Box::new(slack::SlackChannel::new(config)),
+        "matrix" => Box::new(matrix::MatrixChannel::new(config)),
+        "whatsapp" => Box::new(whatsapp::WhatsAppChannel::new(config)),
+        "email" => Box::new(email::EmailChannel::new(config)),
         _ => Box::new(cli::CliChannel::new(config)),
     }
 }

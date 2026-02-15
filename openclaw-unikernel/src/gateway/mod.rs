@@ -4,10 +4,14 @@
 //! Provides the REST API for external interaction:
 //!
 //! - GET  /health         — Public health metrics
+//! - GET  /doctor         — Full diagnostic report
 //! - POST /pair           — Pairing code exchange for bearer token
 //! - POST /webhook        — Authenticated message processing
 //! - GET  /whatsapp       — Meta webhook verification
 //! - POST /whatsapp       — WhatsApp message ingestion
+//! - GET  /export         — Export agent state (authenticated)
+//! - POST /import         — Import agent state (authenticated)
+//! - GET  /identity       — Get AIEOS identity JSON
 
 use alloc::string::String;
 use alloc::format;
@@ -44,10 +48,14 @@ fn process_connections(_listener_id: usize) {
 fn handle_request(method: &str, path: &str, body: &str, auth: Option<&str>) -> HttpResponse {
     match (method, path) {
         ("GET", "/health") => handle_health(),
+        ("GET", "/doctor") => handle_doctor(auth),
         ("POST", "/pair") => handle_pair(body),
         ("POST", "/webhook") => handle_webhook(body, auth),
         ("GET", "/whatsapp") => handle_whatsapp_verify(body),
         ("POST", "/whatsapp") => handle_whatsapp_message(body),
+        ("GET", "/export") => handle_export(auth),
+        ("POST", "/import") => handle_import(body, auth),
+        ("GET", "/identity") => handle_identity(),
         _ => HttpResponse {
             status: 404,
             body: String::from("{\"error\":\"not found\"}"),
@@ -139,5 +147,91 @@ fn handle_whatsapp_message(body: &str) -> HttpResponse {
     HttpResponse {
         status: 200,
         body: String::from("{\"status\":\"ok\"}"),
+    }
+}
+
+fn handle_doctor(auth: Option<&str>) -> HttpResponse {
+    // Doctor endpoint requires authentication
+    let token = auth.and_then(|a| a.strip_prefix("Bearer "));
+    match token {
+        Some(t) if crate::security::validate_token(t) => {}
+        _ => {
+            return HttpResponse {
+                status: 401,
+                body: String::from("{\"error\":\"unauthorized\"}"),
+            };
+        }
+    }
+
+    let report = crate::doctor::run_diagnostics();
+    HttpResponse {
+        status: 200,
+        body: report.to_json(),
+    }
+}
+
+fn handle_export(auth: Option<&str>) -> HttpResponse {
+    let token = auth.and_then(|a| a.strip_prefix("Bearer "));
+    match token {
+        Some(t) if crate::security::validate_token(t) => {}
+        _ => {
+            return HttpResponse {
+                status: 401,
+                body: String::from("{\"error\":\"unauthorized\"}"),
+            };
+        }
+    }
+
+    let bundle = crate::migration::export(&crate::migration::ExportOptions::default());
+    HttpResponse {
+        status: 200,
+        body: bundle.json,
+    }
+}
+
+fn handle_import(body: &str, auth: Option<&str>) -> HttpResponse {
+    let token = auth.and_then(|a| a.strip_prefix("Bearer "));
+    match token {
+        Some(t) if crate::security::validate_token(t) => {}
+        _ => {
+            return HttpResponse {
+                status: 401,
+                body: String::from("{\"error\":\"unauthorized\"}"),
+            };
+        }
+    }
+
+    match crate::migration::import(body) {
+        Ok(result) => HttpResponse {
+            status: 200,
+            body: format!(
+                "{{\"memories_imported\":{},\"files_imported\":{},\"config_updated\":{},\"warnings\":{}}}",
+                result.memories_imported,
+                result.files_imported,
+                result.config_updated,
+                result.warnings.len()
+            ),
+        },
+        Err(e) => HttpResponse {
+            status: 400,
+            body: format!("{{\"error\":\"{}\"}}", e),
+        },
+    }
+}
+
+fn handle_identity() -> HttpResponse {
+    match crate::identity::AieosIdentity::load() {
+        Some(id) => HttpResponse {
+            status: 200,
+            body: id.to_json(),
+        },
+        None => {
+            let cfg = crate::config::get();
+            let id = crate::identity::AieosIdentity::from_config(&cfg.identity);
+            HttpResponse {
+                status: 200,
+                body: id.to_json(),
+            }
+        }
     }
 }

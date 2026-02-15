@@ -17,6 +17,7 @@ mod anthropic;
 mod openrouter;
 mod ollama;
 mod gemini;
+pub mod resilient;
 
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -320,7 +321,7 @@ fn parse_tool_call(json: &str) -> Option<ToolCall> {
 // ── Minimal JSON Helpers ───────────────────────────────────────────────────
 
 /// Extract a string value for a given key from JSON.
-fn extract_json_string(json: &str, key: &str) -> Option<String> {
+pub fn extract_json_string(json: &str, key: &str) -> Option<String> {
     let pattern = format!("\"{}\"", key);
     let start = json.find(&pattern)?;
     let rest = &json[start + pattern.len()..];
@@ -368,7 +369,7 @@ fn extract_json_string(json: &str, key: &str) -> Option<String> {
 }
 
 /// Extract a numeric value for a given key from JSON.
-fn extract_json_number(json: &str, key: &str) -> Option<u64> {
+pub fn extract_json_number(json: &str, key: &str) -> Option<u64> {
     let pattern = format!("\"{}\"", key);
     let start = json.find(&pattern)?;
     let rest = &json[start + pattern.len()..];
@@ -396,7 +397,7 @@ fn extract_json_number(json: &str, key: &str) -> Option<u64> {
 }
 
 /// Escape a string for JSON output.
-fn json_string_escape(s: &str) -> String {
+pub fn json_string_escape(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + 2);
     result.push('"');
     for c in s.chars() {

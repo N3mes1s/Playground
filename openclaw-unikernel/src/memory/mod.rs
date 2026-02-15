@@ -8,6 +8,10 @@
 //! In the unikernel, this runs entirely in-kernel memory (no SQLite dependency).
 //! The data structures are designed for the heap allocator.
 
+pub mod embeddings;
+pub mod chunker;
+pub mod hygiene;
+
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -86,6 +90,10 @@ pub struct InKernelMemory {
     /// Configuration
     vector_weight: f32,
     keyword_weight: f32,
+    /// Embedding provider for vector search
+    embedding_provider: Option<alloc::boxed::Box<dyn embeddings::EmbeddingProvider>>,
+    /// Embedding cache to minimize API calls
+    embedding_cache: embeddings::EmbeddingCache,
 }
 
 static mut GLOBAL_MEMORY: Option<SpinLock<InKernelMemory>> = None;
@@ -99,6 +107,8 @@ pub fn init() {
         total_docs: 0,
         vector_weight: 0.6,
         keyword_weight: 0.4,
+        embedding_provider: None,
+        embedding_cache: embeddings::EmbeddingCache::new(1000),
     };
     unsafe {
         GLOBAL_MEMORY = Some(SpinLock::new(mem));
@@ -224,6 +234,37 @@ impl InKernelMemory {
         let denom = norm_a.sqrt() * norm_b.sqrt();
         if denom == 0.0 { 0.0 } else { dot / denom }
     }
+
+    /// Generate an embedding for text using the configured provider.
+    fn generate_embedding(&self, text: &str) -> Option<Vec<f32>> {
+        let provider = self.embedding_provider.as_ref()?;
+
+        // Check cache first
+        let text_hash = crate::util::fnv1a_hash(text.as_bytes());
+        if let Some(cached) = self.embedding_cache.get(text_hash) {
+            return Some(cached.clone());
+        }
+
+        // Generate via API
+        match provider.embed(text) {
+            Ok(embedding) => Some(embedding),
+            Err(e) => {
+                crate::kprintln!("[memory] embedding error: {}", e);
+                None
+            }
+        }
+    }
+
+    /// Set the embedding provider for vector search.
+    pub fn set_embedding_provider(&mut self, provider: alloc::boxed::Box<dyn embeddings::EmbeddingProvider>) {
+        crate::kprintln!("[memory] embedding provider set: {}", provider.name());
+        self.embedding_provider = Some(provider);
+    }
+
+    /// Run memory hygiene (archival, pruning, deduplication).
+    pub fn run_hygiene(&mut self) -> hygiene::HygieneSummary {
+        hygiene::run_hygiene(self, &hygiene::HygieneConfig::default())
+    }
 }
 
 impl Memory for InKernelMemory {
@@ -249,17 +290,30 @@ impl Memory for InKernelMemory {
 
     fn recall(&self, query: &str, limit: usize) -> Vec<SearchResult> {
         let query_terms = Self::tokenize(query);
+
+        // Generate query embedding if provider is available
+        let query_embedding = self.generate_embedding(query);
+
         let mut results: Vec<SearchResult> = Vec::new();
 
         for (_, entry) in &self.entries {
             // BM25 keyword score
             let keyword_score = self.bm25_score(&query_terms, &entry.content);
 
-            // Vector similarity score (if embeddings available)
-            let vector_score = 0.0f32; // Would use embeddings when available
+            // Vector similarity score (if embeddings available on both sides)
+            let vector_score = match (&query_embedding, &entry.embedding) {
+                (Some(q_emb), Some(e_emb)) => Self::cosine_similarity(q_emb, e_emb),
+                _ => 0.0f32,
+            };
 
-            // Hybrid score
-            let score = self.keyword_weight * keyword_score + self.vector_weight * vector_score;
+            // Hybrid score: weighted combination
+            let score = if vector_score > 0.0 {
+                // Both scores available — use weighted hybrid
+                self.keyword_weight * keyword_score + self.vector_weight * vector_score
+            } else {
+                // Keyword-only fallback (full weight to keywords)
+                keyword_score
+            };
 
             if score > 0.0 {
                 results.push(SearchResult {

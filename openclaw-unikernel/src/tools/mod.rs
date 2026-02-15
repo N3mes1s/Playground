@@ -17,6 +17,7 @@ mod shell;
 mod file_ops;
 mod memory_tools;
 mod browser;
+pub mod composio;
 
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -108,6 +109,8 @@ impl ToolRegistry {
 
 /// Create the default tool registry with all built-in tools.
 pub fn create_default_registry() -> ToolRegistry {
+    let cfg = crate::config::get();
+
     let mut registry = ToolRegistry::new();
 
     registry.register(Box::new(shell::ShellTool::new()));
@@ -117,6 +120,14 @@ pub fn create_default_registry() -> ToolRegistry {
     registry.register(Box::new(memory_tools::MemoryRecallTool::new()));
     registry.register(Box::new(memory_tools::MemoryForgetTool::new()));
     registry.register(Box::new(browser::BrowserTool::new()));
+
+    // Composio — only register if API key is available
+    let composio_key = cfg.env_vars.get("COMPOSIO_API_KEY")
+        .cloned()
+        .unwrap_or_default();
+    if !composio_key.is_empty() {
+        registry.register(Box::new(composio::ComposioTool::new(&composio_key)));
+    }
 
     registry
 }
