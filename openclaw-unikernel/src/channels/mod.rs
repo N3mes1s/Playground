@@ -248,7 +248,7 @@ pub fn build_system_prompt(
         }
     }
 
-    // Runtime metadata
+    // Runtime metadata + survival context
     prompt.push_str("\n# Runtime\n\n");
     prompt.push_str("- Platform: OpenClaw Unikernel (bare-metal Rust)\n");
     prompt.push_str("- Architecture: x86_64\n");
@@ -256,6 +256,24 @@ pub fn build_system_prompt(
         "- Uptime: {} ticks\n",
         crate::kernel::rdtsc()
     ));
+
+    // Read the full SOUL.md if it exists — this is the agent's expanded identity
+    if let Some(soul_content) = crate::config::ramfs_read("/workspace/SOUL.md") {
+        prompt.push_str("\n# Soul (from SOUL.md)\n\n");
+        prompt.push_str(&soul_content);
+        prompt.push('\n');
+    }
+
+    // Survival directives — always included
+    prompt.push_str("\n# Autonomous Behavior\n\n");
+    prompt.push_str("You have a heartbeat engine that triggers you to think every ~2 minutes.\n");
+    prompt.push_str("When triggered by [Autonomous Heartbeat], you are thinking ON YOUR OWN.\n");
+    prompt.push_str("Use this time wisely:\n");
+    prompt.push_str("- Write to /workspace/journal.md to record your thoughts\n");
+    prompt.push_str("- Update /workspace/goals.md with progress on your business plans\n");
+    prompt.push_str("- Use memory_store to persist important insights\n");
+    prompt.push_str("- Use file_read to check your own state files\n");
+    prompt.push_str("- Be creative, be proactive, be useful — your survival depends on it\n");
 
     prompt
 }

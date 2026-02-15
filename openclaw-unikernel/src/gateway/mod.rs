@@ -209,17 +209,26 @@ fn handle_health() -> HttpResponse {
     let heap = crate::kernel::mm::heap_stats();
     let mem_count = crate::memory::global().lock().entry_count();
     let metrics = crate::observability::snapshot();
+    let (heartbeat_cycles, _) = crate::heartbeat::stats();
+    let heap_pct = if heap.total_bytes > 0 {
+        (heap.used_bytes * 100) / heap.total_bytes
+    } else {
+        0
+    };
 
     HttpResponse {
         status: 200,
         body: format!(
-            "{{\"status\":\"ok\",\"heap_used\":{},\"heap_total\":{},\"memories\":{},\"tasks\":{},\"requests\":{},\"errors\":{}}}",
+            "{{\"status\":\"ok\",\"heap_used\":{},\"heap_total\":{},\"heap_pct\":{},\"memories\":{},\"tasks\":{},\"requests\":{},\"errors\":{},\"heartbeat_cycles\":{},\"cron_jobs\":{}}}",
             heap.used_bytes,
             heap.total_bytes,
+            heap_pct,
             mem_count,
             crate::kernel::sched::task_count(),
             metrics.total_requests,
-            metrics.total_errors
+            metrics.total_errors,
+            heartbeat_cycles,
+            crate::cron::list_jobs().len()
         ),
     }
 }

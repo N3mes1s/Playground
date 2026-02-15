@@ -155,6 +155,20 @@ pub fn run() -> ! {
     // ── Start the cron scheduler ─────────────────────────────────────────
     crate::cron::start();
 
+    // ── Register survival cron jobs ──────────────────────────────────────
+    // These are the agent's autonomous nervous system — self-monitoring
+    // and self-preservation behaviors that run on a schedule.
+    crate::cron::add_job(
+        "health-watchdog",
+        "*/3 * * * *",  // every 3 minutes
+        "echo HEALTH_CHECK",
+    );
+    crate::cron::add_job(
+        "journal-reminder",
+        "*/10 * * * *",  // every 10 minutes
+        "echo JOURNAL_REMINDER",
+    );
+
     // ── Start the gateway ────────────────────────────────────────────────
     crate::gateway::start(cfg.gateway_port);
 
