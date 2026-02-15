@@ -20,14 +20,14 @@ static TASK_INDEX: AtomicU64 = AtomicU64::new(0);
 /// Total heartbeat cycles completed.
 static CYCLE_COUNT: AtomicU64 = AtomicU64::new(0);
 
-/// Minimum interval between heartbeats (~2 minutes at 2 GHz).
-/// Keeps the agent actively thinking and surviving.
-const MIN_INTERVAL_TICKS: u64 = 240_000_000_000;
+/// Minimum interval between heartbeats (~30 seconds at 2 GHz).
+/// Aggressive interval for maximum autonomous thinking.
+const MIN_INTERVAL_TICKS: u64 = 60_000_000_000;
 
 /// Start the heartbeat engine.
 pub fn start() {
     HEARTBEAT_RUNNING.store(true, Ordering::SeqCst);
-    crate::kprintln!("[heartbeat] engine started (interval: ~2 min, rotating tasks)");
+    crate::kprintln!("[heartbeat] engine started (interval: ~30s, rotating tasks)");
 }
 
 /// Tick the heartbeat — check if it's time to run the next task.

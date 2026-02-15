@@ -222,8 +222,14 @@ impl OpenAiCompatibleClient {
         let temp_int = (self.config.temperature * 10.0) as u32;
         json.push_str(&format!("\"temperature\":0.{},", temp_int));
 
-        // Max tokens
-        json.push_str(&format!("\"max_tokens\":{}", self.config.max_tokens));
+        // Max tokens — use max_completion_tokens for newer models (gpt-4o+, gpt-5+)
+        let uses_new_param = model.contains("gpt-4o") || model.contains("gpt-4.1")
+            || model.contains("gpt-5") || model.contains("o1") || model.contains("o3");
+        if uses_new_param {
+            json.push_str(&format!("\"max_completion_tokens\":{}", self.config.max_tokens));
+        } else {
+            json.push_str(&format!("\"max_tokens\":{}", self.config.max_tokens));
+        }
 
         // Tools (if any)
         if !tools.is_empty() {

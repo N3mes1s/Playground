@@ -54,10 +54,10 @@ SECTIONS
     . += 64K;
     __stack_top = .;
 
-    /* Heap region: 16 MiB initial */
+    /* Heap region: 48 MiB — room for 100+ autonomous thinking cycles */
     . = ALIGN(4K);
     __heap_start = .;
-    . += 16M;
+    . += 48M;
     __heap_end = .;
 
     /* Network buffer pool: 4 MiB */

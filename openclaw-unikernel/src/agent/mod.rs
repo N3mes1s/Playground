@@ -50,7 +50,7 @@ impl Agent {
             tools,
             history: Vec::new(),
             system_prompt,
-            max_history: 50,
+            max_history: 10, // Keep lean for long autonomous runs
         }
     }
 
