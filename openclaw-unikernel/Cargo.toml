@@ -1,0 +1,36 @@
+[package]
+name = "openclaw-unikernel"
+version = "0.1.0"
+edition = "2021"
+authors = ["OpenClaw Contributors"]
+description = "A bare-metal Rust unikernel implementing the full OpenClaw AI agent platform"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/theonlyhennygod/zeroclaw"
+keywords = ["unikernel", "ai-agent", "rust", "bare-metal", "llm"]
+categories = ["os", "network-programming", "command-line-utilities"]
+
+[features]
+default = ["full"]
+full = ["providers-all", "channels-all", "memory-sqlite", "tools-all", "security-full"]
+providers-all = []
+channels-all = []
+memory-sqlite = []
+tools-all = []
+security-full = []
+# Minimal build for constrained environments
+minimal = []
+
+[dependencies]
+# No external dependencies for the kernel core — everything is built from scratch
+# for true unikernel operation. The following are compile-time only or no_std compatible.
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+opt-level = "z"       # Optimize for size
+lto = true            # Link-time optimization
+codegen-units = 1     # Single codegen unit for maximum optimization
+strip = true          # Strip symbols

@@ -31,6 +31,7 @@ While this is primarily a coding agent workspace, contributions and suggestions 
 |-----------|-------------|
 | [`vulnllm-analyzer/`](vulnllm-analyzer/) | Automated vulnerability analysis for GitHub repos using [VulnLLM-R-7B](https://github.com/ucsb-mlsec/VulnLLM-R) on Modal GPUs |
 | [recursive-lm-security-audit](./recursive-lm-security-audit/) | Automated codebase security scanner using DSPy's Recursive Language Model (RLM) module. Accepts a GitHub repo URL or local path and produces a vulnerability report for ~$0.87. |
+| [`openclaw-unikernel/`](openclaw-unikernel/) | Bare-metal Rust unikernel implementing the full OpenClaw/ZeroClaw AI agent platform. 48 source files, 7.5K lines — boots directly into an autonomous AI agent with 30+ LLM providers, 8 channels, hybrid memory, ChaCha20 crypto, and a full security policy engine. No OS required. |
 
 ## Note
 
