@@ -1,6 +1,8 @@
 # Build artifacts
 /target/
 **/*.rs.bk
+*.iso
+iso/boot/openclaw-unikernel
 
 # IDE
 .idea/
