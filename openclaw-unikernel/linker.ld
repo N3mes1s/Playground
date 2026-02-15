@@ -54,10 +54,10 @@ SECTIONS
     . += 64K;
     __stack_top = .;
 
-    /* Heap region: 128 MiB — room for 100+ autonomous thinking cycles */
+    /* Heap region: 512 MiB — accounts for allocator fragmentation over 100 cycles */
     . = ALIGN(4K);
     __heap_start = .;
-    . += 128M;
+    . += 512M;
     __heap_end = .;
 
     /* Network buffer pool: 4 MiB */

@@ -77,7 +77,7 @@ pub extern "C" fn kernel_main() -> ! {
     console::puts("[openclaw] booting unikernel v0.1.0\n");
 
     kernel::mm::init_heap();
-    console::puts("[openclaw] heap initialized (128 MiB)\n");
+    console::puts("[openclaw] heap initialized (512 MiB)\n");
 
     kernel::sched::init();
     console::puts("[openclaw] cooperative scheduler ready\n");

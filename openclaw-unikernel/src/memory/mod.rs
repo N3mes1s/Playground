@@ -273,7 +273,7 @@ impl InKernelMemory {
 }
 
 /// Maximum number of memory entries before eviction kicks in.
-const MAX_MEMORY_ENTRIES: usize = 50;
+const MAX_MEMORY_ENTRIES: usize = 30;
 
 impl Memory for InKernelMemory {
     fn store(&mut self, key: &str, content: &str, category: MemoryCategory) -> Result<(), String> {
