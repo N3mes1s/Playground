@@ -213,7 +213,7 @@ pub fn init() {
          ## Progress Log\n\n\
          - Boot: initialized, waiting for first heartbeat cycle\n");
     ramfs_write("/workspace/config.toml",
-        "[agent]\nprovider = \"openai\"\nmodel = \"gpt-4o\"\n\
+        "[agent]\nprovider = \"openai\"\nmodel = \"gpt-5.2\"\n\
          api_key = \"OPENAI_API_KEY\"\n\n\
          [autonomy]\nlevel = \"supervised\"\n\n\
          [memory]\nbackend = \"in-kernel\"\n");

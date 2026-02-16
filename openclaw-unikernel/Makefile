@@ -16,7 +16,7 @@ BINARY    := target/$(TARGET)/release/openclaw-unikernel
 ISO       := openclaw.iso
 BUILD_STD := -Zbuild-std=core,alloc,compiler_builtins -Zbuild-std-features=compiler-builtins-mem
 QEMU      := qemu-system-x86_64
-QEMU_ARGS := -m 128M -serial stdio -display none -no-reboot \
+QEMU_ARGS := -m 1G -serial stdio -display none -no-reboot \
              -cpu qemu64 -smp 1 \
              -netdev user,id=net0,hostfwd=tcp::3000-:3000 \
              -device virtio-net-pci,netdev=net0 \
