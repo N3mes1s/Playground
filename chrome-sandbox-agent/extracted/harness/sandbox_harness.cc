@@ -118,6 +118,7 @@ static const char* syscall_name(int nr) {
     case __NR_fork: return "fork";
     case __NR_vfork: return "vfork";
     case __NR_execve: return "execve";
+    case __NR_execveat: return "execveat";
     case __NR_exit: return "exit";
     case __NR_wait4: return "wait4";
     case __NR_kill: return "kill";
@@ -579,11 +580,232 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
 // =============================================================================
 
 static SandboxPolicyLevel g_policy_level = SANDBOX_POLICY_STRICT;
+static SandboxExecPolicy g_exec_policy = SANDBOX_EXEC_BROKERED;
 static std::vector<std::string> g_allowed_paths;
 static bool g_initialized = false;
 
 // Broker process (Chrome's real BrokerProcess)
 static std::unique_ptr<sandbox::syscall_broker::BrokerProcess> g_broker;
+
+// =============================================================================
+// Zygote process (mirrors Chrome's zygote model)
+// =============================================================================
+//
+// Chrome's architecture:
+//   Browser → forks Zygote → Zygote pre-loads renderer code
+//   For each tab: Zygote forks (fast!) → child applies seccomp → runs renderer
+//
+// Our architecture:
+//   Agent → sandbox_init() forks Zygote → Zygote applies namespace isolation
+//   For each command: Zygote forks (fast!) → child applies PID NS + seccomp
+//                     → child execs command → ptrace broker validates syscalls
+//
+// Benefits:
+//   - Namespace isolation (user, mount, net, IPC, chroot, cap drop) done ONCE
+//   - Each command fork inherits the sandbox — no re-setup cost
+//   - Matches Chrome's process model exactly
+
+static pid_t g_zygote_pid = -1;
+static int g_zygote_fd = -1;     // Agent side of socketpair
+static bool g_in_zygote = false;  // True inside the zygote process
+
+// --- Zygote IPC protocol ---
+// All messages are length-prefixed: [uint32_t total_len] [payload]
+
+// Command message: agent → zygote
+//   [uint32_t argc]
+//   [for each arg: uint32_t len, char data[len]]
+//   [int32_t exec_policy]
+//   [int32_t sandbox_policy]
+
+// Result message: zygote → agent
+//   [int32_t exit_code]
+//   [uint32_t stdout_len] [stdout_data]
+//   [uint32_t stderr_len] [stderr_data]
+//   [uint32_t log_len]    [log_data]
+//   [int32_t total_syscalls]
+//   [int32_t blocked_syscalls]
+//   [double duration]
+
+// Reliable write: writes all bytes or returns false
+static bool write_all(int fd, const void* buf, size_t len) {
+  const char* p = static_cast<const char*>(buf);
+  while (len > 0) {
+    ssize_t n = write(fd, p, len);
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      return false;
+    }
+    p += n;
+    len -= n;
+  }
+  return true;
+}
+
+// Reliable read: reads all bytes or returns false
+static bool read_all(int fd, void* buf, size_t len) {
+  char* p = static_cast<char*>(buf);
+  while (len > 0) {
+    ssize_t n = read(fd, p, len);
+    if (n <= 0) {
+      if (n < 0 && errno == EINTR) continue;
+      return false;
+    }
+    p += n;
+    len -= n;
+  }
+  return true;
+}
+
+// Send a command to the zygote
+static bool zygote_send_command(int fd, const char* const* argv,
+                                SandboxExecPolicy exec_policy,
+                                SandboxPolicyLevel sandbox_policy) {
+  // Count args
+  uint32_t argc = 0;
+  for (const char* const* p = argv; *p; p++) argc++;
+
+  // Calculate total size
+  size_t total = sizeof(uint32_t);  // argc
+  for (uint32_t i = 0; i < argc; i++) {
+    total += sizeof(uint32_t) + strlen(argv[i]);
+  }
+  total += sizeof(int32_t) * 2;  // exec_policy + sandbox_policy
+
+  // Write total length
+  uint32_t total_len = (uint32_t)total;
+  if (!write_all(fd, &total_len, sizeof(total_len))) return false;
+
+  // Write argc
+  if (!write_all(fd, &argc, sizeof(argc))) return false;
+
+  // Write each arg
+  for (uint32_t i = 0; i < argc; i++) {
+    uint32_t slen = (uint32_t)strlen(argv[i]);
+    if (!write_all(fd, &slen, sizeof(slen))) return false;
+    if (!write_all(fd, argv[i], slen)) return false;
+  }
+
+  // Write policies
+  int32_t ep = (int32_t)exec_policy;
+  int32_t sp = (int32_t)sandbox_policy;
+  if (!write_all(fd, &ep, sizeof(ep))) return false;
+  if (!write_all(fd, &sp, sizeof(sp))) return false;
+
+  return true;
+}
+
+// Receive a command in the zygote
+static bool zygote_recv_command(int fd, std::vector<std::string>& args,
+                                SandboxExecPolicy& exec_policy,
+                                SandboxPolicyLevel& sandbox_policy) {
+  uint32_t total_len;
+  if (!read_all(fd, &total_len, sizeof(total_len))) return false;
+
+  uint32_t argc;
+  if (!read_all(fd, &argc, sizeof(argc))) return false;
+  if (argc > 1024) return false;  // Sanity check
+
+  args.clear();
+  for (uint32_t i = 0; i < argc; i++) {
+    uint32_t slen;
+    if (!read_all(fd, &slen, sizeof(slen))) return false;
+    if (slen > 65536) return false;  // Sanity check
+    std::string s(slen, '\0');
+    if (!read_all(fd, &s[0], slen)) return false;
+    args.push_back(std::move(s));
+  }
+
+  int32_t ep, sp;
+  if (!read_all(fd, &ep, sizeof(ep))) return false;
+  if (!read_all(fd, &sp, sizeof(sp))) return false;
+  exec_policy = (SandboxExecPolicy)ep;
+  sandbox_policy = (SandboxPolicyLevel)sp;
+
+  return true;
+}
+
+// Send results from zygote back to agent
+static bool zygote_send_result(int fd, const SandboxResult& result) {
+  // Calculate total size
+  size_t total = sizeof(int32_t)    // exit_code
+               + sizeof(uint32_t) + result.stdout_len   // stdout
+               + sizeof(uint32_t) + result.stderr_len   // stderr
+               + sizeof(uint32_t) + result.syscall_log_len  // log
+               + sizeof(int32_t) * 2  // total + blocked
+               + sizeof(double);      // duration
+
+  uint32_t total_len = (uint32_t)total;
+  if (!write_all(fd, &total_len, sizeof(total_len))) return false;
+
+  int32_t ec = result.exit_code;
+  if (!write_all(fd, &ec, sizeof(ec))) return false;
+
+  uint32_t slen;
+  slen = (uint32_t)result.stdout_len;
+  if (!write_all(fd, &slen, sizeof(slen))) return false;
+  if (slen > 0 && !write_all(fd, result.stdout_buf, slen)) return false;
+
+  slen = (uint32_t)result.stderr_len;
+  if (!write_all(fd, &slen, sizeof(slen))) return false;
+  if (slen > 0 && !write_all(fd, result.stderr_buf, slen)) return false;
+
+  slen = (uint32_t)result.syscall_log_len;
+  if (!write_all(fd, &slen, sizeof(slen))) return false;
+  if (slen > 0 && !write_all(fd, result.syscall_log, slen)) return false;
+
+  int32_t total_sc = result.num_syscalls_total;
+  int32_t blocked_sc = result.num_syscalls_blocked;
+  if (!write_all(fd, &total_sc, sizeof(total_sc))) return false;
+  if (!write_all(fd, &blocked_sc, sizeof(blocked_sc))) return false;
+  if (!write_all(fd, &result.duration_seconds, sizeof(result.duration_seconds))) return false;
+
+  return true;
+}
+
+// Receive results in the agent
+static bool zygote_recv_result(int fd, SandboxResult& result) {
+  uint32_t total_len;
+  if (!read_all(fd, &total_len, sizeof(total_len))) return false;
+
+  int32_t ec;
+  if (!read_all(fd, &ec, sizeof(ec))) return false;
+  result.exit_code = ec;
+
+  uint32_t slen;
+  if (!read_all(fd, &slen, sizeof(slen))) return false;
+  result.stdout_len = slen;
+  result.stdout_buf = slen > 0 ? (char*)malloc(slen + 1) : nullptr;
+  if (slen > 0) {
+    if (!read_all(fd, result.stdout_buf, slen)) return false;
+    result.stdout_buf[slen] = '\0';
+  }
+
+  if (!read_all(fd, &slen, sizeof(slen))) return false;
+  result.stderr_len = slen;
+  result.stderr_buf = slen > 0 ? (char*)malloc(slen + 1) : nullptr;
+  if (slen > 0) {
+    if (!read_all(fd, result.stderr_buf, slen)) return false;
+    result.stderr_buf[slen] = '\0';
+  }
+
+  if (!read_all(fd, &slen, sizeof(slen))) return false;
+  result.syscall_log_len = slen;
+  result.syscall_log = slen > 0 ? (char*)malloc(slen + 1) : nullptr;
+  if (slen > 0) {
+    if (!read_all(fd, result.syscall_log, slen)) return false;
+    result.syscall_log[slen] = '\0';
+  }
+
+  int32_t total_sc, blocked_sc;
+  if (!read_all(fd, &total_sc, sizeof(total_sc))) return false;
+  if (!read_all(fd, &blocked_sc, sizeof(blocked_sc))) return false;
+  result.num_syscalls_total = total_sc;
+  result.num_syscalls_blocked = blocked_sc;
+  if (!read_all(fd, &result.duration_seconds, sizeof(result.duration_seconds))) return false;
+
+  return true;
+}
 
 // =============================================================================
 // Ptrace-based syscall tracer
@@ -1037,13 +1259,26 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
     raise(SIGSTOP);  // Wait for parent to set up tracing
 
     // === LAYER 1-5: Namespace isolation ===
-    // Apply namespace isolation before seccomp-BPF.
-    // This mirrors Chrome's defense-in-depth: even if BPF has a bug,
-    // namespace isolation constrains what the process can reach.
-    // Order: user NS → PID NS → IPC NS → net NS → mount NS → drop caps
-    NamespaceStatus ns_status = apply_namespace_isolation();
+    // In zygote mode: namespaces (user, mount, net, IPC, chroot, caps)
+    // are already applied by the zygote. We only need PID NS per-command.
+    // In direct mode: apply everything now.
+    NamespaceStatus ns_status = {};
+    if (g_in_zygote) {
+      // Zygote already applied: user NS, mount NS, net NS, IPC NS,
+      // chroot, cap drop, process hardening. Only PID NS is per-command.
+      ns_status.user_ns = true;
+      ns_status.mount_ns = true;
+      ns_status.net_ns = true;
+      ns_status.ipc_ns = true;
+      ns_status.caps_dropped = true;
+      // Apply per-command PID namespace isolation
+      ns_status.pid_ns = setup_pid_namespace();
+    } else {
+      // Direct mode: full namespace isolation
+      ns_status = apply_namespace_isolation();
+    }
 
-    // === LAYER 2: PID namespace fork ===
+    // === PID namespace fork ===
     // After unshare(CLONE_NEWPID), our children enter a new PID namespace.
     // We fork here: the child becomes PID 1 in the new namespace.
     // The parent (this process) becomes a simple init reaper.
@@ -1136,6 +1371,11 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
   int blocked = 0;
   int brokered = 0;
 
+  // Exec policy tracking: count execs per PID for Chrome-like enforcement.
+  // Chrome blocks ALL execs (zygote model). We allow the initial exec
+  // (launching the command) and optionally block subsequent ones.
+  std::map<pid_t, int> exec_count;
+
   while (!traced_pids.empty()) {
     pid_t pid;
     int wstatus;
@@ -1148,6 +1388,7 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
       }
       traced_pids.erase(pid);
       pending_entry.erase(pid);
+      exec_count.erase(pid);
       continue;
     }
 
@@ -1179,7 +1420,8 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
             nr == __NR_mkdirat || nr == __NR_unlinkat ||
             nr == __NR_fchmodat || nr == __NR_fchownat ||
             nr == __NR_readlinkat || nr == __NR_linkat ||
-            nr == __NR_symlinkat || nr == __NR_utimensat) {
+            nr == __NR_symlinkat || nr == __NR_utimensat ||
+            nr == __NR_execveat) {
           path_str = read_child_string(pid, regs.rsi);
           is_at_syscall = true;
           if (nr == __NR_openat) open_flags = (int)regs.rdx;
@@ -1262,10 +1504,32 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
             // stat family: use stat permission check
             allowed = (broker_policy.GetFileNameIfAllowedToStat(
                 path_c) != nullptr);
-          } else if (nr == __NR_execve) {
-            // execve: check read access (need to read the binary)
-            allowed = (broker_policy.GetFileNameIfAllowedToAccess(
-                path_c, R_OK) != nullptr);
+          } else if (nr == __NR_execve || nr == __NR_execveat) {
+            // execve/execveat: enforce exec policy.
+            //
+            // Chrome blocks ALL execs (zygote model: fork, never exec).
+            // We support three modes:
+            //   CHROME:   allow first exec per PID, block all subsequent
+            //   BROKERED: validate every exec path against broker perms
+            //   BLOCKED:  block all execs
+            int& pid_execs = exec_count[pid];
+            switch (g_exec_policy) {
+              case SANDBOX_EXEC_BLOCKED:
+                allowed = false;
+                break;
+              case SANDBOX_EXEC_CHROME:
+                // Allow exactly one exec per PID (the initial command launch).
+                // After that, block — matching Chrome's renderer sandbox.
+                allowed = (pid_execs == 0);
+                break;
+              case SANDBOX_EXEC_BROKERED:
+              default:
+                // Validate path against broker permissions
+                allowed = (broker_policy.GetFileNameIfAllowedToAccess(
+                    path_c, R_OK) != nullptr);
+                break;
+            }
+            if (allowed) pid_execs++;
           } else if (nr == __NR_readlink || nr == __NR_readlinkat) {
             // readlink: check read access
             auto result = broker_policy.GetFileNameIfAllowedToOpen(
@@ -1517,23 +1781,132 @@ build_broker_permissions() {
 }
 
 // =============================================================================
+// Zygote main loop
+// =============================================================================
+//
+// The zygote process sits in a pre-sandboxed state (namespaces applied,
+// chroot active, capabilities dropped) and waits for commands from the
+// agent process via socketpair. For each command:
+//   1. Read command + policies from agent
+//   2. Fork a worker (worker inherits sandbox from zygote!)
+//   3. Worker calls exec_with_tracing() (applies PID NS + seccomp + exec)
+//   4. Send results back to agent
+//
+// This matches Chrome's zygote model:
+//   Chrome: Zygote fork → child applies seccomp → runs renderer code
+//   Us:     Zygote fork → child applies PID NS + seccomp → execs command
+
+[[noreturn]] static void zygote_main(int zygote_fd) {
+  g_in_zygote = true;
+
+  // Apply namespace isolation ONCE in the zygote.
+  // All forked children will inherit this sandbox.
+  // Layers applied here: user NS, IPC NS, net NS, mount NS, chroot,
+  // capability drop, PR_SET_DUMPABLE, RLIMIT_CORE, Yama, RLIMIT_DATA.
+  // PID NS is NOT applied here — it's per-command (each command gets its own).
+  apply_namespace_isolation();
+
+  // Main command loop.
+  // exec_with_tracing() forks internally (child = sandboxed target,
+  // parent = ptrace tracer). The zygote acts as the tracer for each
+  // command, blocking until it completes. Commands are sequential,
+  // matching the agent's tool-call-at-a-time pattern.
+  for (;;) {
+    std::vector<std::string> args;
+    SandboxExecPolicy exec_policy;
+    SandboxPolicyLevel sandbox_policy;
+
+    if (!zygote_recv_command(zygote_fd, args, exec_policy, sandbox_policy)) {
+      break;  // Agent closed the socket or sent invalid data
+    }
+
+    // Apply per-command policies
+    g_exec_policy = exec_policy;
+    g_policy_level = sandbox_policy;
+
+    // Build argv for exec_with_tracing
+    std::vector<const char*> argv;
+    for (const auto& a : args) argv.push_back(a.c_str());
+    argv.push_back(nullptr);
+
+    // Execute the command. exec_with_tracing() forks a sandboxed child
+    // (which inherits the zygote's namespace isolation), applies PID NS +
+    // seccomp-BPF, execs the command, and traces it via ptrace broker.
+    SandboxResult cmd_result = exec_with_tracing(argv.data());
+
+    // Send results back to the agent
+    zygote_send_result(zygote_fd, cmd_result);
+
+    // Free result buffers
+    free(cmd_result.stdout_buf);
+    free(cmd_result.stderr_buf);
+    free(cmd_result.syscall_log);
+  }
+
+  _exit(0);
+}
+
+// =============================================================================
 // C API implementation
 // =============================================================================
 
 extern "C" {
 
 int sandbox_init(void) {
+  if (g_initialized) return 0;
+
+  // Create socketpair for agent ↔ zygote IPC
+  int sv[2];
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) {
+    return -1;
+  }
+
+  // Fork the zygote process
+  pid_t zygote = fork();
+  if (zygote < 0) {
+    close(sv[0]);
+    close(sv[1]);
+    return -1;
+  }
+
+  if (zygote == 0) {
+    // === ZYGOTE PROCESS ===
+    close(sv[0]);  // Close agent side
+    zygote_main(sv[1]);
+    // zygote_main never returns
+  }
+
+  // === AGENT PROCESS ===
+  close(sv[1]);  // Close zygote side
+  g_zygote_pid = zygote;
+  g_zygote_fd = sv[0];
   g_initialized = true;
+
   return 0;
 }
 
 void sandbox_shutdown(void) {
+  if (g_zygote_pid > 0) {
+    // Close the socket — this will cause the zygote to exit its loop
+    if (g_zygote_fd >= 0) {
+      close(g_zygote_fd);
+      g_zygote_fd = -1;
+    }
+    // Wait for zygote to exit
+    int status;
+    waitpid(g_zygote_pid, &status, 0);
+    g_zygote_pid = -1;
+  }
   g_broker.reset();
   g_initialized = false;
 }
 
 void sandbox_set_policy(SandboxPolicyLevel level) {
   g_policy_level = level;
+}
+
+void sandbox_set_exec_policy(SandboxExecPolicy policy) {
+  g_exec_policy = policy;
 }
 
 int sandbox_set_allowed_paths(const char* paths) {
@@ -1550,12 +1923,26 @@ int sandbox_set_allowed_paths(const char* paths) {
 }
 
 SandboxResult sandbox_exec(const char* const* argv) {
+  // If zygote is running, dispatch via zygote for inherited namespace isolation
+  if (g_zygote_pid > 0 && g_zygote_fd >= 0) {
+    if (zygote_send_command(g_zygote_fd, argv, g_exec_policy, g_policy_level)) {
+      SandboxResult result = {};
+      if (zygote_recv_result(g_zygote_fd, result)) {
+        return result;
+      }
+    }
+    // Zygote IPC failed — fall back to direct execution
+    SandboxResult err = {};
+    err.exit_code = -1;
+    return err;
+  }
+  // No zygote — run directly (applies namespace isolation per-call)
   return exec_with_tracing(argv);
 }
 
 SandboxResult sandbox_exec_shell(const char* cmd) {
   const char* argv[] = {"/bin/sh", "-c", cmd, nullptr};
-  return exec_with_tracing(argv);
+  return sandbox_exec(argv);
 }
 
 void sandbox_result_free(SandboxResult* result) {

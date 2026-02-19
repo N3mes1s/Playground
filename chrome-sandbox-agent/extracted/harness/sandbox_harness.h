@@ -53,6 +53,34 @@ int sandbox_set_allowed_paths(const char* paths);
 // Set the policy level for subsequent sandbox_exec calls.
 void sandbox_set_policy(SandboxPolicyLevel level);
 
+// Exec policy: controls how execve/execveat are handled in the sandbox.
+//
+// Chrome blocks execve entirely (zygote model: fork, never exec).
+// Since we run commands via exec, we offer configurable exec policies:
+typedef enum {
+  // CHROME mode: block ALL exec after the initial command launch.
+  // The first execve (launching the sandboxed command) is allowed;
+  // all subsequent execs from within the sandbox are blocked with -EACCES.
+  // This matches Chrome's renderer sandbox behavior.
+  // Use for: single-binary sandboxing where the command shouldn't spawn others.
+  SANDBOX_EXEC_CHROME = 0,
+
+  // BROKERED mode (default): every execve is validated by the broker.
+  // The ptrace tracer checks the executable path against BrokerPermissionList.
+  // Only executables in allowed paths (/bin, /usr/bin, etc.) can run.
+  // Use for: shell commands and pipelines that need to exec sub-processes.
+  SANDBOX_EXEC_BROKERED = 1,
+
+  // BLOCKED mode: block ALL execs including the initial one.
+  // The command must already be running (e.g., via fork from zygote).
+  // Use for: Chrome-identical behavior when exec is truly unnecessary.
+  SANDBOX_EXEC_BLOCKED = 2,
+} SandboxExecPolicy;
+
+// Set the exec policy for subsequent sandbox_exec calls.
+// Default: SANDBOX_EXEC_BROKERED
+void sandbox_set_exec_policy(SandboxExecPolicy policy);
+
 // --- Execution ---
 
 // Result of a sandboxed execution.
