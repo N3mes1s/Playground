@@ -11,6 +11,7 @@
 #include <cstring>
 #include <sstream>
 #include <string>
+#include <unistd.h>
 
 #include "base/compiler_specific.h"
 
@@ -42,7 +43,7 @@ class CheckError {
     stream_ << "\n";
     fprintf(stderr, "%s", stream_.str().c_str());
     fflush(stderr);
-    abort();
+    _exit(1);
   }
 
   std::ostream& stream() { return stream_; }
@@ -69,7 +70,7 @@ class NotReachedError {
     stream_ << "\n";
     fprintf(stderr, "%s", stream_.str().c_str());
     fflush(stderr);
-    abort();
+    _exit(1);
   }
   std::ostream& stream() { return stream_; }
   NotReachedError(const NotReachedError&) = delete;
@@ -81,7 +82,7 @@ class NotReachedError {
 
 [[noreturn]] inline void RawCheckFailure(const char* message) {
   fprintf(stderr, "RAW_CHECK failed: %s\n", message);
-  abort();
+  _exit(1);
 }
 
 }  // namespace logging

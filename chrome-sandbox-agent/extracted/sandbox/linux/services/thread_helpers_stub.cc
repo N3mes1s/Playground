@@ -37,10 +37,13 @@ bool ThreadHelpers::IsSingleThreaded() {
 
 // static
 void ThreadHelpers::AssertSingleThreaded(int proc_fd) {
-  // In standalone mode, just check once (no exponential backoff loop)
-  if (!IsSingleThreadedImpl(proc_fd)) {
-    LOG(WARNING) << "Process is not single-threaded (non-fatal in standalone mode)";
+  // Exponential backoff loop: wait for /proc to settle, then fail fatally
+  for (unsigned int i = 0; i < 25; ++i) {
+    if (IsSingleThreadedImpl(proc_fd)) return;
+    struct timespec ts = {0, 1L << i /* nanoseconds */};
+    nanosleep(&ts, &ts);
   }
+  LOG(FATAL) << "Current process is not mono-threaded!";
 }
 
 // static

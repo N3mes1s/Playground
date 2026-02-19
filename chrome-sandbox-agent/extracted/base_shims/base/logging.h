@@ -11,6 +11,7 @@
 #include <cstring>
 #include <sstream>
 #include <string>
+#include <unistd.h>
 
 #include "base/check.h"
 #include "base/check_op.h"
@@ -57,7 +58,7 @@ class LogMessage {
             stream_.str().c_str());
     fflush(stderr);
     if (severity_ >= LOGGING_FATAL) {
-      abort();
+      _exit(1);
     }
   }
 
@@ -92,7 +93,7 @@ class ErrnoLogMessage {
             saved_errno_);
     fflush(stderr);
     if (severity_ >= LOGGING_FATAL) {
-      abort();
+      _exit(1);
     }
   }
 
@@ -124,7 +125,7 @@ class LogMessageFatal {
     fprintf(stderr, "[%s:%d(FATAL)] %s\n", file_, line_,
             stream_.str().c_str());
     fflush(stderr);
-    abort();
+    _exit(1);
   }
   std::ostream& stream() { return stream_; }
 
@@ -143,7 +144,7 @@ class ErrnoLogMessageFatal {
     fprintf(stderr, "[%s:%d(FATAL)] %s: %s (errno %d)\n", file_, line_,
             stream_.str().c_str(), strerror(saved_errno_), saved_errno_);
     fflush(stderr);
-    abort();
+    _exit(1);
   }
   std::ostream& stream() { return stream_; }
 
@@ -157,7 +158,7 @@ class ErrnoLogMessageFatal {
 inline void RawLog(int level, const char* message) {
   fprintf(stderr, "[RAW] %s\n", message);
   if (level >= LOGGING_FATAL)
-    abort();
+    _exit(1);
 }
 
 // MSAN/sanitizer macros (no-ops in standalone build)
