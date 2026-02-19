@@ -61,9 +61,12 @@
 #include "sandbox/linux/syscall_broker/broker_client.h"
 #include "sandbox/linux/services/namespace_utils.h"
 #include "sandbox/linux/services/proc_util.h"
+#include "sandbox/linux/services/resource_limits.h"
 #include "sandbox/linux/services/syscall_wrappers.h"
+#include "sandbox/linux/services/yama.h"
 #include "sandbox/linux/system_headers/linux_syscalls.h"
 #include "sandbox/linux/system_headers/linux_seccomp.h"
+#include "sandbox/linux/system_headers/linux_stat.h"
 #include "sandbox/linux/system_headers/capability.h"
 
 using sandbox::bpf_dsl::Allow;
@@ -419,6 +422,31 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
           .Else(Error(EPERM));
     }
 
+    // ptrace: restrict to safe read-only operations for crash reporting
+    if (sysno == __NR_ptrace) {
+      return sandbox::RestrictPtrace();
+    }
+
+    // getrusage: restrict to self only
+    if (sysno == __NR_getrusage) {
+      return sandbox::RestrictGetrusage();
+    }
+
+    // prlimit64: restrict to self only, no modification
+    if (sysno == __NR_prlimit64) {
+      return sandbox::RestrictPrlimitToGetrlimit(policy_pid_);
+    }
+
+    // fstatat rewrite: glibc rewrites fstat() as fstatat(), handle this
+    if (sysno == __NR_fstatat_default) {
+      return sandbox::RewriteFstatatSIGSYS(EPERM);
+    }
+
+    // statx: return ENOSYS for basic stats (glibc falls back to stat)
+    if (sysno == __NR_statx) {
+      return Error(ENOSYS);
+    }
+
     // ── BLOCK: Dangerous syscall categories ──────────────────────────
 
     // Network: block new socket creation (except AF_UNIX)
@@ -437,10 +465,21 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       return Block();
     }
 
-    // Filesystem access: block (Chrome uses EPERM)
+    // Filesystem access: ALLOW within chroot isolation.
+    //
+    // Architecture difference from Chrome:
+    //   Chrome: blocks IsFileSystem syscalls → SIGSYS handler → broker IPC
+    //           → broker validates path against allowlist → returns fd
+    //   Us:     exec commands after sandbox setup → SIGSYS handler lost on exec
+    //           → filesystem isolation provided by chroot instead:
+    //             - read-only bind mounts for /bin, /lib, /usr, /etc
+    //             - writable /tmp (tmpfs)
+    //             - user-configured allowed paths
+    //   Net security effect is equivalent: process can only access
+    //   pre-approved paths, system directories are read-only.
     if (sandbox::SyscallSets::IsFileSystem(sysno) ||
         sandbox::SyscallSets::IsCurrentDirectory(sysno)) {
-      return Error(EPERM);
+      return Allow();
     }
 
     // Seccomp reconfiguration
@@ -454,10 +493,18 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       return Error(EPERM);
     }
 
-    // Denied fd operations, socket modifications, umask
-    if (sandbox::SyscallSets::IsUmask(sysno) ||
-        sandbox::SyscallSets::IsDeniedFileSystemAccessViaFd(sysno) ||
-        sandbox::SyscallSets::IsDeniedGetOrModifySocket(sysno)) {
+    // Umask: block (could weaken file permissions)
+    if (sandbox::SyscallSets::IsUmask(sysno)) return Error(EPERM);
+
+    // Fd-based filesystem ops (fchmod, fchown, getdents64, fallocate):
+    // Allow within chroot — read-only mounts return EROFS for mutations,
+    // getdents64 is needed for directory listing (ls, find, etc.)
+    if (sandbox::SyscallSets::IsDeniedFileSystemAccessViaFd(sysno)) {
+      return Allow();
+    }
+
+    // Socket modifications: block
+    if (sandbox::SyscallSets::IsDeniedGetOrModifySocket(sysno)) {
       return Error(EPERM);
     }
 
@@ -900,6 +947,22 @@ static NamespaceStatus apply_namespace_isolation() {
   // NOTE: We must do this AFTER mount namespace setup (which needs
   // CAP_SYS_ADMIN) but BEFORE seccomp-BPF installation.
   status.caps_dropped = drop_all_capabilities();
+
+  // Layer 4: Process hardening
+  // Disable core dumps (prevents leaking process memory)
+  prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);
+  // Disable core file generation
+  struct rlimit no_core = {0, 0};
+  setrlimit(RLIMIT_CORE, &no_core);
+
+  // Yama ptrace restrictions: restrict ptrace to ancestors only.
+  // This prevents other processes (even as same user) from ptracing us.
+  sandbox::Yama::RestrictPtracersToAncestors();
+
+  // Resource limits: prevent excessive memory allocation (heap spray defense)
+  // Chrome's renderer uses ~32GB limit; we use 16GB for general sandboxing.
+  static constexpr rlim_t kDataLimit = 16ULL * 1024 * 1024 * 1024;  // 16 GB
+  (void)sandbox::ResourceLimits::Lower(RLIMIT_DATA, kDataLimit);
 
   return status;
 }
