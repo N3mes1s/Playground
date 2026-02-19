@@ -29,6 +29,7 @@
 #include <sched.h>
 
 #include <chrono>
+#include <map>
 #include <set>
 #include <sstream>
 #include <string>
@@ -41,6 +42,11 @@
 #include "sandbox/linux/seccomp-bpf-helpers/baseline_policy.h"
 #include "sandbox/linux/seccomp-bpf-helpers/syscall_sets.h"
 #include "sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.h"
+#include "sandbox/linux/syscall_broker/broker_process.h"
+#include "sandbox/linux/syscall_broker/broker_sandbox_config.h"
+#include "sandbox/linux/syscall_broker/broker_command.h"
+#include "sandbox/linux/syscall_broker/broker_file_permission.h"
+#include "sandbox/linux/syscall_broker/broker_client.h"
 #include "sandbox/linux/services/namespace_utils.h"
 #include "sandbox/linux/services/proc_util.h"
 #include "sandbox/linux/services/syscall_wrappers.h"
@@ -50,14 +56,14 @@
 using sandbox::bpf_dsl::Allow;
 using sandbox::bpf_dsl::ResultExpr;
 using sandbox::bpf_dsl::Trap;
+using sandbox::bpf_dsl::Trace;
 using sandbox::bpf_dsl::Error;
 using sandbox::bpf_dsl::Arg;
 
 // =============================================================================
-// Custom policy classes using Chrome's bpf_dsl
+// Syscall name and risk classification (x86_64)
 // =============================================================================
 
-// x86_64 syscall names for logging
 static const char* syscall_name(int nr) {
   switch (nr) {
     case __NR_read: return "read";
@@ -84,6 +90,8 @@ static const char* syscall_name(int nr) {
     case __NR_accept: return "accept";
     case __NR_sendto: return "sendto";
     case __NR_recvfrom: return "recvfrom";
+    case __NR_sendmsg: return "sendmsg";
+    case __NR_recvmsg: return "recvmsg";
     case __NR_bind: return "bind";
     case __NR_listen: return "listen";
     case __NR_clone: return "clone";
@@ -159,22 +167,42 @@ static const char* syscall_name(int nr) {
     case __NR_madvise: return "madvise";
     case __NR_setsockopt: return "setsockopt";
     case __NR_getsockopt: return "getsockopt";
+    case __NR_socketpair: return "socketpair";
+    case __NR_getsockname: return "getsockname";
     default: return nullptr;
   }
 }
 
 static const char* syscall_risk(int nr) {
-  // Categorize like Chrome's syscall_sets.cc
-  if (nr == __NR_ptrace || nr == __NR_mount || nr == __NR_umount2 ||
-      nr == __NR_chroot || nr == __NR_reboot || nr == __NR_seccomp)
+  // Risk categories aligned with Chrome's syscall_sets.cc classifications
+  // CRITICAL: admin, kernel module, debug, filesystem control
+  if (nr == __NR_ptrace || nr == __NR_process_vm_readv ||
+      nr == __NR_process_vm_writev || nr == __NR_kcmp ||
+      nr == __NR_mount || nr == __NR_umount2 || nr == __NR_pivot_root ||
+      nr == __NR_chroot || nr == __NR_reboot || nr == __NR_seccomp ||
+      nr == __NR_init_module || nr == __NR_finit_module ||
+      nr == __NR_delete_module || nr == __NR_swapon || nr == __NR_swapoff ||
+      nr == __NR_sethostname || nr == __NR_setdomainname || nr == __NR_syslog)
     return "CRITICAL";
+  // HIGH: exec, process creation, networking, privilege changes
   if (nr == __NR_execve || nr == __NR_fork || nr == __NR_vfork ||
-      nr == __NR_clone || nr == __NR_socket || nr == __NR_connect ||
-      nr == __NR_bind || nr == __NR_listen || nr == __NR_kill)
+      nr == __NR_clone || nr == __NR_unshare || nr == __NR_setns ||
+      nr == __NR_socket || nr == __NR_connect || nr == __NR_bind ||
+      nr == __NR_listen || nr == __NR_accept || nr == __NR_accept4 ||
+      nr == __NR_kill || nr == __NR_tgkill || nr == __NR_tkill ||
+      nr == __NR_capset || nr == __NR_setuid || nr == __NR_setgid ||
+      nr == __NR_setreuid || nr == __NR_setregid ||
+      nr == __NR_setresuid || nr == __NR_setresgid)
     return "HIGH";
+  // MEDIUM: filesystem mutation, sending data
   if (nr == __NR_open || nr == __NR_openat || nr == __NR_unlink ||
-      nr == __NR_unlinkat || nr == __NR_rename || nr == __NR_mkdir ||
-      nr == __NR_rmdir || nr == __NR_chmod || nr == __NR_chown)
+      nr == __NR_unlinkat || nr == __NR_rename || nr == __NR_renameat ||
+      nr == __NR_mkdir || nr == __NR_mkdirat || nr == __NR_rmdir ||
+      nr == __NR_chmod || nr == __NR_fchmod || nr == __NR_fchmodat ||
+      nr == __NR_chown || nr == __NR_fchownat || nr == __NR_truncate ||
+      nr == __NR_sendto || nr == __NR_sendmsg || nr == __NR_recvfrom ||
+      nr == __NR_recvmsg || nr == __NR_link || nr == __NR_symlink ||
+      nr == __NR_mknod)
     return "MEDIUM";
   return "LOW";
 }
@@ -200,28 +228,113 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
   }
 
  private:
+  // Block helper: uses SECCOMP_RET_TRACE so the ptrace tracer can see and
+  // record blocked syscalls. The tracer skips the syscall by setting
+  // orig_rax=-1 and rax=-EPERM.
+  // (SECCOMP_RET_ERRNO is invisible to ptrace in gVisor.)
+  static ResultExpr Block() { return Trace(EPERM); }
+
   ResultExpr EvaluateStrict(int sysno) const {
-    // Block dangerous syscalls (Chrome's DANGEROUS category)
-    if (sysno == __NR_ptrace || sysno == __NR_mount ||
-        sysno == __NR_umount2 || sysno == __NR_chroot ||
-        sysno == __NR_reboot) {
-      return Error(EPERM);
+    // ── CRITICAL: Admin / Kernel / Privilege ─────────────────────────
+    // Chrome's IsAdminOperation + IsKernelModule + IsGlobalFSViewChange
+    if (sysno == __NR_reboot || sysno == __NR_sethostname ||
+        sysno == __NR_setdomainname || sysno == __NR_syslog) {
+      return Block();
     }
-    // Block network creation (sandboxed code shouldn't open new sockets)
+    if (sysno == __NR_init_module || sysno == __NR_finit_module ||
+        sysno == __NR_delete_module) {
+      return Block();
+    }
+    if (sysno == __NR_mount || sysno == __NR_umount2 ||
+        sysno == __NR_pivot_root || sysno == __NR_chroot ||
+        sysno == __NR_swapon || sysno == __NR_swapoff) {
+      return Block();
+    }
+
+    // ── CRITICAL: Debug / Process Introspection ──────────────────────
+    // Chrome's IsDebug
+    if (sysno == __NR_ptrace || sysno == __NR_process_vm_readv ||
+        sysno == __NR_process_vm_writev || sysno == __NR_kcmp) {
+      return Block();
+    }
+
+    // ── HIGH: Privilege Escalation ───────────────────────────────────
+    // Chrome's IsProcessPrivilegeChange
+    if (sysno == __NR_capset || sysno == __NR_setuid ||
+        sysno == __NR_setgid || sysno == __NR_setreuid ||
+        sysno == __NR_setregid || sysno == __NR_setresuid ||
+        sysno == __NR_setresgid || sysno == __NR_setgroups ||
+        sysno == __NR_setfsuid || sysno == __NR_setfsgid) {
+      return Block();
+    }
+
+    // ── HIGH: Network ────────────────────────────────────────────────
+    // Block new socket creation (except AF_UNIX for IPC with broker)
     if (sysno == __NR_socket) {
       Arg<int> domain(0);
-      // Allow AF_UNIX (1) for IPC, block others
-      return sandbox::bpf_dsl::If(domain == 1, Allow()).Else(Error(EPERM));
+      return sandbox::bpf_dsl::If(domain == 1, Allow()).Else(Block());
     }
-    // Allow everything else
+    // Block bind/listen/accept (no servers inside sandbox)
+    if (sysno == __NR_bind || sysno == __NR_listen ||
+        sysno == __NR_accept || sysno == __NR_accept4) {
+      return Block();
+    }
+
+    // ── HIGH: Namespace / Isolation Escape ───────────────────────────
+    if (sysno == __NR_unshare || sysno == __NR_setns) {
+      return Block();
+    }
+
+    // ── MEDIUM: Restrict clone flags ─────────────────────────────────
+    // Allow normal clone (for fork/threads) but block CLONE_NEWUSER etc.
+    if (sysno == __NR_clone) {
+      // Bit 28-31 in flags are the new namespace flags
+      // CLONE_NEWUSER=0x10000000, CLONE_NEWNS=0x00020000,
+      // CLONE_NEWPID=0x20000000, CLONE_NEWNET=0x40000000
+      // We block any clone that requests new namespaces
+      Arg<unsigned long> flags(0);
+      const unsigned long NS_FLAGS = 0x7e020000;  // All CLONE_NEW* flags
+      return sandbox::bpf_dsl::If(
+          (flags & NS_FLAGS) == 0, Allow()).Else(Block());
+    }
+
+    // ── MEDIUM: Key Management ───────────────────────────────────────
+    if (sysno == __NR_add_key || sysno == __NR_keyctl ||
+        sysno == __NR_request_key) {
+      return Block();
+    }
+
+    // ── LOW: Prevent seccomp re-configuration ────────────────────────
+    // Don't let sandboxed code install new seccomp filters that could
+    // interfere with our policy
+    if (sysno == __NR_seccomp) {
+      // Allow SECCOMP_GET_ACTION_AVAIL (for feature detection) but
+      // block SECCOMP_SET_MODE_FILTER
+      Arg<unsigned int> op(0);
+      return sandbox::bpf_dsl::If(op == 2, Allow()).Else(Block());
+    }
+
+    // Allow everything else (file ops, signals, memory, scheduling, etc.)
     return Allow();
   }
 
   ResultExpr EvaluatePermissive(int sysno) const {
-    // Only block the truly dangerous ones
-    if (sysno == __NR_ptrace || sysno == __NR_mount ||
-        sysno == __NR_reboot || sysno == __NR_chroot) {
-      return Error(EPERM);
+    // Only block truly dangerous operations that could escape the sandbox
+    if (sysno == __NR_ptrace || sysno == __NR_process_vm_readv ||
+        sysno == __NR_process_vm_writev) {
+      return Block();
+    }
+    if (sysno == __NR_mount || sysno == __NR_umount2 ||
+        sysno == __NR_chroot || sysno == __NR_pivot_root) {
+      return Block();
+    }
+    if (sysno == __NR_reboot || sysno == __NR_init_module ||
+        sysno == __NR_finit_module || sysno == __NR_delete_module) {
+      return Block();
+    }
+    if (sysno == __NR_capset || sysno == __NR_setuid ||
+        sysno == __NR_setgid) {
+      return Block();
     }
     return Allow();
   }
@@ -237,18 +350,41 @@ static SandboxPolicyLevel g_policy_level = SANDBOX_POLICY_STRICT;
 static std::vector<std::string> g_allowed_paths;
 static bool g_initialized = false;
 
-// =============================================================================
-// Ptrace-based syscall tracer (runs in parent, traces child)
-// =============================================================================
+// Broker process (Chrome's real BrokerProcess)
+static std::unique_ptr<sandbox::syscall_broker::BrokerProcess> g_broker;
 
-#define ORIG_RAX_OFFSET (8 * ORIG_RAX)
+// =============================================================================
+// Ptrace-based syscall tracer
+// =============================================================================
 
 struct SyscallRecord {
   int nr;
   const char* name;
   const char* risk;
+  bool blocked;
+  std::string path;  // Resolved path for file-related syscalls
   long args[6];
 };
+
+// Escape a string for JSON output
+static std::string json_escape(const std::string& s) {
+  std::string out;
+  out.reserve(s.size() + 4);
+  for (char c : s) {
+    switch (c) {
+      case '"':  out += "\\\""; break;
+      case '\\': out += "\\\\"; break;
+      case '\n': out += "\\n"; break;
+      case '\r': out += "\\r"; break;
+      case '\t': out += "\\t"; break;
+      default:
+        if (static_cast<unsigned char>(c) < 0x20)
+          continue;  // skip other control chars
+        out += c;
+    }
+  }
+  return out;
+}
 
 static std::string build_syscall_log_json(
     const std::vector<SyscallRecord>& records) {
@@ -259,6 +395,10 @@ static std::string build_syscall_log_json(
     json << "{\"nr\":" << records[i].nr;
     json << ",\"name\":\"" << (records[i].name ? records[i].name : "unknown") << "\"";
     json << ",\"risk\":\"" << records[i].risk << "\"";
+    json << ",\"blocked\":" << (records[i].blocked ? "true" : "false");
+    if (!records[i].path.empty()) {
+      json << ",\"path\":\"" << json_escape(records[i].path) << "\"";
+    }
     json << ",\"args\":[";
     for (int a = 0; a < 6; a++) {
       if (a > 0) json << ",";
@@ -272,17 +412,16 @@ static std::string build_syscall_log_json(
 
 // Read a string from child process memory via /proc/pid/mem
 static std::string read_child_string(pid_t pid, unsigned long addr, size_t maxlen = 256) {
-  if (addr == 0) return "(null)";
-  char path[64];
-  snprintf(path, sizeof(path), "/proc/%d/mem", pid);
-  int fd = open(path, O_RDONLY);
-  if (fd < 0) return "(unreadable)";
+  if (addr == 0) return "";
+  char proc_path[64];
+  snprintf(proc_path, sizeof(proc_path), "/proc/%d/mem", pid);
+  int fd = open(proc_path, O_RDONLY);
+  if (fd < 0) return "";
   char buf[256];
   if (maxlen > sizeof(buf)) maxlen = sizeof(buf);
   ssize_t n = pread(fd, buf, maxlen, addr);
   close(fd);
-  if (n <= 0) return "(unreadable)";
-  // Find null terminator
+  if (n <= 0) return "";
   for (ssize_t i = 0; i < n; i++) {
     if (buf[i] == '\0') return std::string(buf, i);
   }
@@ -328,8 +467,6 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
     // Install Chrome's seccomp-BPF sandbox using the actual Chromium code
     auto policy = std::make_unique<AgentSandboxPolicy>(g_policy_level);
     sandbox::SandboxBPF sandbox(std::move(policy));
-    // Note: StartSandbox may fail in some environments, but the
-    // policy is still enforced via ptrace as a fallback.
     sandbox.StartSandbox(sandbox::SandboxBPF::SeccompLevel::SINGLE_THREADED);
 
     // Now exec the target command
@@ -352,23 +489,19 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
                      PTRACE_O_TRACEEXIT;
   ptrace(PTRACE_SETOPTIONS, child, nullptr, ptrace_opts);
 
-  // In TRACE_ALL mode, use PTRACE_SYSCALL so we get stops on every syscall.
-  // In other modes, seccomp-BPF generates SECCOMP_RET_TRACE for interesting
-  // syscalls and we just use PTRACE_CONT.
-  bool trace_all = (g_policy_level == SANDBOX_POLICY_TRACE_ALL);
+  // ALWAYS use PTRACE_SYSCALL so we trace every syscall regardless of policy.
+  // Chrome's seccomp-BPF filter still enforces the policy at the kernel level
+  // (blocking dangerous syscalls via SECCOMP_RET_ERRNO), but ptrace gives us
+  // independent visibility. These are two separate kernel mechanisms:
+  //   - seccomp-BPF: enforces policy (block/allow/trap)
+  //   - ptrace(PTRACE_SYSCALL): observes syscalls for tracing/analysis
+  ptrace(PTRACE_SYSCALL, child, nullptr, nullptr);
 
-  // Resume child (it will install seccomp, then exec)
-  if (trace_all) {
-    ptrace(PTRACE_SYSCALL, child, nullptr, nullptr);
-  } else {
-    ptrace(PTRACE_CONT, child, nullptr, nullptr);
-  }
-
-  // Trace loop: intercept syscalls via ptrace
+  // Trace loop
   std::vector<SyscallRecord> records;
   std::set<pid_t> traced_pids = {child};
-  // Track syscall entry vs exit per-pid (PTRACE_SYSCALL fires twice per syscall)
-  std::set<pid_t> in_syscall_entry;
+  // Track syscall entry→exit per pid: maps pid → index into records[]
+  std::map<pid_t, size_t> pending_entry;
   int blocked = 0;
 
   while (!traced_pids.empty()) {
@@ -382,7 +515,7 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
         result.exit_code = WIFEXITED(wstatus) ? WEXITSTATUS(wstatus) : -1;
       }
       traced_pids.erase(pid);
-      in_syscall_entry.erase(pid);
+      pending_entry.erase(pid);
       continue;
     }
 
@@ -392,25 +525,45 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
     int event = (wstatus >> 16) & 0xFF;
 
     if (event == PTRACE_EVENT_SECCOMP) {
-      // Seccomp-BPF triggered SECCOMP_RET_TRACE - record the syscall
+      // SECCOMP_RET_TRACE: seccomp-BPF flagged this syscall for tracer
+      // decision. Our policy uses Trace(EPERM) for blocked syscalls, so
+      // the data field contains EPERM (1).
       struct user_regs_struct regs;
       if (ptrace(PTRACE_GETREGS, pid, nullptr, &regs) == 0) {
+        // Record the blocked syscall
         SyscallRecord rec;
-        rec.nr = regs.orig_rax;
+        rec.nr = (int)regs.orig_rax;
         rec.name = syscall_name(rec.nr);
         rec.risk = syscall_risk(rec.nr);
+        rec.blocked = true;  // This was flagged by seccomp for blocking
         rec.args[0] = regs.rdi;
         rec.args[1] = regs.rsi;
         rec.args[2] = regs.rdx;
         rec.args[3] = regs.r10;
         rec.args[4] = regs.r8;
         rec.args[5] = regs.r9;
+
+        // Read path for file-related blocked syscalls
+        if (rec.nr == __NR_openat || rec.nr == __NR_faccessat ||
+            rec.nr == __NR_newfstatat || rec.nr == __NR_mkdirat ||
+            rec.nr == __NR_unlinkat) {
+          rec.path = read_child_string(pid, regs.rsi);
+        } else if (rec.nr == __NR_open || rec.nr == __NR_access ||
+                   rec.nr == __NR_execve) {
+          rec.path = read_child_string(pid, regs.rdi);
+        }
+
         records.push_back(rec);
+        blocked++;
+
+        // Skip the syscall by setting orig_rax to -1 (invalid syscall nr).
+        // The kernel will return -ENOSYS. To return -EPERM instead, we
+        // also set rax to -EPERM so the child sees the right errno.
+        regs.orig_rax = -1;  // Skip the syscall
+        regs.rax = -EPERM;   // Child sees EPERM
+        ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
       }
-      if (trace_all)
-        ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
-      else
-        ptrace(PTRACE_CONT, pid, nullptr, nullptr);
+      ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
 
     } else if (event == PTRACE_EVENT_FORK ||
                event == PTRACE_EVENT_VFORK ||
@@ -418,55 +571,79 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
       unsigned long new_pid;
       ptrace(PTRACE_GETEVENTMSG, pid, nullptr, &new_pid);
       traced_pids.insert(static_cast<pid_t>(new_pid));
-      if (trace_all)
-        ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
-      else
-        ptrace(PTRACE_CONT, pid, nullptr, nullptr);
+      ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
 
     } else if (event == PTRACE_EVENT_EXEC ||
                event == PTRACE_EVENT_EXIT) {
-      if (trace_all)
-        ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
-      else
-        ptrace(PTRACE_CONT, pid, nullptr, nullptr);
+      ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
 
     } else if (sig == (SIGTRAP | 0x80)) {
-      // Syscall-stop from PTRACE_SYSCALL mode (fires on entry AND exit)
-      // Only record on entry (toggle per pid)
-      if (in_syscall_entry.count(pid) == 0) {
-        // This is syscall entry
-        in_syscall_entry.insert(pid);
-        struct user_regs_struct regs;
-        if (ptrace(PTRACE_GETREGS, pid, nullptr, &regs) == 0) {
+      // Syscall-stop from PTRACE_SYSCALL: fires on entry AND exit.
+      // On x86_64, the kernel sets rax = -ENOSYS on entry (before the syscall
+      // executes). On exit, rax contains the return value. We use this to
+      // distinguish entry from exit without a toggle (which desyncs in gVisor
+      // when seccomp-blocked syscalls don't generate exit-stops).
+      struct user_regs_struct regs;
+      if (ptrace(PTRACE_GETREGS, pid, nullptr, &regs) == 0) {
+        long long rax_val = (long long)regs.rax;
+        int nr = (int)regs.orig_rax;
+        bool is_entry = (rax_val == -ENOSYS);
+
+        if (is_entry) {
+          // === SYSCALL ENTRY ===
           SyscallRecord rec;
-          rec.nr = regs.orig_rax;
+          rec.nr = nr;
           rec.name = syscall_name(rec.nr);
           rec.risk = syscall_risk(rec.nr);
+          rec.blocked = false;
           rec.args[0] = regs.rdi;
           rec.args[1] = regs.rsi;
           rec.args[2] = regs.rdx;
           rec.args[3] = regs.r10;
           rec.args[4] = regs.r8;
           rec.args[5] = regs.r9;
+
+          // For file-related syscalls, read the path from child memory
+          if (rec.nr == __NR_openat || rec.nr == __NR_faccessat ||
+              rec.nr == __NR_newfstatat || rec.nr == __NR_mkdirat ||
+              rec.nr == __NR_unlinkat || rec.nr == __NR_fchmodat ||
+              rec.nr == __NR_readlinkat || rec.nr == __NR_renameat) {
+            rec.path = read_child_string(pid, regs.rsi);
+          } else if (rec.nr == __NR_open || rec.nr == __NR_access ||
+                     rec.nr == __NR_stat || rec.nr == __NR_lstat ||
+                     rec.nr == __NR_execve || rec.nr == __NR_unlink ||
+                     rec.nr == __NR_mkdir || rec.nr == __NR_rmdir ||
+                     rec.nr == __NR_chmod || rec.nr == __NR_chown ||
+                     rec.nr == __NR_chdir || rec.nr == __NR_truncate) {
+            rec.path = read_child_string(pid, regs.rdi);
+          }
+
           records.push_back(rec);
+          // Track this entry so we can match the exit
+          pending_entry[pid] = records.size() - 1;
+        } else {
+          // === SYSCALL EXIT ===
+          long retval = (long)rax_val;
+          auto it = pending_entry.find(pid);
+          if (it != pending_entry.end()) {
+            size_t entry_idx = it->second;
+            pending_entry.erase(it);
+
+            // Check if seccomp-BPF blocked this syscall (returned -EPERM)
+            if (retval == -EPERM && entry_idx < records.size()) {
+              records[entry_idx].blocked = true;
+              blocked++;
+            }
+          }
         }
-      } else {
-        // This is syscall exit
-        in_syscall_entry.erase(pid);
       }
       ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
 
     } else if (sig == SIGTRAP) {
-      if (trace_all)
-        ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
-      else
-        ptrace(PTRACE_CONT, pid, nullptr, nullptr);
+      ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
     } else {
       // Deliver signal to child
-      if (trace_all)
-        ptrace(PTRACE_SYSCALL, pid, nullptr, sig);
-      else
-        ptrace(PTRACE_CONT, pid, nullptr, sig);
+      ptrace(PTRACE_SYSCALL, pid, nullptr, sig);
     }
   }
 
@@ -503,6 +680,31 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
 }
 
 // =============================================================================
+// Broker implementation using Chrome's real BrokerProcess
+// =============================================================================
+
+static std::vector<sandbox::syscall_broker::BrokerFilePermission>
+build_broker_permissions() {
+  using sandbox::syscall_broker::BrokerFilePermission;
+  std::vector<BrokerFilePermission> perms;
+
+  // Always allow read access to essential system paths
+  perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/lib"));
+  perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/usr/lib"));
+  perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/etc"));
+  perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/proc"));
+
+  // Add user-configured paths with full access
+  for (const auto& path : g_allowed_paths) {
+    if (!path.empty() && path[0] == '/') {
+      perms.push_back(BrokerFilePermission::ReadWriteCreateRecursive(path));
+    }
+  }
+
+  return perms;
+}
+
+// =============================================================================
 // C API implementation
 // =============================================================================
 
@@ -514,6 +716,7 @@ int sandbox_init(void) {
 }
 
 void sandbox_shutdown(void) {
+  g_broker.reset();
   g_initialized = false;
 }
 
@@ -578,12 +781,39 @@ const char* sandbox_kernel_version(void) {
 }
 
 int sandbox_start_broker(void) {
-  // TODO: implement using sandbox::syscall_broker::BrokerProcess
-  return -1;
+  using namespace sandbox::syscall_broker;
+
+  auto perms = build_broker_permissions();
+
+  // Build the broker config using Chrome's real BrokerSandboxConfig
+  BrokerCommandSet commands = MakeBrokerCommandSet({
+      COMMAND_OPEN, COMMAND_ACCESS, COMMAND_STAT, COMMAND_STAT64,
+      COMMAND_READLINK, COMMAND_MKDIR, COMMAND_UNLINK, COMMAND_RMDIR,
+      COMMAND_RENAME});
+
+  BrokerSandboxConfig config(commands, std::move(perms), EACCES);
+
+  g_broker = std::make_unique<BrokerProcess>(
+      std::move(config), BrokerProcess::BrokerType::SIGNAL_BASED);
+
+  // Fork the broker process (this actually forks!)
+  if (!g_broker->Fork(base::OnceCallback<bool(const BrokerSandboxConfig&)>())) {
+    g_broker.reset();
+    return -1;
+  }
+
+  return g_broker->broker_pid();
 }
 
 void sandbox_stop_broker(void) {
-  // TODO: implement
+  if (g_broker) {
+    int pid = g_broker->broker_pid();
+    g_broker.reset();
+    if (pid > 0) {
+      kill(pid, SIGTERM);
+      waitpid(pid, nullptr, 0);
+    }
+  }
 }
 
 }  // extern "C"
