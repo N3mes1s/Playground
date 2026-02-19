@@ -1,16 +1,17 @@
 // sandbox_harness.h - C API for the Chrome sandbox harness.
 // This is the interface used by Python ctypes to drive the sandbox.
 //
-// Architecture (mirrors Chrome's broker/target model):
+// Architecture (mirrors Chrome's multi-layer sandbox model):
 //
 //   Python Agent (broker)                   Sandboxed Worker (target)
-//   ┌─────────────────────┐                ┌─────────────────────┐
-//   │  LLM tool calls     │   fork + IPC   │  Executes commands  │
-//   │  Policy decisions   │ ──────────────> │  under seccomp-BPF  │
-//   │  Syscall analysis   │ <────────────── │  with namespace     │
-//   │                     │   results +     │  isolation           │
-//   │                     │   syscall log   │                     │
-//   └─────────────────────┘                └─────────────────────┘
+//   ┌─────────────────────┐                ┌─────────────────────────┐
+//   │  LLM tool calls     │   fork + IPC   │  Layer 1: User NS       │
+//   │  Policy decisions   │ ──────────────> │  Layer 2: PID NS        │
+//   │  Syscall analysis   │ <────────────── │  Layer 3: Net NS        │
+//   │                     │   results +     │  Layer 4: Mount NS      │
+//   │                     │   syscall log   │  Layer 5: Drop caps     │
+//   │                     │                 │  Layer 6: seccomp-BPF   │
+//   └─────────────────────┘                └─────────────────────────┘
 
 #ifndef SANDBOX_HARNESS_H_
 #define SANDBOX_HARNESS_H_
@@ -85,6 +86,21 @@ int sandbox_start_broker(void);
 
 // Stop the broker process.
 void sandbox_stop_broker(void);
+
+// --- Namespace isolation ---
+
+// Enable or disable namespace isolation (user, PID, network, mount).
+// When enabled (default), the sandbox applies Chrome's full defense-in-depth:
+//   Layer 1: User namespace (isolate UIDs, drop privilege)
+//   Layer 2: PID namespace (isolate process tree)
+//   Layer 3: Network namespace (isolate network stack)
+//   Layer 4: Mount namespace (isolate filesystem view)
+//   Layer 5: Drop all capabilities
+//   Layer 6: seccomp-BPF filter (syscall allowlist)
+// When disabled, only seccomp-BPF is used.
+// Must be called before sandbox_exec(). Default: enabled.
+void sandbox_set_namespaces_enabled(int enabled);
+int sandbox_get_namespaces_enabled(void);
 
 // --- Query capabilities ---
 

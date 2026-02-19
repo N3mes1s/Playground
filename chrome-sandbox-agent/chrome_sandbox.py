@@ -94,6 +94,12 @@ _lib.sandbox_has_user_namespaces.restype = ctypes.c_int
 _lib.sandbox_kernel_version.argtypes = []
 _lib.sandbox_kernel_version.restype = ctypes.c_char_p
 
+_lib.sandbox_set_namespaces_enabled.argtypes = [ctypes.c_int]
+_lib.sandbox_set_namespaces_enabled.restype = None
+
+_lib.sandbox_get_namespaces_enabled.argtypes = []
+_lib.sandbox_get_namespaces_enabled.restype = ctypes.c_int
+
 
 # --- Pythonic wrapper ---
 
@@ -124,12 +130,14 @@ class ChromeSandbox:
         print(result.syscall_log)   # [{nr: 1, name: "write", risk: "LOW", ...}, ...]
     """
 
-    def __init__(self, policy: PolicyLevel = PolicyLevel.TRACE_ALL):
+    def __init__(self, policy: PolicyLevel = PolicyLevel.TRACE_ALL,
+                 namespaces: bool = True):
         rc = _lib.sandbox_init()
         if rc != 0:
             raise RuntimeError("Failed to initialize Chrome sandbox")
         self._policy = policy
         _lib.sandbox_set_policy(int(policy))
+        _lib.sandbox_set_namespaces_enabled(1 if namespaces else 0)
 
     def set_policy(self, policy: PolicyLevel) -> None:
         """Change the seccomp-BPF policy level."""
@@ -170,6 +178,10 @@ class ChromeSandbox:
     def has_user_namespaces() -> bool:
         """Check if user namespaces are available."""
         return _lib.sandbox_has_user_namespaces() == 1
+
+    def set_namespaces_enabled(self, enabled: bool) -> None:
+        """Enable or disable namespace isolation layers."""
+        _lib.sandbox_set_namespaces_enabled(1 if enabled else 0)
 
     @staticmethod
     def kernel_version() -> str:
