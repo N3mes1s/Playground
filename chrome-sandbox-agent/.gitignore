@@ -1,0 +1,15 @@
+# Build artifacts
+extracted/build/
+__pycache__/
+*.pyc
+*.o
+*.a
+*.so
+
+# Chromium source checkout (1.4G, not needed in repo - extracted/ has the needed files)
+chromium-src/
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
