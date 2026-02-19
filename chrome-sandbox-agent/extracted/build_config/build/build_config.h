@@ -17,6 +17,10 @@
 #define BUILDFLAG_INTERNAL_IS_POSIX() (1)
 #define BUILDFLAG_INTERNAL_IS_OZONE() (0)
 
+// Feature flags used by sandbox tests
+#define BUILDFLAG_INTERNAL_ENABLE_MUTEX_PRIORITY_INHERITANCE() (0)
+#define BUILDFLAG_INTERNAL_CLANG_PROFILING() (0)
+
 #define BUILDFLAG(flag) (BUILDFLAG_INTERNAL_##flag())
 
 // Architecture detection
