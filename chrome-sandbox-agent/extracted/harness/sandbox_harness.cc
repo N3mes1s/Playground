@@ -370,10 +370,11 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       return sandbox::RestrictSchedTarget(policy_pid_, sysno);
     }
 
-    // socketpair: only AF_UNIX
+    // socketpair: only AF_UNIX (matches Chrome baseline — CrashSIGSYS on other)
     if (sysno == __NR_socketpair) {
       const Arg<int> domain(0);
-      return sandbox::bpf_dsl::If(domain == AF_UNIX, Allow()).Else(Block());
+      return sandbox::bpf_dsl::If(domain == AF_UNIX, Allow())
+          .Else(sandbox::CrashSIGSYS());
     }
 
     // send flags: restrict MSG_OOB etc.
@@ -381,13 +382,13 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       return sandbox::RestrictSockSendFlags(sysno);
     }
 
-    // getsockopt/setsockopt: only SO_PEEK_OFF
+    // getsockopt/setsockopt: only SO_PEEK_OFF (matches Chrome baseline)
     if (sysno == __NR_getsockopt || sysno == __NR_setsockopt) {
       const Arg<int> level(1);
       const Arg<int> optname(2);
       return sandbox::bpf_dsl::If(
           sandbox::bpf_dsl::AllOf(level == SOL_SOCKET, optname == 42),
-          Allow()).Else(Block());
+          Allow()).Else(sandbox::CrashSIGSYS());
     }
 
     // memfd_create: restrict flags
@@ -442,9 +443,13 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       return sandbox::RewriteFstatatSIGSYS(EPERM);
     }
 
-    // statx: return ENOSYS for basic stats (glibc falls back to stat)
+    // statx: glibc may use statx for stat-family calls. Return ENOSYS for
+    // STATX_BASIC_STATS to force glibc fallback to old stat paths.
+    // Non-basic masks get EPERM (matches Chrome baseline).
     if (sysno == __NR_statx) {
-      return Error(ENOSYS);
+      const Arg<int> mask(3);
+      return sandbox::bpf_dsl::If(mask == STATX_BASIC_STATS, Error(ENOSYS))
+          .Else(Error(EPERM));
     }
 
     // ── BLOCK: Dangerous syscall categories ──────────────────────────
@@ -519,9 +524,11 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       return sandbox::CrashSIGSYS();
     }
 
-    // Everything else: block with EPERM
-    // (Chrome would CrashSIGSYS here, but we prefer observability)
-    return Error(EPERM);
+    // Everything else: crash via SIGSYS (matches Chrome's baseline policy).
+    // Unknown/unclassified syscalls are treated as dangerous — if a syscall
+    // wasn't explicitly allowed or handled above, it should not be silently
+    // permitted or return a benign error.
+    return sandbox::CrashSIGSYS();
   }
 
   ResultExpr EvaluatePermissive(int sysno) const {
@@ -830,6 +837,10 @@ static bool setup_chroot_filesystem() {
   close(open(path, O_WRONLY | O_CREAT, 0444));
   mount("/dev/urandom", path, nullptr, MS_BIND, nullptr);
 
+  snprintf(path, sizeof(path), "%s/dev/random", sandbox_root);
+  close(open(path, O_WRONLY | O_CREAT, 0444));
+  mount("/dev/random", path, nullptr, MS_BIND, nullptr);
+
   snprintf(path, sizeof(path), "%s/dev/zero", sandbox_root);
   close(open(path, O_WRONLY | O_CREAT, 0666));
   mount("/dev/zero", path, nullptr, MS_BIND, nullptr);
@@ -1022,11 +1033,26 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
         _exit(125);  // Fork failed
       }
       if (ns_child > 0) {
-        // Original child becomes init reaper for PID namespace.
-        // Wait for the namespace child and exit with its status.
-        int reaper_status;
-        while (waitpid(ns_child, &reaper_status, 0) < 0 && errno == EINTR) {}
-        _exit(WIFEXITED(reaper_status) ? WEXITSTATUS(reaper_status) : 1);
+        // Init reaper: as PID 1 in a PID namespace, we must reap ALL
+        // orphaned children (not just our direct child). This matches
+        // Chrome's CreateInitProcessReaper() which uses waitid(P_ALL).
+        int exit_code = 1;
+        for (;;) {
+          int reaper_status;
+          pid_t reaped = waitpid(-1, &reaper_status, 0);
+          if (reaped < 0) {
+            if (errno == EINTR) continue;
+            break;  // ECHILD: no more children
+          }
+          if (reaped == ns_child) {
+            // Our main child exited — record its exit code
+            exit_code = WIFEXITED(reaper_status)
+                            ? WEXITSTATUS(reaper_status)
+                            : 1;
+          }
+          // Continue reaping other orphaned children
+        }
+        _exit(exit_code);
       }
       // Grandchild: PID 1 in new PID namespace.
       // Remount /proc to reflect the new PID namespace.
