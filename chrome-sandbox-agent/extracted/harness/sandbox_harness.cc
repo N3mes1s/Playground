@@ -8,10 +8,13 @@
 // - sandbox/linux/services/                    (namespace utils, proc utils)
 //
 // Sandbox layers (matching Chrome's defense-in-depth):
-// Layer 1: Namespace isolation (user, PID, network) via unshare(2)
-// Layer 2: Filesystem isolation via chroot(2) to empty dir
+// Layer 1: Namespace isolation (user, PID, IPC, network, mount) via unshare(2)
+// Layer 2: Filesystem isolation via chroot(2)/pivot_root with bind mounts
 // Layer 3: Capability dropping via capset(2)
-// Layer 4: seccomp-BPF syscall filtering via Chrome's SandboxBPF
+// Layer 4: Process hardening (PR_SET_DUMPABLE, RLIMIT_CORE, Yama, RLIMIT_DATA)
+// Layer 5: seccomp-BPF syscall filtering via Chrome's SandboxBPF
+// Layer 6: Ptrace-based filesystem broker (validates paths via BrokerPermissionList)
+//          Equivalent to Chrome's SIGSYS-based broker but survives execve()
 
 #include "harness/sandbox_harness.h"
 
@@ -59,6 +62,7 @@
 #include "sandbox/linux/syscall_broker/broker_command.h"
 #include "sandbox/linux/syscall_broker/broker_file_permission.h"
 #include "sandbox/linux/syscall_broker/broker_client.h"
+#include "sandbox/linux/syscall_broker/broker_permission_list.h"
 #include "sandbox/linux/services/namespace_utils.h"
 #include "sandbox/linux/services/proc_util.h"
 #include "sandbox/linux/services/resource_limits.h"
@@ -247,12 +251,25 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
     }
   }
 
+ public:
+  // Trace data values for SECCOMP_RET_TRACE.
+  // PTRACE_GETEVENTMSG returns these so the tracer can distinguish actions.
+  static constexpr uint16_t TRACE_BLOCKED = 1;  // Always block (skip + EPERM)
+  static constexpr uint16_t TRACE_BROKER  = 2;  // Broker: validate path first
+
  private:
+
   // Block helper: uses SECCOMP_RET_TRACE so the ptrace tracer can see and
   // record blocked syscalls. The tracer skips the syscall by setting
   // orig_rax=-1 and rax=-EPERM.
   // (SECCOMP_RET_ERRNO is invisible to ptrace in gVisor.)
-  static ResultExpr Block() { return Trace(EPERM); }
+  static ResultExpr Block() { return Trace(TRACE_BLOCKED); }
+
+  // Broker helper: routes filesystem syscalls to the ptrace tracer which
+  // validates paths against BrokerPermissionList before allowing/denying.
+  // This is architecturally equivalent to Chrome's SIGSYS-based broker but
+  // survives execve() because ptrace operates from the parent process.
+  static ResultExpr Broker() { return Trace(TRACE_BROKER); }
 
   ResultExpr EvaluateStrict(int sysno) const {
     // ── Use Chrome's SyscallSets for comprehensive classification ────
@@ -470,21 +487,19 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       return Block();
     }
 
-    // Filesystem access: ALLOW within chroot isolation.
+    // Filesystem access: route through ptrace-based broker.
     //
-    // Architecture difference from Chrome:
-    //   Chrome: blocks IsFileSystem syscalls → SIGSYS handler → broker IPC
-    //           → broker validates path against allowlist → returns fd
-    //   Us:     exec commands after sandbox setup → SIGSYS handler lost on exec
-    //           → filesystem isolation provided by chroot instead:
-    //             - read-only bind mounts for /bin, /lib, /usr, /etc
-    //             - writable /tmp (tmpfs)
-    //             - user-configured allowed paths
-    //   Net security effect is equivalent: process can only access
-    //   pre-approved paths, system directories are read-only.
+    // Chrome uses SIGSYS handler → broker IPC to validate filesystem paths.
+    // We use SECCOMP_RET_TRACE → ptrace tracer validates paths against
+    // BrokerPermissionList. This achieves the same per-path validation but
+    // survives execve() (SIGSYS handlers are lost on exec; ptrace is not).
+    //
+    // The tracer checks PTRACE_GETEVENTMSG == TRACE_BROKER and validates
+    // the path against the configured permission list. If allowed, the
+    // syscall proceeds normally. If denied, it's skipped with -EACCES.
     if (sandbox::SyscallSets::IsFileSystem(sysno) ||
         sandbox::SyscallSets::IsCurrentDirectory(sysno)) {
-      return Allow();
+      return Broker();
     }
 
     // Seccomp reconfiguration
@@ -502,8 +517,11 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
     if (sandbox::SyscallSets::IsUmask(sysno)) return Error(EPERM);
 
     // Fd-based filesystem ops (fchmod, fchown, getdents64, fallocate):
-    // Allow within chroot — read-only mounts return EROFS for mutations,
+    // These operate on already-opened file descriptors, not paths.
     // getdents64 is needed for directory listing (ls, find, etc.)
+    // fchmod/fchown on read-only mounts return EROFS from the kernel.
+    // Allow these since they can't open new files — the broker already
+    // controls which files can be opened in the first place.
     if (sandbox::SyscallSets::IsDeniedFileSystemAccessViaFd(sysno)) {
       return Allow();
     }
@@ -978,6 +996,10 @@ static NamespaceStatus apply_namespace_isolation() {
   return status;
 }
 
+// Forward declaration for broker permissions builder
+static std::vector<sandbox::syscall_broker::BrokerFilePermission>
+build_broker_permissions();
+
 // =============================================================================
 // Core execution: fork + ptrace + seccomp
 // =============================================================================
@@ -1090,6 +1112,14 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
                      PTRACE_O_TRACEEXIT;
   ptrace(PTRACE_SETOPTIONS, child, nullptr, ptrace_opts);
 
+  // === Ptrace-based syscall broker ===
+  // Build the broker permission list (matches Chrome's BrokerHost validation).
+  // The seccomp policy routes filesystem syscalls via Trace(TRACE_BROKER).
+  // The tracer validates paths against this list, allowing or denying each call.
+  auto broker_perms = build_broker_permissions();
+  sandbox::syscall_broker::BrokerPermissionList broker_policy(
+      EACCES, std::move(broker_perms));
+
   // ALWAYS use PTRACE_SYSCALL so we trace every syscall regardless of policy.
   // Chrome's seccomp-BPF filter still enforces the policy at the kernel level
   // (blocking dangerous syscalls via SECCOMP_RET_ERRNO), but ptrace gives us
@@ -1104,6 +1134,7 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
   // Track syscall entry→exit per pid: maps pid → index into records[]
   std::map<pid_t, size_t> pending_entry;
   int blocked = 0;
+  int brokered = 0;
 
   while (!traced_pids.empty()) {
     pid_t pid;
@@ -1127,16 +1158,62 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
 
     if (event == PTRACE_EVENT_SECCOMP) {
       // SECCOMP_RET_TRACE: seccomp-BPF flagged this syscall for tracer
-      // decision. Our policy uses Trace(EPERM) for blocked syscalls, so
-      // the data field contains EPERM (1).
+      // decision. Read the trace data to determine action:
+      //   TRACE_BLOCKED (1): always block
+      //   TRACE_BROKER  (2): validate path via BrokerPermissionList
+      unsigned long trace_data = 0;
+      ptrace(PTRACE_GETEVENTMSG, pid, nullptr, &trace_data);
+
       struct user_regs_struct regs;
       if (ptrace(PTRACE_GETREGS, pid, nullptr, &regs) == 0) {
-        // Record the blocked syscall
+        int nr = (int)regs.orig_rax;
+
+        // Read path from child memory (depends on syscall convention)
+        std::string path_str;
+        int open_flags = 0;
+        bool is_at_syscall = false;
+
+        // *at syscalls: path in rsi (2nd arg), dirfd in rdi (1st arg)
+        if (nr == __NR_openat || nr == __NR_faccessat ||
+            nr == __NR_faccessat2 || nr == __NR_newfstatat ||
+            nr == __NR_mkdirat || nr == __NR_unlinkat ||
+            nr == __NR_fchmodat || nr == __NR_fchownat ||
+            nr == __NR_readlinkat || nr == __NR_linkat ||
+            nr == __NR_symlinkat || nr == __NR_utimensat) {
+          path_str = read_child_string(pid, regs.rsi);
+          is_at_syscall = true;
+          if (nr == __NR_openat) open_flags = (int)regs.rdx;
+        } else if (nr == __NR_renameat || nr == __NR_renameat2) {
+          path_str = read_child_string(pid, regs.rsi);  // old path
+          is_at_syscall = true;
+        }
+        // Non-at syscalls: path in rdi (1st arg)
+        else if (nr == __NR_open || nr == __NR_access ||
+                 nr == __NR_stat || nr == __NR_lstat ||
+                 nr == __NR_execve || nr == __NR_unlink ||
+                 nr == __NR_mkdir || nr == __NR_rmdir ||
+                 nr == __NR_chmod || nr == __NR_chown ||
+                 nr == __NR_chdir || nr == __NR_truncate ||
+                 nr == __NR_readlink || nr == __NR_creat ||
+                 nr == __NR_link || nr == __NR_symlink ||
+                 nr == __NR_rename || nr == __NR_statfs ||
+                 nr == __NR_lchown || nr == __NR_mknod) {
+          path_str = read_child_string(pid, regs.rdi);
+          if (nr == __NR_open) open_flags = (int)regs.rsi;
+          if (nr == __NR_creat) open_flags = O_CREAT | O_WRONLY | O_TRUNC;
+        }
+        // getcwd: no path to validate, always allow
+        else if (nr == __NR_getcwd) {
+          path_str = "";  // No path validation needed
+        }
+
+        // Record the syscall
         SyscallRecord rec;
-        rec.nr = (int)regs.orig_rax;
-        rec.name = syscall_name(rec.nr);
-        rec.risk = syscall_risk(rec.nr);
-        rec.blocked = true;  // This was flagged by seccomp for blocking
+        rec.nr = nr;
+        rec.name = syscall_name(nr);
+        rec.risk = syscall_risk(nr);
+        rec.blocked = false;
+        rec.path = path_str;
         rec.args[0] = regs.rdi;
         rec.args[1] = regs.rsi;
         rec.args[2] = regs.rdx;
@@ -1144,25 +1221,130 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
         rec.args[4] = regs.r8;
         rec.args[5] = regs.r9;
 
-        // Read path for file-related blocked syscalls
-        if (rec.nr == __NR_openat || rec.nr == __NR_faccessat ||
-            rec.nr == __NR_newfstatat || rec.nr == __NR_mkdirat ||
-            rec.nr == __NR_unlinkat) {
-          rec.path = read_child_string(pid, regs.rsi);
-        } else if (rec.nr == __NR_open || rec.nr == __NR_access ||
-                   rec.nr == __NR_execve) {
-          rec.path = read_child_string(pid, regs.rdi);
+        if (trace_data == AgentSandboxPolicy::TRACE_BLOCKED) {
+          // === BLOCKED: always skip syscall ===
+          rec.blocked = true;
+          blocked++;
+          regs.orig_rax = -1;
+          regs.rax = -EPERM;
+          ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
+
+        } else if (trace_data == AgentSandboxPolicy::TRACE_BROKER) {
+          // === BROKER: validate path against BrokerPermissionList ===
+          // This mirrors Chrome's broker validation:
+          //   Chrome:  SIGSYS → BrokerClient::Open() → IPC → BrokerHost
+          //            → CommandOpenIsSafe() → BrokerPermissionList
+          //   Us:      SECCOMP_RET_TRACE → ptrace tracer
+          //            → BrokerPermissionList directly
+          brokered++;
+          bool allowed = false;
+          const char* path_c = path_str.c_str();
+
+          if (path_str.empty() && nr != __NR_getcwd) {
+            // No path — can't validate, deny
+            allowed = false;
+          } else if (nr == __NR_getcwd || nr == __NR_fchdir) {
+            // getcwd/fchdir: always allow (no path-based risk)
+            allowed = true;
+          } else if (nr == __NR_open || nr == __NR_openat || nr == __NR_creat) {
+            // open/openat/creat: check with flags
+            auto result = broker_policy.GetFileNameIfAllowedToOpen(
+                path_c, open_flags);
+            allowed = (result.first != nullptr);
+          } else if (nr == __NR_access || nr == __NR_faccessat ||
+                     nr == __NR_faccessat2) {
+            // access/faccessat: check with mode
+            int mode = is_at_syscall ? (int)regs.rdx : (int)regs.rsi;
+            allowed = (broker_policy.GetFileNameIfAllowedToAccess(
+                path_c, mode) != nullptr);
+          } else if (nr == __NR_stat || nr == __NR_lstat ||
+                     nr == __NR_newfstatat || nr == __NR_statfs) {
+            // stat family: use stat permission check
+            allowed = (broker_policy.GetFileNameIfAllowedToStat(
+                path_c) != nullptr);
+          } else if (nr == __NR_execve) {
+            // execve: check read access (need to read the binary)
+            allowed = (broker_policy.GetFileNameIfAllowedToAccess(
+                path_c, R_OK) != nullptr);
+          } else if (nr == __NR_readlink || nr == __NR_readlinkat) {
+            // readlink: check read access
+            auto result = broker_policy.GetFileNameIfAllowedToOpen(
+                path_c, O_RDONLY);
+            allowed = (result.first != nullptr);
+          } else if (nr == __NR_chdir) {
+            // chdir: check stat (need to access directory)
+            allowed = (broker_policy.GetFileNameIfAllowedToStat(
+                path_c) != nullptr);
+          } else if (nr == __NR_mkdir || nr == __NR_mkdirat) {
+            // mkdir: check create permission (O_RDWR|O_CREAT|O_EXCL)
+            auto result = broker_policy.GetFileNameIfAllowedToOpen(
+                path_c, O_RDWR | O_CREAT | O_EXCL);
+            allowed = (result.first != nullptr);
+          } else if (nr == __NR_unlink || nr == __NR_unlinkat ||
+                     nr == __NR_rmdir) {
+            // unlink/rmdir: check write permission
+            auto result = broker_policy.GetFileNameIfAllowedToOpen(
+                path_c, O_RDWR | O_CREAT | O_EXCL);
+            allowed = (result.first != nullptr);
+          } else if (nr == __NR_rename || nr == __NR_renameat ||
+                     nr == __NR_renameat2) {
+            // rename: check both old and new paths
+            auto result_old = broker_policy.GetFileNameIfAllowedToOpen(
+                path_c, O_RDWR);
+            // Read new path (rsi for rename, r10 for renameat/renameat2)
+            std::string new_path;
+            if (nr == __NR_rename) {
+              new_path = read_child_string(pid, regs.rsi);
+            } else {
+              new_path = read_child_string(pid, regs.r10);
+            }
+            auto result_new = broker_policy.GetFileNameIfAllowedToOpen(
+                new_path.c_str(), O_RDWR | O_CREAT);
+            allowed = (result_old.first != nullptr &&
+                       result_new.first != nullptr);
+          } else if (nr == __NR_chmod || nr == __NR_fchmodat ||
+                     nr == __NR_chown || nr == __NR_fchownat ||
+                     nr == __NR_lchown) {
+            // chmod/chown: check write permission
+            auto result = broker_policy.GetFileNameIfAllowedToOpen(
+                path_c, O_RDWR);
+            allowed = (result.first != nullptr);
+          } else if (nr == __NR_truncate) {
+            // truncate: check write permission
+            auto result = broker_policy.GetFileNameIfAllowedToOpen(
+                path_c, O_WRONLY);
+            allowed = (result.first != nullptr);
+          } else if (nr == __NR_link || nr == __NR_linkat ||
+                     nr == __NR_symlink || nr == __NR_symlinkat) {
+            // link/symlink: check write on target
+            auto result = broker_policy.GetFileNameIfAllowedToOpen(
+                path_c, O_RDWR | O_CREAT);
+            allowed = (result.first != nullptr);
+          } else if (nr == __NR_mknod || nr == __NR_mknodat) {
+            // mknod: deny (creating device nodes is dangerous)
+            allowed = false;
+          } else if (nr == __NR_utimensat || nr == __NR_utimes ||
+                     nr == __NR_futimesat) {
+            // utimes: check write permission
+            auto result = broker_policy.GetFileNameIfAllowedToOpen(
+                path_c, O_RDWR);
+            allowed = (result.first != nullptr);
+          } else {
+            // Unknown filesystem syscall — deny by default
+            allowed = false;
+          }
+
+          if (!allowed) {
+            rec.blocked = true;
+            blocked++;
+            regs.orig_rax = -1;
+            regs.rax = -broker_policy.denied_errno();
+            ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
+          }
+          // If allowed: don't modify regs — syscall proceeds normally
         }
 
         records.push_back(rec);
-        blocked++;
-
-        // Skip the syscall by setting orig_rax to -1 (invalid syscall nr).
-        // The kernel will return -ENOSYS. To return -EPERM instead, we
-        // also set rax to -EPERM so the child sees the right errno.
-        regs.orig_rax = -1;  // Skip the syscall
-        regs.rax = -EPERM;   // Child sees EPERM
-        ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
       }
       ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
 
@@ -1294,16 +1476,40 @@ build_broker_permissions() {
   using sandbox::syscall_broker::BrokerFilePermission;
   std::vector<BrokerFilePermission> perms;
 
-  // Always allow read access to essential system paths
-  perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/lib"));
-  perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/usr/lib"));
-  perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/etc"));
-  perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/proc"));
+  // System paths: read-only (same as Chrome's renderer broker)
+  // These are the paths needed for dynamic linking, library loading,
+  // and basic command execution within the sandbox.
+  perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/lib/"));
+  perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/lib64/"));
+  perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/usr/lib/"));
+  perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/usr/share/"));
+  perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/etc/"));
+
+  // Executable paths: read-only (needed for execve, which the broker validates)
+  perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/bin/"));
+  perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/sbin/"));
+  perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/usr/bin/"));
+  perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/usr/sbin/"));
+
+  // /proc: read-only (process info, needed by many tools)
+  perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/proc/"));
+
+  // Device files: specific devices only
+  perms.push_back(BrokerFilePermission::ReadWrite("/dev/null"));
+  perms.push_back(BrokerFilePermission::ReadOnly("/dev/urandom"));
+  perms.push_back(BrokerFilePermission::ReadOnly("/dev/random"));
+  perms.push_back(BrokerFilePermission::ReadOnly("/dev/zero"));
+
+  // /tmp: read-write-create (sandboxed scratch space)
+  perms.push_back(BrokerFilePermission::ReadWriteCreateRecursive("/tmp/"));
 
   // Add user-configured paths with full access
   for (const auto& path : g_allowed_paths) {
     if (!path.empty() && path[0] == '/') {
-      perms.push_back(BrokerFilePermission::ReadWriteCreateRecursive(path));
+      // Ensure trailing slash for recursive matching
+      std::string p = path;
+      if (p.back() != '/') p += '/';
+      perms.push_back(BrokerFilePermission::ReadWriteCreateRecursive(p));
     }
   }
 

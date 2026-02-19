@@ -3,16 +3,20 @@
 //
 // Architecture (mirrors Chrome's multi-layer sandbox model):
 //
-//   Python Agent (broker)                   Sandboxed Worker (target)
-//   ┌─────────────────────┐                ┌─────────────────────────┐
-//   │  LLM tool calls     │   fork + IPC   │  Layer 1: User NS       │
-//   │  Policy decisions   │ ──────────────> │  Layer 2: PID NS + init │
-//   │  Syscall analysis   │ <────────────── │  Layer 3: IPC NS        │
-//   │                     │   results +     │  Layer 4: Net NS        │
-//   │                     │   syscall log   │  Layer 5: Mount NS      │
-//   │                     │                 │  Layer 6: Drop caps     │
-//   │                     │                 │  Layer 7: seccomp-BPF   │
-//   └─────────────────────┘                └─────────────────────────┘
+//   Python Agent (broker/tracer)             Sandboxed Worker (target)
+//   ┌─────────────────────────┐            ┌─────────────────────────┐
+//   │  LLM tool calls         │  fork+IPC  │  Layer 1: User NS       │
+//   │  Policy decisions       │ ─────────> │  Layer 2: PID NS + init │
+//   │  Syscall analysis       │ <───────── │  Layer 3: IPC NS        │
+//   │                         │ results +  │  Layer 4: Net NS        │
+//   │  ptrace-based broker:   │ syscall log│  Layer 5: Mount NS      │
+//   │  ┌───────────────────┐  │            │  Layer 6: Chroot/pivot  │
+//   │  │BrokerPermissionList│  │   ptrace   │  Layer 7: Drop caps     │
+//   │  │ validates paths    │<─┼───────────┤  Layer 8: seccomp-BPF   │
+//   │  │ against allowlist  │──┼───────────>│   TRACE_BROKER →        │
+//   │  └───────────────────┘  │  allow/deny│   validates path →      │
+//   │                         │            │   allow or -EACCES      │
+//   └─────────────────────────┘            └─────────────────────────┘
 
 #ifndef SANDBOX_HARNESS_H_
 #define SANDBOX_HARNESS_H_
