@@ -25,7 +25,9 @@
 #include <sys/mount.h>
 #include <sys/prctl.h>
 #include <sys/ptrace.h>
+#include <sys/mman.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
@@ -49,6 +51,7 @@
 #include "sandbox/linux/bpf_dsl/policy.h"
 #include "sandbox/linux/seccomp-bpf/sandbox_bpf.h"
 #include "sandbox/linux/seccomp-bpf-helpers/baseline_policy.h"
+#include "sandbox/linux/seccomp-bpf-helpers/syscall_parameters_restrictions.h"
 #include "sandbox/linux/seccomp-bpf-helpers/syscall_sets.h"
 #include "sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.h"
 #include "sandbox/linux/syscall_broker/broker_process.h"
@@ -223,7 +226,11 @@ static const char* syscall_risk(int nr) {
 
 class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
  public:
-  explicit AgentSandboxPolicy(SandboxPolicyLevel level) : level_(level) {}
+  explicit AgentSandboxPolicy(SandboxPolicyLevel level)
+      : level_(level), policy_pid_(sandbox::sys_getpid()) {
+    // Allocate crash keys for Chrome's SIGSYS handler logging
+    sandbox::AllocateCrashKeys();
+  }
 
   ResultExpr EvaluateSyscall(int sysno) const override {
     switch (level_) {
@@ -245,87 +252,229 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
   static ResultExpr Block() { return Trace(EPERM); }
 
   ResultExpr EvaluateStrict(int sysno) const {
-    // ── CRITICAL: Admin / Kernel / Privilege ─────────────────────────
-    // Chrome's IsAdminOperation + IsKernelModule + IsGlobalFSViewChange
-    if (sysno == __NR_reboot || sysno == __NR_sethostname ||
-        sysno == __NR_setdomainname || sysno == __NR_syslog) {
-      return Block();
-    }
-    if (sysno == __NR_init_module || sysno == __NR_finit_module ||
-        sysno == __NR_delete_module) {
-      return Block();
-    }
-    if (sysno == __NR_mount || sysno == __NR_umount2 ||
-        sysno == __NR_pivot_root || sysno == __NR_chroot ||
-        sysno == __NR_swapon || sysno == __NR_swapoff) {
-      return Block();
+    // ── Use Chrome's SyscallSets for comprehensive classification ────
+
+    // Sendfile: return EPERM (allow fallback to read/write)
+    if (sandbox::SyscallSets::IsSendfile(sysno)) {
+      return Error(EPERM);
     }
 
-    // ── CRITICAL: Debug / Process Introspection ──────────────────────
-    // Chrome's IsDebug
-    if (sysno == __NR_ptrace || sysno == __NR_process_vm_readv ||
-        sysno == __NR_process_vm_writev || sysno == __NR_kcmp) {
-      return Block();
+    // Always-allowed: safe syscall categories from Chrome's BaselinePolicy
+    if (sandbox::SyscallSets::IsAllowedAddressSpaceAccess(sysno) ||
+        sandbox::SyscallSets::IsAllowedBasicScheduler(sysno) ||
+        sandbox::SyscallSets::IsAllowedEpoll(sysno) ||
+        sandbox::SyscallSets::IsEventFd(sysno) ||
+        sandbox::SyscallSets::IsAllowedFileSystemAccessViaFd(sysno) ||
+        sandbox::SyscallSets::IsAllowedFutex(sysno) ||
+        sandbox::SyscallSets::IsAllowedGeneralIo(sysno) ||
+        sandbox::SyscallSets::IsAllowedGettime(sysno) ||
+        sandbox::SyscallSets::IsAllowedProcessStartOrDeath(sysno) ||
+        sandbox::SyscallSets::IsAllowedSignalHandling(sysno) ||
+        sandbox::SyscallSets::IsGetSimpleId(sysno) ||
+        sandbox::SyscallSets::IsKernelInternalApi(sysno) ||
+        sandbox::SyscallSets::IsAllowedOperationOnFd(sysno)) {
+      return Allow();
     }
 
-    // ── HIGH: Privilege Escalation ───────────────────────────────────
-    // Chrome's IsProcessPrivilegeChange
-    if (sysno == __NR_capset || sysno == __NR_setuid ||
-        sysno == __NR_setgid || sysno == __NR_setreuid ||
-        sysno == __NR_setregid || sysno == __NR_setresuid ||
-        sysno == __NR_setresgid || sysno == __NR_setgroups ||
-        sysno == __NR_setfsuid || sysno == __NR_setfsgid) {
-      return Block();
+    // ── uname: always allowed ────────────────────────────────────────
+    if (sysno == __NR_uname) return Allow();
+
+    // ── rseq: always allowed (glibc registers it) ────────────────────
+#if defined(__NR_rseq)
+    if (sysno == __NR_rseq) return Allow();
+#endif
+
+    // ── mincore: allowed (used by various libraries) ─────────────────
+    if (sysno == __NR_mincore) return Allow();
+
+    // ── PARAMETER RESTRICTIONS (from Chrome's BaselinePolicy) ────────
+
+    // clone: allow threads, EPERM for fork, crash for namespace flags
+    if (sysno == __NR_clone) {
+      return sandbox::RestrictCloneToThreadsAndEPERMFork();
+    }
+    // clone3: force libc to use clone (we can inspect clone args)
+    if (sysno == __NR_clone3) return Error(ENOSYS);
+
+    // mmap: restrict flags (no MAP_HUGETLB, etc.)
+    if (sysno == __NR_mmap) {
+      return sandbox::RestrictMmapFlags();
     }
 
-    // ── HIGH: Network ────────────────────────────────────────────────
-    // Block new socket creation (except AF_UNIX for IPC with broker)
+    // mprotect: restrict prot flags
+    if (sysno == __NR_mprotect || sysno == __NR_pkey_mprotect) {
+      return sandbox::RestrictMprotectFlags();
+    }
+
+    // ioctl: only allow TCGETS and FIONREAD
+    if (sysno == __NR_ioctl) {
+      return sandbox::RestrictIoctl();
+    }
+
+    // fcntl: restrict commands
+    if (sysno == __NR_fcntl) {
+      return sandbox::RestrictFcntlCommands();
+    }
+
+    // prctl: restrict operations
+    if (sysno == __NR_prctl) {
+      return sandbox::RestrictPrctl();
+    }
+
+    // futex: block dangerous operations (FUTEX_CMP_REQUEUE_PI etc.)
+    if (sysno == __NR_futex) {
+      return sandbox::RestrictFutex();
+    }
+
+    // clock_gettime/clock_getres/clock_nanosleep: restrict clock IDs
+    if (sandbox::SyscallSets::IsClockApi(sysno)) {
+      return sandbox::RestrictClockID();
+    }
+
+    // getrandom: restrict flags
+    if (sysno == __NR_getrandom) {
+      return sandbox::RestrictGetRandom();
+    }
+
+    // madvise: only safe advice values
+    if (sysno == __NR_madvise) {
+      const Arg<int> advice(2);
+      return sandbox::bpf_dsl::If(
+          sandbox::bpf_dsl::AnyOf(
+              advice == MADV_DONTNEED, advice == MADV_WILLNEED,
+              advice == MADV_RANDOM, advice == MADV_REMOVE,
+              advice == MADV_NORMAL
+#if defined(MADV_FREE)
+              , advice == MADV_FREE
+#endif
+          ),
+          Allow()).Else(Error(EPERM));
+    }
+
+    // kill/tgkill: restrict to self only
+    if (sandbox::SyscallSets::IsKill(sysno)) {
+      return sandbox::RestrictKillTarget(policy_pid_, sysno);
+    }
+
+    // getpriority/setpriority: restrict to self
+    if (sysno == __NR_getpriority || sysno == __NR_setpriority) {
+      return sandbox::RestrictGetSetpriority(policy_pid_);
+    }
+
+    // sched_*: restrict to self
+    if (sysno == __NR_sched_getaffinity || sysno == __NR_sched_getparam ||
+        sysno == __NR_sched_getscheduler || sysno == __NR_sched_setscheduler) {
+      return sandbox::RestrictSchedTarget(policy_pid_, sysno);
+    }
+
+    // socketpair: only AF_UNIX
+    if (sysno == __NR_socketpair) {
+      const Arg<int> domain(0);
+      return sandbox::bpf_dsl::If(domain == AF_UNIX, Allow()).Else(Block());
+    }
+
+    // send flags: restrict MSG_OOB etc.
+    if (sandbox::SyscallSets::IsSockSendOneMsg(sysno)) {
+      return sandbox::RestrictSockSendFlags(sysno);
+    }
+
+    // getsockopt/setsockopt: only SO_PEEK_OFF
+    if (sysno == __NR_getsockopt || sysno == __NR_setsockopt) {
+      const Arg<int> level(1);
+      const Arg<int> optname(2);
+      return sandbox::bpf_dsl::If(
+          sandbox::bpf_dsl::AllOf(level == SOL_SOCKET, optname == 42),
+          Allow()).Else(Block());
+    }
+
+    // memfd_create: restrict flags
+    if (sysno == __NR_memfd_create) {
+      return sandbox::RestrictMemfdCreate();
+    }
+
+    // pipe/pipe2: allowed with flag restrictions
+#if defined(__NR_pipe)
+    if (sysno == __NR_pipe) return Allow();
+#endif
+    if (sysno == __NR_pipe2) {
+      return sandbox::RestrictPipe2();
+    }
+
+    // pkey_alloc: restrict flags
+    if (sysno == __NR_pkey_alloc) {
+      return sandbox::RestrictPkeyAllocFlags();
+    }
+    if (sysno == __NR_pkey_free) return Allow();
+
+    // set_robust_list: deny (used by futex)
+    if (sysno == __NR_set_robust_list) return Error(EPERM);
+
+    // pidfd_open: not supported
+    if (sysno == __NR_pidfd_open) return Error(ENOSYS);
+
+    // rt_tgsigqueueinfo: only to self
+    if (sysno == __NR_rt_tgsigqueueinfo) {
+      const Arg<pid_t> tgid(0);
+      return sandbox::bpf_dsl::If(tgid == policy_pid_, Allow())
+          .Else(Error(EPERM));
+    }
+
+    // ── BLOCK: Dangerous syscall categories ──────────────────────────
+
+    // Network: block new socket creation (except AF_UNIX)
     if (sysno == __NR_socket) {
       Arg<int> domain(0);
-      return sandbox::bpf_dsl::If(domain == 1, Allow()).Else(Block());
+      return sandbox::bpf_dsl::If(domain == AF_UNIX, Allow()).Else(Block());
     }
-    // Block bind/listen/accept (no servers inside sandbox)
     if (sysno == __NR_bind || sysno == __NR_listen ||
-        sysno == __NR_accept || sysno == __NR_accept4) {
+        sysno == __NR_accept || sysno == __NR_accept4 ||
+        sysno == __NR_connect) {
       return Block();
     }
 
-    // ── HIGH: Namespace / Isolation Escape ───────────────────────────
+    // Namespace escape
     if (sysno == __NR_unshare || sysno == __NR_setns) {
       return Block();
     }
 
-    // ── MEDIUM: Restrict clone flags ─────────────────────────────────
-    // Allow normal clone (for fork/threads) but block CLONE_NEWUSER etc.
-    if (sysno == __NR_clone) {
-      // Bit 28-31 in flags are the new namespace flags
-      // CLONE_NEWUSER=0x10000000, CLONE_NEWNS=0x00020000,
-      // CLONE_NEWPID=0x20000000, CLONE_NEWNET=0x40000000
-      // We block any clone that requests new namespaces
-      Arg<unsigned long> flags(0);
-      const unsigned long NS_FLAGS = 0x7e020000;  // All CLONE_NEW* flags
-      return sandbox::bpf_dsl::If(
-          (flags & NS_FLAGS) == 0, Allow()).Else(Block());
+    // Filesystem access: block (Chrome uses EPERM)
+    if (sandbox::SyscallSets::IsFileSystem(sysno) ||
+        sandbox::SyscallSets::IsCurrentDirectory(sysno)) {
+      return Error(EPERM);
     }
 
-    // ── MEDIUM: Key Management ───────────────────────────────────────
-    if (sysno == __NR_add_key || sysno == __NR_keyctl ||
-        sysno == __NR_request_key) {
-      return Block();
+    // Seccomp reconfiguration
+    if (sandbox::SyscallSets::IsSeccomp(sysno)) return Error(EPERM);
+
+    // SystemV IPC
+    if (sandbox::SyscallSets::IsAnySystemV(sysno)) return Error(EPERM);
+
+    // Privilege changes
+    if (sandbox::SyscallSets::IsProcessPrivilegeChange(sysno)) {
+      return Error(EPERM);
     }
 
-    // ── LOW: Prevent seccomp re-configuration ────────────────────────
-    // Don't let sandboxed code install new seccomp filters that could
-    // interfere with our policy
-    if (sysno == __NR_seccomp) {
-      // Allow SECCOMP_GET_ACTION_AVAIL (for feature detection) but
-      // block SECCOMP_SET_MODE_FILTER
-      Arg<unsigned int> op(0);
-      return sandbox::bpf_dsl::If(op == 2, Allow()).Else(Block());
+    // Denied fd operations, socket modifications, umask
+    if (sandbox::SyscallSets::IsUmask(sysno) ||
+        sandbox::SyscallSets::IsDeniedFileSystemAccessViaFd(sysno) ||
+        sandbox::SyscallSets::IsDeniedGetOrModifySocket(sysno)) {
+      return Error(EPERM);
     }
 
-    // Allow everything else (file ops, signals, memory, scheduling, etc.)
-    return Allow();
+    // ── CRASH: Truly dangerous operations ────────────────────────────
+    // These are so dangerous that they should crash, not just EPERM.
+    // Uses Chrome's SIGSYS handler for logging.
+    if (sandbox::SyscallSets::IsAdminOperation(sysno) ||
+        sandbox::SyscallSets::IsDebug(sysno) ||
+        sandbox::SyscallSets::IsKernelModule(sysno) ||
+        sandbox::SyscallSets::IsGlobalFSViewChange(sysno) ||
+        sandbox::SyscallSets::IsGlobalProcessEnvironment(sysno)) {
+      return sandbox::CrashSIGSYS();
+    }
+
+    // Everything else: block with EPERM
+    // (Chrome would CrashSIGSYS here, but we prefer observability)
+    return Error(EPERM);
   }
 
   ResultExpr EvaluatePermissive(int sysno) const {
@@ -350,6 +499,7 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
   }
 
   SandboxPolicyLevel level_;
+  pid_t policy_pid_;
 };
 
 // =============================================================================
@@ -482,11 +632,17 @@ static bool setup_user_namespace() {
 
 // Set up PID namespace. After this, fork()ed children see PID 1.
 // NOTE: The calling process itself stays in the old PID namespace;
-// only its children will be in the new one. This matches Chrome's
-// behavior with CLONE_NEWPID.
-// Currently unused — see apply_namespace_isolation() for details.
-static bool __attribute__((unused)) setup_pid_namespace() {
+// only its children will be in the new one. A subsequent fork()
+// creates a child that IS PID 1 in the new namespace.
+static bool setup_pid_namespace() {
   return sandbox::sys_unshare(CLONE_NEWPID) == 0;
+}
+
+// Set up IPC namespace. Isolates System V IPC objects and POSIX
+// message queues so the sandboxed process can't interact with
+// the host's IPC objects.
+static bool setup_ipc_namespace() {
+  return sandbox::sys_unshare(CLONE_NEWIPC) == 0;
 }
 
 // Set up network namespace. This gives the process an empty network
@@ -530,6 +686,139 @@ static bool setup_mount_namespace() {
 }
 
 // =============================================================================
+// Filesystem isolation via chroot with minimal bind mounts
+// =============================================================================
+//
+// Creates a minimal root filesystem with only essential directories
+// bind-mounted read-only, then pivot_root into it. This prevents the
+// sandboxed process from reading sensitive host files (/etc/shadow,
+// /root/.ssh/, etc.) even if seccomp-BPF has a bug.
+//
+// The resulting filesystem contains:
+//   /bin, /sbin, /lib, /lib64, /usr  (read-only, from host)
+//   /proc                             (fresh mount, PID-namespaced)
+//   /dev/null, /dev/urandom, /dev/zero (minimal devices)
+//   /tmp                              (private tmpfs)
+//   /etc                              (read-only from host)
+//   + any user-configured allowed paths
+
+static bool bind_mount_readonly(const char* src, const char* dst) {
+  // Step 1: bind mount
+  if (mount(src, dst, nullptr, MS_BIND | MS_REC, nullptr) != 0)
+    return false;
+  // Step 2: remount read-only
+  if (mount(nullptr, dst, nullptr,
+            MS_BIND | MS_REMOUNT | MS_RDONLY | MS_REC, nullptr) != 0)
+    return false;
+  return true;
+}
+
+static bool setup_chroot_filesystem() {
+  // Create a temporary directory for our new root
+  char sandbox_root[] = "/tmp/.sandbox_root_XXXXXX";
+  if (mkdtemp(sandbox_root) == nullptr)
+    return false;
+
+  // Mount a tmpfs as our new root
+  if (mount("tmpfs", sandbox_root, "tmpfs",
+            MS_NOSUID | MS_NODEV, "size=64m,mode=0755") != 0) {
+    rmdir(sandbox_root);
+    return false;
+  }
+
+  // Create essential directories in new root
+  const char* dirs[] = {
+    "bin", "sbin", "lib", "lib64", "usr", "etc",
+    "proc", "dev", "tmp", "var", "run",
+    nullptr
+  };
+  char path[512];
+  for (int i = 0; dirs[i]; i++) {
+    snprintf(path, sizeof(path), "%s/%s", sandbox_root, dirs[i]);
+    mkdir(path, 0755);
+  }
+
+  // Bind-mount essential host directories (read-only)
+  struct { const char* src; const char* subdir; } ro_mounts[] = {
+    {"/bin",   "bin"},
+    {"/sbin",  "sbin"},
+    {"/lib",   "lib"},
+    {"/lib64", "lib64"},
+    {"/usr",   "usr"},
+    {"/etc",   "etc"},
+    {nullptr, nullptr}
+  };
+
+  for (int i = 0; ro_mounts[i].src; i++) {
+    struct stat st;
+    if (stat(ro_mounts[i].src, &st) != 0) continue;  // Skip if doesn't exist
+    snprintf(path, sizeof(path), "%s/%s", sandbox_root, ro_mounts[i].subdir);
+    bind_mount_readonly(ro_mounts[i].src, path);
+  }
+
+  // Bind-mount user-configured allowed paths (read-write)
+  for (const auto& allowed : g_allowed_paths) {
+    if (allowed.empty() || allowed[0] != '/') continue;
+    // Create the mount point in new root
+    snprintf(path, sizeof(path), "%s%s", sandbox_root, allowed.c_str());
+    // Create parent directories
+    std::string parent = path;
+    for (size_t j = 1; j < parent.size(); j++) {
+      if (parent[j] == '/') {
+        parent[j] = '\0';
+        mkdir(parent.c_str(), 0755);
+        parent[j] = '/';
+      }
+    }
+    mkdir(path, 0755);
+    mount(allowed.c_str(), path, nullptr, MS_BIND | MS_REC, nullptr);
+  }
+
+  // Mount minimal /dev entries
+  snprintf(path, sizeof(path), "%s/dev/null", sandbox_root);
+  close(open(path, O_WRONLY | O_CREAT, 0666));
+  mount("/dev/null", path, nullptr, MS_BIND, nullptr);
+
+  snprintf(path, sizeof(path), "%s/dev/urandom", sandbox_root);
+  close(open(path, O_WRONLY | O_CREAT, 0444));
+  mount("/dev/urandom", path, nullptr, MS_BIND, nullptr);
+
+  snprintf(path, sizeof(path), "%s/dev/zero", sandbox_root);
+  close(open(path, O_WRONLY | O_CREAT, 0666));
+  mount("/dev/zero", path, nullptr, MS_BIND, nullptr);
+
+  // Mount a private tmpfs for /tmp in new root
+  snprintf(path, sizeof(path), "%s/tmp", sandbox_root);
+  mount("tmpfs", path, "tmpfs", MS_NOSUID | MS_NODEV, "size=32m,mode=1777");
+
+  // pivot_root: switch the root filesystem
+  // Create a directory for the old root
+  snprintf(path, sizeof(path), "%s/.old_root", sandbox_root);
+  mkdir(path, 0700);
+
+  // pivot_root requires both paths to be mount points
+  if (syscall(SYS_pivot_root, sandbox_root, path) != 0) {
+    // pivot_root failed — fall back to chroot
+    if (chroot(sandbox_root) != 0)
+      return false;
+    if (chdir("/") != 0)
+      return false;
+    return true;
+  }
+
+  // Successfully pivoted — unmount and remove old root
+  if (umount2("/.old_root", MNT_DETACH) == 0) {
+    rmdir("/.old_root");
+  }
+
+  // chdir to new root
+  if (chdir("/") != 0)
+    return false;
+
+  return true;
+}
+
+// =============================================================================
 // Layer 3: Drop capabilities (mirrors Chrome's DropAllCapabilities)
 // =============================================================================
 //
@@ -562,6 +851,7 @@ static bool drop_all_capabilities() {
 struct NamespaceStatus {
   bool user_ns;
   bool pid_ns;
+  bool ipc_ns;
   bool net_ns;
   bool mount_ns;
   bool caps_dropped;
@@ -583,25 +873,26 @@ static NamespaceStatus apply_namespace_isolation() {
   }
 
   // Layer 1b: PID namespace
-  // NOTE: PID namespace isolation requires an init process (PID 1) to
-  // reap children. Chrome handles this with init_process_reaper.cc which
-  // forks a dedicated init process. In our architecture, adding another
-  // fork layer would complicate ptrace tracing. Instead, we rely on:
-  //   - User namespace (prevents seeing/signaling other processes)
-  //   - seccomp-BPF (blocks ptrace, process_vm_readv, etc.)
-  //   - Network namespace (isolates network visibility)
-  // Together these provide equivalent process isolation without the
-  // complexity of a PID namespace init process.
-  //
-  // TODO: Add PID namespace support by forking an init reaper process
-  // between the ptrace setup and seccomp installation.
-  status.pid_ns = false;  // Deferred — see comment above
+  // unshare(CLONE_NEWPID) makes our CHILDREN enter a new PID namespace.
+  // We must fork() after this; the child becomes PID 1 in the new namespace.
+  // The fork happens in exec_with_tracing() after apply_namespace_isolation().
+  status.pid_ns = setup_pid_namespace();
 
-  // Layer 1c: Network namespace
+  // Layer 1c: IPC namespace (isolates System V IPC + POSIX mqueues)
+  status.ipc_ns = setup_ipc_namespace();
+
+  // Layer 1d: Network namespace
   status.net_ns = setup_net_namespace();
 
   // Layer 2: Mount namespace for filesystem isolation
   status.mount_ns = setup_mount_namespace();
+
+  // Layer 2b: Chroot filesystem isolation
+  // Must be done after mount namespace (so bind mounts are private)
+  // and before dropping capabilities (needs CAP_SYS_ADMIN for mount/pivot_root)
+  if (status.mount_ns) {
+    setup_chroot_filesystem();
+  }
 
   // Layer 3: Drop all capabilities
   // After user namespace setup, we have full caps in the new namespace.
@@ -649,19 +940,44 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
     ptrace(PTRACE_TRACEME, 0, nullptr, nullptr);
     raise(SIGSTOP);  // Wait for parent to set up tracing
 
-    // === LAYER 1-3: Namespace isolation ===
+    // === LAYER 1-5: Namespace isolation ===
     // Apply namespace isolation before seccomp-BPF.
     // This mirrors Chrome's defense-in-depth: even if BPF has a bug,
     // namespace isolation constrains what the process can reach.
-    // Order: user NS → PID NS → net NS → mount NS → drop caps
-    apply_namespace_isolation();
+    // Order: user NS → PID NS → IPC NS → net NS → mount NS → drop caps
+    NamespaceStatus ns_status = apply_namespace_isolation();
 
-    // === LAYER 4: seccomp-BPF ===
+    // === LAYER 2: PID namespace fork ===
+    // After unshare(CLONE_NEWPID), our children enter a new PID namespace.
+    // We fork here: the child becomes PID 1 in the new namespace.
+    // The parent (this process) becomes a simple init reaper.
+    // The ptrace tracer (grandparent) auto-traces the grandchild via
+    // PTRACE_O_TRACEFORK.
+    if (ns_status.pid_ns) {
+      pid_t ns_child = fork();
+      if (ns_child < 0) {
+        _exit(125);  // Fork failed
+      }
+      if (ns_child > 0) {
+        // Original child becomes init reaper for PID namespace.
+        // Wait for the namespace child and exit with its status.
+        int reaper_status;
+        while (waitpid(ns_child, &reaper_status, 0) < 0 && errno == EINTR) {}
+        _exit(WIFEXITED(reaper_status) ? WEXITSTATUS(reaper_status) : 1);
+      }
+      // Grandchild: PID 1 in new PID namespace.
+      // Remount /proc to reflect the new PID namespace.
+      // This ensures /proc only shows processes in our namespace.
+      mount("proc", "/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC,
+            nullptr);
+    }
+
+    // === LAYER 6: seccomp-BPF ===
     // Install Chrome's seccomp-BPF sandbox using the actual Chromium code.
     // This is the innermost layer and filters every syscall.
     auto policy = std::make_unique<AgentSandboxPolicy>(g_policy_level);
-    sandbox::SandboxBPF sandbox(std::move(policy));
-    if (!sandbox.StartSandbox(sandbox::SandboxBPF::SeccompLevel::SINGLE_THREADED)) {
+    sandbox::SandboxBPF sandbox_bpf(std::move(policy));
+    if (!sandbox_bpf.StartSandbox(sandbox::SandboxBPF::SeccompLevel::SINGLE_THREADED)) {
       _exit(126);
     }
 
@@ -836,6 +1152,11 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
       ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
 
     } else if (sig == SIGTRAP) {
+      ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
+    } else if (sig == SIGSTOP) {
+      // Suppress SIGSTOP for auto-traced children (from PTRACE_O_TRACEFORK).
+      // The kernel delivers SIGSTOP when a new child starts being traced.
+      // Delivering it would stop the child permanently.
       ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
     } else {
       // Deliver signal to child

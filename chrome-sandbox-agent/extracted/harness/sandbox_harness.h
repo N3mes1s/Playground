@@ -6,11 +6,12 @@
 //   Python Agent (broker)                   Sandboxed Worker (target)
 //   ┌─────────────────────┐                ┌─────────────────────────┐
 //   │  LLM tool calls     │   fork + IPC   │  Layer 1: User NS       │
-//   │  Policy decisions   │ ──────────────> │  Layer 2: PID NS        │
-//   │  Syscall analysis   │ <────────────── │  Layer 3: Net NS        │
-//   │                     │   results +     │  Layer 4: Mount NS      │
-//   │                     │   syscall log   │  Layer 5: Drop caps     │
-//   │                     │                 │  Layer 6: seccomp-BPF   │
+//   │  Policy decisions   │ ──────────────> │  Layer 2: PID NS + init │
+//   │  Syscall analysis   │ <────────────── │  Layer 3: IPC NS        │
+//   │                     │   results +     │  Layer 4: Net NS        │
+//   │                     │   syscall log   │  Layer 5: Mount NS      │
+//   │                     │                 │  Layer 6: Drop caps     │
+//   │                     │                 │  Layer 7: seccomp-BPF   │
 //   └─────────────────────┘                └─────────────────────────┘
 
 #ifndef SANDBOX_HARNESS_H_
