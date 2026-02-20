@@ -53,16 +53,17 @@ pub fn init_response_store() {
 }
 
 /// Push an agent response into the store.
+/// Truncates stored content to limit heap usage over long autonomous runs.
 pub fn push_response(user_msg: &str, response: &str) {
     unsafe {
         if let Some(ref mut queue) = RESPONSE_QUEUE {
             queue.push(WebhookResponse {
-                user_message: String::from(user_msg),
-                agent_response: String::from(response),
+                user_message: crate::util::truncate(user_msg, 200),
+                agent_response: crate::util::truncate(response, 500),
                 timestamp: crate::kernel::rdtsc(),
             });
-            // Keep at most 50 responses
-            if queue.len() > 50 {
+            // Keep at most 20 responses to bound heap usage
+            while queue.len() > 20 {
                 queue.remove(0);
             }
         }

@@ -15,7 +15,6 @@ pub mod hygiene;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
-use alloc::format;
 use crate::kernel::sync::SpinLock;
 
 /// Memory categories.
@@ -87,6 +86,8 @@ pub struct InKernelMemory {
     doc_frequency: BTreeMap<String, u32>,
     /// Total documents indexed
     total_docs: u32,
+    /// Cached total token count across all documents (avoids O(n^2) BM25 scoring)
+    total_token_count: usize,
     /// Configuration
     vector_weight: f32,
     keyword_weight: f32,
@@ -105,10 +106,11 @@ pub fn init() {
         inverted_index: BTreeMap::new(),
         doc_frequency: BTreeMap::new(),
         total_docs: 0,
+        total_token_count: 0,
         vector_weight: 0.6,
         keyword_weight: 0.4,
         embedding_provider: None,
-        embedding_cache: embeddings::EmbeddingCache::new(1000),
+        embedding_cache: embeddings::EmbeddingCache::new(100),
     };
     unsafe {
         GLOBAL_MEMORY = Some(SpinLock::new(mem));
@@ -138,6 +140,7 @@ impl InKernelMemory {
     /// Add a document to the inverted index.
     fn index_document(&mut self, key: &str, content: &str) {
         let terms = Self::tokenize(content);
+        let term_count = terms.len();
         let mut seen = alloc::collections::BTreeSet::new();
 
         for term in &terms {
@@ -154,11 +157,13 @@ impl InKernelMemory {
         }
 
         self.total_docs += 1;
+        self.total_token_count += term_count;
     }
 
     /// Remove a document from the inverted index.
     fn unindex_document(&mut self, key: &str, content: &str) {
         let terms = Self::tokenize(content);
+        let term_count = terms.len();
         let mut seen = alloc::collections::BTreeSet::new();
 
         for term in &terms {
@@ -180,6 +185,7 @@ impl InKernelMemory {
         }
 
         self.total_docs = self.total_docs.saturating_sub(1);
+        self.total_token_count = self.total_token_count.saturating_sub(term_count);
     }
 
     /// BM25 scoring for a query against a document.
@@ -189,12 +195,9 @@ impl InKernelMemory {
 
         let doc_terms = Self::tokenize(doc_content);
         let doc_len = doc_terms.len() as f32;
+        // Use cached total_token_count (O(1)) instead of re-tokenizing all entries (O(n*m))
         let avg_doc_len = if self.total_docs > 0 {
-            // Approximate average document length
-            let total_terms: usize = self.entries.values()
-                .map(|e| Self::tokenize(&e.content).len())
-                .sum();
-            total_terms as f32 / self.total_docs as f32
+            self.total_token_count as f32 / self.total_docs as f32
         } else {
             1.0
         };

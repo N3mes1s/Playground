@@ -4,7 +4,6 @@
 //! Logs to the serial console and tracks key metrics.
 
 use alloc::string::String;
-use alloc::vec::Vec;
 use alloc::format;
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -51,7 +50,7 @@ pub fn record_event(event: &Event) {
             METRICS.total_messages.fetch_add(1, Ordering::Relaxed);
             crate::kprintln!("[observe] message from {}", channel);
         }
-        Event::ProviderRequest { provider, tokens } => {
+        Event::ProviderRequest { tokens, .. } => {
             METRICS.total_requests.fetch_add(1, Ordering::Relaxed);
             METRICS.total_tokens.fetch_add(*tokens as u64, Ordering::Relaxed);
         }

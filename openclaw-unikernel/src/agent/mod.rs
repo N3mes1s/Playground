@@ -14,8 +14,8 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use alloc::format;
-use crate::providers::{self, Message, Role, CompletionResponse, FinishReason};
-use crate::channels::{self, ChannelMessage};
+use crate::providers::{self, Message, Role};
+use crate::channels::ChannelMessage;
 use crate::tools::ToolRegistry;
 use crate::memory::{self, MemoryCategory, Memory};
 

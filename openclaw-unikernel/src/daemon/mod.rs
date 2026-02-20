@@ -278,9 +278,10 @@ pub fn run() -> ! {
             let mem_count = crate::memory::global().lock().entry_count();
             let metrics = crate::observability::snapshot();
             crate::kprintln!(
-                "[health] heap: {}/{} | memories: {} | tasks: {} | history: {} | reqs: {} | errors: {}",
+                "[health] heap: {}/{} (free-list: {}) | memories: {} | tasks: {} | history: {} | reqs: {} | errors: {}",
                 crate::util::format_bytes(heap.used_bytes),
                 crate::util::format_bytes(heap.total_bytes),
+                crate::util::format_bytes(heap.free_list_bytes),
                 mem_count,
                 crate::kernel::sched::task_count(),
                 agent.history_len(),

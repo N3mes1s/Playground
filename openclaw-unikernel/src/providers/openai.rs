@@ -4,7 +4,6 @@
 //! This is the base client used by 25+ providers (Groq, Mistral, Together, etc.)
 
 use alloc::string::String;
-use alloc::vec::Vec;
 use super::*;
 
 pub struct OpenAiProvider {
@@ -44,7 +43,7 @@ impl Provider for OpenAiProvider {
 
     fn health_check(&self) -> Result<(), String> {
         // Send a minimal request to verify connectivity
-        let test_messages = [Message::new(Role::User, "ping")];
+        let _test_messages = [Message::new(Role::User, "ping")];
 
         let config_backup = self.client.config.clone();
         let mut test_config = config_backup;

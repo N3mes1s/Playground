@@ -4,7 +4,6 @@
 //! built-in HTTP client rather than a headless browser.
 //! Supports domain allowlisting and private host blocking.
 
-use alloc::string::String;
 use alloc::format;
 use super::{Tool, ToolResult};
 

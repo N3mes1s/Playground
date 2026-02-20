@@ -6,7 +6,6 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use alloc::format;
 
 /// A chunk of text with its heading context.
 #[derive(Debug, Clone)]

@@ -34,6 +34,11 @@
 #![no_std]
 #![no_main]
 #![feature(alloc_error_handler)]
+// Unikernel: single-core cooperative scheduling makes static mut safe.
+// Many modules define infrastructure that isn't all called yet (stubs for
+// future channels, security primitives, etc.) — suppress dead_code globally.
+#![allow(static_mut_refs)]
+#![allow(dead_code)]
 
 extern crate alloc;
 

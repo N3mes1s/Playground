@@ -6,7 +6,6 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use alloc::format;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 static CRON_RUNNING: AtomicBool = AtomicBool::new(false);

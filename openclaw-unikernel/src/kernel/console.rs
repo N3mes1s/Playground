@@ -6,7 +6,7 @@
 //!
 //! Both are initialized at boot and written to simultaneously.
 
-use core::fmt::{self, Write};
+use core::fmt;
 use super::{inb, outb};
 
 const VGA_BUFFER: usize = 0xB8000;

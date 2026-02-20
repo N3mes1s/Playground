@@ -82,7 +82,7 @@ impl Tunnel for CloudflareTunnel {
                 Ok(url)
             }
             Ok(resp) => Err(format!("cloudflare API error {}", resp.status_code)),
-            Err(e) => {
+            Err(_) => {
                 // Fallback: generate a placeholder URL for the tunnel
                 let url = format!("https://openclaw-{}.trycloudflare.com", crate::kernel::rdtsc() % 100000);
                 self.running = true;

@@ -10,6 +10,7 @@
 #   make size     — Report binary size
 #   make clippy   — Run linter
 #   make fmt      — Format code
+#   make test     — Run QEMU boot test
 
 TARGET    := x86_64-unknown-none
 BINARY    := target/$(TARGET)/release/openclaw-unikernel
@@ -70,3 +71,6 @@ fmt:
 
 fmt-check:
 	cargo fmt -- --check
+
+test: build
+	@bash tests/boot_test.sh $(BINARY)

@@ -6,7 +6,6 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use alloc::format;
-use super::tls::TlsSession;
 
 /// HTTP methods.
 #[derive(Debug, Clone, Copy)]

@@ -147,7 +147,7 @@ fn parse_gemini_response(body: &[u8]) -> Result<CompletionResponse, String> {
     let mut tool_calls = Vec::new();
     let mut finish_reason = FinishReason::Stop;
 
-    if let Some(fc_pos) = text.find("\"functionCall\"") {
+    if text.find("\"functionCall\"").is_some() {
         finish_reason = FinishReason::ToolUse;
         // Parse function calls from the response
         let mut search_from = 0;

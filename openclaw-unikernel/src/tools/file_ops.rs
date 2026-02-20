@@ -3,7 +3,6 @@
 //! Read and write files in the unikernel's RAM filesystem.
 //! All paths are validated against the security policy.
 
-use alloc::string::String;
 use alloc::format;
 use super::{Tool, ToolResult};
 
