@@ -1315,7 +1315,7 @@ static bool setup_chroot_filesystem() {
   // directories under /tmp (e.g. /tmp/workspace) can be bind-mounted on top
   // of the tmpfs. Otherwise the tmpfs would shadow the workspace bind-mount.
   snprintf(path, sizeof(path), "%s/tmp", sandbox_root);
-  mount("tmpfs", path, "tmpfs", MS_NOSUID | MS_NODEV, "size=32m,mode=1777");
+  mount("tmpfs", path, "tmpfs", MS_NOSUID | MS_NODEV, "size=256m,mode=1777");
 
   // Bind-mount user-configured allowed paths (read-write)
   // Mounted AFTER tmpfs /tmp so workspace dirs under /tmp overlay the tmpfs.
@@ -2354,7 +2354,11 @@ static int exec_passthrough(const char* const* argv) {
               ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
             }
           }
-          // Empty path for non-kill/exec broker syscalls: deny.
+          // getcwd: always allow (no path to validate, safe in chroot)
+          else if (nr == __NR_getcwd) {
+            // Allow — no security risk, returns the chroot-relative CWD
+          }
+          // Empty path for non-kill/exec/getcwd broker syscalls: deny.
           // Prevents fchdir and other fd-based syscalls from bypassing the broker.
           else if (path_str.empty()) {
             regs.orig_rax = -1;
@@ -2532,7 +2536,7 @@ build_broker_permissions() {
   perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/proc/"));
 
   // Device files: specific devices only
-  perms.push_back(BrokerFilePermission::ReadWrite("/dev/null"));
+  perms.push_back(BrokerFilePermission::ReadWriteCreate("/dev/null"));
   perms.push_back(BrokerFilePermission::ReadOnly("/dev/urandom"));
   perms.push_back(BrokerFilePermission::ReadOnly("/dev/random"));
   perms.push_back(BrokerFilePermission::ReadOnly("/dev/zero"));
