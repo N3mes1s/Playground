@@ -448,8 +448,10 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
     if (sysno == __NR_ioctl) {
       const Arg<unsigned long> request(1);
       // Chrome's allowlist + FIOCLEX/FIONCLEX for close-on-exec
+      // + FIONBIO for non-blocking mode (used by Python socket.settimeout
+      // and Node.js net.connect — safe, only affects I/O blocking behavior)
       ResultExpr result = Switch(request)
-          .Cases({TCGETS, FIONREAD, FIOCLEX, FIONCLEX}, Allow())
+          .Cases({TCGETS, FIONREAD, FIOCLEX, FIONCLEX, FIONBIO}, Allow())
           .Default(Block());
       // Layer on runtime-configured extensions (additive only)
       for (unsigned long cmd : extra_ioctls_) {
@@ -567,16 +569,33 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
     if (sysno == __NR_getsockopt || sysno == __NR_setsockopt) {
       const Arg<int> level(1);
       const Arg<int> optname(2);
-      // Start with Chrome's exact allowlist
+      // Start with Chrome's allowlist + standard socket options needed by
+      // Python/Node.js TLS stacks. These are safe informational/tuning options:
+      //   SO_PEEK_OFF (42): Chrome's original allowlist
+      //   SO_TYPE (3): read-only, returns socket type (needed by ssl.wrap_socket)
+      //   SO_ERROR (4): read-only, returns pending error (needed by connect())
+      //   SO_KEEPALIVE (9): enable TCP keepalive (standard)
+      //   SO_SNDBUF/SO_RCVBUF (7/8): buffer size tuning
       ResultExpr sockopt_result = Switch(optname)
-          .Cases({SO_PEEK_OFF}, Allow())
+          .Cases({SO_PEEK_OFF, SO_TYPE, SO_ERROR, SO_KEEPALIVE,
+                  SO_SNDBUF, SO_RCVBUF}, Allow())
           .Default(Block());
       // Layer on runtime-configured extensions (additive only)
       for (int opt : extra_sockopts_) {
         sockopt_result = sandbox::bpf_dsl::If(optname == opt, Allow())
             .Else(std::move(sockopt_result));
       }
+      // Also allow IPPROTO_TCP level for TCP_NODELAY (optname 1) and
+      // TCP_KEEPIDLE/TCP_KEEPINTVL/TCP_KEEPCNT which are standard
+      // performance/keepalive options used by Python's urllib, Node.js, etc.
+      // These are safe: they only affect TCP segment behavior, not security.
+      ResultExpr tcp_result = Switch(optname)
+          .Cases({1 /* TCP_NODELAY */,
+                  4 /* TCP_KEEPIDLE */, 5 /* TCP_KEEPINTVL */,
+                  6 /* TCP_KEEPCNT */}, Allow())
+          .Default(Block());
       return sandbox::bpf_dsl::If(level == SOL_SOCKET, std::move(sockopt_result))
+          .ElseIf(level == 6 /* IPPROTO_TCP */, std::move(tcp_result))
           .Else(Block());
     }
 
@@ -1250,6 +1269,34 @@ static std::string normalize_path_lexical(const std::string& path) {
   return result;
 }
 
+// Resolve a relative path to an absolute path using a tracked CWD.
+// This maintains broker enforcement for relative paths instead of
+// blindly allowing them.
+//
+// Security rationale: Chrome's broker requires absolute paths because Chrome's
+// renderers run without a chroot. Our sandbox IS chrooted, so relative paths
+// are kernel-confined, but we STILL resolve and broker-check them to maintain:
+//   1. The audit trail (all accesses logged with full paths)
+//   2. Defense-in-depth (broker + mount namespace + chroot, not just chroot)
+//   3. Fine-grained path restrictions beyond mount namespace
+//
+// Implementation: Use tracer-tracked CWD (maintained via chdir interception
+// and fork/clone inheritance) rather than /proc/pid/cwd, because the /proc
+// inside the chroot is remounted for the inner PID namespace and the tracer's
+// PIDs may not be visible there. PTRACE_PEEKDATA works regardless of /proc,
+// but readlink on /proc does not.
+static std::string resolve_relative_path(const std::string& cwd,
+                                         const std::string& relpath) {
+  // CWD must be absolute
+  if (cwd.empty() || cwd[0] != '/') return "";
+
+  // Join CWD with relative path and normalize
+  // e.g., cwd="/tmp/workspace" + relpath="." → "/tmp/workspace/."
+  //     → normalize → "/tmp/workspace"
+  std::string joined = cwd + "/" + relpath;
+  return normalize_path_lexical(joined);
+}
+
 // =============================================================================
 // Layer 1: Namespace isolation (mirrors Chrome's Credentials::MoveToNewUserNS)
 // =============================================================================
@@ -1895,6 +1942,14 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
   // (launching the command) and optionally block subsequent ones.
   std::map<pid_t, int> exec_count;
 
+  // CWD tracking per PID: used to resolve relative paths to absolute.
+  // /proc/pid/cwd is unreliable because the inner PID namespace remounts
+  // /proc, making the tracer's (outer namespace) PIDs invisible.
+  // Instead, we track chdir() calls and fork() inheritance.
+  std::map<pid_t, std::string> cwd_map;
+  cwd_map[child] = "/";  // Child starts at / (set by chroot setup)
+  std::string last_fork_cwd = "/";  // See passthrough section comment
+
   while (!traced_pids.empty()) {
     pid_t pid;
     int wstatus;
@@ -1910,6 +1965,7 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
       traced_pids.erase(pid);
       pending_entry.erase(pid);
       exec_count.erase(pid);
+      cwd_map.erase(pid);
       continue;
     }
 
@@ -1919,6 +1975,11 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
     int event = (wstatus >> 16) & 0xFF;
 
     if (event == PTRACE_EVENT_SECCOMP) {
+      // Auto-assign CWD for PIDs not yet in cwd_map (PID namespace mismatch)
+      if (cwd_map.find(pid) == cwd_map.end()) {
+        cwd_map[pid] = last_fork_cwd;
+      }
+
       // SECCOMP_RET_TRACE: seccomp-BPF flagged this syscall for tracer
       // decision. Read the trace data to determine action:
       //   TRACE_BLOCKED (1): always block
@@ -1980,6 +2041,29 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
         std::string original_path_str = path_str;  // Save for TOCTOU decision
         if (!path_str.empty() && path_str[0] == '/') {
           path_str = normalize_path_lexical(path_str);
+        }
+
+        // Resolve relative paths to absolute using child's CWD within chroot.
+        // Chrome's broker requires absolute paths, but programs commonly use
+        // relative paths (stat("."), open("./file"), etc.). Instead of blindly
+        // allowing these (which would bypass broker enforcement), we resolve
+        // them to absolute paths and let the broker validate normally.
+        // This maintains the full audit trail and defense-in-depth.
+        //
+        // IMPORTANT: Do NOT write back resolved paths — the child's buffer
+        // only has room for the original relative path (e.g., "."). Writing
+        // the resolved absolute path (e.g., "/tmp/workspace") would overflow
+        // the buffer and corrupt adjacent memory. The kernel handles relative
+        // path resolution safely within the chroot.
+        bool skip_writeback = false;
+        if (!path_str.empty() && path_str[0] != '/') {
+          std::string resolved = resolve_relative_path(cwd_map[pid], path_str);
+          if (!resolved.empty()) {
+            path_str = resolved;
+            skip_writeback = true;  // Buffer too small for resolved path
+          }
+          // If resolution fails, path_str stays relative — the broker will
+          // reject it (requires absolute), which is the safe default.
         }
 
         // Record the syscall
@@ -2171,22 +2255,28 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
             regs.orig_rax = -1;
             regs.rax = -broker_policy.denied_errno();
             ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
-          } else if (path_addr != 0 && !path_str.empty()) {
-            // === TOCTOU defense ===
-            // Rewrite the broker-validated path back into child memory.
-            // Between our read and the kernel's read, another thread could
-            // have swapped the path to a forbidden target. By rewriting,
-            // the kernel reads OUR validated copy, not the attacker's.
-            //
-            // EXCEPTION: skip write-back when normalization shortened the
-            // path. The dynamic linker (ld.so) reuses path buffers and
-            // modifies them in-place between hwcaps iterations. Writing a
-            // shorter string corrupts the linker's offset calculations,
-            // causing garbled paths on subsequent searches. The kernel
-            // resolves ".." natively, so the original path reaches the
-            // same file — TOCTOU write-back is unnecessary here.
-            if (path_str.size() >= original_path_str.size()) {
-              write_child_string(pid, path_addr, path_str);
+          } else {
+            // Track CWD changes for relative path resolution
+            if (nr == __NR_chdir && !path_str.empty()) {
+              cwd_map[pid] = path_str;
+            }
+            if (path_addr != 0 && !path_str.empty() && !skip_writeback) {
+              // === TOCTOU defense ===
+              // Rewrite the broker-validated path back into child memory.
+              // Between our read and the kernel's read, another thread could
+              // have swapped the path to a forbidden target. By rewriting,
+              // the kernel reads OUR validated copy, not the attacker's.
+              //
+              // EXCEPTION: skip write-back when normalization shortened the
+              // path. The dynamic linker (ld.so) reuses path buffers and
+              // modifies them in-place between hwcaps iterations. Writing a
+              // shorter string corrupts the linker's offset calculations,
+              // causing garbled paths on subsequent searches. The kernel
+              // resolves ".." natively, so the original path reaches the
+              // same file — TOCTOU write-back is unnecessary here.
+              if (path_str.size() >= original_path_str.size()) {
+                write_child_string(pid, path_addr, path_str);
+              }
             }
           }
         }
@@ -2201,6 +2291,9 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
       unsigned long new_pid;
       ptrace(PTRACE_GETEVENTMSG, pid, nullptr, &new_pid);
       traced_pids.insert(static_cast<pid_t>(new_pid));
+      // Child inherits parent's CWD (see passthrough section for PID NS note)
+      cwd_map[static_cast<pid_t>(new_pid)] = cwd_map[pid];
+      last_fork_cwd = cwd_map[pid];
       ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
 
     } else if (event == PTRACE_EVENT_EXEC ||
@@ -2532,6 +2625,15 @@ static int exec_passthrough(const char* const* argv) {
   std::set<pid_t> traced_pids = {child};
   int exit_code = 0;
 
+  // CWD tracking per PID (same as exec_with_tracing — see comment there)
+  std::map<pid_t, std::string> cwd_map;
+  cwd_map[child] = "/";
+  // Last fork parent's CWD: used to assign CWD to new PIDs that appear
+  // in waitpid but weren't added via PTRACE_GETEVENTMSG (PID namespace
+  // mapping causes GETEVENTMSG to return inner-namespace PIDs while
+  // waitpid returns outer-namespace PIDs).
+  std::string last_fork_cwd = "/";
+
   // Ptrace broker loop — same security as exec_with_tracing but:
   //   - Uses PTRACE_CONT for performance (no entry/exit stops)
   //   - No syscall log collection
@@ -2562,6 +2664,7 @@ static int exec_passthrough(const char* const* argv) {
       }
       traced_pids.erase(pid);
       exec_count.erase(pid);
+      cwd_map.erase(pid);
       continue;
     }
 
@@ -2571,6 +2674,12 @@ static int exec_passthrough(const char* const* argv) {
     int event = (wstatus >> 16) & 0xFF;
 
     if (event == PTRACE_EVENT_SECCOMP) {
+      // Auto-assign CWD for PIDs not yet in cwd_map (PID namespace mismatch:
+      // PTRACE_GETEVENTMSG returns inner-namespace PID, waitpid returns outer)
+      if (cwd_map.find(pid) == cwd_map.end()) {
+        cwd_map[pid] = last_fork_cwd;
+      }
+
       // SECCOMP_RET_TRACE: handle broker/block decisions (SAME as exec_with_tracing)
       unsigned long trace_data = 0;
       ptrace(PTRACE_GETEVENTMSG, pid, nullptr, &trace_data);
@@ -2627,6 +2736,17 @@ static int exec_passthrough(const char* const* argv) {
           std::string original_path_str = path_str;
           if (!path_str.empty() && path_str[0] == '/') {
             path_str = normalize_path_lexical(path_str);
+          }
+
+          // Resolve relative paths to absolute (same as exec_with_tracing).
+          // See comment there for security rationale and skip_writeback note.
+          bool skip_writeback = false;
+          if (!path_str.empty() && path_str[0] != '/') {
+            std::string resolved = resolve_relative_path(cwd_map[pid], path_str);
+            if (!resolved.empty()) {
+              path_str = resolved;
+              skip_writeback = true;
+            }
           }
 
           // Handle kill/tgkill/tkill: protect namespace init (PID 1)
@@ -2750,12 +2870,18 @@ static int exec_passthrough(const char* const* argv) {
               regs.orig_rax = -1;
               regs.rax = -broker_policy.denied_errno();
               ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
-            } else if (path_addr != 0 && !path_str.empty()) {
-              // TOCTOU defense: rewrite validated path (same as exec_with_tracing).
-              // Skip when normalization shortened the path — see exec_with_tracing
-              // comment for why (ld.so in-place buffer modification).
-              if (path_str.size() >= original_path_str.size()) {
-                write_child_string(pid, path_addr, path_str);
+            } else {
+              // Track CWD changes for relative path resolution
+              if (nr == __NR_chdir && !path_str.empty()) {
+                cwd_map[pid] = path_str;
+              }
+              if (path_addr != 0 && !path_str.empty() && !skip_writeback) {
+                // TOCTOU defense: rewrite validated path (same as exec_with_tracing).
+                // Skip when normalization shortened the path — see exec_with_tracing
+                // comment for why (ld.so in-place buffer modification).
+                if (path_str.size() >= original_path_str.size()) {
+                  write_child_string(pid, path_addr, path_str);
+                }
               }
             }
 
@@ -2789,6 +2915,12 @@ static int exec_passthrough(const char* const* argv) {
       unsigned long new_pid;
       ptrace(PTRACE_GETEVENTMSG, pid, nullptr, &new_pid);
       traced_pids.insert(static_cast<pid_t>(new_pid));
+      // Child inherits parent's CWD.
+      // Note: new_pid may be from inner PID namespace (GETEVENTMSG returns
+      // namespace-relative PID), so we also save last_fork_cwd for PIDs
+      // that appear in waitpid with outer-namespace PIDs.
+      cwd_map[static_cast<pid_t>(new_pid)] = cwd_map[pid];
+      last_fork_cwd = cwd_map[pid];
       audit_log("{\"ts\":%.3f,\"pid\":%d,\"event\":\"fork\",\"child\":%lu,\"type\":\"%s\"}",
                 audit_timestamp(), pid, new_pid,
                 event == PTRACE_EVENT_FORK ? "fork" :
