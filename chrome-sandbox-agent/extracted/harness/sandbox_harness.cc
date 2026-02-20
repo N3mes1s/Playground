@@ -1033,6 +1033,35 @@ static std::string read_child_string(pid_t pid, unsigned long addr, size_t maxle
   return result;
 }
 
+// Write a string back into child memory at the given address.
+// Used to defeat TOCTOU races: after validating a path, we rewrite the
+// broker-approved path into child memory so the kernel reads OUR copy,
+// not whatever the child's threads may have swapped in.
+static bool write_child_string(pid_t pid, unsigned long addr,
+                               const std::string& str) {
+  if (addr == 0) return false;
+  const char* src = str.c_str();
+  size_t len = str.size() + 1;  // include null terminator
+
+  for (size_t offset = 0; offset < len; offset += sizeof(long)) {
+    // Read the current word (we need it for partial-word writes at the end)
+    errno = 0;
+    long word = ptrace(PTRACE_PEEKDATA, pid, addr + offset, nullptr);
+    if (errno != 0) return false;
+
+    // Overwrite bytes in the word with our string
+    char* wp = reinterpret_cast<char*>(&word);
+    for (size_t i = 0; i < sizeof(long) && offset + i < len; i++) {
+      wp[i] = src[offset + i];
+    }
+
+    if (ptrace(PTRACE_POKEDATA, pid, addr + offset, word) != 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // =============================================================================
 // Layer 1: Namespace isolation (mirrors Chrome's Credentials::MoveToNewUserNS)
 // =============================================================================
@@ -1712,6 +1741,7 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
         std::string path_str;
         int open_flags = 0;
         bool is_at_syscall = false;
+        unsigned long path_addr = 0;  // Address of path in child memory (for TOCTOU defense)
 
         // *at syscalls: path in rsi (2nd arg), dirfd in rdi (1st arg)
         if (nr == __NR_openat || nr == __NR_faccessat ||
@@ -1721,11 +1751,13 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
             nr == __NR_readlinkat || nr == __NR_linkat ||
             nr == __NR_symlinkat || nr == __NR_utimensat ||
             nr == __NR_execveat) {
-          path_str = read_child_string(pid, regs.rsi);
+          path_addr = regs.rsi;
+          path_str = read_child_string(pid, path_addr);
           is_at_syscall = true;
           if (nr == __NR_openat) open_flags = (int)regs.rdx;
         } else if (nr == __NR_renameat || nr == __NR_renameat2) {
-          path_str = read_child_string(pid, regs.rsi);  // old path
+          path_addr = regs.rsi;
+          path_str = read_child_string(pid, path_addr);  // old path
           is_at_syscall = true;
         }
         // Non-at syscalls: path in rdi (1st arg)
@@ -1739,7 +1771,8 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
                  nr == __NR_link || nr == __NR_symlink ||
                  nr == __NR_rename || nr == __NR_statfs ||
                  nr == __NR_lchown || nr == __NR_mknod) {
-          path_str = read_child_string(pid, regs.rdi);
+          path_addr = regs.rdi;
+          path_str = read_child_string(pid, path_addr);
           if (nr == __NR_open) open_flags = (int)regs.rsi;
           if (nr == __NR_creat) open_flags = O_CREAT | O_WRONLY | O_TRUNC;
         }
@@ -1937,8 +1970,14 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
             regs.orig_rax = -1;
             regs.rax = -broker_policy.denied_errno();
             ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
+          } else if (path_addr != 0 && !path_str.empty()) {
+            // === TOCTOU defense ===
+            // Rewrite the broker-validated path back into child memory.
+            // Between our read and the kernel's read, another thread could
+            // have swapped the path to a forbidden target. By rewriting,
+            // the kernel reads OUR validated copy, not the attacker's.
+            write_child_string(pid, path_addr, path_str);
           }
-          // If allowed: don't modify regs — syscall proceeds normally
         }
 
         records.push_back(rec);
@@ -2249,6 +2288,7 @@ static int exec_passthrough(const char* const* argv) {
           // Broker: validate filesystem path (same logic as exec_with_tracing)
           std::string path_str;
           int open_flags = 0;
+          unsigned long path_addr = 0;  // For TOCTOU defense
 
           // Extract path from syscall args (same as exec_with_tracing)
           if (nr == __NR_openat || nr == __NR_faccessat ||
@@ -2258,10 +2298,12 @@ static int exec_passthrough(const char* const* argv) {
               nr == __NR_readlinkat || nr == __NR_linkat ||
               nr == __NR_symlinkat || nr == __NR_utimensat ||
               nr == __NR_execveat) {
-            path_str = read_child_string(pid, regs.rsi);
+            path_addr = regs.rsi;
+            path_str = read_child_string(pid, path_addr);
             if (nr == __NR_openat) open_flags = (int)regs.rdx;
           } else if (nr == __NR_renameat || nr == __NR_renameat2) {
-            path_str = read_child_string(pid, regs.rsi);
+            path_addr = regs.rsi;
+            path_str = read_child_string(pid, path_addr);
           } else if (nr == __NR_open || nr == __NR_access ||
                      nr == __NR_stat || nr == __NR_lstat ||
                      nr == __NR_execve || nr == __NR_unlink ||
@@ -2272,7 +2314,8 @@ static int exec_passthrough(const char* const* argv) {
                      nr == __NR_link || nr == __NR_symlink ||
                      nr == __NR_rename || nr == __NR_statfs ||
                      nr == __NR_lchown || nr == __NR_mknod) {
-            path_str = read_child_string(pid, regs.rdi);
+            path_addr = regs.rdi;
+            path_str = read_child_string(pid, path_addr);
             if (nr == __NR_open) open_flags = (int)regs.rsi;
             if (nr == __NR_creat) open_flags = O_CREAT | O_WRONLY | O_TRUNC;
           }
@@ -2311,8 +2354,15 @@ static int exec_passthrough(const char* const* argv) {
               ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
             }
           }
+          // Empty path for non-kill/exec broker syscalls: deny.
+          // Prevents fchdir and other fd-based syscalls from bypassing the broker.
+          else if (path_str.empty()) {
+            regs.orig_rax = -1;
+            regs.rax = (unsigned long long)(-EACCES);
+            ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
+          }
           // Handle filesystem broker (same validation as exec_with_tracing)
-          else if (!path_str.empty()) {
+          else {
             const char* path_c = path_str.c_str();
             bool allowed = false;
 
@@ -2377,6 +2427,9 @@ static int exec_passthrough(const char* const* argv) {
               regs.orig_rax = -1;
               regs.rax = -broker_policy.denied_errno();
               ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
+            } else if (path_addr != 0 && !path_str.empty()) {
+              // TOCTOU defense: rewrite validated path (same as exec_with_tracing)
+              write_child_string(pid, path_addr, path_str);
             }
           }
         }
