@@ -92,6 +92,31 @@ typedef enum {
 // Default: SANDBOX_EXEC_BROKERED
 void sandbox_set_exec_policy(SandboxExecPolicy policy);
 
+// --- Seccomp filter extensions ---
+//
+// The default seccomp-BPF filter is identical to Chrome's renderer sandbox.
+// These functions allow extending the filter at runtime WITHOUT modifying the
+// base policy. Extensions are additive — they can only allow operations that
+// Chrome blocks, never restrict operations Chrome allows.
+//
+// MUST be called before sandbox_init() — seccomp filters are installed during init.
+
+// Allow additional ioctl commands inside the sandbox.
+// By default only TCGETS and FIONREAD are allowed (Chrome's RestrictIoctl).
+// Use for runtimes that need: FIONBIO (non-blocking), TIOCGPGRP (TTY detect),
+// TIOCGWINSZ (terminal size), TCSETS (terminal config), etc.
+// cmds: array of ioctl request codes to allow.
+// count: number of entries in the array.
+int sandbox_allow_ioctls(const unsigned long* cmds, int count);
+
+// Allow additional getsockopt/setsockopt options inside the sandbox.
+// By default only SOL_SOCKET+SO_PEEK_OFF is allowed (Chrome's policy).
+// Use for runtimes that need: SO_TYPE (socket detection), SO_ERROR,
+// SO_RCVBUF/SO_SNDBUF, SO_KEEPALIVE, SO_REUSEADDR, etc.
+// optnames: array of SOL_SOCKET option names to allow.
+// count: number of entries in the array.
+int sandbox_allow_sockopts(const int* optnames, int count);
+
 // --- Execution ---
 
 // Result of a sandboxed execution.

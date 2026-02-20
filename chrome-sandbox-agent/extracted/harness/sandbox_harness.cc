@@ -236,8 +236,12 @@ static const char* syscall_risk(int nr) {
 
 class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
  public:
-  explicit AgentSandboxPolicy(SandboxPolicyLevel level)
-      : level_(level), policy_pid_(sandbox::sys_getpid()) {
+  AgentSandboxPolicy(SandboxPolicyLevel level,
+                     std::set<unsigned long> extra_ioctls,
+                     std::set<int> extra_sockopts)
+      : level_(level), policy_pid_(sandbox::sys_getpid()),
+        extra_ioctls_(std::move(extra_ioctls)),
+        extra_sockopts_(std::move(extra_sockopts)) {
     // Allocate crash keys for Chrome's SIGSYS handler logging
     sandbox::AllocateCrashKeys();
   }
@@ -347,17 +351,21 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       return sandbox::RestrictMprotectFlags();
     }
 
-    // ioctl: allow safe terminal/pipe operations needed by Node.js/libuv.
-    // Chrome's RestrictIoctl() only allows TCGETS and FIONREAD, which is too
-    // restrictive for a general-purpose runtime. We add FIONBIO (non-blocking
-    // mode), TIOCGPGRP/TIOCGWINSZ (TTY detection/size), which libuv needs
-    // for stream initialization (createWritableStdioStream).
+    // ioctl: Chrome's default allows only TCGETS and FIONREAD.
+    // Additional ioctl commands can be allowed at runtime via
+    // sandbox_allow_ioctls() for runtimes that need them.
     if (sysno == __NR_ioctl) {
       const Arg<unsigned long> request(1);
-      return Switch(request)
-          .Cases({TCGETS, FIONREAD, FIONBIO, TIOCGPGRP, TIOCGWINSZ,
-                  TIOCSPGRP, TCSETS, TCSETSW, TCSETSF}, Allow())
+      // Start with Chrome's exact allowlist
+      ResultExpr result = Switch(request)
+          .Cases({TCGETS, FIONREAD}, Allow())
           .Default(Block());
+      // Layer on runtime-configured extensions (additive only)
+      for (unsigned long cmd : extra_ioctls_) {
+        result = sandbox::bpf_dsl::If(request == cmd, Allow())
+            .Else(std::move(result));
+      }
+      return result;
     }
 
     // fcntl: restrict commands
@@ -438,19 +446,22 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       return sandbox::RestrictSockSendFlags(sysno);
     }
 
-    // getsockopt/setsockopt: allow safe socket options needed by Node.js/libuv.
-    // Chrome only allows SO_PEEK_OFF. We add SO_TYPE (socket type detection),
-    // SO_ERROR (error checking), SO_RCVBUF/SO_SNDBUF (buffer sizes),
-    // SO_KEEPALIVE, SO_REUSEADDR — all needed by libuv for stream setup.
+    // getsockopt/setsockopt: Chrome's default allows only SOL_SOCKET+SO_PEEK_OFF.
+    // Additional socket options can be allowed at runtime via
+    // sandbox_allow_sockopts() for runtimes that need them.
     if (sysno == __NR_getsockopt || sysno == __NR_setsockopt) {
       const Arg<int> level(1);
       const Arg<int> optname(2);
-      return sandbox::bpf_dsl::If(
-          level == SOL_SOCKET,
-          Switch(optname)
-              .Cases({SO_TYPE, SO_ERROR, SO_RCVBUF, SO_SNDBUF,
-                      SO_KEEPALIVE, SO_REUSEADDR, SO_PEEK_OFF}, Allow())
-              .Default(Block()))
+      // Start with Chrome's exact allowlist
+      ResultExpr sockopt_result = Switch(optname)
+          .Cases({SO_PEEK_OFF}, Allow())
+          .Default(Block());
+      // Layer on runtime-configured extensions (additive only)
+      for (int opt : extra_sockopts_) {
+        sockopt_result = sandbox::bpf_dsl::If(optname == opt, Allow())
+            .Else(std::move(sockopt_result));
+      }
+      return sandbox::bpf_dsl::If(level == SOL_SOCKET, std::move(sockopt_result))
           .Else(Block());
     }
 
@@ -621,6 +632,8 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
 
   SandboxPolicyLevel level_;
   pid_t policy_pid_;
+  std::set<unsigned long> extra_ioctls_;   // runtime-configured ioctl extensions
+  std::set<int> extra_sockopts_;           // runtime-configured sockopt extensions
 };
 
 // =============================================================================
@@ -631,6 +644,8 @@ static SandboxPolicyLevel g_policy_level = SANDBOX_POLICY_STRICT;
 static SandboxExecPolicy g_exec_policy = SANDBOX_EXEC_BROKERED;
 static std::vector<std::string> g_allowed_paths;       // read-write-create paths
 static std::vector<std::string> g_readonly_paths;       // read-only paths (runtimes, tools)
+static std::set<unsigned long> g_extra_ioctls;          // additional allowed ioctl cmds
+static std::set<int> g_extra_sockopts;                  // additional allowed SOL_SOCKET options
 static bool g_initialized = false;
 
 // Broker process (Chrome's real BrokerProcess)
@@ -1419,7 +1434,8 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
     // === LAYER 6: seccomp-BPF ===
     // Install Chrome's seccomp-BPF sandbox using the actual Chromium code.
     // This is the innermost layer and filters every syscall.
-    auto policy = std::make_unique<AgentSandboxPolicy>(g_policy_level);
+    auto policy = std::make_unique<AgentSandboxPolicy>(
+        g_policy_level, g_extra_ioctls, g_extra_sockopts);
     sandbox::SandboxBPF sandbox_bpf(std::move(policy));
     if (!sandbox_bpf.StartSandbox(sandbox::SandboxBPF::SeccompLevel::SINGLE_THREADED)) {
       _exit(126);
@@ -2060,6 +2076,22 @@ int sandbox_set_readonly_paths(const char* paths) {
     p.erase(0, pos + 1);
   }
   if (!p.empty()) g_readonly_paths.push_back(p);
+  return 0;
+}
+
+int sandbox_allow_ioctls(const unsigned long* cmds, int count) {
+  if (!cmds || count <= 0) return -1;
+  for (int i = 0; i < count; i++) {
+    g_extra_ioctls.insert(cmds[i]);
+  }
+  return 0;
+}
+
+int sandbox_allow_sockopts(const int* optnames, int count) {
+  if (!optnames || count <= 0) return -1;
+  for (int i = 0; i < count; i++) {
+    g_extra_sockopts.insert(optnames[i]);
+  }
   return 0;
 }
 

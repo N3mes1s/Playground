@@ -4,6 +4,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <termios.h>
 #include "sandbox_harness.h"
 
 static int tests_passed = 0;
@@ -55,15 +58,39 @@ int main() {
 
     printf("=== Claude Code in Chrome Sandbox Test ===\n\n");
 
-    // Configure paths BEFORE sandbox_init() — the mount namespace is set up
-    // during init, so paths must be known at that point.
+    // Configure BEFORE sandbox_init() — seccomp filters and mount namespace
+    // are set up during init, so all configuration must be done first.
     sandbox_set_policy(SANDBOX_POLICY_STRICT);
     sandbox_set_exec_policy(SANDBOX_EXEC_BROKERED);
 
     // Configure /opt/node22 as a read-only path so Node.js and Claude Code
-    // can execute inside the sandbox. This uses the configurable API rather
-    // than hardcoding paths in the broker permission list.
+    // can execute inside the sandbox.
     sandbox_set_readonly_paths("/opt/node22");
+
+    // Extend the seccomp filter for Node.js/libuv runtime needs.
+    // The base sandbox is identical to Chrome's — these are additive extensions.
+    // Node.js/libuv needs these ioctl commands for stream initialization:
+    //   FIONBIO: set non-blocking mode on file descriptors
+    //   TIOCGPGRP/TIOCSPGRP: detect/set TTY process group
+    //   TIOCGWINSZ: get terminal window size
+    //   TCSETS/TCSETSW/TCSETSF: terminal attribute configuration
+    unsigned long node_ioctls[] = {
+        FIONBIO, TIOCGPGRP, TIOCGWINSZ, TIOCSPGRP,
+        TCSETS, TCSETSW, TCSETSF
+    };
+    sandbox_allow_ioctls(node_ioctls, sizeof(node_ioctls) / sizeof(node_ioctls[0]));
+
+    // Node.js/libuv needs these socket options for stream type detection:
+    //   SO_TYPE: determine socket type (SOCK_STREAM vs SOCK_DGRAM)
+    //   SO_ERROR: check pending socket errors
+    //   SO_RCVBUF/SO_SNDBUF: get/set buffer sizes
+    //   SO_KEEPALIVE: TCP keepalive
+    //   SO_REUSEADDR: address reuse
+    int node_sockopts[] = {
+        SO_TYPE, SO_ERROR, SO_RCVBUF, SO_SNDBUF,
+        SO_KEEPALIVE, SO_REUSEADDR
+    };
+    sandbox_allow_sockopts(node_sockopts, sizeof(node_sockopts) / sizeof(node_sockopts[0]));
 
     printf("Initializing sandbox (zygote + namespace isolation)...\n");
     if (sandbox_init() != 0) {
