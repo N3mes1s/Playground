@@ -698,6 +698,9 @@ static bool g_in_zygote = false;  // True inside the zygote process
 //   [for each arg: uint32_t len, char data[len]]
 //   [int32_t exec_policy]
 //   [int32_t sandbox_policy]
+//   [uint32_t n_ioctls] [ioctl_data...]
+//   [uint32_t n_sockopts] [sockopt_data...]
+//   [uint8_t passthrough]    // 1 = interactive passthrough mode (no capture)
 
 // Result message: zygote → agent
 //   [int32_t exit_code]
@@ -743,7 +746,8 @@ static bool zygote_send_command(int fd, const char* const* argv,
                                 SandboxExecPolicy exec_policy,
                                 SandboxPolicyLevel sandbox_policy,
                                 const std::set<unsigned long>& extra_ioctls,
-                                const std::set<int>& extra_sockopts) {
+                                const std::set<int>& extra_sockopts,
+                                bool passthrough = false) {
   // Count args
   uint32_t argc = 0;
   for (const char* const* p = argv; *p; p++) argc++;
@@ -756,6 +760,7 @@ static bool zygote_send_command(int fd, const char* const* argv,
   total += sizeof(int32_t) * 2;  // exec_policy + sandbox_policy
   total += sizeof(uint32_t) + extra_ioctls.size() * sizeof(unsigned long);
   total += sizeof(uint32_t) + extra_sockopts.size() * sizeof(int32_t);
+  total += sizeof(uint8_t);  // passthrough flag
 
   // Write total length
   uint32_t total_len = (uint32_t)total;
@@ -791,6 +796,10 @@ static bool zygote_send_command(int fd, const char* const* argv,
     if (!write_all(fd, &opt32, sizeof(opt32))) return false;
   }
 
+  // Write passthrough flag
+  uint8_t pt = passthrough ? 1 : 0;
+  if (!write_all(fd, &pt, sizeof(pt))) return false;
+
   return true;
 }
 
@@ -799,7 +808,8 @@ static bool zygote_recv_command(int fd, std::vector<std::string>& args,
                                 SandboxExecPolicy& exec_policy,
                                 SandboxPolicyLevel& sandbox_policy,
                                 std::set<unsigned long>& extra_ioctls,
-                                std::set<int>& extra_sockopts) {
+                                std::set<int>& extra_sockopts,
+                                bool& passthrough) {
   uint32_t total_len;
   if (!read_all(fd, &total_len, sizeof(total_len))) return false;
 
@@ -843,6 +853,11 @@ static bool zygote_recv_command(int fd, std::vector<std::string>& args,
     if (!read_all(fd, &opt, sizeof(opt))) return false;
     extra_sockopts.insert((int)opt);
   }
+
+  // Read passthrough flag
+  uint8_t pt = 0;
+  if (!read_all(fd, &pt, sizeof(pt))) return false;
+  passthrough = (pt != 0);
 
   return true;
 }
@@ -1950,6 +1965,341 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
 }
 
 // =============================================================================
+// Interactive execution: fork + ptrace broker + seccomp, stdio on terminal
+// =============================================================================
+//
+// For running interactive commands (like `claude`) inside the sandbox WITH
+// the full Chrome security model including the filesystem broker.
+//
+// Same as exec_with_tracing() EXCEPT:
+//   - Does NOT redirect stdin/stdout/stderr (terminal passthrough)
+//   - Does NOT collect detailed syscall logs (performance)
+//   - Still uses ptrace for the filesystem broker (path validation)
+//   - Still applies seccomp-BPF filtering (STRICT/PERMISSIVE/TRACE_ALL)
+//   - Forwards signals (SIGINT, SIGTERM) to the sandboxed child
+//
+// Security model is IDENTICAL to exec_with_tracing():
+//   All 8 layers active including the ptrace-based filesystem broker.
+//   The only difference is stdio routing and log collection.
+
+static pid_t g_passthrough_child = -1;
+
+static void passthrough_signal_handler(int sig) {
+  // Forward signals to the sandboxed child
+  if (g_passthrough_child > 0) {
+    kill(g_passthrough_child, sig);
+  }
+}
+
+static int exec_passthrough(const char* const* argv) {
+  pid_t child = fork();
+  if (child < 0) return -1;
+
+  if (child == 0) {
+    // === CHILD (sandboxed target) ===
+    // stdin/stdout/stderr are inherited from parent (terminal passthrough)
+    // NO pipe redirection — interactive I/O flows directly to the terminal.
+
+    // Allow ptrace from parent (same as exec_with_tracing)
+    prctl(PR_SET_DUMPABLE, 1, 0, 0, 0);
+    ptrace(PTRACE_TRACEME, 0, nullptr, nullptr);
+    prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);
+    raise(SIGSTOP);  // Wait for parent to set up tracing
+
+    // Namespace isolation (same as exec_with_tracing)
+    NamespaceStatus ns_status = {};
+    if (g_in_zygote) {
+      ns_status.user_ns = true;
+      ns_status.mount_ns = true;
+      ns_status.net_ns = true;
+      ns_status.ipc_ns = true;
+      ns_status.caps_dropped = true;
+      ns_status.pid_ns = false;
+    } else {
+      ns_status = apply_namespace_isolation();
+    }
+
+    // PID namespace fork (same as exec_with_tracing)
+    if (ns_status.pid_ns) {
+      pid_t ns_child = fork();
+      if (ns_child < 0) _exit(125);
+      if (ns_child > 0) {
+        int exit_code = 1;
+        for (;;) {
+          int reaper_status;
+          pid_t reaped = waitpid(-1, &reaper_status, 0);
+          if (reaped < 0) { if (errno == EINTR) continue; break; }
+          if (reaped == ns_child) {
+            exit_code = WIFEXITED(reaper_status)
+                            ? WEXITSTATUS(reaper_status) : 1;
+          }
+        }
+        _exit(exit_code);
+      }
+      mount("proc", "/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, nullptr);
+    }
+
+    // Install seccomp-BPF (same as exec_with_tracing - STRICT policy works!)
+    auto policy = std::make_unique<AgentSandboxPolicy>(
+        g_policy_level, g_extra_ioctls, g_extra_sockopts,
+        !g_enable_network_isolation);
+    sandbox::SandboxBPF sandbox_bpf(std::move(policy));
+    if (!sandbox_bpf.StartSandbox(sandbox::SandboxBPF::SeccompLevel::SINGLE_THREADED)) {
+      _exit(126);
+    }
+
+    execvp(argv[0], const_cast<char* const*>(argv));
+    perror("exec");
+    _exit(127);
+  }
+
+  // === PARENT (tracer/broker - same security as exec_with_tracing) ===
+  g_passthrough_child = child;
+
+  // Forward SIGINT and SIGTERM to the child
+  struct sigaction sa = {};
+  sa.sa_handler = passthrough_signal_handler;
+  sa.sa_flags = SA_RESTART;
+  sigemptyset(&sa.sa_mask);
+  sigaction(SIGINT, &sa, nullptr);
+  sigaction(SIGTERM, &sa, nullptr);
+
+  // Wait for child's SIGSTOP
+  int status;
+  waitpid(child, &status, 0);
+
+  // Set ptrace options (same as exec_with_tracing)
+  long ptrace_opts = PTRACE_O_TRACESECCOMP | PTRACE_O_TRACESYSGOOD |
+                     PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORK |
+                     PTRACE_O_TRACECLONE | PTRACE_O_TRACEEXEC |
+                     PTRACE_O_TRACEEXIT;
+  ptrace(PTRACE_SETOPTIONS, child, nullptr, ptrace_opts);
+
+  // Build the broker permission list (same as exec_with_tracing)
+  auto broker_perms = build_broker_permissions();
+  sandbox::syscall_broker::BrokerPermissionList broker_policy(
+      EACCES, std::move(broker_perms));
+
+  ptrace(PTRACE_SYSCALL, child, nullptr, nullptr);
+
+  // Exec policy tracking
+  std::map<pid_t, int> exec_count;
+  std::set<pid_t> traced_pids = {child};
+  int exit_code = 0;
+
+  // Ptrace broker loop — same security as exec_with_tracing but:
+  //   - No syscall log collection (performance)
+  //   - No stdout/stderr pipe reading
+  //   - Full broker validation still active
+  while (!traced_pids.empty()) {
+    pid_t pid;
+    int wstatus;
+    pid = waitpid(-1, &wstatus, __WALL);
+    if (pid < 0) {
+      if (errno == EINTR) continue;
+      break;
+    }
+
+    if (WIFEXITED(wstatus) || WIFSIGNALED(wstatus)) {
+      if (pid == child) {
+        exit_code = WIFEXITED(wstatus)
+            ? WEXITSTATUS(wstatus)
+            : 128 + WTERMSIG(wstatus);
+      }
+      traced_pids.erase(pid);
+      exec_count.erase(pid);
+      continue;
+    }
+
+    if (!WIFSTOPPED(wstatus)) continue;
+
+    int sig = WSTOPSIG(wstatus);
+    int event = (wstatus >> 16) & 0xFF;
+
+    if (event == PTRACE_EVENT_SECCOMP) {
+      // SECCOMP_RET_TRACE: handle broker/block decisions (SAME as exec_with_tracing)
+      unsigned long trace_data = 0;
+      ptrace(PTRACE_GETEVENTMSG, pid, nullptr, &trace_data);
+
+      struct user_regs_struct regs;
+      if (ptrace(PTRACE_GETREGS, pid, nullptr, &regs) == 0) {
+        int nr = (int)regs.orig_rax;
+
+        if (trace_data == AgentSandboxPolicy::TRACE_BLOCKED) {
+          // Block: skip syscall, return -EPERM
+          regs.orig_rax = -1;
+          regs.rax = (unsigned long long)(-EPERM);
+          ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
+
+        } else if (trace_data == AgentSandboxPolicy::TRACE_BROKER) {
+          // Broker: validate filesystem path (same logic as exec_with_tracing)
+          std::string path_str;
+          int open_flags = 0;
+
+          // Extract path from syscall args (same as exec_with_tracing)
+          if (nr == __NR_openat || nr == __NR_faccessat ||
+              nr == __NR_faccessat2 || nr == __NR_newfstatat ||
+              nr == __NR_mkdirat || nr == __NR_unlinkat ||
+              nr == __NR_fchmodat || nr == __NR_fchownat ||
+              nr == __NR_readlinkat || nr == __NR_linkat ||
+              nr == __NR_symlinkat || nr == __NR_utimensat ||
+              nr == __NR_execveat) {
+            path_str = read_child_string(pid, regs.rsi);
+            if (nr == __NR_openat) open_flags = (int)regs.rdx;
+          } else if (nr == __NR_renameat || nr == __NR_renameat2) {
+            path_str = read_child_string(pid, regs.rsi);
+          } else if (nr == __NR_open || nr == __NR_access ||
+                     nr == __NR_stat || nr == __NR_lstat ||
+                     nr == __NR_execve || nr == __NR_unlink ||
+                     nr == __NR_mkdir || nr == __NR_rmdir ||
+                     nr == __NR_chmod || nr == __NR_chown ||
+                     nr == __NR_chdir || nr == __NR_truncate ||
+                     nr == __NR_readlink || nr == __NR_creat ||
+                     nr == __NR_link || nr == __NR_symlink ||
+                     nr == __NR_rename || nr == __NR_statfs ||
+                     nr == __NR_lchown || nr == __NR_mknod) {
+            path_str = read_child_string(pid, regs.rdi);
+            if (nr == __NR_open) open_flags = (int)regs.rsi;
+            if (nr == __NR_creat) open_flags = O_CREAT | O_WRONLY | O_TRUNC;
+          }
+
+          // Handle exec policy (same as exec_with_tracing)
+          if (nr == __NR_execve || nr == __NR_execveat) {
+            exec_count[pid]++;
+            bool allow_exec = true;
+            if (g_exec_policy == SANDBOX_EXEC_BLOCKED) {
+              allow_exec = false;
+            } else if (g_exec_policy == SANDBOX_EXEC_CHROME) {
+              allow_exec = (exec_count[pid] <= 1);
+            } else {
+              // BROKERED: check path
+              if (!path_str.empty()) {
+                const char* path_c = path_str.c_str();
+                auto result = broker_policy.GetFileNameIfAllowedToOpen(
+                    path_c, O_RDONLY);
+                allow_exec = (result.first != nullptr);
+              }
+            }
+            if (!allow_exec) {
+              regs.orig_rax = -1;
+              regs.rax = (unsigned long long)(-EACCES);
+              ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
+            }
+          }
+          // Handle filesystem broker (same validation as exec_with_tracing)
+          else if (!path_str.empty()) {
+            const char* path_c = path_str.c_str();
+            bool allowed = false;
+
+            // Strip O_CLOEXEC: Chrome's SIGSYS broker also strips it because
+            // the broker proxies file operations but not FD flags. We check
+            // the access mode (read/write/create) only.
+            int broker_flags = open_flags & ~O_CLOEXEC;
+
+            if (nr == __NR_open || nr == __NR_openat || nr == __NR_creat) {
+              auto result = broker_policy.GetFileNameIfAllowedToOpen(
+                  path_c, broker_flags);
+              allowed = (result.first != nullptr);
+            } else if (nr == __NR_access || nr == __NR_faccessat ||
+                       nr == __NR_faccessat2 || nr == __NR_stat ||
+                       nr == __NR_lstat || nr == __NR_newfstatat ||
+                       nr == __NR_readlink || nr == __NR_readlinkat ||
+                       nr == __NR_statfs || nr == __NR_chdir) {
+              auto result = broker_policy.GetFileNameIfAllowedToOpen(
+                  path_c, O_RDONLY);
+              allowed = (result.first != nullptr);
+            } else if (nr == __NR_mkdir || nr == __NR_mkdirat) {
+              auto result = broker_policy.GetFileNameIfAllowedToOpen(
+                  path_c, O_RDWR | O_CREAT);
+              allowed = (result.first != nullptr);
+            } else if (nr == __NR_unlink || nr == __NR_unlinkat ||
+                       nr == __NR_rmdir) {
+              auto result = broker_policy.GetFileNameIfAllowedToOpen(
+                  path_c, O_RDWR);
+              allowed = (result.first != nullptr);
+            } else if (nr == __NR_rename || nr == __NR_renameat ||
+                       nr == __NR_renameat2) {
+              auto result = broker_policy.GetFileNameIfAllowedToOpen(
+                  path_c, O_RDWR);
+              allowed = (result.first != nullptr);
+            } else if (nr == __NR_chmod || nr == __NR_fchmodat ||
+                       nr == __NR_chown || nr == __NR_fchownat ||
+                       nr == __NR_lchown) {
+              auto result = broker_policy.GetFileNameIfAllowedToOpen(
+                  path_c, O_RDWR);
+              allowed = (result.first != nullptr);
+            } else if (nr == __NR_truncate) {
+              auto result = broker_policy.GetFileNameIfAllowedToOpen(
+                  path_c, O_WRONLY);
+              allowed = (result.first != nullptr);
+            } else if (nr == __NR_link || nr == __NR_linkat ||
+                       nr == __NR_symlink || nr == __NR_symlinkat) {
+              auto result = broker_policy.GetFileNameIfAllowedToOpen(
+                  path_c, O_RDWR | O_CREAT);
+              allowed = (result.first != nullptr);
+            } else if (nr == __NR_mknod || nr == __NR_mknodat) {
+              allowed = false;
+            } else if (nr == __NR_utimensat || nr == __NR_utimes ||
+                       nr == __NR_futimesat) {
+              auto result = broker_policy.GetFileNameIfAllowedToOpen(
+                  path_c, O_RDWR);
+              allowed = (result.first != nullptr);
+            } else {
+              allowed = false;
+            }
+
+            if (!allowed) {
+              regs.orig_rax = -1;
+              regs.rax = -broker_policy.denied_errno();
+              ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
+            }
+          }
+        }
+      }
+      ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
+
+    } else if (event == PTRACE_EVENT_FORK ||
+               event == PTRACE_EVENT_VFORK ||
+               event == PTRACE_EVENT_CLONE) {
+      unsigned long new_pid;
+      ptrace(PTRACE_GETEVENTMSG, pid, nullptr, &new_pid);
+      traced_pids.insert(static_cast<pid_t>(new_pid));
+      ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
+
+    } else if (event == PTRACE_EVENT_EXEC ||
+               event == PTRACE_EVENT_EXIT) {
+      ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
+
+    } else if (sig == (SIGTRAP | 0x80)) {
+      // Syscall-stop: just continue (no logging in passthrough mode)
+      ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
+
+    } else if (sig == SIGTRAP) {
+      ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
+    } else if (sig == SIGSTOP) {
+      ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
+    } else if (sig == SIGSYS) {
+      // Suppress SIGSYS from SECCOMP_RET_TRAP (same as exec_with_tracing)
+      struct user_regs_struct regs;
+      if (ptrace(PTRACE_GETREGS, pid, nullptr, &regs) == 0) {
+        regs.rax = (unsigned long long)(-ENOSYS);
+        ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
+      }
+      ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
+    } else {
+      // Deliver signal to child
+      ptrace(PTRACE_SYSCALL, pid, nullptr, sig);
+    }
+  }
+
+  g_passthrough_child = -1;
+  signal(SIGINT, SIG_DFL);
+  signal(SIGTERM, SIG_DFL);
+
+  return exit_code;
+}
+
+// =============================================================================
 // Broker implementation using Chrome's real BrokerProcess
 // =============================================================================
 
@@ -2074,9 +2424,11 @@ build_broker_permissions() {
     SandboxPolicyLevel sandbox_policy;
     std::set<unsigned long> cmd_extra_ioctls;
     std::set<int> cmd_extra_sockopts;
+    bool passthrough = false;
 
     if (!zygote_recv_command(zygote_fd, args, exec_policy, sandbox_policy,
-                             cmd_extra_ioctls, cmd_extra_sockopts)) {
+                             cmd_extra_ioctls, cmd_extra_sockopts,
+                             passthrough)) {
       break;  // Agent closed the socket or sent invalid data
     }
 
@@ -2093,27 +2445,40 @@ build_broker_permissions() {
               g_extra_ioctls.size(), g_extra_sockopts.size());
     }
 
-    // Build argv for exec_with_tracing
+    // Build argv
     std::vector<const char*> argv;
     for (const auto& a : args) argv.push_back(a.c_str());
     argv.push_back(nullptr);
 
-    // Execute the command. exec_with_tracing() forks a sandboxed child
-    // (which inherits the zygote's namespace isolation), applies PID NS +
-    // seccomp-BPF, execs the command, and traces it via ptrace broker.
-    SandboxResult cmd_result = exec_with_tracing(argv.data());
+    if (passthrough) {
+      // Passthrough mode: stdio stays on terminal, full broker active.
+      // Security model is IDENTICAL to standard mode (all 8 layers):
+      //   namespace isolation + chroot + capability drop + seccomp-BPF
+      //   + ptrace filesystem broker. Only difference: no stdio capture,
+      //   no syscall log collection.
+      int exit_code = exec_passthrough(argv.data());
 
-    // Clear per-exec extensions (auto-reset after each command)
-    g_extra_ioctls.clear();
-    g_extra_sockopts.clear();
+      // Send a minimal result back (no stdout/stderr/syscall data)
+      SandboxResult cmd_result = {};
+      cmd_result.exit_code = exit_code;
+      zygote_send_result(zygote_fd, cmd_result);
 
-    // Send results back to the agent
-    zygote_send_result(zygote_fd, cmd_result);
+    } else {
+      // Standard mode: capture stdout/stderr, full ptrace tracing
+      SandboxResult cmd_result = exec_with_tracing(argv.data());
 
-    // Free result buffers
-    free(cmd_result.stdout_buf);
-    free(cmd_result.stderr_buf);
-    free(cmd_result.syscall_log);
+      // Clear per-exec extensions (auto-reset after each command)
+      g_extra_ioctls.clear();
+      g_extra_sockopts.clear();
+
+      // Send results back to the agent
+      zygote_send_result(zygote_fd, cmd_result);
+
+      // Free result buffers
+      free(cmd_result.stdout_buf);
+      free(cmd_result.stderr_buf);
+      free(cmd_result.syscall_log);
+    }
   }
 
   _exit(0);
@@ -2269,6 +2634,54 @@ SandboxResult sandbox_exec(const char* const* argv) {
 SandboxResult sandbox_exec_shell(const char* cmd) {
   const char* argv[] = {"/bin/sh", "-c", cmd, nullptr};
   return sandbox_exec(argv);
+}
+
+int sandbox_exec_interactive(const char* const* argv) {
+  // Interactive execution with FULL Chrome security model.
+  //
+  // ALL 8 security layers active (identical to sandbox_exec):
+  //   1. User namespace isolation
+  //   2. PID namespace isolation
+  //   3. IPC namespace isolation
+  //   4. Network namespace (unless explicitly disabled)
+  //   5. Mount namespace + chroot/pivot_root
+  //   6. Capability dropping
+  //   7. seccomp-BPF filtering (STRICT/PERMISSIVE/TRACE_ALL)
+  //   8. ptrace-based filesystem broker (path validation on every FS syscall)
+  //
+  // Only difference from sandbox_exec: stdio stays on the terminal.
+  // No syscall log collection (performance optimization for interactive use).
+
+  // Capture and clear extensions
+  std::set<unsigned long> exec_ioctls = g_extra_ioctls;
+  std::set<int> exec_sockopts = g_extra_sockopts;
+  g_extra_ioctls.clear();
+  g_extra_sockopts.clear();
+
+  if (g_zygote_pid > 0 && g_zygote_fd >= 0) {
+    // Dispatch via zygote with passthrough flag
+    if (zygote_send_command(g_zygote_fd, argv, g_exec_policy, g_policy_level,
+                            exec_ioctls, exec_sockopts,
+                            /*passthrough=*/true)) {
+      SandboxResult result = {};
+      if (zygote_recv_result(g_zygote_fd, result)) {
+        int exit_code = result.exit_code;
+        sandbox_result_free(&result);
+        return exit_code;
+      }
+    }
+    return -1;  // IPC failed
+  }
+
+  // No zygote — direct passthrough execution
+  g_extra_ioctls = std::move(exec_ioctls);
+  g_extra_sockopts = std::move(exec_sockopts);
+
+  int code = exec_passthrough(argv);
+
+  g_extra_ioctls.clear();
+  g_extra_sockopts.clear();
+  return code;
 }
 
 void sandbox_result_free(SandboxResult* result) {

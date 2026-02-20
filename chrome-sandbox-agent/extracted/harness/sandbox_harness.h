@@ -164,6 +164,20 @@ SandboxResult sandbox_exec(const char* const* argv);
 // Seccomp extensions are applied to this execution only, then auto-reset.
 SandboxResult sandbox_exec_shell(const char* cmd);
 
+// Execute a command interactively inside the sandbox (passthrough mode).
+// stdin/stdout/stderr stay connected to the terminal (not captured).
+// Returns the process exit code directly.
+//
+// Security: IDENTICAL to sandbox_exec() — all 8 Chrome sandbox layers active:
+//   1. User NS  2. PID NS  3. IPC NS  4. Network NS  5. Mount NS + chroot
+//   6. Capability drop  7. seccomp-BPF  8. ptrace filesystem broker
+//
+// Only difference from sandbox_exec(): stdio is not redirected (stays on
+// terminal for interactive use) and syscall logs are not collected.
+//
+// Use for: running interactive commands like `claude`, `python3`, `bash`, etc.
+int sandbox_exec_interactive(const char* const* argv);
+
 // Free a SandboxResult's allocated buffers.
 void sandbox_result_free(SandboxResult* result);
 

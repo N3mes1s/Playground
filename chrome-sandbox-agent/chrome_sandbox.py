@@ -124,6 +124,9 @@ _lib.sandbox_allow_sockopts.restype = ctypes.c_int
 _lib.sandbox_clear_extensions.argtypes = []
 _lib.sandbox_clear_extensions.restype = None
 
+_lib.sandbox_exec_interactive.argtypes = [ctypes.POINTER(ctypes.c_char_p)]
+_lib.sandbox_exec_interactive.restype = ctypes.c_int
+
 
 # --- Pythonic wrapper ---
 
@@ -247,6 +250,29 @@ class ChromeSandbox:
         result = self._convert_result(raw)
         _lib.sandbox_result_free(ctypes.byref(raw))
         return result
+
+    def run_interactive(self, argv: list[str]) -> int:
+        """Run an interactive command inside the sandbox (passthrough mode).
+
+        stdin/stdout/stderr stay connected to the terminal. No output capture
+        or syscall logging. Returns the process exit code.
+
+        Security: IDENTICAL to run() / run_argv() — all 8 Chrome sandbox
+        layers active including the ptrace-based filesystem broker. The only
+        difference is stdio routing (terminal passthrough) and no log collection.
+
+        Args:
+            argv: Command to execute, e.g. ["claude"], ["python3"], ["bash"].
+
+        Returns:
+            Process exit code (0 = success).
+        """
+        c_argv = (ctypes.c_char_p * (len(argv) + 1))()
+        for i, arg in enumerate(argv):
+            c_argv[i] = arg.encode("utf-8")
+        c_argv[len(argv)] = None
+
+        return _lib.sandbox_exec_interactive(c_argv)
 
     def run_argv(self, argv: list[str]) -> SandboxResult:
         """Execute a command with explicit argv inside the Chrome sandbox."""

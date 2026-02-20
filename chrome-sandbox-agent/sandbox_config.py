@@ -50,7 +50,7 @@ class SandboxConfig:
 
     workspace: Optional[str] = None
     sandbox_workspace_path: str = "/workspace"
-    policy: str = "TRACE_ALL"
+    policy: str = "STRICT"
     network: bool = False
     readonly_paths: list[str] = field(default_factory=lambda: ["/usr/local/lib", "/usr/local/bin"])
     allowed_paths: list[str] = field(default_factory=list)
