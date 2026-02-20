@@ -510,6 +510,12 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       return Allow();
     }
 
+    // sysinfo: allow (returns total/free RAM, uptime, process count).
+    // Used by Node.js and Bun for os.totalmem()/os.freemem() and GC
+    // heap sizing. Returns only system-wide metrics, no per-process
+    // data. Not an info leak risk in a sandbox context.
+    if (sysno == __NR_sysinfo) return Allow();
+
     // getrandom: restrict flags
     if (sysno == __NR_getrandom) {
       return sandbox::RestrictGetRandom();
@@ -2152,6 +2158,12 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
           } else if (nr == __NR_getcwd || nr == __NR_fchdir) {
             // getcwd/fchdir: always allow (no path-based risk)
             allowed = true;
+          } else if (path_str.size() > 8 && path_str.compare(0, 8, "/$bunfs/") == 0) {
+            // Bun virtual filesystem: /$bunfs/ paths are Bun's in-process
+            // embedded asset store. They don't exist on the real filesystem —
+            // the kernel returns ENOENT, then Bun serves from embedded memory.
+            // Safe to allow: no real file access occurs, no escape vector.
+            allowed = true;
           } else if (nr == __NR_open || nr == __NR_openat || nr == __NR_creat) {
             // open/openat/creat: check with flags.
             // Strip O_CLOEXEC before validation — Chrome's CommandOpenIsSafe()
@@ -2830,6 +2842,11 @@ static int exec_passthrough(const char* const* argv) {
             ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
             audit_log("{\"ts\":%.3f,\"pid\":%d,\"event\":\"empty_path\",\"syscall\":\"%s\",\"nr\":%d,\"decision\":\"deny\",\"risk\":\"%s\"}",
                       audit_timestamp(), pid, syscall_name(nr), nr, syscall_risk(nr));
+          }
+          // Bun virtual filesystem: /$bunfs/ (same rationale as exec_with_tracing)
+          else if (path_str.size() > 8 && path_str.compare(0, 8, "/$bunfs/") == 0) {
+            // Allow: paths don't exist on disk, kernel returns ENOENT,
+            // Bun serves from embedded memory. No escape vector.
           }
           // Handle filesystem broker (same validation as exec_with_tracing)
           else {
