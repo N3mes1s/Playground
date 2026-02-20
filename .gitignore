@@ -12,3 +12,6 @@ vulnllm-analyzer/sliver-src/
 chrome-sandbox-agent/extracted/test_broker_check
 chrome-sandbox-agent/extracted/test_ptrace_debug
 chrome-sandbox-agent/extracted/test_quick
+
+# Test output artifacts
+rust-service-sandbox/out.txt
