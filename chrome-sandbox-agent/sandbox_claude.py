@@ -146,10 +146,22 @@ def main():
         print(f"  seccomp:   {'active' if ChromeSandbox.has_seccomp_bpf() else 'NOT available'}", file=sys.stderr)
         print(f"\033[0m", file=sys.stderr, end="")
 
+    # Map config policy string to PolicyLevel enum
+    policy_map = {
+        "STRICT": PolicyLevel.STRICT,
+        "PERMISSIVE": PolicyLevel.PERMISSIVE,
+        "TRACE_ALL": PolicyLevel.TRACE_ALL,
+    }
+    exec_policy_map = {
+        "CHROME": ExecPolicy.CHROME,
+        "BROKERED": ExecPolicy.BROKERED,
+        "BLOCKED": ExecPolicy.BLOCKED,
+    }
+
     # Initialize the sandbox
     sandbox = ChromeSandbox(
-        policy=PolicyLevel.TRACE_ALL,
-        exec_policy=ExecPolicy.BROKERED,
+        policy=policy_map.get(config.policy, PolicyLevel.STRICT),
+        exec_policy=exec_policy_map.get(config.exec_policy, ExecPolicy.BROKERED),
         readonly_paths=config.readonly_paths,
         allowed_paths=config.allowed_paths,
         network_enabled=config.network,

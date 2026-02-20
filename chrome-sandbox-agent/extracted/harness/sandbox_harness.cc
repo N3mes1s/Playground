@@ -425,9 +425,14 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
           Allow()).Else(Error(EPERM));
     }
 
-    // kill/tgkill: restrict to self only
+    // kill/tgkill/tkill: route through ptrace broker.
+    // Chrome's RestrictKillTarget(policy_pid_) hardcodes the PID at filter
+    // install time, but children inherit the filter with the wrong PID constant
+    // — allowing them to kill PID 1 (the namespace init), tearing down the
+    // entire PID namespace. We use Trace(TRACE_BROKER) instead so the ptrace
+    // broker can check the target PID at runtime.
     if (sandbox::SyscallSets::IsKill(sysno)) {
-      return sandbox::RestrictKillTarget(policy_pid_, sysno);
+      return Broker();
     }
 
     // getpriority/setpriority: restrict to self
@@ -472,9 +477,12 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
           .Else(Block());
     }
 
-    // memfd_create: restrict flags
+    // memfd_create: block entirely in STRICT mode.
+    // Chrome's RestrictMemfdCreate() only restricts flags, but memfd_create
+    // enables fileless execution (write ELF to memfd, fexecve it) which
+    // bypasses the filesystem broker. Block it completely.
     if (sysno == __NR_memfd_create) {
-      return sandbox::RestrictMemfdCreate();
+      return Block();
     }
 
     // pipe/pipe2: allowed with flag restrictions
@@ -1183,7 +1191,6 @@ static bool setup_chroot_filesystem() {
     {"/lib",   "lib"},
     {"/lib64", "lib64"},
     {"/usr",   "usr"},
-    {"/etc",   "etc"},
     {nullptr, nullptr}
   };
 
@@ -1192,6 +1199,49 @@ static bool setup_chroot_filesystem() {
     if (stat(ro_mounts[i].src, &st) != 0) continue;  // Skip if doesn't exist
     snprintf(path, sizeof(path), "%s/%s", sandbox_root, ro_mounts[i].subdir);
     bind_mount_readonly(ro_mounts[i].src, path);
+  }
+
+  // /etc: selective bind-mount of ONLY safe configuration files.
+  // We mount a tmpfs for /etc and copy/bind only the files needed for
+  // program execution. This prevents access to /etc/shadow, /etc/sudoers,
+  // /etc/ssh/, /etc/gshadow, etc.
+  snprintf(path, sizeof(path), "%s/etc", sandbox_root);
+  mount("tmpfs", path, "tmpfs", MS_NOSUID | MS_NODEV, "size=4m,mode=0755");
+
+  // Safe /etc files needed by libc, DNS, SSL, locale, timezone, users
+  static const char* safe_etc_files[] = {
+    "ld.so.cache", "ld.so.conf", "ld.so.conf.d",
+    "nsswitch.conf", "resolv.conf", "hosts", "hostname",
+    "passwd", "group",             // User info (public, no password hashes)
+    "localtime", "timezone",       // Timezone
+    "ssl", "ca-certificates",      // TLS certificates
+    "alternatives",                // Debian alternatives
+    "locale.conf", "locale.gen",   // Locale settings
+    "profile", "profile.d", "bash.bashrc", "environment",
+    "login.defs",                  // Login defaults (not credentials)
+    "default", "skel",             // System defaults
+    "mime.types",                  // MIME type mappings
+    "protocols", "services",       // Network service name mappings
+    "gai.conf",                    // getaddrinfo config
+    "host.conf",                   // Resolver config
+    nullptr
+  };
+  for (int i = 0; safe_etc_files[i]; i++) {
+    char src[512], dst[512];
+    snprintf(src, sizeof(src), "/etc/%s", safe_etc_files[i]);
+    snprintf(dst, sizeof(dst), "%s/etc/%s", sandbox_root, safe_etc_files[i]);
+    struct stat st;
+    if (stat(src, &st) != 0) continue;
+    if (S_ISDIR(st.st_mode)) {
+      mkdir(dst, 0755);
+      bind_mount_readonly(src, dst);
+    } else {
+      // Create file and bind-mount
+      int fd = open(dst, O_WRONLY | O_CREAT, 0644);
+      if (fd >= 0) close(fd);
+      mount(src, dst, nullptr, MS_BIND, nullptr);
+      mount(nullptr, dst, nullptr, MS_BIND | MS_REMOUNT | MS_RDONLY, nullptr);
+    }
   }
 
   // Bind-mount user-configured read-only paths (runtimes, tools)
@@ -1299,12 +1349,25 @@ static bool setup_chroot_filesystem() {
 // that namespace. We drop everything so the sandboxed process can't
 // use CAP_SYS_ADMIN, CAP_SYS_CHROOT, CAP_NET_ADMIN, etc.
 
-static bool drop_all_capabilities() {
+// Drop all capabilities, optionally keeping CAP_SYS_ADMIN.
+// keep_sys_admin: when true, preserves CAP_SYS_ADMIN in the user namespace.
+// This is needed by the zygote so forked workers can create PID namespaces
+// and remount /proc. Workers drop CAP_SYS_ADMIN after PID NS setup.
+static bool drop_capabilities(bool keep_sys_admin = false) {
   struct cap_hdr hdr = {};
   hdr.version = _LINUX_CAPABILITY_VERSION_3;
   struct cap_data data[_LINUX_CAPABILITY_U32S_3] = {};
-  // All zeros = no capabilities
+  if (keep_sys_admin) {
+    // CAP_SYS_ADMIN = 21 → bit 21 in the first 32-bit word
+    data[0].effective = (1U << 21);
+    data[0].permitted = (1U << 21);
+    data[0].inheritable = 0;  // Don't inherit across exec
+  }
   return sandbox::sys_capset(&hdr, data) == 0;
+}
+
+static bool drop_all_capabilities() {
+  return drop_capabilities(false);
 }
 
 // =============================================================================
@@ -1376,12 +1439,17 @@ static NamespaceStatus apply_namespace_isolation(bool skip_pid_ns = false) {
     setup_chroot_filesystem();
   }
 
-  // Layer 3: Drop all capabilities
+  // Layer 3: Drop capabilities
   // After user namespace setup, we have full caps in the new namespace.
-  // Drop them all — we don't need any for executing commands.
   // NOTE: We must do this AFTER mount namespace setup (which needs
   // CAP_SYS_ADMIN) but BEFORE seccomp-BPF installation.
-  status.caps_dropped = drop_all_capabilities();
+  //
+  // When skip_pid_ns is true (zygote mode), we preserve CAP_SYS_ADMIN
+  // so forked workers can create per-command PID namespaces and remount
+  // /proc. Each worker drops CAP_SYS_ADMIN after setting up its PID NS.
+  // The seccomp-BPF filter still blocks mount/unshare syscalls, so
+  // CAP_SYS_ADMIN alone cannot be used to escape.
+  status.caps_dropped = drop_capabilities(/*keep_sys_admin=*/skip_pid_ns);
 
   // Layer 4: Process hardening
   // Disable core dumps (prevents leaking process memory)
@@ -1398,6 +1466,14 @@ static NamespaceStatus apply_namespace_isolation(bool skip_pid_ns = false) {
   // Chrome's renderer uses ~32GB limit; we use 16GB for general sandboxing.
   static constexpr rlim_t kDataLimit = 16ULL * 1024 * 1024 * 1024;  // 16 GB
   (void)sandbox::ResourceLimits::Lower(RLIMIT_DATA, kDataLimit);
+
+  // Limit number of processes to prevent fork bombs.
+  // 256 is enough for shells, interpreters, and build tools, but prevents
+  // unbounded fork() that could exhaust host PID space.
+  static constexpr rlim_t kNprocLimit = 256;
+  (void)sandbox::ResourceLimits::Lower(RLIMIT_NPROC, kNprocLimit);
+
+  // Disk space is bounded by tmpfs size (32MB) + workspace quotas.
 
   return status;
 }
@@ -1458,17 +1534,16 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
     // In direct mode: apply everything now.
     NamespaceStatus ns_status = {};
     if (g_in_zygote) {
-      // Zygote already applied: user NS, PID NS, mount NS, net NS, IPC NS,
-      // chroot, cap drop, process hardening. All layers inherited by fork.
-      // No per-command namespace setup needed — capabilities are dropped
-      // so we can't create new namespaces anyway (matches Chrome: the zygote
-      // drops caps once, and all forked children inherit the sandbox).
+      // Zygote already applied: user NS, mount NS, net NS, IPC NS, chroot.
+      // The zygote preserves CAP_SYS_ADMIN so we can create per-command
+      // PID namespaces. We'll drop it after PID NS setup.
       ns_status.user_ns = true;
       ns_status.mount_ns = true;
       ns_status.net_ns = true;
       ns_status.ipc_ns = true;
-      ns_status.caps_dropped = true;
-      ns_status.pid_ns = false;  // No per-command PID NS (caps dropped)
+      ns_status.caps_dropped = false;
+      // Create PID namespace for this command
+      ns_status.pid_ns = setup_pid_namespace();
     } else {
       // Direct mode: full namespace isolation
       ns_status = apply_namespace_isolation();
@@ -1512,6 +1587,12 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
       // This ensures /proc only shows processes in our namespace.
       mount("proc", "/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC,
             nullptr);
+    }
+
+    // Drop CAP_SYS_ADMIN if still held (zygote path preserves it for PID NS).
+    // Must happen AFTER proc mount but BEFORE seccomp-BPF install.
+    if (!ns_status.caps_dropped) {
+      drop_all_capabilities();
     }
 
     // === LAYER 6: seccomp-BPF ===
@@ -1700,7 +1781,34 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
           bool allowed = false;
           const char* path_c = path_str.c_str();
 
-          if (path_str.empty() && nr != __NR_getcwd) {
+          // === kill/tgkill/tkill: protect namespace init (PID 1) ===
+          // Chrome's RestrictKillTarget hardcodes the PID at BPF install time,
+          // but after fork() children inherit the wrong PID constant. We validate
+          // at ptrace-time instead: allow signals to self and process group 0,
+          // block signals to PID 1 (namespace init — killing it tears down the
+          // entire PID namespace).
+          if (nr == __NR_kill) {
+            pid_t target = (pid_t)regs.rdi;
+            if (target == 1) {
+              allowed = false;  // Protect namespace init
+            } else {
+              allowed = true;   // Allow kill to self, children, groups
+            }
+          } else if (nr == __NR_tgkill) {
+            pid_t tgid = (pid_t)regs.rdi;
+            if (tgid == 1) {
+              allowed = false;
+            } else {
+              allowed = true;
+            }
+          } else if (nr == __NR_tkill) {
+            pid_t tid = (pid_t)regs.rdi;
+            if (tid == 1) {
+              allowed = false;
+            } else {
+              allowed = true;
+            }
+          } else if (path_str.empty() && nr != __NR_getcwd) {
             // No path — can't validate, deny
             allowed = false;
           } else if (nr == __NR_getcwd || nr == __NR_fchdir) {
@@ -2013,8 +2121,9 @@ static int exec_passthrough(const char* const* argv) {
       ns_status.mount_ns = true;
       ns_status.net_ns = true;
       ns_status.ipc_ns = true;
-      ns_status.caps_dropped = true;
-      ns_status.pid_ns = false;
+      ns_status.caps_dropped = false;
+      // Create PID namespace for this command
+      ns_status.pid_ns = setup_pid_namespace();
     } else {
       ns_status = apply_namespace_isolation();
     }
@@ -2037,6 +2146,11 @@ static int exec_passthrough(const char* const* argv) {
         _exit(exit_code);
       }
       mount("proc", "/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, nullptr);
+    }
+
+    // Drop CAP_SYS_ADMIN if still held (zygote path preserves it for PID NS)
+    if (!ns_status.caps_dropped) {
+      drop_all_capabilities();
     }
 
     // Install seccomp-BPF (same as exec_with_tracing - STRICT policy works!)
@@ -2163,8 +2277,19 @@ static int exec_passthrough(const char* const* argv) {
             if (nr == __NR_creat) open_flags = O_CREAT | O_WRONLY | O_TRUNC;
           }
 
+          // Handle kill/tgkill/tkill: protect namespace init (PID 1)
+          // Same as exec_with_tracing — block signals to PID 1.
+          if (nr == __NR_kill || nr == __NR_tgkill || nr == __NR_tkill) {
+            pid_t target = (pid_t)regs.rdi;
+            if (target == 1) {
+              regs.orig_rax = -1;
+              regs.rax = (unsigned long long)(-EPERM);
+              ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
+            }
+            // else: allow (signal to self, children, groups)
+          }
           // Handle exec policy (same as exec_with_tracing)
-          if (nr == __NR_execve || nr == __NR_execveat) {
+          else if (nr == __NR_execve || nr == __NR_execveat) {
             exec_count[pid]++;
             bool allow_exec = true;
             if (g_exec_policy == SANDBOX_EXEC_BLOCKED) {
@@ -2329,6 +2454,10 @@ build_broker_permissions() {
   perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/usr/lib/"));
   perms.push_back(BrokerFilePermission::ReadOnly("/usr/share"));
   perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/usr/share/"));
+  // /etc: restricted read-only access (matches selective bind-mount).
+  // Only safe configuration files are mounted; sensitive files like
+  // /etc/shadow, /etc/sudoers, /etc/ssh/ are NOT in the chroot.
+  // The broker still needs to allow reads for whatever IS mounted.
   perms.push_back(BrokerFilePermission::ReadOnly("/etc"));
   perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/etc/"));
 
@@ -2342,7 +2471,11 @@ build_broker_permissions() {
   perms.push_back(BrokerFilePermission::ReadOnly("/usr/sbin"));
   perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/usr/sbin/"));
 
-  // /proc: read-only (process info, needed by many tools)
+  // /proc: read-only access.
+  // Security relies on PID namespace isolation (each command gets its own
+  // PID NS) so /proc only shows sandbox processes — NOT broker restrictions.
+  // This allows ps, top, /proc/self/* to work naturally inside the sandbox.
+  perms.push_back(BrokerFilePermission::ReadOnly("/proc"));
   perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/proc/"));
 
   // Device files: specific devices only
