@@ -1977,6 +1977,7 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
         // Lexical path normalization: resolve .. and . segments without
         // touching the filesystem. Handles PIL/../pillow.libs/ style paths
         // from RPATH ($ORIGIN/../) that Chrome's broker rejects outright.
+        std::string original_path_str = path_str;  // Save for TOCTOU decision
         if (!path_str.empty() && path_str[0] == '/') {
           path_str = normalize_path_lexical(path_str);
         }
@@ -2176,7 +2177,17 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
             // Between our read and the kernel's read, another thread could
             // have swapped the path to a forbidden target. By rewriting,
             // the kernel reads OUR validated copy, not the attacker's.
-            write_child_string(pid, path_addr, path_str);
+            //
+            // EXCEPTION: skip write-back when normalization shortened the
+            // path. The dynamic linker (ld.so) reuses path buffers and
+            // modifies them in-place between hwcaps iterations. Writing a
+            // shorter string corrupts the linker's offset calculations,
+            // causing garbled paths on subsequent searches. The kernel
+            // resolves ".." natively, so the original path reaches the
+            // same file — TOCTOU write-back is unnecessary here.
+            if (path_str.size() >= original_path_str.size()) {
+              write_child_string(pid, path_addr, path_str);
+            }
           }
         }
 
@@ -2613,6 +2624,7 @@ static int exec_passthrough(const char* const* argv) {
           }
 
           // Lexical path normalization (same as exec_with_tracing).
+          std::string original_path_str = path_str;
           if (!path_str.empty() && path_str[0] == '/') {
             path_str = normalize_path_lexical(path_str);
           }
@@ -2739,8 +2751,12 @@ static int exec_passthrough(const char* const* argv) {
               regs.rax = -broker_policy.denied_errno();
               ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
             } else if (path_addr != 0 && !path_str.empty()) {
-              // TOCTOU defense: rewrite validated path (same as exec_with_tracing)
-              write_child_string(pid, path_addr, path_str);
+              // TOCTOU defense: rewrite validated path (same as exec_with_tracing).
+              // Skip when normalization shortened the path — see exec_with_tracing
+              // comment for why (ld.so in-place buffer modification).
+              if (path_str.size() >= original_path_str.size()) {
+                write_child_string(pid, path_addr, path_str);
+              }
             }
 
             // Audit: log broker decision (only for non-trivial paths to reduce noise)
