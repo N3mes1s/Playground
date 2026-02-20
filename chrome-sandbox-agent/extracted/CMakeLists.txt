@@ -259,6 +259,15 @@ target_link_libraries(sandbox_helpers_tests PRIVATE
     GTest::Main
 )
 
+# --- Sandbox harness end-to-end integration test ---
+# Tests the full stack: zygote, namespaces, seccomp, ptrace broker, exec policy
+add_executable(sandbox_harness_test
+    harness/sandbox_integration_test.cc
+)
+target_link_libraries(sandbox_harness_test PRIVATE
+    chrome_sandbox_harness
+)
+
 # NOTE: Services tests (credentials, namespace_utils) are not built because
 # they require sys/capability.h and base::ForkWithFlags which have heavy
 # system dependencies. The services code itself is thoroughly tested via

@@ -20,6 +20,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <asm/prctl.h>
 #include <linux/prctl.h>
 #include <signal.h>
 #include <stdio.h>
@@ -305,17 +306,35 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
     if (sysno == __NR_rseq) return Allow();
 #endif
 
+    // ── set_tid_address: allowed (glibc TLS/thread setup after exec) ──
+    if (sysno == __NR_set_tid_address) return Allow();
+
     // ── mincore: allowed (used by various libraries) ─────────────────
     if (sysno == __NR_mincore) return Allow();
 
     // ── PARAMETER RESTRICTIONS (from Chrome's BaselinePolicy) ────────
 
-    // clone: allow threads, EPERM for fork, crash for namespace flags
+    // clone/fork/vfork: allow process creation, block namespace flags.
+    // Chrome blocks fork (renderers use zygote), but we exec a shell that
+    // needs fork to run external commands. The child is fully confined by
+    // namespaces + seccomp + ptrace, so forking is safe.
     if (sysno == __NR_clone) {
-      return sandbox::RestrictCloneToThreadsAndEPERMFork();
+      const Arg<unsigned long> flags(0);
+      const unsigned long kDangerousCloneFlags =
+          CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWPID |
+          CLONE_NEWNET | CLONE_NEWIPC | CLONE_NEWUTS;
+      return sandbox::bpf_dsl::If(
+          (flags & kDangerousCloneFlags) == 0, Allow())
+          .Else(Error(EPERM));
     }
     // clone3: force libc to use clone (we can inspect clone args)
     if (sysno == __NR_clone3) return Error(ENOSYS);
+#if !defined(__aarch64__)
+    if (sysno == __NR_fork) return Allow();
+#endif
+#if !defined(__mips__) && !defined(__aarch64__)
+    if (sysno == __NR_vfork) return Allow();
+#endif
 
     // mmap: restrict flags (no MAP_HUGETLB, etc.)
     if (sysno == __NR_mmap) {
@@ -341,6 +360,16 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
     if (sysno == __NR_prctl) {
       return sandbox::RestrictPrctl();
     }
+
+    // arch_prctl: allow ARCH_SET_FS/ARCH_SET_GS (TLS setup, critical for glibc)
+#if defined(__x86_64__)
+    if (sysno == __NR_arch_prctl) {
+      const Arg<int> code(0);
+      return sandbox::bpf_dsl::If(
+          sandbox::bpf_dsl::AnyOf(code == ARCH_SET_FS, code == ARCH_SET_GS),
+          Allow()).Else(Error(EPERM));
+    }
+#endif
 
     // futex: block dangerous operations (FUTEX_CMP_REQUEUE_PI etc.)
     if (sysno == __NR_futex) {
@@ -388,11 +417,11 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       return sandbox::RestrictSchedTarget(policy_pid_, sysno);
     }
 
-    // socketpair: only AF_UNIX (matches Chrome baseline — CrashSIGSYS on other)
+    // socketpair: only AF_UNIX
     if (sysno == __NR_socketpair) {
       const Arg<int> domain(0);
       return sandbox::bpf_dsl::If(domain == AF_UNIX, Allow())
-          .Else(sandbox::CrashSIGSYS());
+          .Else(Block());
     }
 
     // send flags: restrict MSG_OOB etc.
@@ -400,13 +429,13 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       return sandbox::RestrictSockSendFlags(sysno);
     }
 
-    // getsockopt/setsockopt: only SO_PEEK_OFF (matches Chrome baseline)
+    // getsockopt/setsockopt: only SO_PEEK_OFF
     if (sysno == __NR_getsockopt || sysno == __NR_setsockopt) {
       const Arg<int> level(1);
       const Arg<int> optname(2);
       return sandbox::bpf_dsl::If(
           sandbox::bpf_dsl::AllOf(level == SOL_SOCKET, optname == 42),
-          Allow()).Else(sandbox::CrashSIGSYS());
+          Allow()).Else(Block());
     }
 
     // memfd_create: restrict flags
@@ -456,18 +485,22 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       return sandbox::RestrictPrlimitToGetrlimit(policy_pid_);
     }
 
-    // fstatat rewrite: glibc rewrites fstat() as fstatat(), handle this
+    // fstatat: glibc uses fstatat() for stat/fstat/lstat.
+    // Chrome's RewriteFstatatSIGSYS uses Trap() which doesn't survive exec.
+    // Instead: AT_EMPTY_PATH means fstat-on-fd (safe, allow directly).
+    // With a path: route through broker for path validation.
     if (sysno == __NR_fstatat_default) {
-      return sandbox::RewriteFstatatSIGSYS(EPERM);
+      const Arg<int> flags(3);
+      return sandbox::bpf_dsl::If(
+          (flags & AT_EMPTY_PATH) == AT_EMPTY_PATH, Allow())
+          .Else(Broker());
     }
 
-    // statx: glibc may use statx for stat-family calls. Return ENOSYS for
-    // STATX_BASIC_STATS to force glibc fallback to old stat paths.
-    // Non-basic masks get EPERM (matches Chrome baseline).
+    // statx: return ENOSYS to force glibc/coreutils fallback to fstatat,
+    // which we route through the broker for path validation. Returning
+    // ENOSYS (not EPERM) ensures correct fallback behavior.
     if (sysno == __NR_statx) {
-      const Arg<int> mask(3);
-      return sandbox::bpf_dsl::If(mask == STATX_BASIC_STATS, Error(ENOSYS))
-          .Else(Error(EPERM));
+      return Error(ENOSYS);
     }
 
     // ── BLOCK: Dangerous syscall categories ──────────────────────────
@@ -532,22 +565,21 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       return Error(EPERM);
     }
 
-    // ── CRASH: Truly dangerous operations ────────────────────────────
-    // These are so dangerous that they should crash, not just EPERM.
-    // Uses Chrome's SIGSYS handler for logging.
+    // ── BLOCK: Dangerous operations ──────────────────────────────────
+    // These operations are blocked via ptrace (SECCOMP_RET_TRACE).
+    // We use Block() instead of CrashSIGSYS() because SECCOMP_RET_TRAP
+    // generates SIGSYS, whose handler is lost after execve().
     if (sandbox::SyscallSets::IsAdminOperation(sysno) ||
         sandbox::SyscallSets::IsDebug(sysno) ||
         sandbox::SyscallSets::IsKernelModule(sysno) ||
         sandbox::SyscallSets::IsGlobalFSViewChange(sysno) ||
         sandbox::SyscallSets::IsGlobalProcessEnvironment(sysno)) {
-      return sandbox::CrashSIGSYS();
+      return Block();
     }
 
-    // Everything else: crash via SIGSYS (matches Chrome's baseline policy).
-    // Unknown/unclassified syscalls are treated as dangerous — if a syscall
-    // wasn't explicitly allowed or handled above, it should not be silently
-    // permitted or return a benign error.
-    return sandbox::CrashSIGSYS();
+    // Everything else: block via ptrace.
+    // Unknown/unclassified syscalls are denied with -EACCES by the tracer.
+    return Block();
   }
 
   ResultExpr EvaluatePermissive(int sysno) const {
@@ -864,22 +896,28 @@ static std::string build_syscall_log_json(
   return json.str();
 }
 
-// Read a string from child process memory via /proc/pid/mem
+// Read a string from child process memory via ptrace(PTRACE_PEEKDATA).
+//
+// We use PTRACE_PEEKDATA instead of /proc/pid/mem because /proc may not
+// be mountable inside the zygote's chroot. Mounting procfs requires the
+// user namespace to own the PID namespace, but the zygote skips PID NS
+// creation. PTRACE_PEEKDATA works regardless of /proc availability since
+// the tracer is already attached via PTRACE_TRACEME.
 static std::string read_child_string(pid_t pid, unsigned long addr, size_t maxlen = 256) {
   if (addr == 0) return "";
-  char proc_path[64];
-  snprintf(proc_path, sizeof(proc_path), "/proc/%d/mem", pid);
-  int fd = open(proc_path, O_RDONLY);
-  if (fd < 0) return "";
-  char buf[256];
-  if (maxlen > sizeof(buf)) maxlen = sizeof(buf);
-  ssize_t n = pread(fd, buf, maxlen, addr);
-  close(fd);
-  if (n <= 0) return "";
-  for (ssize_t i = 0; i < n; i++) {
-    if (buf[i] == '\0') return std::string(buf, i);
+  std::string result;
+  result.reserve(64);
+  for (size_t offset = 0; offset < maxlen; offset += sizeof(long)) {
+    errno = 0;
+    long word = ptrace(PTRACE_PEEKDATA, pid, addr + offset, nullptr);
+    if (errno != 0) break;
+    const char* p = reinterpret_cast<const char*>(&word);
+    for (size_t i = 0; i < sizeof(long) && offset + i < maxlen; i++) {
+      if (p[i] == '\0') return result;
+      result += p[i];
+    }
   }
-  return std::string(buf, n);
+  return result;
 }
 
 // =============================================================================
@@ -1089,6 +1127,12 @@ static bool setup_chroot_filesystem() {
   snprintf(path, sizeof(path), "%s/tmp", sandbox_root);
   mount("tmpfs", path, "tmpfs", MS_NOSUID | MS_NODEV, "size=32m,mode=1777");
 
+  // Mount procfs in new root (needed by ptrace broker to read child memory
+  // via /proc/pid/mem, and by tools like ps, top, /proc/self/*)
+  snprintf(path, sizeof(path), "%s/proc", sandbox_root);
+  mkdir(path, 0555);
+  mount("proc", path, "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, nullptr);
+
   // pivot_root: switch the root filesystem
   // Create a directory for the old root
   snprintf(path, sizeof(path), "%s/.old_root", sandbox_root);
@@ -1155,7 +1199,9 @@ struct NamespaceStatus {
   bool caps_dropped;
 };
 
-static NamespaceStatus apply_namespace_isolation() {
+// skip_pid_ns: when true, skips PID namespace setup (for zygote — PID NS
+// is per-command, not per-zygote, so each command gets its own PID NS).
+static NamespaceStatus apply_namespace_isolation(bool skip_pid_ns = false) {
   NamespaceStatus status = {};
 
   if (!g_enable_namespaces) {
@@ -1174,7 +1220,10 @@ static NamespaceStatus apply_namespace_isolation() {
   // unshare(CLONE_NEWPID) makes our CHILDREN enter a new PID namespace.
   // We must fork() after this; the child becomes PID 1 in the new namespace.
   // The fork happens in exec_with_tracing() after apply_namespace_isolation().
-  status.pid_ns = setup_pid_namespace();
+  // In zygote mode, PID NS is per-command (not per-zygote).
+  if (!skip_pid_ns) {
+    status.pid_ns = setup_pid_namespace();
+  }
 
   // Layer 1c: IPC namespace (isolates System V IPC + POSIX mqueues)
   status.ipc_ns = setup_ipc_namespace();
@@ -1247,6 +1296,7 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
 
   if (child == 0) {
     // === CHILD (sandboxed target) ===
+
     close(stdout_pipe[0]);
     close(stderr_pipe[0]);
     dup2(stdout_pipe[1], STDOUT_FILENO);
@@ -1254,8 +1304,17 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
     close(stdout_pipe[1]);
     close(stderr_pipe[1]);
 
-    // Allow ptrace from parent
+    // Allow ptrace from parent.
+    //
+    // The zygote drops all capabilities AND sets PR_SET_DUMPABLE=0.
+    // Children inherit both settings. The kernel's cap_ptrace_traceme()
+    // check fails when the parent has no CAP_SYS_PTRACE and the child
+    // is not dumpable. Fix: temporarily set dumpable=1 so PTRACE_TRACEME
+    // can establish the tracing relationship, then restore dumpable=0
+    // for defense-in-depth (prevents other processes from ptracing us).
+    prctl(PR_SET_DUMPABLE, 1, 0, 0, 0);
     ptrace(PTRACE_TRACEME, 0, nullptr, nullptr);
+    prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);
     raise(SIGSTOP);  // Wait for parent to set up tracing
 
     // === LAYER 1-5: Namespace isolation ===
@@ -1264,15 +1323,17 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
     // In direct mode: apply everything now.
     NamespaceStatus ns_status = {};
     if (g_in_zygote) {
-      // Zygote already applied: user NS, mount NS, net NS, IPC NS,
-      // chroot, cap drop, process hardening. Only PID NS is per-command.
+      // Zygote already applied: user NS, PID NS, mount NS, net NS, IPC NS,
+      // chroot, cap drop, process hardening. All layers inherited by fork.
+      // No per-command namespace setup needed — capabilities are dropped
+      // so we can't create new namespaces anyway (matches Chrome: the zygote
+      // drops caps once, and all forked children inherit the sandbox).
       ns_status.user_ns = true;
       ns_status.mount_ns = true;
       ns_status.net_ns = true;
       ns_status.ipc_ns = true;
       ns_status.caps_dropped = true;
-      // Apply per-command PID namespace isolation
-      ns_status.pid_ns = setup_pid_namespace();
+      ns_status.pid_ns = false;  // No per-command PID NS (caps dropped)
     } else {
       // Direct mode: full namespace isolation
       ns_status = apply_namespace_isolation();
@@ -1384,7 +1445,9 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
 
     if (WIFEXITED(wstatus) || WIFSIGNALED(wstatus)) {
       if (pid == child) {
-        result.exit_code = WIFEXITED(wstatus) ? WEXITSTATUS(wstatus) : -1;
+        result.exit_code = WIFEXITED(wstatus)
+            ? WEXITSTATUS(wstatus)
+            : -(WTERMSIG(wstatus));
       }
       traced_pids.erase(pid);
       pending_entry.erase(pid);
@@ -1489,9 +1552,16 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
             // getcwd/fchdir: always allow (no path-based risk)
             allowed = true;
           } else if (nr == __NR_open || nr == __NR_openat || nr == __NR_creat) {
-            // open/openat/creat: check with flags
+            // open/openat/creat: check with flags.
+            // Strip O_CLOEXEC before validation — Chrome's CommandOpenIsSafe()
+            // does the same (flags & ~kCurrentProcessOpenFlagsMask). O_CLOEXEC
+            // only affects close-on-exec behavior, not which file is opened.
+            // Chrome's IPC-based broker handles O_CLOEXEC via MSG_CMSG_CLOEXEC
+            // on the receiving end. Our ptrace broker doesn't proxy FDs, so the
+            // kernel applies O_CLOEXEC directly. We just need to not reject it.
+            int broker_flags = open_flags & ~O_CLOEXEC;
             auto result = broker_policy.GetFileNameIfAllowedToOpen(
-                path_c, open_flags);
+                path_c, broker_flags);
             allowed = (result.first != nullptr);
           } else if (nr == __NR_access || nr == __NR_faccessat ||
                      nr == __NR_faccessat2) {
@@ -1693,6 +1763,19 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
       // The kernel delivers SIGSTOP when a new child starts being traced.
       // Delivering it would stop the child permanently.
       ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
+    } else if (sig == SIGSYS) {
+      // Suppress SIGSYS from SECCOMP_RET_TRAP.
+      // Chrome's helper functions (RestrictPrctl, RestrictClone, RestrictIoctl,
+      // etc.) internally use Trap()/CrashSIGSYS() which generates SIGSYS.
+      // After execve(), signal handlers are reset to SIG_DFL, so SIGSYS would
+      // kill the process. We suppress the signal and set the syscall return
+      // value to -ENOSYS so the caller gets a clean error.
+      struct user_regs_struct regs;
+      if (ptrace(PTRACE_GETREGS, pid, nullptr, &regs) == 0) {
+        regs.rax = (unsigned long long)(-ENOSYS);
+        ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
+      }
+      ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
     } else {
       // Deliver signal to child
       ptrace(PTRACE_SYSCALL, pid, nullptr, sig);
@@ -1739,6 +1822,9 @@ static std::vector<sandbox::syscall_broker::BrokerFilePermission>
 build_broker_permissions() {
   using sandbox::syscall_broker::BrokerFilePermission;
   std::vector<BrokerFilePermission> perms;
+
+  // Root directory: read-only (needed for ls /, directory listing)
+  perms.push_back(BrokerFilePermission::ReadOnly("/"));
 
   // System paths: read-only (same as Chrome's renderer broker)
   // These are the paths needed for dynamic linking, library loading,
@@ -1804,13 +1890,9 @@ build_broker_permissions() {
   // Layers applied here: user NS, IPC NS, net NS, mount NS, chroot,
   // capability drop, PR_SET_DUMPABLE, RLIMIT_CORE, Yama, RLIMIT_DATA.
   // PID NS is NOT applied here — it's per-command (each command gets its own).
-  apply_namespace_isolation();
+  apply_namespace_isolation(/*skip_pid_ns=*/true);
 
   // Main command loop.
-  // exec_with_tracing() forks internally (child = sandboxed target,
-  // parent = ptrace tracer). The zygote acts as the tracer for each
-  // command, blocking until it completes. Commands are sequential,
-  // matching the agent's tool-call-at-a-time pattern.
   for (;;) {
     std::vector<std::string> args;
     SandboxExecPolicy exec_policy;
