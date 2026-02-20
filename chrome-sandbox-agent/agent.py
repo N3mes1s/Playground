@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 
 import anthropic
 
-from chrome_sandbox import ChromeSandbox, PolicyLevel, SandboxResult
+from chrome_sandbox import ChromeSandbox, PolicyLevel, ExecPolicy, SandboxResult
 
 
 # ─── Tool Definitions (Claude tool_use format) ─────────────────────────────
@@ -170,10 +170,14 @@ def execute_tool(sandbox: ChromeSandbox, tool_name: str, tool_input: dict) -> st
 
     elif tool_name == "write_file":
         path = tool_input["path"]
-        content = tool_input["content"]
-        # Use heredoc to safely pass content
-        escaped = content.replace("'", "'\\''")
-        result = sandbox.run(f"cat > {path!r} << 'SANDBOX_EOF'\n{escaped}\nSANDBOX_EOF")
+        content = tool_input.get("content", "")
+        if not content:
+            return json.dumps({"error": "write_file requires 'content' parameter", "exit_code": 1})
+        # Use heredoc with single-quoted delimiter (no expansion, no escaping needed)
+        # The only thing that could break this is the content containing the exact
+        # delimiter string on its own line, so we use a unique one.
+        delimiter = "SANDBOX_WRITE_EOF_7f3a9c"
+        result = sandbox.run(f"cat > {path!r} << '{delimiter}'\n{content}\n{delimiter}")
 
     elif tool_name == "list_dir":
         path = tool_input["path"]
@@ -218,11 +222,18 @@ Be concise but thorough. When reporting results, mention notable syscall \
 activity if relevant (e.g., network attempts, file access patterns)."""
 
 
-def run_agent(user_message: str, policy: PolicyLevel = PolicyLevel.TRACE_ALL):
+def run_agent(user_message: str, policy: PolicyLevel = PolicyLevel.TRACE_ALL,
+              readonly_paths: list[str] | None = None,
+              network_enabled: bool = False):
     """Run the sandboxed agent with the given user message."""
 
     client = anthropic.Anthropic()
-    sandbox = ChromeSandbox(policy=policy)
+    sandbox = ChromeSandbox(
+        policy=policy,
+        exec_policy=ExecPolicy.BROKERED,
+        readonly_paths=readonly_paths,
+        network_enabled=network_enabled,
+    )
 
     print(f"\n{'='*70}")
     print(f"Chrome Sandbox Agent")
@@ -275,8 +286,12 @@ def run_agent(user_message: str, policy: PolicyLevel = PolicyLevel.TRACE_ALL):
                 print(f"  Path: {block.input.get('path', '')}")
 
             # Execute inside Chrome sandbox
-            result_str = execute_tool(sandbox, block.name, block.input)
-            result_data = json.loads(result_str)
+            try:
+                result_str = execute_tool(sandbox, block.name, block.input)
+                result_data = json.loads(result_str)
+            except Exception as e:
+                result_str = json.dumps({"error": str(e), "exit_code": 1})
+                result_data = json.loads(result_str)
 
             print(f"  Exit: {result_data.get('exit_code', '?')} | "
                   f"Syscalls: {result_data.get('num_syscalls', 0)} | "
@@ -286,6 +301,8 @@ def run_agent(user_message: str, policy: PolicyLevel = PolicyLevel.TRACE_ALL):
                 if len(result_data["stdout"]) > 200:
                     preview += "..."
                 print(f"  Output: {preview}")
+            if result_data.get("error"):
+                print(f"  Error: {result_data['error']}")
             print()
 
             tool_results.append({
@@ -321,7 +338,15 @@ def main():
     policy_name = os.environ.get("SANDBOX_POLICY", "TRACE_ALL")
     policy = PolicyLevel[policy_name]
 
-    run_agent(user_msg, policy=policy)
+    # Read-only paths for Python runtime
+    readonly_paths = ["/usr/local/lib", "/usr/local/bin"]
+
+    # Enable network if SANDBOX_NETWORK=1 or for API calls
+    network_enabled = os.environ.get("SANDBOX_NETWORK", "0") == "1"
+
+    run_agent(user_msg, policy=policy,
+              readonly_paths=readonly_paths,
+              network_enabled=network_enabled)
 
 
 if __name__ == "__main__":

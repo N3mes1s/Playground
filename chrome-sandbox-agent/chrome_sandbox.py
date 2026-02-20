@@ -45,6 +45,12 @@ class PolicyLevel(IntEnum):
     TRACE_ALL = 2    # Allow all but trace every syscall
 
 
+class ExecPolicy(IntEnum):
+    CHROME = 0       # Allow first exec only (Chrome's behavior)
+    BROKERED = 1     # Validate every exec path against broker
+    BLOCKED = 2      # Block ALL execs
+
+
 # --- ctypes struct ---
 
 class _SandboxResult(ctypes.Structure):
@@ -100,6 +106,24 @@ _lib.sandbox_set_namespaces_enabled.restype = None
 _lib.sandbox_get_namespaces_enabled.argtypes = []
 _lib.sandbox_get_namespaces_enabled.restype = ctypes.c_int
 
+_lib.sandbox_set_readonly_paths.argtypes = [ctypes.c_char_p]
+_lib.sandbox_set_readonly_paths.restype = ctypes.c_int
+
+_lib.sandbox_set_network_enabled.argtypes = [ctypes.c_int]
+_lib.sandbox_set_network_enabled.restype = None
+
+_lib.sandbox_set_exec_policy.argtypes = [ctypes.c_int]
+_lib.sandbox_set_exec_policy.restype = None
+
+_lib.sandbox_allow_ioctls.argtypes = [ctypes.POINTER(ctypes.c_ulong), ctypes.c_int]
+_lib.sandbox_allow_ioctls.restype = ctypes.c_int
+
+_lib.sandbox_allow_sockopts.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_int]
+_lib.sandbox_allow_sockopts.restype = ctypes.c_int
+
+_lib.sandbox_clear_extensions.argtypes = []
+_lib.sandbox_clear_extensions.restype = None
+
 
 # --- Pythonic wrapper ---
 
@@ -131,13 +155,23 @@ class ChromeSandbox:
     """
 
     def __init__(self, policy: PolicyLevel = PolicyLevel.TRACE_ALL,
-                 namespaces: bool = True):
+                 namespaces: bool = True,
+                 exec_policy: ExecPolicy = ExecPolicy.BROKERED,
+                 readonly_paths: Optional[list[str]] = None,
+                 network_enabled: bool = False):
+        # Pre-init configuration (must be set BEFORE sandbox_init)
+        _lib.sandbox_set_policy(int(policy))
+        _lib.sandbox_set_exec_policy(int(exec_policy))
+        _lib.sandbox_set_namespaces_enabled(1 if namespaces else 0)
+        _lib.sandbox_set_network_enabled(1 if network_enabled else 0)
+        if readonly_paths:
+            joined = ":".join(readonly_paths)
+            _lib.sandbox_set_readonly_paths(joined.encode("utf-8"))
+
         rc = _lib.sandbox_init()
         if rc != 0:
             raise RuntimeError("Failed to initialize Chrome sandbox")
         self._policy = policy
-        _lib.sandbox_set_policy(int(policy))
-        _lib.sandbox_set_namespaces_enabled(1 if namespaces else 0)
 
     def set_policy(self, policy: PolicyLevel) -> None:
         """Change the seccomp-BPF policy level."""
