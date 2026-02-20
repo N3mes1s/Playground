@@ -31,6 +31,7 @@
 #include <sys/ptrace.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -346,9 +347,17 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       return sandbox::RestrictMprotectFlags();
     }
 
-    // ioctl: only allow TCGETS and FIONREAD
+    // ioctl: allow safe terminal/pipe operations needed by Node.js/libuv.
+    // Chrome's RestrictIoctl() only allows TCGETS and FIONREAD, which is too
+    // restrictive for a general-purpose runtime. We add FIONBIO (non-blocking
+    // mode), TIOCGPGRP/TIOCGWINSZ (TTY detection/size), which libuv needs
+    // for stream initialization (createWritableStdioStream).
     if (sysno == __NR_ioctl) {
-      return sandbox::RestrictIoctl();
+      const Arg<unsigned long> request(1);
+      return Switch(request)
+          .Cases({TCGETS, FIONREAD, FIONBIO, TIOCGPGRP, TIOCGWINSZ,
+                  TIOCSPGRP, TCSETS, TCSETSW, TCSETSF}, Allow())
+          .Default(Block());
     }
 
     // fcntl: restrict commands
@@ -429,13 +438,20 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       return sandbox::RestrictSockSendFlags(sysno);
     }
 
-    // getsockopt/setsockopt: only SO_PEEK_OFF
+    // getsockopt/setsockopt: allow safe socket options needed by Node.js/libuv.
+    // Chrome only allows SO_PEEK_OFF. We add SO_TYPE (socket type detection),
+    // SO_ERROR (error checking), SO_RCVBUF/SO_SNDBUF (buffer sizes),
+    // SO_KEEPALIVE, SO_REUSEADDR — all needed by libuv for stream setup.
     if (sysno == __NR_getsockopt || sysno == __NR_setsockopt) {
       const Arg<int> level(1);
       const Arg<int> optname(2);
       return sandbox::bpf_dsl::If(
-          sandbox::bpf_dsl::AllOf(level == SOL_SOCKET, optname == 42),
-          Allow()).Else(Block());
+          level == SOL_SOCKET,
+          Switch(optname)
+              .Cases({SO_TYPE, SO_ERROR, SO_RCVBUF, SO_SNDBUF,
+                      SO_KEEPALIVE, SO_REUSEADDR, SO_PEEK_OFF}, Allow())
+              .Default(Block()))
+          .Else(Block());
     }
 
     // memfd_create: restrict flags
@@ -613,7 +629,8 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
 
 static SandboxPolicyLevel g_policy_level = SANDBOX_POLICY_STRICT;
 static SandboxExecPolicy g_exec_policy = SANDBOX_EXEC_BROKERED;
-static std::vector<std::string> g_allowed_paths;
+static std::vector<std::string> g_allowed_paths;       // read-write-create paths
+static std::vector<std::string> g_readonly_paths;       // read-only paths (runtimes, tools)
 static bool g_initialized = false;
 
 // Broker process (Chrome's real BrokerProcess)
@@ -1086,6 +1103,26 @@ static bool setup_chroot_filesystem() {
     if (stat(ro_mounts[i].src, &st) != 0) continue;  // Skip if doesn't exist
     snprintf(path, sizeof(path), "%s/%s", sandbox_root, ro_mounts[i].subdir);
     bind_mount_readonly(ro_mounts[i].src, path);
+  }
+
+  // Bind-mount user-configured read-only paths (runtimes, tools)
+  for (const auto& ro_path : g_readonly_paths) {
+    if (ro_path.empty() || ro_path[0] != '/') continue;
+    struct stat st;
+    if (stat(ro_path.c_str(), &st) != 0) continue;  // Skip if doesn't exist
+    // Create the mount point in new root
+    snprintf(path, sizeof(path), "%s%s", sandbox_root, ro_path.c_str());
+    // Create parent directories
+    std::string parent = path;
+    for (size_t j = 1; j < parent.size(); j++) {
+      if (parent[j] == '/') {
+        parent[j] = '\0';
+        mkdir(parent.c_str(), 0755);
+        parent[j] = '/';
+      }
+    }
+    mkdir(path, 0755);
+    bind_mount_readonly(ro_path.c_str(), path);
   }
 
   // Bind-mount user-configured allowed paths (read-write)
@@ -1853,7 +1890,16 @@ build_broker_permissions() {
   // /tmp: read-write-create (sandboxed scratch space)
   perms.push_back(BrokerFilePermission::ReadWriteCreateRecursive("/tmp/"));
 
-  // Add user-configured paths with full access
+  // Add user-configured read-only paths (runtimes, tools, SDKs)
+  for (const auto& path : g_readonly_paths) {
+    if (!path.empty() && path[0] == '/') {
+      std::string p = path;
+      if (p.back() != '/') p += '/';
+      perms.push_back(BrokerFilePermission::ReadOnlyRecursive(p));
+    }
+  }
+
+  // Add user-configured paths with full access (workspaces, scratch dirs)
   for (const auto& path : g_allowed_paths) {
     if (!path.empty() && path[0] == '/') {
       // Ensure trailing slash for recursive matching
@@ -2001,6 +2047,19 @@ int sandbox_set_allowed_paths(const char* paths) {
     p.erase(0, pos + 1);
   }
   if (!p.empty()) g_allowed_paths.push_back(p);
+  return 0;
+}
+
+int sandbox_set_readonly_paths(const char* paths) {
+  g_readonly_paths.clear();
+  if (!paths) return 0;
+  std::string p(paths);
+  size_t pos = 0;
+  while ((pos = p.find(':')) != std::string::npos) {
+    g_readonly_paths.push_back(p.substr(0, pos));
+    p.erase(0, pos + 1);
+  }
+  if (!p.empty()) g_readonly_paths.push_back(p);
   return 0;
 }
 

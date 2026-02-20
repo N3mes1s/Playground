@@ -46,9 +46,20 @@ typedef enum {
   SANDBOX_POLICY_TRACE_ALL = 2,   // Allow all but trace every syscall
 } SandboxPolicyLevel;
 
-// Configure allowed paths for the broker to open on behalf of sandboxed process.
+// Configure writable paths for the broker to open on behalf of sandboxed process.
+// These paths get read-write-create access (bind-mounted read-write in the
+// mount namespace, ReadWriteCreateRecursive in the broker permission list).
 // paths: colon-separated list of allowed paths (e.g., "/tmp:/home/user/work")
+// MUST be called before sandbox_init() — mount namespace is set up during init.
 int sandbox_set_allowed_paths(const char* paths);
+
+// Configure read-only paths for runtimes, tools, and libraries.
+// These paths get read-only access (bind-mounted read-only in the mount
+// namespace, ReadOnlyRecursive in the broker permission list).
+// Use for: language runtimes (/opt/node22), extra tool dirs, SDK paths.
+// paths: colon-separated list of read-only paths (e.g., "/opt/node22:/opt/python3")
+// MUST be called before sandbox_init() — mount namespace is set up during init.
+int sandbox_set_readonly_paths(const char* paths);
 
 // Set the policy level for subsequent sandbox_exec calls.
 void sandbox_set_policy(SandboxPolicyLevel level);
