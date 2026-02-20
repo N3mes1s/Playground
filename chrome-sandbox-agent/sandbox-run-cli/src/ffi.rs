@@ -33,6 +33,7 @@ extern "C" {
     pub fn sandbox_set_exec_policy(policy: SandboxExecPolicy);
     pub fn sandbox_set_allowed_paths(paths: *const c_char) -> c_int;
     pub fn sandbox_set_readonly_paths(paths: *const c_char) -> c_int;
+    pub fn sandbox_set_denied_paths(paths: *const c_char) -> c_int;
     pub fn sandbox_set_network_enabled(enabled: c_int);
     pub fn sandbox_set_namespaces_enabled(enabled: c_int);
 

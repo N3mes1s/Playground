@@ -6,6 +6,8 @@ description = "Run any command inside Chrome's seccomp-BPF sandbox"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
 
 [build-dependencies]
 cc = "1"

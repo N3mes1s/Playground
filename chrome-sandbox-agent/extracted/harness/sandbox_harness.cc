@@ -815,6 +815,7 @@ static SandboxPolicyLevel g_policy_level = SANDBOX_POLICY_STRICT;
 static SandboxExecPolicy g_exec_policy = SANDBOX_EXEC_BROKERED;
 static std::vector<std::string> g_allowed_paths;       // read-write-create paths
 static std::vector<std::string> g_readonly_paths;       // read-only paths (runtimes, tools)
+static std::vector<std::string> g_denied_paths;         // blocklist — always denied even if in allowed dirs
 static std::set<unsigned long> g_extra_ioctls;          // additional allowed ioctl cmds
 static std::set<int> g_extra_sockopts;                  // additional allowed SOL_SOCKET options
 static bool g_initialized = false;
@@ -1295,6 +1296,25 @@ static std::string resolve_relative_path(const std::string& cwd,
   //     → normalize → "/tmp/workspace"
   std::string joined = cwd + "/" + relpath;
   return normalize_path_lexical(joined);
+}
+
+// Check if a normalized absolute path is in the deny list.
+// Deny list takes priority over allow list — used for sensitive files
+// that should never be accessible even if inside an allowed directory.
+static bool is_path_denied(const std::string& path) {
+  for (const auto& denied : g_denied_paths) {
+    if (path == denied) return true;
+    // Also deny if path is under a denied directory prefix
+    if (!denied.empty() && denied.back() == '/' && path.compare(0, denied.size(), denied) == 0) {
+      return true;
+    }
+    // Deny directory prefix: path starts with denied + "/"
+    if (path.size() > denied.size() && path[denied.size()] == '/' &&
+        path.compare(0, denied.size(), denied) == 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // =============================================================================
@@ -2249,6 +2269,13 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
             allowed = false;
           }
 
+          // Deny-list override: block even if broker allowed the path.
+          // This provides runtime-configurable path blocking for sensitive
+          // files (e.g., /etc/shadow) within otherwise-allowed directories.
+          if (allowed && !path_str.empty() && is_path_denied(path_str)) {
+            allowed = false;
+          }
+
           if (!allowed) {
             rec.blocked = true;
             blocked++;
@@ -2866,6 +2893,11 @@ static int exec_passthrough(const char* const* argv) {
               allowed = false;
             }
 
+            // Deny-list override (same as exec_with_tracing broker).
+            if (allowed && !path_str.empty() && is_path_denied(path_str)) {
+              allowed = false;
+            }
+
             if (!allowed) {
               regs.orig_rax = -1;
               regs.rax = -broker_policy.denied_errno();
@@ -3284,6 +3316,19 @@ int sandbox_set_readonly_paths(const char* paths) {
     p.erase(0, pos + 1);
   }
   if (!p.empty()) g_readonly_paths.push_back(p);
+  return 0;
+}
+
+int sandbox_set_denied_paths(const char* paths) {
+  g_denied_paths.clear();
+  if (!paths) return 0;
+  std::string p(paths);
+  size_t pos = 0;
+  while ((pos = p.find(':')) != std::string::npos) {
+    g_denied_paths.push_back(p.substr(0, pos));
+    p.erase(0, pos + 1);
+  }
+  if (!p.empty()) g_denied_paths.push_back(p);
   return 0;
 }
 

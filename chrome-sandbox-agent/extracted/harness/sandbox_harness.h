@@ -64,6 +64,13 @@ int sandbox_set_allowed_paths(const char* paths);
 // paths: colon-separated list of read-only paths (e.g., "/opt/node22:/opt/python3")
 int sandbox_set_readonly_paths(const char* paths);
 
+// Configure denied paths (blocklist). These paths are ALWAYS blocked even if
+// they fall inside an allowed or read-only directory. The deny list takes
+// priority over all allow lists. Use for: sensitive files like /etc/shadow,
+// private keys, credentials files.
+// paths: colon-separated list of denied paths (e.g., "/etc/shadow:/etc/gshadow")
+int sandbox_set_denied_paths(const char* paths);
+
 // Enable or disable network namespace isolation.
 // When enabled (default), sandboxed processes have no network access.
 // When disabled, sandboxed processes inherit the host network stack.
