@@ -484,9 +484,28 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       return sandbox::RestrictFutex();
     }
 
-    // clock_gettime/clock_getres/clock_nanosleep: restrict clock IDs
+    // clock_gettime/clock_nanosleep: restrict clock IDs
     if (sandbox::SyscallSets::IsClockApi(sysno)) {
       return sandbox::RestrictClockID();
+    }
+
+    // clock_getres: restrict clock IDs (same as clock_gettime).
+    // Chrome's IsClockApi() excludes clock_getres on non-Android, but
+    // runtimes (Python, Java, Go) call it during initialization to query
+    // timer precision. Read-only, returns a single timespec — no risk.
+    if (sysno == __NR_clock_getres) {
+      return sandbox::RestrictClockID();
+    }
+
+    // timerfd_create: allow (creates a timer file descriptor).
+    // Event loops (libuv, tokio, asyncio) need this for timer notifications.
+    // Creates a local FD only — no privilege escalation, no info leak.
+    // Resource exhaustion bounded by RLIMIT_NOFILE.
+    if (sysno == __NR_timerfd_create) return Allow();
+    // timerfd_settime/timerfd_gettime: operate on existing timer FDs.
+    // Safe — equivalent to read/write on an already-opened FD.
+    if (sysno == __NR_timerfd_settime || sysno == __NR_timerfd_gettime) {
+      return Allow();
     }
 
     // getrandom: restrict flags
@@ -1168,6 +1187,67 @@ static bool write_child_string(pid_t pid, unsigned long addr,
     }
   }
   return true;
+}
+
+// Lexical-only path normalization (no filesystem access, no TOCTOU risk).
+// Resolves `.` and `..` segments, collapses duplicate slashes.
+// This is the safe alternative to realpath() for sandbox brokers:
+//   - No filesystem access: no TOCTOU race (unlike realpath which stats)
+//   - No symlink resolution: doesn't follow symlinks outside allowlist
+//   - Pure string operation: deterministic and async-signal-safe
+//
+// Why NOT realpath():
+//   - CVE-2018-1000001: glibc buffer underflow via getcwd() interaction
+//   - CVE-2018-11236: stack overflow on 32-bit with long paths
+//   - TOCTOU: symlink swap between realpath() and kernel syscall execution
+//     (exactly CVE-2018-15664 in Docker, ~12.5% success rate per attempt)
+//   - /proc magic links resolve in broker context, not child context
+//   - SEI CERT FIO02-C: "canonicalizing path names may need to be abandoned"
+//
+// Examples:
+//   /usr/local/lib/python3.11/dist-packages/PIL/../pillow.libs/lib.so
+//     → /usr/local/lib/python3.11/dist-packages/pillow.libs/lib.so
+//   /usr/./lib/foo     → /usr/lib/foo
+//   /usr//lib///foo    → /usr/lib/foo
+//   /../etc/passwd     → /etc/passwd (can't go above root)
+static std::string normalize_path_lexical(const std::string& path) {
+  if (path.empty() || path[0] != '/') return path;  // only absolute paths
+
+  std::vector<std::string> components;
+  size_t i = 0;
+  while (i < path.size()) {
+    // Skip slashes
+    while (i < path.size() && path[i] == '/') i++;
+    if (i >= path.size()) break;
+
+    // Extract component
+    size_t start = i;
+    while (i < path.size() && path[i] != '/') i++;
+    std::string component = path.substr(start, i - start);
+
+    if (component == ".") {
+      continue;  // skip current dir reference
+    } else if (component == "..") {
+      if (!components.empty()) {
+        components.pop_back();  // go up one level
+      }
+      // At root: can't go higher, silently clamp (same as kernel behavior)
+    } else {
+      components.push_back(std::move(component));
+    }
+  }
+
+  // Reconstruct absolute path
+  if (components.empty()) return "/";
+  std::string result;
+  for (const auto& c : components) {
+    result += '/';
+    result += c;
+  }
+  // Do NOT preserve trailing slash: Chrome's ValidatePath() rejects
+  // paths ending with "/" (except root "/"). The kernel handles
+  // trailing slashes internally during path resolution.
+  return result;
 }
 
 // =============================================================================
@@ -1894,6 +1974,13 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
           path_str = "";  // No path validation needed
         }
 
+        // Lexical path normalization: resolve .. and . segments without
+        // touching the filesystem. Handles PIL/../pillow.libs/ style paths
+        // from RPATH ($ORIGIN/../) that Chrome's broker rejects outright.
+        if (!path_str.empty() && path_str[0] == '/') {
+          path_str = normalize_path_lexical(path_str);
+        }
+
         // Record the syscall
         SyscallRecord rec;
         rec.nr = nr;
@@ -2523,6 +2610,11 @@ static int exec_passthrough(const char* const* argv) {
             path_str = read_child_string(pid, path_addr);
             if (nr == __NR_open) open_flags = (int)regs.rsi;
             if (nr == __NR_creat) open_flags = O_CREAT | O_WRONLY | O_TRUNC;
+          }
+
+          // Lexical path normalization (same as exec_with_tracing).
+          if (!path_str.empty() && path_str[0] == '/') {
+            path_str = normalize_path_lexical(path_str);
           }
 
           // Handle kill/tgkill/tkill: protect namespace init (PID 1)
