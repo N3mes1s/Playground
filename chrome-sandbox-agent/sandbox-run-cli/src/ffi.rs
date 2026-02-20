@@ -36,8 +36,15 @@ extern "C" {
     pub fn sandbox_set_network_enabled(enabled: c_int);
     pub fn sandbox_set_namespaces_enabled(enabled: c_int);
 
+    // Per-execution extensions (called BEFORE sandbox_exec/sandbox_exec_interactive)
+    pub fn sandbox_allow_ioctls(cmds: *const std::os::raw::c_ulong, count: c_int) -> c_int;
+    pub fn sandbox_allow_sockopts(optnames: *const c_int, count: c_int) -> c_int;
+
     // Execution
     pub fn sandbox_exec_interactive(argv: *const *const c_char) -> c_int;
+
+    // Audit mode
+    pub fn sandbox_set_audit_mode(enabled: c_int, log_path: *const c_char) -> c_int;
 
     // Query
     pub fn sandbox_has_seccomp_bpf() -> c_int;

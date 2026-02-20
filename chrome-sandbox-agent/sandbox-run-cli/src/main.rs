@@ -37,7 +37,9 @@ ENVIRONMENT:
     SANDBOX_NETWORK=1         Enable network
     SANDBOX_READONLY_PATHS    Colon-separated read-only paths
     SANDBOX_ALLOWED_PATHS     Colon-separated read-write paths
-    SANDBOX_POLICY            Policy level (STRICT/PERMISSIVE/TRACE_ALL)")]
+    SANDBOX_POLICY            Policy level (STRICT/PERMISSIVE/TRACE_ALL)
+    SANDBOX_AUDIT=1           Enable audit mode
+    SANDBOX_AUDIT_LOG=path    Audit log file path (default: stderr)")]
 struct Cli {
     /// Host directory to mount as workspace (default: current directory)
     #[arg(short, long)]
@@ -66,6 +68,16 @@ struct Cli {
     /// Print sandbox configuration before launching
     #[arg(short, long)]
     verbose: bool,
+
+    /// Enable audit mode: log every broker decision to file (or stderr if no path)
+    #[arg(long, value_name = "LOG_PATH")]
+    audit: Option<Option<String>>,
+
+    /// Allow extra ioctl commands (comma-separated hex values, or "tty" shorthand)
+    /// Example: --ioctls tty   (adds TIOCGWINSZ, TIOCSWINSZ, TIOCSCTTY)
+    /// Example: --ioctls 0x5413,0x5414
+    #[arg(long)]
+    ioctls: Option<String>,
 
     /// Command to run inside the sandbox
     #[arg(trailing_var_arg = true, required = true)]
@@ -208,6 +220,80 @@ fn main() -> ExitCode {
             if !ro.is_empty() {
                 let c_paths = CString::new(ro.as_str()).expect("invalid readonly paths");
                 ffi::sandbox_set_readonly_paths(c_paths.as_ptr());
+            }
+        }
+    }
+
+    // Configure audit mode if requested (CLI flag > env var)
+    let audit_enabled = cli.audit.is_some()
+        || std::env::var("SANDBOX_AUDIT")
+            .map(|v| v == "1" || v == "true")
+            .unwrap_or(false);
+    if audit_enabled {
+        // Resolve audit log path: --audit=PATH > SANDBOX_AUDIT_LOG > stderr
+        let cli_path = cli
+            .audit
+            .as_ref()
+            .and_then(|opt| opt.clone())
+            .unwrap_or_default();
+        let env_path = std::env::var("SANDBOX_AUDIT_LOG").unwrap_or_default();
+        let audit_path = if !cli_path.is_empty() {
+            cli_path
+        } else {
+            env_path
+        };
+
+        let c_path = CString::new(audit_path.as_str()).expect("invalid audit log path");
+        unsafe {
+            let rc = ffi::sandbox_set_audit_mode(1, c_path.as_ptr());
+            if rc != 0 {
+                eprintln!("sandbox-run: failed to open audit log: {}", audit_path);
+                return ExitCode::from(1);
+            }
+        }
+        if verbose {
+            eprint!("\x1b[2m");
+            eprintln!(
+                "  Audit:     enabled ({})",
+                if audit_path.is_empty() {
+                    "stderr"
+                } else {
+                    audit_path.as_str()
+                }
+            );
+            eprint!("\x1b[0m");
+        }
+    }
+
+    // Configure extra ioctls if requested (CLI flag > env var)
+    let ioctls_str = cli
+        .ioctls
+        .clone()
+        .or_else(|| std::env::var("SANDBOX_IOCTLS").ok())
+        .unwrap_or_default();
+    if !ioctls_str.is_empty() {
+        let mut ioctl_cmds: Vec<std::os::raw::c_ulong> = Vec::new();
+        for part in ioctls_str.split(',') {
+            let part = part.trim();
+            if part.eq_ignore_ascii_case("tty") {
+                // Shorthand: common terminal ioctls
+                ioctl_cmds.push(0x5413); // TIOCGWINSZ
+                ioctl_cmds.push(0x5414); // TIOCSWINSZ
+                ioctl_cmds.push(0x540e); // TIOCSCTTY
+            } else if let Some(hex) = part.strip_prefix("0x") {
+                if let Ok(val) = u64::from_str_radix(hex, 16) {
+                    ioctl_cmds.push(val as std::os::raw::c_ulong);
+                }
+            } else if let Ok(val) = part.parse::<u64>() {
+                ioctl_cmds.push(val as std::os::raw::c_ulong);
+            }
+        }
+        if !ioctl_cmds.is_empty() {
+            unsafe {
+                ffi::sandbox_allow_ioctls(
+                    ioctl_cmds.as_ptr(),
+                    ioctl_cmds.len() as std::os::raw::c_int,
+                );
             }
         }
     }

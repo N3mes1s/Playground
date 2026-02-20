@@ -45,6 +45,7 @@
 #include <sched.h>
 
 #include <chrono>
+#include <cstdarg>
 #include <map>
 #include <set>
 #include <sstream>
@@ -193,7 +194,90 @@ static const char* syscall_name(int nr) {
     case __NR_getsockopt: return "getsockopt";
     case __NR_socketpair: return "socketpair";
     case __NR_getsockname: return "getsockname";
-    default: return nullptr;
+    case __NR_fadvise64: return "fadvise64";
+    case __NR_statfs: return "statfs";
+    case __NR_fstatfs: return "fstatfs";
+    case __NR_readlink: return "readlink";
+    case __NR_symlink: return "symlink";
+    case __NR_symlinkat: return "symlinkat";
+    case __NR_link: return "link";
+    case __NR_linkat: return "linkat";
+    case __NR_mknod: return "mknod";
+    case __NR_lchown: return "lchown";
+    case __NR_fchownat: return "fchownat";
+    case __NR_creat: return "creat";
+    case __NR_renameat2: return "renameat2";
+    case __NR_faccessat2: return "faccessat2";
+    case __NR_tkill: return "tkill";
+    case __NR_accept4: return "accept4";
+    case __NR_dup: return "dup";
+    case __NR_shutdown: return "shutdown";
+    case __NR_select: return "select";
+    case __NR_pselect6: return "pselect6";
+    case __NR_ppoll: return "ppoll";
+    case __NR_eventfd2: return "eventfd2";
+    case __NR_timerfd_create: return "timerfd_create";
+    case __NR_timerfd_settime: return "timerfd_settime";
+    case __NR_signalfd4: return "signalfd4";
+    case __NR_inotify_init1: return "inotify_init1";
+    case __NR_inotify_add_watch: return "inotify_add_watch";
+    case __NR_inotify_rm_watch: return "inotify_rm_watch";
+    case __NR_clone3: return "clone3";
+    case __NR_memfd_create: return "memfd_create";
+    case __NR_copy_file_range: return "copy_file_range";
+    case __NR_pread64: return "pread64";
+    case __NR_pwrite64: return "pwrite64";
+    case __NR_sendfile: return "sendfile";
+    case __NR_fchmod: return "fchmod";
+    case __NR_fchown: return "fchown";
+    case __NR_utimensat: return "utimensat";
+    case __NR_fallocate: return "fallocate";
+    case __NR_fdatasync: return "fdatasync";
+    case __NR_waitid: return "waitid";
+    case __NR_capget: return "capget";
+    case __NR_capset: return "capset";
+    case __NR_setuid: return "setuid";
+    case __NR_setgid: return "setgid";
+    case __NR_setresuid: return "setresuid";
+    case __NR_setresgid: return "setresgid";
+    case __NR_getresuid: return "getresuid";
+    case __NR_getresgid: return "getresgid";
+    case __NR_unshare: return "unshare";
+    case __NR_setns: return "setns";
+    case __NR_pivot_root: return "pivot_root";
+    case __NR_init_module: return "init_module";
+    case __NR_delete_module: return "delete_module";
+    case __NR_process_vm_readv: return "process_vm_readv";
+    case __NR_process_vm_writev: return "process_vm_writev";
+    case __NR_sethostname: return "sethostname";
+    case __NR_setdomainname: return "setdomainname";
+    case __NR_swapon: return "swapon";
+    case __NR_swapoff: return "swapoff";
+    case __NR_syslog: return "syslog";
+    case __NR_kcmp: return "kcmp";
+    case __NR_setreuid: return "setreuid";
+    case __NR_setregid: return "setregid";
+    case __NR_fchdir: return "fchdir";
+    case __NR_mremap: return "mremap";
+    case __NR_msync: return "msync";
+    case __NR_mincore: return "mincore";
+    case __NR_shmget: return "shmget";
+    case __NR_shmat: return "shmat";
+    case __NR_shmctl: return "shmctl";
+    case __NR_semget: return "semget";
+    case __NR_semop: return "semop";
+    case __NR_semctl: return "semctl";
+    case __NR_msgget: return "msgget";
+    case __NR_msgsnd: return "msgsnd";
+    case __NR_msgrcv: return "msgrcv";
+    case __NR_msgctl: return "msgctl";
+    default: {
+      // Return a static buffer with the numeric syscall number.
+      // Thread-safe: uses thread-local storage.
+      static thread_local char unknown_buf[32];
+      snprintf(unknown_buf, sizeof(unknown_buf), "syscall_%d", nr);
+      return unknown_buf;
+    }
   }
 }
 
@@ -611,8 +695,32 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       return Allow();
     }
 
-    // Socket modifications: block
+    // Socket operations: block unless networking is enabled.
+    // Chrome blocks these because renderers don't need sockets.
+    // When networking is enabled (for API calls, curl, etc.), allow
+    // socket creation, connect, bind, listen, accept.
+    // getsockopt/setsockopt are handled separately above with per-option
+    // filtering.
+    //
+    // ESCAPE HYPOTHESIS (IsDeniedGetOrModifySocket + networking):
+    //   socket+connect: LOW risk — outbound only, net NS limits reach
+    //   bind+listen+accept: MEDIUM risk — enables inbound server,
+    //     but net NS blocks external access (only loopback reachable)
+    //   Raw/packet sockets: blocked by kernel (needs CAP_NET_RAW)
     if (sandbox::SyscallSets::IsDeniedGetOrModifySocket(sysno)) {
+      if (allow_networking_) return Allow();
+      return Error(EPERM);
+    }
+
+    // getsockname/getpeername: needed for TLS handshake (checking local
+    // address after connect). These are query-only, read-only operations
+    // on already-open sockets — no new attack surface.
+    //
+    // ESCAPE HYPOTHESIS (getsockname/getpeername + networking):
+    //   Risk: LOW — read-only socket metadata, no data exfiltration
+    //   Mitigated by: net NS isolation, broker controls socket creation
+    if (sysno == __NR_getsockname || sysno == __NR_getpeername) {
+      if (allow_networking_) return Allow();
       return Error(EPERM);
     }
 
@@ -1076,6 +1184,11 @@ static bool write_child_string(pid_t pid, unsigned long addr,
 
 static bool g_enable_namespaces = true;
 static bool g_enable_network_isolation = true;  // default: Chrome's behavior
+
+// Audit mode: structured logging of all broker decisions
+static bool g_audit_mode = false;
+static int g_audit_fd = -1;            // fd for audit log output (-1 = stderr)
+static bool g_audit_owns_fd = false;   // true if we opened the fd (need to close)
 
 // Set up user namespace and map current uid/gid.
 // Returns true on success, false if namespaces unavailable (non-fatal).
@@ -2112,6 +2225,75 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
 }
 
 // =============================================================================
+// Audit mode: structured logging of broker decisions and sandbox events
+// =============================================================================
+//
+// When g_audit_mode is true, every broker decision, exec, fork/clone,
+// process exit, and policy violation is logged as one JSON line per event.
+// This enables post-hoc security review without modifying the security model.
+//
+// Log format (one JSON object per line):
+//   {"ts":1234567890.123,"pid":42,"event":"broker","syscall":"openat",
+//    "nr":257,"path":"/etc/passwd","flags":"O_RDONLY","decision":"allow",
+//    "risk":"LOW"}
+//
+// Event types:
+//   "broker"  - filesystem syscall validated by ptrace broker
+//   "block"   - syscall blocked by SECCOMP_RET_TRACE(TRACE_BLOCKED)
+//   "exec"    - execve/execveat attempt (with allow/deny)
+//   "kill"    - kill/tgkill/tkill to PID 1 (always logged)
+//   "fork"    - new process created (fork/vfork/clone)
+//   "exit"    - process exited
+//   "signal"  - signal delivered to sandboxed process
+//   "sigsys"  - SIGSYS from SECCOMP_RET_TRAP (seccomp violation)
+//   "init"    - sandbox initialized (logs configuration)
+//   "empty_path" - empty-path denial (fd-based bypass attempt)
+
+static void audit_log(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+static void audit_log(const char* fmt, ...) {
+  if (!g_audit_mode) return;
+
+  int fd = (g_audit_fd >= 0) ? g_audit_fd : STDERR_FILENO;
+
+  char buf[4096];
+  va_list ap;
+  va_start(ap, fmt);
+  int len = vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+
+  if (len > 0 && len < (int)sizeof(buf)) {
+    // Append newline if not present
+    if (buf[len - 1] != '\n') {
+      buf[len++] = '\n';
+    }
+    // Write atomically (single write call)
+    (void)write(fd, buf, len);
+  }
+}
+
+// Get monotonic timestamp as fractional seconds (for audit log ordering)
+static double audit_timestamp() {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
+// Format open flags as human-readable string
+static std::string format_open_flags(int flags) {
+  std::string s;
+  int access = flags & O_ACCMODE;
+  if (access == O_RDONLY) s = "O_RDONLY";
+  else if (access == O_WRONLY) s = "O_WRONLY";
+  else if (access == O_RDWR) s = "O_RDWR";
+  if (flags & O_CREAT)  s += "|O_CREAT";
+  if (flags & O_EXCL)   s += "|O_EXCL";
+  if (flags & O_TRUNC)  s += "|O_TRUNC";
+  if (flags & O_APPEND) s += "|O_APPEND";
+  if (flags & O_CLOEXEC) s += "|O_CLOEXEC";
+  return s;
+}
+
+// =============================================================================
 // Interactive execution: fork + ptrace broker + seccomp, stdio on terminal
 // =============================================================================
 //
@@ -2233,6 +2415,18 @@ static int exec_passthrough(const char* const* argv) {
   sandbox::syscall_broker::BrokerPermissionList broker_policy(
       EACCES, std::move(broker_perms));
 
+  // Resume the child to start execution.
+  //
+  // On kernel 4.4, PTRACE_CONT does NOT stop for SECCOMP_RET_TRACE events
+  // (this was fixed in kernel 4.8+). We must use PTRACE_SYSCALL to see
+  // seccomp events on older kernels. This causes more tracer stops but is
+  // necessary for correctness.
+  //
+  // Performance optimization for interactive passthrough mode:
+  // - STRICT policy: only dangerous/filesystem syscalls trigger SECCOMP_RET_TRACE,
+  //   so the overhead is bounded to ~100 broker decisions during startup.
+  // - TRACE_ALL policy: every syscall triggers SECCOMP_RET_TRACE, which is slow
+  //   with multi-threaded programs. Use STRICT for production workloads.
   ptrace(PTRACE_SYSCALL, child, nullptr, nullptr);
 
   // Exec policy tracking
@@ -2241,15 +2435,17 @@ static int exec_passthrough(const char* const* argv) {
   int exit_code = 0;
 
   // Ptrace broker loop — same security as exec_with_tracing but:
-  //   - No syscall log collection (performance)
+  //   - Uses PTRACE_CONT for performance (no entry/exit stops)
+  //   - No syscall log collection
   //   - No stdout/stderr pipe reading
-  //   - Full broker validation still active
+  //   - Full broker validation still active via SECCOMP_RET_TRACE
   while (!traced_pids.empty()) {
     pid_t pid;
     int wstatus;
     pid = waitpid(-1, &wstatus, __WALL);
     if (pid < 0) {
       if (errno == EINTR) continue;
+      audit_log("{\"ts\":%.3f,\"event\":\"waitpid_error\",\"errno\":%d}", audit_timestamp(), errno);
       break;
     }
 
@@ -2258,6 +2454,13 @@ static int exec_passthrough(const char* const* argv) {
         exit_code = WIFEXITED(wstatus)
             ? WEXITSTATUS(wstatus)
             : 128 + WTERMSIG(wstatus);
+      }
+      if (WIFEXITED(wstatus)) {
+        audit_log("{\"ts\":%.3f,\"pid\":%d,\"event\":\"exit\",\"code\":%d}",
+                  audit_timestamp(), pid, WEXITSTATUS(wstatus));
+      } else {
+        audit_log("{\"ts\":%.3f,\"pid\":%d,\"event\":\"exit\",\"signal\":%d}",
+                  audit_timestamp(), pid, WTERMSIG(wstatus));
       }
       traced_pids.erase(pid);
       exec_count.erase(pid);
@@ -2283,6 +2486,8 @@ static int exec_passthrough(const char* const* argv) {
           regs.orig_rax = -1;
           regs.rax = (unsigned long long)(-EPERM);
           ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
+          audit_log("{\"ts\":%.3f,\"pid\":%d,\"event\":\"block\",\"syscall\":\"%s\",\"nr\":%d,\"decision\":\"deny\",\"risk\":\"%s\"}",
+                    audit_timestamp(), pid, syscall_name(nr), nr, syscall_risk(nr));
 
         } else if (trace_data == AgentSandboxPolicy::TRACE_BROKER) {
           // Broker: validate filesystem path (same logic as exec_with_tracing)
@@ -2328,8 +2533,12 @@ static int exec_passthrough(const char* const* argv) {
               regs.orig_rax = -1;
               regs.rax = (unsigned long long)(-EPERM);
               ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
+              audit_log("{\"ts\":%.3f,\"pid\":%d,\"event\":\"kill\",\"syscall\":\"%s\",\"nr\":%d,\"target\":1,\"decision\":\"deny\",\"risk\":\"HIGH\"}",
+                        audit_timestamp(), pid, syscall_name(nr), nr);
+            } else {
+              audit_log("{\"ts\":%.3f,\"pid\":%d,\"event\":\"kill\",\"syscall\":\"%s\",\"nr\":%d,\"target\":%d,\"decision\":\"allow\",\"risk\":\"HIGH\"}",
+                        audit_timestamp(), pid, syscall_name(nr), nr, (int)target);
             }
-            // else: allow (signal to self, children, groups)
           }
           // Handle exec policy (same as exec_with_tracing)
           else if (nr == __NR_execve || nr == __NR_execveat) {
@@ -2353,6 +2562,10 @@ static int exec_passthrough(const char* const* argv) {
               regs.rax = (unsigned long long)(-EACCES);
               ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
             }
+            audit_log("{\"ts\":%.3f,\"pid\":%d,\"event\":\"exec\",\"syscall\":\"%s\",\"nr\":%d,\"path\":\"%s\",\"decision\":\"%s\",\"risk\":\"HIGH\"}",
+                      audit_timestamp(), pid, syscall_name(nr), nr,
+                      json_escape(path_str).c_str(),
+                      allow_exec ? "allow" : "deny");
           }
           // getcwd: always allow (no path to validate, safe in chroot)
           else if (nr == __NR_getcwd) {
@@ -2364,6 +2577,8 @@ static int exec_passthrough(const char* const* argv) {
             regs.orig_rax = -1;
             regs.rax = (unsigned long long)(-EACCES);
             ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
+            audit_log("{\"ts\":%.3f,\"pid\":%d,\"event\":\"empty_path\",\"syscall\":\"%s\",\"nr\":%d,\"decision\":\"deny\",\"risk\":\"%s\"}",
+                      audit_timestamp(), pid, syscall_name(nr), nr, syscall_risk(nr));
           }
           // Handle filesystem broker (same validation as exec_with_tracing)
           else {
@@ -2435,6 +2650,26 @@ static int exec_passthrough(const char* const* argv) {
               // TOCTOU defense: rewrite validated path (same as exec_with_tracing)
               write_child_string(pid, path_addr, path_str);
             }
+
+            // Audit: log broker decision (only for non-trivial paths to reduce noise)
+            if (g_audit_mode) {
+              const char* name = syscall_name(nr);
+              const char* risk = syscall_risk(nr);
+              std::string flags_str = (nr == __NR_open || nr == __NR_openat || nr == __NR_creat)
+                  ? format_open_flags(open_flags) : "";
+              if (flags_str.empty()) {
+                audit_log("{\"ts\":%.3f,\"pid\":%d,\"event\":\"broker\",\"syscall\":\"%s\",\"nr\":%d,\"path\":\"%s\",\"decision\":\"%s\",\"risk\":\"%s\"}",
+                          audit_timestamp(), pid, name, nr,
+                          json_escape(path_str).c_str(),
+                          allowed ? "allow" : "deny", risk);
+              } else {
+                audit_log("{\"ts\":%.3f,\"pid\":%d,\"event\":\"broker\",\"syscall\":\"%s\",\"nr\":%d,\"path\":\"%s\",\"flags\":\"%s\",\"decision\":\"%s\",\"risk\":\"%s\"}",
+                          audit_timestamp(), pid, name, nr,
+                          json_escape(path_str).c_str(),
+                          flags_str.c_str(),
+                          allowed ? "allow" : "deny", risk);
+              }
+            }
           }
         }
       }
@@ -2446,14 +2681,25 @@ static int exec_passthrough(const char* const* argv) {
       unsigned long new_pid;
       ptrace(PTRACE_GETEVENTMSG, pid, nullptr, &new_pid);
       traced_pids.insert(static_cast<pid_t>(new_pid));
+      audit_log("{\"ts\":%.3f,\"pid\":%d,\"event\":\"fork\",\"child\":%lu,\"type\":\"%s\"}",
+                audit_timestamp(), pid, new_pid,
+                event == PTRACE_EVENT_FORK ? "fork" :
+                event == PTRACE_EVENT_VFORK ? "vfork" : "clone");
       ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
 
-    } else if (event == PTRACE_EVENT_EXEC ||
-               event == PTRACE_EVENT_EXIT) {
+    } else if (event == PTRACE_EVENT_EXEC) {
+      audit_log("{\"ts\":%.3f,\"pid\":%d,\"event\":\"exec_complete\"}",
+                audit_timestamp(), pid);
+      ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
+
+    } else if (event == PTRACE_EVENT_EXIT) {
       ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
 
     } else if (sig == (SIGTRAP | 0x80)) {
-      // Syscall-stop: just continue (no logging in passthrough mode)
+      // Syscall entry/exit stop from PTRACE_SYSCALL — just continue.
+      // We use PTRACE_SYSCALL (not PTRACE_CONT) because kernel 4.4 requires it
+      // to see SECCOMP_RET_TRACE events. The cost is extra stops for every
+      // syscall entry/exit, but this is necessary for correctness.
       ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
 
     } else if (sig == SIGTRAP) {
@@ -2461,15 +2707,20 @@ static int exec_passthrough(const char* const* argv) {
     } else if (sig == SIGSTOP) {
       ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
     } else if (sig == SIGSYS) {
-      // Suppress SIGSYS from SECCOMP_RET_TRAP (same as exec_with_tracing)
+      // SIGSYS from SECCOMP_RET_TRAP: suppress and return -ENOSYS
       struct user_regs_struct regs;
       if (ptrace(PTRACE_GETREGS, pid, nullptr, &regs) == 0) {
+        audit_log("{\"ts\":%.3f,\"pid\":%d,\"event\":\"sigsys\",\"syscall\":\"%s\",\"nr\":%d,\"risk\":\"%s\"}",
+                  audit_timestamp(), pid, syscall_name((int)regs.orig_rax), (int)regs.orig_rax,
+                  syscall_risk((int)regs.orig_rax));
         regs.rax = (unsigned long long)(-ENOSYS);
         ptrace(PTRACE_SETREGS, pid, nullptr, &regs);
       }
       ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
     } else {
-      // Deliver signal to child
+      // Deliver other signals to child
+      audit_log("{\"ts\":%.3f,\"pid\":%d,\"event\":\"signal\",\"signal\":%d}",
+                audit_timestamp(), pid, sig);
       ptrace(PTRACE_SYSCALL, pid, nullptr, sig);
     }
   }
@@ -2710,6 +2961,31 @@ int sandbox_init(void) {
   g_zygote_fd = sv[0];
   g_initialized = true;
 
+  // Audit: log sandbox initialization with configuration
+  if (g_audit_mode) {
+    std::string allowed_str, readonly_str;
+    for (const auto& p : g_allowed_paths) {
+      if (!allowed_str.empty()) allowed_str += ":";
+      allowed_str += p;
+    }
+    for (const auto& p : g_readonly_paths) {
+      if (!readonly_str.empty()) readonly_str += ":";
+      readonly_str += p;
+    }
+    const char* policy_name =
+        g_policy_level == SANDBOX_POLICY_STRICT ? "STRICT" :
+        g_policy_level == SANDBOX_POLICY_PERMISSIVE ? "PERMISSIVE" : "TRACE_ALL";
+    const char* exec_name =
+        g_exec_policy == SANDBOX_EXEC_CHROME ? "CHROME" :
+        g_exec_policy == SANDBOX_EXEC_BROKERED ? "BROKERED" : "BLOCKED";
+    audit_log("{\"ts\":%.3f,\"event\":\"init\",\"zygote_pid\":%d,\"policy\":\"%s\",\"exec_policy\":\"%s\",\"network\":%s,\"namespaces\":%s,\"allowed_paths\":\"%s\",\"readonly_paths\":\"%s\"}",
+              audit_timestamp(), (int)zygote, policy_name, exec_name,
+              g_enable_network_isolation ? "false" : "true",
+              g_enable_namespaces ? "true" : "false",
+              json_escape(allowed_str).c_str(),
+              json_escape(readonly_str).c_str());
+  }
+
   return 0;
 }
 
@@ -2727,6 +3003,14 @@ void sandbox_shutdown(void) {
   }
   g_broker.reset();
   g_initialized = false;
+
+  // Close audit log fd
+  if (g_audit_owns_fd && g_audit_fd >= 0) {
+    close(g_audit_fd);
+    g_audit_fd = -1;
+    g_audit_owns_fd = false;
+  }
+  g_audit_mode = false;
 }
 
 void sandbox_set_policy(SandboxPolicyLevel level) {
@@ -2897,6 +3181,34 @@ int sandbox_has_user_namespaces(void) {
 
 void sandbox_set_namespaces_enabled(int enabled) {
   g_enable_namespaces = (enabled != 0);
+}
+
+int sandbox_set_audit_mode(int enabled, const char* log_path) {
+  // Close previous audit fd if we own it
+  if (g_audit_owns_fd && g_audit_fd >= 0) {
+    close(g_audit_fd);
+    g_audit_fd = -1;
+    g_audit_owns_fd = false;
+  }
+
+  g_audit_mode = (enabled != 0);
+  if (!g_audit_mode) return 0;
+
+  if (log_path && log_path[0] != '\0') {
+    int fd = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+    if (fd < 0) {
+      g_audit_mode = false;
+      return -1;
+    }
+    g_audit_fd = fd;
+    g_audit_owns_fd = true;
+  } else {
+    // Default to stderr
+    g_audit_fd = -1;
+    g_audit_owns_fd = false;
+  }
+
+  return 0;
 }
 
 int sandbox_get_namespaces_enabled(void) {

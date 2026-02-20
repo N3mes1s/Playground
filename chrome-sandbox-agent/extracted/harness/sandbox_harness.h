@@ -192,6 +192,22 @@ int sandbox_start_broker(void);
 // Stop the broker process.
 void sandbox_stop_broker(void);
 
+// --- Audit mode ---
+
+// Enable audit mode: log every broker decision, policy violation, exec,
+// fork, and signal to a structured log file. Designed for security review
+// and post-hoc analysis of sandbox behavior.
+//
+// When enabled, the ptrace broker loop emits one JSON line per event to
+// the audit log file. Each line contains: timestamp, pid, syscall, path,
+// decision (allow/deny), risk level, and context.
+//
+// MUST be called before sandbox_init().
+//
+// log_path: path to write audit log (NULL or "" = stderr)
+// Returns 0 on success, -1 on failure (e.g., can't open log file).
+int sandbox_set_audit_mode(int enabled, const char* log_path);
+
 // --- Query capabilities ---
 
 // Check if seccomp-BPF is available on this kernel.
