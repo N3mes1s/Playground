@@ -1,0 +1,14 @@
+#!/bin/bash
+# sandbox-claude: Interactive Claude agent inside Chrome's seccomp-BPF sandbox.
+#
+# Your current directory becomes the workspace - files created by Claude
+# persist after the session ends. All tool execution is sandboxed.
+#
+# Usage:
+#   sandbox-claude                          # Interactive, CWD as workspace
+#   sandbox-claude --workspace ./project    # Specific workspace
+#   sandbox-claude -p "build a web server"  # Single prompt mode
+#   sandbox-claude --help                   # Full usage
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/sandbox_claude.py" "$@"
