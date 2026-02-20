@@ -13,5 +13,5 @@ chrome-sandbox-agent/extracted/test_broker_check
 chrome-sandbox-agent/extracted/test_ptrace_debug
 chrome-sandbox-agent/extracted/test_quick
 
-# Test output artifacts
-rust-service-sandbox/out.txt
+# Rust service sandbox (created by Claude inside sandbox, not our code)
+rust-service-sandbox/
