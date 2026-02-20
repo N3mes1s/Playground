@@ -1,0 +1,22 @@
+# Build artifacts
+/target/
+**/*.rs.bk
+*.iso
+iso/boot/openclaw-unikernel
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
+*.pem
+*.key
