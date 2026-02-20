@@ -287,6 +287,25 @@ target_link_libraries(claude_sandbox_test PRIVATE
     chrome_sandbox_harness
 )
 
+# --- Agent smoke test ---
+# Tests agent-like workflows: file ops, pipelines, security boundaries
+add_executable(agent_smoke_test
+    harness/agent_smoke_test.c
+)
+target_link_libraries(agent_smoke_test PRIVATE
+    chrome_sandbox_harness
+)
+
+# --- Python in Chrome Sandbox test ---
+# Tests Python runtime inside the Chrome sandbox: interpreter, file I/O,
+# JSON processing, subprocess, and Claude API calls via urllib
+add_executable(python_sandbox_test
+    harness/python_sandbox_test.c
+)
+target_link_libraries(python_sandbox_test PRIVATE
+    chrome_sandbox_harness
+)
+
 # --- Services tests ---
 add_executable(sandbox_services_tests
     sandbox/linux/tests/test_main.cc

@@ -355,13 +355,17 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
     }
 
     // ioctl: Chrome's default allows only TCGETS and FIONREAD.
+    // We also allow FIOCLEX/FIONCLEX (set/clear close-on-exec via ioctl)
+    // because glibc and runtimes use these during file operations.
+    // Without FIOCLEX, Python can't open script files (fopen uses it
+    // internally to set O_CLOEXEC when openat2 returns ENOSYS).
     // Additional ioctl commands can be allowed at runtime via
     // sandbox_allow_ioctls() for runtimes that need them.
     if (sysno == __NR_ioctl) {
       const Arg<unsigned long> request(1);
-      // Start with Chrome's exact allowlist
+      // Chrome's allowlist + FIOCLEX/FIONCLEX for close-on-exec
       ResultExpr result = Switch(request)
-          .Cases({TCGETS, FIONREAD}, Allow())
+          .Cases({TCGETS, FIONREAD, FIOCLEX, FIONCLEX}, Allow())
           .Default(Block());
       // Layer on runtime-configured extensions (additive only)
       for (unsigned long cmd : extra_ioctls_) {
@@ -1956,16 +1960,32 @@ build_broker_permissions() {
   // System paths: read-only (same as Chrome's renderer broker)
   // These are the paths needed for dynamic linking, library loading,
   // and basic command execution within the sandbox.
+  //
+  // Each directory needs BOTH:
+  //   ReadOnly("/path")           - so stat/lstat on the directory itself works
+  //   ReadOnlyRecursive("/path/") - so files inside can be read
+  // Without the ReadOnly on the dir itself, stat("/usr/lib") returns EACCES
+  // which breaks runtimes that walk parent directories (Python, Ruby, etc.).
+  perms.push_back(BrokerFilePermission::ReadOnly("/lib"));
   perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/lib/"));
+  perms.push_back(BrokerFilePermission::ReadOnly("/lib64"));
   perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/lib64/"));
+  perms.push_back(BrokerFilePermission::ReadOnly("/usr"));
+  perms.push_back(BrokerFilePermission::ReadOnly("/usr/lib"));
   perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/usr/lib/"));
+  perms.push_back(BrokerFilePermission::ReadOnly("/usr/share"));
   perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/usr/share/"));
+  perms.push_back(BrokerFilePermission::ReadOnly("/etc"));
   perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/etc/"));
 
   // Executable paths: read-only (needed for execve, which the broker validates)
+  perms.push_back(BrokerFilePermission::ReadOnly("/bin"));
   perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/bin/"));
+  perms.push_back(BrokerFilePermission::ReadOnly("/sbin"));
   perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/sbin/"));
+  perms.push_back(BrokerFilePermission::ReadOnly("/usr/bin"));
   perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/usr/bin/"));
+  perms.push_back(BrokerFilePermission::ReadOnly("/usr/sbin"));
   perms.push_back(BrokerFilePermission::ReadOnlyRecursive("/usr/sbin/"));
 
   // /proc: read-only (process info, needed by many tools)
