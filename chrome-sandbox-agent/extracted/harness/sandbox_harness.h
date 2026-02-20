@@ -17,6 +17,13 @@
 //   │  └───────────────────┘  │  allow/deny│   validates path →      │
 //   │                         │            │   allow or -EACCES      │
 //   └─────────────────────────┘            └─────────────────────────┘
+//
+// Security model:
+//   The BASE sandbox is identical to Chrome's renderer sandbox.
+//   All extensions are ADDITIVE and RUNTIME-CONFIGURED — they can only
+//   relax specific restrictions, never weaken the structural isolation.
+//   Seccomp extensions are PER-EXECUTION — they apply only to the
+//   single command they're configured for, then auto-reset.
 
 #ifndef SANDBOX_HARNESS_H_
 #define SANDBOX_HARNESS_H_
@@ -31,13 +38,52 @@ extern "C" {
 // --- Sandbox lifecycle ---
 
 // Initialize the sandbox subsystem. Call once at startup.
+// All init-time configuration (paths, network) must be set BEFORE this call.
 // Returns 0 on success, -1 on failure.
 int sandbox_init(void);
 
 // Shutdown and clean up.
 void sandbox_shutdown(void);
 
-// --- Policy configuration ---
+// ==========================================================================
+// Init-time configuration (MUST be called before sandbox_init)
+// ==========================================================================
+// These settings affect the sandbox infrastructure and cannot be changed
+// after initialization because they're baked into the zygote's namespaces.
+
+// Configure writable paths for the broker to open on behalf of sandboxed process.
+// These paths get read-write-create access (bind-mounted read-write in the
+// mount namespace, ReadWriteCreateRecursive in the broker permission list).
+// paths: colon-separated list of allowed paths (e.g., "/tmp:/home/user/work")
+int sandbox_set_allowed_paths(const char* paths);
+
+// Configure read-only paths for runtimes, tools, and libraries.
+// These paths get read-only access (bind-mounted read-only in the mount
+// namespace, ReadOnlyRecursive in the broker permission list).
+// Use for: language runtimes (/opt/node22), extra tool dirs, SDK paths.
+// paths: colon-separated list of read-only paths (e.g., "/opt/node22:/opt/python3")
+int sandbox_set_readonly_paths(const char* paths);
+
+// Enable or disable network namespace isolation.
+// When enabled (default), sandboxed processes have no network access.
+// When disabled, sandboxed processes inherit the host network stack.
+// Use disabled for: API calls (Claude Code), package managers, curl, etc.
+// Default: enabled (Chrome's behavior).
+void sandbox_set_network_enabled(int enabled);
+
+// Enable or disable ALL namespace isolation (user, PID, network, mount).
+// When disabled, only seccomp-BPF is used.
+// Default: enabled.
+void sandbox_set_namespaces_enabled(int enabled);
+int sandbox_get_namespaces_enabled(void);
+
+// ==========================================================================
+// Per-execution runtime policy (can be changed between sandbox_exec calls)
+// ==========================================================================
+// These settings are sent to the zygote with EACH command via IPC.
+// Seccomp extensions are PER-EXECUTION: they apply only to the next
+// sandbox_exec() call, then auto-reset to Chrome's defaults.
+// This ensures each command gets the minimum privileges it needs.
 
 // Policy levels (maps to Chrome's baseline_policy.cc)
 typedef enum {
@@ -46,76 +92,50 @@ typedef enum {
   SANDBOX_POLICY_TRACE_ALL = 2,   // Allow all but trace every syscall
 } SandboxPolicyLevel;
 
-// Configure writable paths for the broker to open on behalf of sandboxed process.
-// These paths get read-write-create access (bind-mounted read-write in the
-// mount namespace, ReadWriteCreateRecursive in the broker permission list).
-// paths: colon-separated list of allowed paths (e.g., "/tmp:/home/user/work")
-// MUST be called before sandbox_init() — mount namespace is set up during init.
-int sandbox_set_allowed_paths(const char* paths);
-
-// Configure read-only paths for runtimes, tools, and libraries.
-// These paths get read-only access (bind-mounted read-only in the mount
-// namespace, ReadOnlyRecursive in the broker permission list).
-// Use for: language runtimes (/opt/node22), extra tool dirs, SDK paths.
-// paths: colon-separated list of read-only paths (e.g., "/opt/node22:/opt/python3")
-// MUST be called before sandbox_init() — mount namespace is set up during init.
-int sandbox_set_readonly_paths(const char* paths);
-
 // Set the policy level for subsequent sandbox_exec calls.
 void sandbox_set_policy(SandboxPolicyLevel level);
 
 // Exec policy: controls how execve/execveat are handled in the sandbox.
-//
-// Chrome blocks execve entirely (zygote model: fork, never exec).
-// Since we run commands via exec, we offer configurable exec policies:
 typedef enum {
-  // CHROME mode: block ALL exec after the initial command launch.
-  // The first execve (launching the sandboxed command) is allowed;
-  // all subsequent execs from within the sandbox are blocked with -EACCES.
-  // This matches Chrome's renderer sandbox behavior.
-  // Use for: single-binary sandboxing where the command shouldn't spawn others.
-  SANDBOX_EXEC_CHROME = 0,
-
-  // BROKERED mode (default): every execve is validated by the broker.
-  // The ptrace tracer checks the executable path against BrokerPermissionList.
-  // Only executables in allowed paths (/bin, /usr/bin, etc.) can run.
-  // Use for: shell commands and pipelines that need to exec sub-processes.
-  SANDBOX_EXEC_BROKERED = 1,
-
-  // BLOCKED mode: block ALL execs including the initial one.
-  // The command must already be running (e.g., via fork from zygote).
-  // Use for: Chrome-identical behavior when exec is truly unnecessary.
-  SANDBOX_EXEC_BLOCKED = 2,
+  SANDBOX_EXEC_CHROME = 0,    // Allow first exec only (Chrome's behavior)
+  SANDBOX_EXEC_BROKERED = 1,  // Validate every exec path against broker
+  SANDBOX_EXEC_BLOCKED = 2,   // Block ALL execs
 } SandboxExecPolicy;
 
 // Set the exec policy for subsequent sandbox_exec calls.
 // Default: SANDBOX_EXEC_BROKERED
 void sandbox_set_exec_policy(SandboxExecPolicy policy);
 
-// --- Seccomp filter extensions ---
+// --- Seccomp filter extensions (per-execution, auto-reset) ---
 //
 // The default seccomp-BPF filter is identical to Chrome's renderer sandbox.
-// These functions allow extending the filter at runtime WITHOUT modifying the
-// base policy. Extensions are additive — they can only allow operations that
-// Chrome blocks, never restrict operations Chrome allows.
+// These functions EXTEND the filter for the NEXT sandbox_exec() call ONLY.
+// After each execution, extensions auto-reset to Chrome's defaults.
 //
-// MUST be called before sandbox_init() — seccomp filters are installed during init.
+// Security properties:
+//   - Extensions are PER-EXECUTION (scoped to one command, then cleared)
+//   - Extensions are ADDITIVE (can only allow, never restrict beyond Chrome)
+//   - Extensions are AUDITED (logged to stderr when active)
+//   - The base Chrome policy is ALWAYS enforced as the minimum
+//
+// Example usage:
+//   sandbox_allow_ioctls(node_ioctls, 7);  // extend for next exec
+//   sandbox_exec_shell("node -e 'console.log(1)'");  // uses extensions
+//   sandbox_exec_shell("echo safe");  // back to Chrome defaults
 
-// Allow additional ioctl commands inside the sandbox.
+// Allow additional ioctl commands for the NEXT sandbox_exec() call.
 // By default only TCGETS and FIONREAD are allowed (Chrome's RestrictIoctl).
-// Use for runtimes that need: FIONBIO (non-blocking), TIOCGPGRP (TTY detect),
-// TIOCGWINSZ (terminal size), TCSETS (terminal config), etc.
-// cmds: array of ioctl request codes to allow.
-// count: number of entries in the array.
+// Auto-resets after each sandbox_exec().
 int sandbox_allow_ioctls(const unsigned long* cmds, int count);
 
-// Allow additional getsockopt/setsockopt options inside the sandbox.
+// Allow additional getsockopt/setsockopt options for the NEXT sandbox_exec() call.
 // By default only SOL_SOCKET+SO_PEEK_OFF is allowed (Chrome's policy).
-// Use for runtimes that need: SO_TYPE (socket detection), SO_ERROR,
-// SO_RCVBUF/SO_SNDBUF, SO_KEEPALIVE, SO_REUSEADDR, etc.
-// optnames: array of SOL_SOCKET option names to allow.
-// count: number of entries in the array.
+// Auto-resets after each sandbox_exec().
 int sandbox_allow_sockopts(const int* optnames, int count);
+
+// Clear all seccomp extensions (return to Chrome defaults).
+// This is called automatically after each sandbox_exec().
+void sandbox_clear_extensions(void);
 
 // --- Execution ---
 
@@ -136,10 +156,12 @@ typedef struct {
 // Execute a command inside the Chrome sandbox.
 // argv: null-terminated array of command arguments (argv[0] = program)
 // Returns a SandboxResult. Caller must call sandbox_result_free().
+// Seccomp extensions are applied to this execution only, then auto-reset.
 SandboxResult sandbox_exec(const char* const* argv);
 
 // Execute a shell command inside the sandbox.
 // cmd: shell command string (run via /bin/sh -c)
+// Seccomp extensions are applied to this execution only, then auto-reset.
 SandboxResult sandbox_exec_shell(const char* cmd);
 
 // Free a SandboxResult's allocated buffers.
@@ -155,21 +177,6 @@ int sandbox_start_broker(void);
 
 // Stop the broker process.
 void sandbox_stop_broker(void);
-
-// --- Namespace isolation ---
-
-// Enable or disable namespace isolation (user, PID, network, mount).
-// When enabled (default), the sandbox applies Chrome's full defense-in-depth:
-//   Layer 1: User namespace (isolate UIDs, drop privilege)
-//   Layer 2: PID namespace (isolate process tree)
-//   Layer 3: Network namespace (isolate network stack)
-//   Layer 4: Mount namespace (isolate filesystem view)
-//   Layer 5: Drop all capabilities
-//   Layer 6: seccomp-BPF filter (syscall allowlist)
-// When disabled, only seccomp-BPF is used.
-// Must be called before sandbox_exec(). Default: enabled.
-void sandbox_set_namespaces_enabled(int enabled);
-int sandbox_get_namespaces_enabled(void);
 
 // --- Query capabilities ---
 

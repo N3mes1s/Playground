@@ -49,6 +49,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 // Chromium sandbox headers (the real extracted code)
@@ -238,10 +239,12 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
  public:
   AgentSandboxPolicy(SandboxPolicyLevel level,
                      std::set<unsigned long> extra_ioctls,
-                     std::set<int> extra_sockopts)
+                     std::set<int> extra_sockopts,
+                     bool allow_networking)
       : level_(level), policy_pid_(sandbox::sys_getpid()),
         extra_ioctls_(std::move(extra_ioctls)),
-        extra_sockopts_(std::move(extra_sockopts)) {
+        extra_sockopts_(std::move(extra_sockopts)),
+        allow_networking_(allow_networking) {
     // Allocate crash keys for Chrome's SIGSYS handler logging
     sandbox::AllocateCrashKeys();
   }
@@ -532,14 +535,23 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
 
     // ── BLOCK: Dangerous syscall categories ──────────────────────────
 
-    // Network: block new socket creation (except AF_UNIX)
+    // Network: when networking is disabled (Chrome default), block everything
+    // except AF_UNIX. When enabled, allow TCP/UDP connections for API calls.
     if (sysno == __NR_socket) {
       Arg<int> domain(0);
+      if (allow_networking_) {
+        // Allow AF_UNIX, AF_INET, AF_INET6
+        return sandbox::bpf_dsl::If(
+            sandbox::bpf_dsl::AnyOf(domain == AF_UNIX, domain == AF_INET,
+                                     domain == AF_INET6),
+            Allow()).Else(Block());
+      }
       return sandbox::bpf_dsl::If(domain == AF_UNIX, Allow()).Else(Block());
     }
     if (sysno == __NR_bind || sysno == __NR_listen ||
         sysno == __NR_accept || sysno == __NR_accept4 ||
         sysno == __NR_connect) {
+      if (allow_networking_) return Allow();
       return Block();
     }
 
@@ -634,6 +646,7 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
   pid_t policy_pid_;
   std::set<unsigned long> extra_ioctls_;   // runtime-configured ioctl extensions
   std::set<int> extra_sockopts_;           // runtime-configured sockopt extensions
+  bool allow_networking_;                  // allow AF_INET/AF_INET6 + connect/bind
 };
 
 // =============================================================================
@@ -724,7 +737,9 @@ static bool read_all(int fd, void* buf, size_t len) {
 // Send a command to the zygote
 static bool zygote_send_command(int fd, const char* const* argv,
                                 SandboxExecPolicy exec_policy,
-                                SandboxPolicyLevel sandbox_policy) {
+                                SandboxPolicyLevel sandbox_policy,
+                                const std::set<unsigned long>& extra_ioctls,
+                                const std::set<int>& extra_sockopts) {
   // Count args
   uint32_t argc = 0;
   for (const char* const* p = argv; *p; p++) argc++;
@@ -735,6 +750,8 @@ static bool zygote_send_command(int fd, const char* const* argv,
     total += sizeof(uint32_t) + strlen(argv[i]);
   }
   total += sizeof(int32_t) * 2;  // exec_policy + sandbox_policy
+  total += sizeof(uint32_t) + extra_ioctls.size() * sizeof(unsigned long);
+  total += sizeof(uint32_t) + extra_sockopts.size() * sizeof(int32_t);
 
   // Write total length
   uint32_t total_len = (uint32_t)total;
@@ -756,13 +773,29 @@ static bool zygote_send_command(int fd, const char* const* argv,
   if (!write_all(fd, &ep, sizeof(ep))) return false;
   if (!write_all(fd, &sp, sizeof(sp))) return false;
 
+  // Write per-execution seccomp extensions
+  uint32_t n_ioctls = (uint32_t)extra_ioctls.size();
+  if (!write_all(fd, &n_ioctls, sizeof(n_ioctls))) return false;
+  for (unsigned long cmd : extra_ioctls) {
+    if (!write_all(fd, &cmd, sizeof(cmd))) return false;
+  }
+
+  uint32_t n_sockopts = (uint32_t)extra_sockopts.size();
+  if (!write_all(fd, &n_sockopts, sizeof(n_sockopts))) return false;
+  for (int opt : extra_sockopts) {
+    int32_t opt32 = (int32_t)opt;
+    if (!write_all(fd, &opt32, sizeof(opt32))) return false;
+  }
+
   return true;
 }
 
 // Receive a command in the zygote
 static bool zygote_recv_command(int fd, std::vector<std::string>& args,
                                 SandboxExecPolicy& exec_policy,
-                                SandboxPolicyLevel& sandbox_policy) {
+                                SandboxPolicyLevel& sandbox_policy,
+                                std::set<unsigned long>& extra_ioctls,
+                                std::set<int>& extra_sockopts) {
   uint32_t total_len;
   if (!read_all(fd, &total_len, sizeof(total_len))) return false;
 
@@ -785,6 +818,27 @@ static bool zygote_recv_command(int fd, std::vector<std::string>& args,
   if (!read_all(fd, &sp, sizeof(sp))) return false;
   exec_policy = (SandboxExecPolicy)ep;
   sandbox_policy = (SandboxPolicyLevel)sp;
+
+  // Read per-execution seccomp extensions
+  extra_ioctls.clear();
+  uint32_t n_ioctls;
+  if (!read_all(fd, &n_ioctls, sizeof(n_ioctls))) return false;
+  if (n_ioctls > 256) return false;  // Sanity check
+  for (uint32_t i = 0; i < n_ioctls; i++) {
+    unsigned long cmd;
+    if (!read_all(fd, &cmd, sizeof(cmd))) return false;
+    extra_ioctls.insert(cmd);
+  }
+
+  extra_sockopts.clear();
+  uint32_t n_sockopts;
+  if (!read_all(fd, &n_sockopts, sizeof(n_sockopts))) return false;
+  if (n_sockopts > 256) return false;  // Sanity check
+  for (uint32_t i = 0; i < n_sockopts; i++) {
+    int32_t opt;
+    if (!read_all(fd, &opt, sizeof(opt))) return false;
+    extra_sockopts.insert((int)opt);
+  }
 
   return true;
 }
@@ -965,6 +1019,7 @@ static std::string read_child_string(pid_t pid, unsigned long addr, size_t maxle
 // We use Chrome's extracted NamespaceUtils and syscall_wrappers directly.
 
 static bool g_enable_namespaces = true;
+static bool g_enable_network_isolation = true;  // default: Chrome's behavior
 
 // Set up user namespace and map current uid/gid.
 // Returns true on success, false if namespaces unavailable (non-fatal).
@@ -1281,7 +1336,12 @@ static NamespaceStatus apply_namespace_isolation(bool skip_pid_ns = false) {
   status.ipc_ns = setup_ipc_namespace();
 
   // Layer 1d: Network namespace
-  status.net_ns = setup_net_namespace();
+  // When network isolation is disabled, sandboxed processes inherit the host
+  // network stack (needed for API calls, curl, etc.). All other isolation
+  // layers (user NS, PID NS, mount NS, seccomp-BPF) remain active.
+  if (g_enable_network_isolation) {
+    status.net_ns = setup_net_namespace();
+  }
 
   // Layer 2: Mount namespace for filesystem isolation
   status.mount_ns = setup_mount_namespace();
@@ -1435,7 +1495,8 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
     // Install Chrome's seccomp-BPF sandbox using the actual Chromium code.
     // This is the innermost layer and filters every syscall.
     auto policy = std::make_unique<AgentSandboxPolicy>(
-        g_policy_level, g_extra_ioctls, g_extra_sockopts);
+        g_policy_level, g_extra_ioctls, g_extra_sockopts,
+        !g_enable_network_isolation);
     sandbox::SandboxBPF sandbox_bpf(std::move(policy));
     if (!sandbox_bpf.StartSandbox(sandbox::SandboxBPF::SeccompLevel::SINGLE_THREADED)) {
       _exit(126);
@@ -1449,6 +1510,24 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
   // === PARENT (tracer/broker) ===
   close(stdout_pipe[1]);
   close(stderr_pipe[1]);
+
+  // Start pipe reader threads BEFORE the ptrace loop.
+  // This prevents deadlock when the child produces more output than the pipe
+  // buffer (64KB). Without concurrent draining, the child blocks on write(),
+  // the parent blocks on waitpid(), and we deadlock.
+  std::string stdout_data, stderr_data;
+  std::thread stdout_reader([fd = stdout_pipe[0], &stdout_data]() {
+    char buf[4096];
+    ssize_t n;
+    while ((n = read(fd, buf, sizeof(buf))) > 0)
+      stdout_data.append(buf, n);
+  });
+  std::thread stderr_reader([fd = stderr_pipe[0], &stderr_data]() {
+    char buf[4096];
+    ssize_t n;
+    while ((n = read(fd, buf, sizeof(buf))) > 0)
+      stderr_data.append(buf, n);
+  });
 
   // Wait for child's SIGSTOP
   int status;
@@ -1835,18 +1914,13 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
     }
   }
 
-  // Read captured stdout/stderr
-  std::string stdout_data, stderr_data;
-  {
-    char buf[4096];
-    ssize_t n;
-    while ((n = read(stdout_pipe[0], buf, sizeof(buf))) > 0)
-      stdout_data.append(buf, n);
-    close(stdout_pipe[0]);
-    while ((n = read(stderr_pipe[0], buf, sizeof(buf))) > 0)
-      stderr_data.append(buf, n);
-    close(stderr_pipe[0]);
-  }
+  // Wait for pipe reader threads to finish.
+  // The threads exit when all write-end references are closed (i.e., all child
+  // processes have exited), so this join completes shortly after the ptrace loop.
+  stdout_reader.join();
+  stderr_reader.join();
+  close(stdout_pipe[0]);
+  close(stderr_pipe[0]);
 
   auto end = std::chrono::steady_clock::now();
   double elapsed = std::chrono::duration<double>(end - start).count();
@@ -1904,14 +1978,29 @@ build_broker_permissions() {
   perms.push_back(BrokerFilePermission::ReadOnly("/dev/zero"));
 
   // /tmp: read-write-create (sandboxed scratch space)
+  // ReadOnly on /tmp itself so stat/lstat works (Node.js mkdirSync checks
+  // existence before creating). Recursive write on contents.
+  perms.push_back(BrokerFilePermission::ReadOnly("/tmp"));
   perms.push_back(BrokerFilePermission::ReadWriteCreateRecursive("/tmp/"));
 
   // Add user-configured read-only paths (runtimes, tools, SDKs)
   for (const auto& path : g_readonly_paths) {
     if (!path.empty() && path[0] == '/') {
+      // Add the directory itself (without slash) so lstat works on it
+      perms.push_back(BrokerFilePermission::ReadOnly(path));
+      // Add recursive access to contents
       std::string p = path;
       if (p.back() != '/') p += '/';
       perms.push_back(BrokerFilePermission::ReadOnlyRecursive(p));
+      // Add parent directories so realpathSync() can walk the path.
+      // Only the directory entries themselves (not contents) are exposed.
+      std::string parent = path;
+      while (parent.size() > 1) {
+        size_t pos = parent.rfind('/');
+        if (pos == 0) break;  // root already in perms
+        parent = parent.substr(0, pos);
+        perms.push_back(BrokerFilePermission::ReadOnly(parent));
+      }
     }
   }
 
@@ -1959,14 +2048,26 @@ build_broker_permissions() {
     std::vector<std::string> args;
     SandboxExecPolicy exec_policy;
     SandboxPolicyLevel sandbox_policy;
+    std::set<unsigned long> cmd_extra_ioctls;
+    std::set<int> cmd_extra_sockopts;
 
-    if (!zygote_recv_command(zygote_fd, args, exec_policy, sandbox_policy)) {
+    if (!zygote_recv_command(zygote_fd, args, exec_policy, sandbox_policy,
+                             cmd_extra_ioctls, cmd_extra_sockopts)) {
       break;  // Agent closed the socket or sent invalid data
     }
 
     // Apply per-command policies
     g_exec_policy = exec_policy;
     g_policy_level = sandbox_policy;
+    // Per-exec seccomp extensions (scoped to this single command)
+    g_extra_ioctls = std::move(cmd_extra_ioctls);
+    g_extra_sockopts = std::move(cmd_extra_sockopts);
+
+    // Audit log: report active extensions
+    if (!g_extra_ioctls.empty() || !g_extra_sockopts.empty()) {
+      fprintf(stderr, "[sandbox-audit] exec extensions: %zu ioctls, %zu sockopts\n",
+              g_extra_ioctls.size(), g_extra_sockopts.size());
+    }
 
     // Build argv for exec_with_tracing
     std::vector<const char*> argv;
@@ -1977,6 +2078,10 @@ build_broker_permissions() {
     // (which inherits the zygote's namespace isolation), applies PID NS +
     // seccomp-BPF, execs the command, and traces it via ptrace broker.
     SandboxResult cmd_result = exec_with_tracing(argv.data());
+
+    // Clear per-exec extensions (auto-reset after each command)
+    g_extra_ioctls.clear();
+    g_extra_sockopts.clear();
 
     // Send results back to the agent
     zygote_send_result(zygote_fd, cmd_result);
@@ -2095,10 +2200,28 @@ int sandbox_allow_sockopts(const int* optnames, int count) {
   return 0;
 }
 
+void sandbox_clear_extensions(void) {
+  g_extra_ioctls.clear();
+  g_extra_sockopts.clear();
+}
+
+void sandbox_set_network_enabled(int enabled) {
+  g_enable_network_isolation = (enabled == 0);  // enabled=1 means allow network
+}
+
 SandboxResult sandbox_exec(const char* const* argv) {
+  // Capture current extensions (will be sent via IPC then auto-cleared)
+  std::set<unsigned long> exec_ioctls = g_extra_ioctls;
+  std::set<int> exec_sockopts = g_extra_sockopts;
+
+  // Auto-clear extensions after capturing (per-exec scoping)
+  g_extra_ioctls.clear();
+  g_extra_sockopts.clear();
+
   // If zygote is running, dispatch via zygote for inherited namespace isolation
   if (g_zygote_pid > 0 && g_zygote_fd >= 0) {
-    if (zygote_send_command(g_zygote_fd, argv, g_exec_policy, g_policy_level)) {
+    if (zygote_send_command(g_zygote_fd, argv, g_exec_policy, g_policy_level,
+                            exec_ioctls, exec_sockopts)) {
       SandboxResult result = {};
       if (zygote_recv_result(g_zygote_fd, result)) {
         return result;
@@ -2110,7 +2233,13 @@ SandboxResult sandbox_exec(const char* const* argv) {
     return err;
   }
   // No zygote — run directly (applies namespace isolation per-call)
-  return exec_with_tracing(argv);
+  // Set globals for exec_with_tracing to pick up
+  g_extra_ioctls = std::move(exec_ioctls);
+  g_extra_sockopts = std::move(exec_sockopts);
+  SandboxResult result = exec_with_tracing(argv);
+  g_extra_ioctls.clear();
+  g_extra_sockopts.clear();
+  return result;
 }
 
 SandboxResult sandbox_exec_shell(const char* cmd) {

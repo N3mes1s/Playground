@@ -278,6 +278,15 @@ target_link_libraries(sandbox_harness_test PRIVATE
     chrome_sandbox_harness
 )
 
+# --- Claude Code in Chrome Sandbox test ---
+# Tests Claude Code running inside the Chrome sandbox with real API calls
+add_executable(claude_sandbox_test
+    harness/claude_sandbox_test.c
+)
+target_link_libraries(claude_sandbox_test PRIVATE
+    chrome_sandbox_harness
+)
+
 # --- Services tests ---
 add_executable(sandbox_services_tests
     sandbox/linux/tests/test_main.cc
