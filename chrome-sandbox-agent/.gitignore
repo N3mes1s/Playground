@@ -11,6 +11,7 @@ chromium-src/
 
 # Rust build artifacts
 sandbox-run-cli/target/
+sandbox-workspace/rust-sysinfo-service/target/
 
 # Editor/IDE
 .vscode/
