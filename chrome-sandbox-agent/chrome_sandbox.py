@@ -152,13 +152,50 @@ class ChromeSandbox:
         result = sandbox.run("echo hello")
         print(result.stdout)        # "hello\n"
         print(result.syscall_log)   # [{nr: 1, name: "write", risk: "LOW", ...}, ...]
+
+    Workspace mounting:
+        sandbox = ChromeSandbox(workspace_dir="/home/user/my-project")
+        result = sandbox.run("ls /home/user/my-project")  # Host dir, read-write
+        # Files created here persist on the host after sandbox exits.
+        # Use workspace_symlink="/workspace" for a clean in-sandbox alias.
     """
 
     def __init__(self, policy: PolicyLevel = PolicyLevel.TRACE_ALL,
                  namespaces: bool = True,
                  exec_policy: ExecPolicy = ExecPolicy.BROKERED,
                  readonly_paths: Optional[list[str]] = None,
-                 network_enabled: bool = False):
+                 allowed_paths: Optional[list[str]] = None,
+                 network_enabled: bool = False,
+                 workspace_dir: Optional[str] = None,
+                 workspace_symlink: Optional[str] = "/workspace"):
+        """Initialize the Chrome sandbox.
+
+        Args:
+            policy: Seccomp-BPF policy level.
+            namespaces: Enable namespace isolation layers.
+            exec_policy: Exec policy for sandboxed processes.
+            readonly_paths: Host paths to mount read-only.
+            allowed_paths: Additional host paths to mount read-write.
+            network_enabled: Allow network access inside sandbox.
+            workspace_dir: Host directory to mount read-write as the workspace.
+                Resolved to absolute path. Created if it doesn't exist.
+                Files written here persist on the host after sandbox exit.
+            workspace_symlink: Path alias inside sandbox that symlinks to
+                the workspace. Default "/workspace". Set to None to disable.
+        """
+        self._workspace_dir = None
+        self._workspace_symlink = workspace_symlink
+
+        # Resolve and ensure workspace exists on host
+        if workspace_dir:
+            self._workspace_dir = str(Path(workspace_dir).resolve())
+            os.makedirs(self._workspace_dir, exist_ok=True)
+
+        # Build the full list of allowed (read-write) paths
+        all_allowed = list(allowed_paths or [])
+        if self._workspace_dir:
+            all_allowed.append(self._workspace_dir)
+
         # Pre-init configuration (must be set BEFORE sandbox_init)
         _lib.sandbox_set_policy(int(policy))
         _lib.sandbox_set_exec_policy(int(exec_policy))
@@ -167,11 +204,32 @@ class ChromeSandbox:
         if readonly_paths:
             joined = ":".join(readonly_paths)
             _lib.sandbox_set_readonly_paths(joined.encode("utf-8"))
+        if all_allowed:
+            joined = ":".join(all_allowed)
+            _lib.sandbox_set_allowed_paths(joined.encode("utf-8"))
 
         rc = _lib.sandbox_init()
         if rc != 0:
             raise RuntimeError("Failed to initialize Chrome sandbox")
         self._policy = policy
+
+        # Create the workspace symlink inside the sandbox
+        # The workspace dir is bind-mounted at its real path; we create
+        # a symlink so the agent can use a clean /workspace path.
+        if self._workspace_dir and self._workspace_symlink:
+            self.run(f"ln -sfn {self._workspace_dir!r} {self._workspace_symlink!r}")
+
+    @property
+    def workspace_dir(self) -> Optional[str]:
+        """Host path of the mounted workspace (None if no workspace)."""
+        return self._workspace_dir
+
+    @property
+    def workspace_path(self) -> Optional[str]:
+        """Path where workspace appears inside the sandbox."""
+        if not self._workspace_dir:
+            return None
+        return self._workspace_symlink or self._workspace_dir
 
     def set_policy(self, policy: PolicyLevel) -> None:
         """Change the seccomp-BPF policy level."""

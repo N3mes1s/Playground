@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 import anthropic
 
 from chrome_sandbox import ChromeSandbox, PolicyLevel, ExecPolicy, SandboxResult
+from sandbox_config import SandboxConfig
 
 
 # ─── Tool Definitions (Claude tool_use format) ─────────────────────────────
@@ -201,7 +202,7 @@ def execute_tool(sandbox: ChromeSandbox, tool_name: str, tool_input: dict) -> st
 
 # ─── Agent Loop ───────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """\
+SYSTEM_PROMPT_BASE = """\
 You are an AI agent running inside Chrome's seccomp-BPF sandbox. Every tool \
 call you make executes inside an isolated process with syscall filtering and \
 full ptrace-based tracing.
@@ -221,28 +222,65 @@ You have these tools:
 Be concise but thorough. When reporting results, mention notable syscall \
 activity if relevant (e.g., network attempts, file access patterns)."""
 
+WORKSPACE_PROMPT_ADDENDUM = """
 
-def run_agent(user_message: str, policy: PolicyLevel = PolicyLevel.TRACE_ALL,
-              readonly_paths: list[str] | None = None,
-              network_enabled: bool = False):
-    """Run the sandboxed agent with the given user message."""
+IMPORTANT - Workspace directory:
+Your workspace is mounted at {workspace_path}. This is a persistent directory \
+bind-mounted from the host filesystem. All files you create here will survive \
+after the sandbox exits.
+
+ALWAYS create files and projects in {workspace_path}/ (not /tmp).
+- /tmp is a private tmpfs inside the sandbox and is EPHEMERAL (destroyed on exit).
+- {workspace_path}/ is the real host directory and is PERSISTENT.
+
+Start by running: cd {workspace_path} && ls -la"""
+
+
+def build_system_prompt(workspace_path: str | None = None) -> str:
+    """Build the system prompt, adding workspace info if configured."""
+    prompt = SYSTEM_PROMPT_BASE
+    if workspace_path:
+        prompt += WORKSPACE_PROMPT_ADDENDUM.format(workspace_path=workspace_path)
+    return prompt
+
+
+def run_agent(user_message: str, config: SandboxConfig | None = None):
+    """Run the sandboxed agent with the given user message.
+
+    Args:
+        user_message: The task/prompt for the agent.
+        config: Sandbox configuration. If None, loads from defaults/env/file.
+    """
+    if config is None:
+        config = SandboxConfig.load()
+
+    policy = PolicyLevel[config.policy]
 
     client = anthropic.Anthropic()
+
+    # Ensure workspace exists on host
+    config.ensure_workspace()
+
     sandbox = ChromeSandbox(
         policy=policy,
-        exec_policy=ExecPolicy.BROKERED,
-        readonly_paths=readonly_paths,
-        network_enabled=network_enabled,
+        exec_policy=ExecPolicy[config.exec_policy],
+        readonly_paths=config.readonly_paths,
+        allowed_paths=config.allowed_paths,
+        network_enabled=config.network,
+        workspace_dir=config.workspace,
+        workspace_symlink=config.sandbox_workspace_path,
     )
 
     print(f"\n{'='*70}")
     print(f"Chrome Sandbox Agent")
-    print(f"Policy: {policy.name}")
+    print(f"Config:")
+    print(config.summary())
     print(f"Kernel: {ChromeSandbox.kernel_version()}")
     print(f"seccomp-BPF: {'available' if ChromeSandbox.has_seccomp_bpf() else 'NOT available'}")
     print(f"{'='*70}")
     print(f"\nUser: {user_message}\n")
 
+    system_prompt = build_system_prompt(sandbox.workspace_path)
     messages = [{"role": "user", "content": user_message}]
 
     # Agent loop: keep going until the model stops making tool calls
@@ -250,7 +288,7 @@ def run_agent(user_message: str, policy: PolicyLevel = PolicyLevel.TRACE_ALL,
         response = client.messages.create(
             model="claude-sonnet-4-5-20250929",
             max_tokens=4096,
-            system=SYSTEM_PROMPT,
+            system=system_prompt,
             tools=TOOLS,
             messages=messages,
         )
@@ -325,28 +363,37 @@ def main():
         print("Set it with: export ANTHROPIC_API_KEY=sk-ant-...")
         sys.exit(1)
 
-    if len(sys.argv) > 1:
-        user_msg = " ".join(sys.argv[1:])
-    else:
-        user_msg = (
-            "Explore the /tmp directory, create a test file, verify it exists, "
-            "then check what system information is available. Report on the "
-            "syscall patterns you observe."
-        )
+    # Parse arguments: [--workspace DIR] [--config FILE] [message...]
+    args = sys.argv[1:]
+    workspace_override = None
+    config_file = None
+    msg_parts = []
 
-    # Choose policy based on env var or default to TRACE_ALL
-    policy_name = os.environ.get("SANDBOX_POLICY", "TRACE_ALL")
-    policy = PolicyLevel[policy_name]
+    i = 0
+    while i < len(args):
+        if args[i] == "--workspace" and i + 1 < len(args):
+            workspace_override = args[i + 1]
+            i += 2
+        elif args[i] == "--config" and i + 1 < len(args):
+            config_file = args[i + 1]
+            i += 2
+        else:
+            msg_parts.append(args[i])
+            i += 1
 
-    # Read-only paths for Python runtime
-    readonly_paths = ["/usr/local/lib", "/usr/local/bin"]
+    user_msg = " ".join(msg_parts) if msg_parts else (
+        "Explore the workspace directory, create a test file, verify it exists, "
+        "then check what system information is available. Report on the "
+        "syscall patterns you observe."
+    )
 
-    # Enable network if SANDBOX_NETWORK=1 or for API calls
-    network_enabled = os.environ.get("SANDBOX_NETWORK", "0") == "1"
+    # Load config from file + env vars + CLI overrides
+    config = SandboxConfig.load(
+        config_file=config_file,
+        workspace=workspace_override,
+    )
 
-    run_agent(user_msg, policy=policy,
-              readonly_paths=readonly_paths,
-              network_enabled=network_enabled)
+    run_agent(user_msg, config=config)
 
 
 if __name__ == "__main__":

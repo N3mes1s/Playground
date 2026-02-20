@@ -1199,24 +1199,6 @@ static bool setup_chroot_filesystem() {
     bind_mount_readonly(ro_path.c_str(), path);
   }
 
-  // Bind-mount user-configured allowed paths (read-write)
-  for (const auto& allowed : g_allowed_paths) {
-    if (allowed.empty() || allowed[0] != '/') continue;
-    // Create the mount point in new root
-    snprintf(path, sizeof(path), "%s%s", sandbox_root, allowed.c_str());
-    // Create parent directories
-    std::string parent = path;
-    for (size_t j = 1; j < parent.size(); j++) {
-      if (parent[j] == '/') {
-        parent[j] = '\0';
-        mkdir(parent.c_str(), 0755);
-        parent[j] = '/';
-      }
-    }
-    mkdir(path, 0755);
-    mount(allowed.c_str(), path, nullptr, MS_BIND | MS_REC, nullptr);
-  }
-
   // Mount minimal /dev entries
   snprintf(path, sizeof(path), "%s/dev/null", sandbox_root);
   close(open(path, O_WRONLY | O_CREAT, 0666));
@@ -1235,8 +1217,30 @@ static bool setup_chroot_filesystem() {
   mount("/dev/zero", path, nullptr, MS_BIND, nullptr);
 
   // Mount a private tmpfs for /tmp in new root
+  // NOTE: This MUST come BEFORE allowed_paths bind-mounts so that workspace
+  // directories under /tmp (e.g. /tmp/workspace) can be bind-mounted on top
+  // of the tmpfs. Otherwise the tmpfs would shadow the workspace bind-mount.
   snprintf(path, sizeof(path), "%s/tmp", sandbox_root);
   mount("tmpfs", path, "tmpfs", MS_NOSUID | MS_NODEV, "size=32m,mode=1777");
+
+  // Bind-mount user-configured allowed paths (read-write)
+  // Mounted AFTER tmpfs /tmp so workspace dirs under /tmp overlay the tmpfs.
+  for (const auto& allowed : g_allowed_paths) {
+    if (allowed.empty() || allowed[0] != '/') continue;
+    // Create the mount point in new root
+    snprintf(path, sizeof(path), "%s%s", sandbox_root, allowed.c_str());
+    // Create parent directories
+    std::string parent = path;
+    for (size_t j = 1; j < parent.size(); j++) {
+      if (parent[j] == '/') {
+        parent[j] = '\0';
+        mkdir(parent.c_str(), 0755);
+        parent[j] = '/';
+      }
+    }
+    mkdir(path, 0755);
+    mount(allowed.c_str(), path, nullptr, MS_BIND | MS_REC, nullptr);
+  }
 
   // Mount procfs in new root (needed by ptrace broker to read child memory
   // via /proc/pid/mem, and by tools like ps, top, /proc/self/*)
