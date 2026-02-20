@@ -4,6 +4,7 @@
 #ifndef BASE_PROCESS_LAUNCH_H_
 #define BASE_PROCESS_LAUNCH_H_
 
+#include <sched.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -13,6 +14,8 @@
 #include <string>
 #include <vector>
 
+#include "base/command_line.h"
+#include "base/environment.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_file.h"
 #include "base/process/process.h"
@@ -27,7 +30,8 @@ struct LaunchOptions {
   bool new_process_group = false;
   std::string current_directory;
   std::map<std::string, std::string> environment;
-  std::map<int, int> fds_to_remap;
+  // fds_to_remap: vector of (target_fd, source_fd) pairs
+  std::vector<std::pair<int, int>> fds_to_remap;
 
   // Pre-exec delegate: called in the child after fork, before exec.
   std::function<void()> pre_exec_delegate;
@@ -43,9 +47,9 @@ inline Process LaunchProcess(const std::vector<std::string>& argv,
   if (pid < 0) return Process();
   if (pid == 0) {
     // Child
-    for (auto& [child_fd, parent_fd] : options.fds_to_remap) {
-      if (child_fd != parent_fd) {
-        dup2(parent_fd, child_fd);
+    for (auto& [target_fd, source_fd] : options.fds_to_remap) {
+      if (target_fd != source_fd) {
+        dup2(source_fd, target_fd);
       }
     }
     if (!options.current_directory.empty()) {
@@ -67,6 +71,18 @@ inline Process LaunchProcess(const std::vector<std::string>& argv,
     waitpid(pid, &status, 0);
   }
   return Process(pid);
+}
+
+// ForkWithFlags: clone() with specific flags. Used by namespace/credential code.
+inline pid_t ForkWithFlags(unsigned long flags, pid_t* ptid, pid_t* ctid) {
+  // Use clone() with the specified flags
+  // For simple cases where CLONE_VM is not set, we can emulate with fork()
+  // and then apply namespace flags. But the real need is for CLONE_NEWUSER etc.
+  const size_t kStackSize = 1024 * 1024;
+  // We use syscall(SYS_clone, ...) for maximum compatibility
+  // But for the sandbox tests, fork-like semantics suffice
+  pid_t pid = syscall(SYS_clone, flags, nullptr, ptid, ctid, 0);
+  return pid;
 }
 
 }  // namespace base

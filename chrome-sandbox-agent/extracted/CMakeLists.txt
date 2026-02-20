@@ -79,6 +79,7 @@ target_link_libraries(sandbox_seccomp_helpers PUBLIC sandbox_seccomp_bpf)
 # Core services only (namespace_sandbox, libc_interceptor, thread_helpers
 # require too many base/ deps and are not needed for the sandbox itself)
 set(SANDBOX_SERVICES_SOURCES
+    sandbox/linux/services/credentials.cc
     sandbox/linux/services/init_process_reaper.cc
     sandbox/linux/services/namespace_utils.cc
     sandbox/linux/services/proc_util.cc
@@ -90,7 +91,7 @@ set(SANDBOX_SERVICES_SOURCES
 )
 
 add_library(sandbox_services STATIC ${SANDBOX_SERVICES_SOURCES})
-target_link_libraries(sandbox_services PUBLIC sandbox_seccomp_bpf)
+target_link_libraries(sandbox_services PUBLIC sandbox_seccomp_bpf cap)
 
 # =============================================================================
 # Library: sandbox_syscall_broker (broker process for proxying syscalls)
@@ -203,6 +204,9 @@ target_link_libraries(sandbox_test_support PUBLIC
 add_executable(sandbox_bpf_dsl_tests
     sandbox/linux/tests/test_main.cc
     sandbox/linux/bpf_dsl/syscall_set_unittest.cc
+    sandbox/linux/bpf_dsl/cons_unittest.cc
+    sandbox/linux/bpf_dsl/test_trap_registry.cc
+    sandbox/linux/bpf_dsl/test_trap_registry_unittest.cc
 )
 target_link_libraries(sandbox_bpf_dsl_tests PRIVATE
     sandbox_test_support
@@ -228,6 +232,9 @@ target_link_libraries(sandbox_seccomp_bpf_tests PRIVATE
 add_executable(sandbox_broker_tests
     sandbox/linux/tests/test_main.cc
     sandbox/linux/syscall_broker/broker_file_permission_unittest.cc
+    sandbox/linux/syscall_broker/broker_simple_message_unittest.cc
+    sandbox/linux/syscall_broker/broker_process_unittest.cc
+    sandbox/linux/syscall_broker/remote_syscall_arg_handler_unittest.cc
 )
 target_link_libraries(sandbox_broker_tests PRIVATE
     sandbox_test_support
@@ -241,6 +248,7 @@ target_link_libraries(sandbox_broker_tests PRIVATE
 add_executable(sandbox_integration_tests
     sandbox/linux/tests/test_main.cc
     sandbox/linux/integration_tests/bpf_dsl_seccomp_unittest.cc
+    sandbox/linux/integration_tests/seccomp_broker_process_unittest.cc
 )
 target_link_libraries(sandbox_integration_tests PRIVATE
     sandbox_test_support
@@ -252,6 +260,8 @@ target_link_libraries(sandbox_integration_tests PRIVATE
 add_executable(sandbox_helpers_tests
     sandbox/linux/tests/test_main.cc
     sandbox/linux/seccomp-bpf-helpers/baseline_policy_unittest.cc
+    sandbox/linux/seccomp-bpf-helpers/sigsys_handlers_unittest.cc
+    sandbox/linux/seccomp-bpf-helpers/syscall_parameters_restrictions_unittest.cc
 )
 target_link_libraries(sandbox_helpers_tests PRIVATE
     sandbox_test_support
@@ -268,7 +278,64 @@ target_link_libraries(sandbox_harness_test PRIVATE
     chrome_sandbox_harness
 )
 
-# NOTE: Services tests (credentials, namespace_utils) are not built because
-# they require sys/capability.h and base::ForkWithFlags which have heavy
-# system dependencies. The services code itself is thoroughly tested via
-# the integration tests above (bpf_dsl_seccomp_unittest.cc).
+# --- Services tests ---
+add_executable(sandbox_services_tests
+    sandbox/linux/tests/test_main.cc
+    sandbox/linux/services/proc_util_unittest.cc
+    sandbox/linux/services/resource_limits_unittest.cc
+    sandbox/linux/services/syscall_wrappers_unittest.cc
+    sandbox/linux/services/scoped_process_unittest.cc
+    sandbox/linux/services/yama_unittest.cc
+    sandbox/linux/services/credentials_unittest.cc
+    sandbox/linux/services/namespace_utils_unittest.cc
+    sandbox/linux/services/thread_helpers_unittest.cc
+)
+target_link_libraries(sandbox_services_tests PRIVATE
+    sandbox_test_support
+    cap
+    GTest::GTest
+    GTest::Main
+)
+
+# --- SUID sandbox client library ---
+add_library(sandbox_suid_client STATIC
+    sandbox/linux/suid/client/setuid_sandbox_client.cc
+    sandbox/linux/suid/client/setuid_sandbox_host.cc
+)
+target_link_libraries(sandbox_suid_client PUBLIC sandbox_services)
+
+# --- SUID client tests ---
+add_executable(sandbox_suid_tests
+    sandbox/linux/tests/test_main.cc
+    sandbox/linux/suid/client/setuid_sandbox_client_unittest.cc
+    sandbox/linux/suid/client/setuid_sandbox_host_unittest.cc
+)
+target_link_libraries(sandbox_suid_tests PRIVATE
+    sandbox_suid_client
+    sandbox_test_support
+    GTest::GTest
+    GTest::Main
+)
+
+# --- Test infrastructure tests ---
+add_executable(sandbox_test_infra_tests
+    sandbox/linux/tests/test_main.cc
+    sandbox/linux/tests/unit_tests_unittest.cc
+    sandbox/linux/tests/scoped_temporary_file_unittest.cc
+)
+target_link_libraries(sandbox_test_infra_tests PRIVATE
+    sandbox_test_support
+    GTest::GTest
+    GTest::Main
+)
+
+# --- Namespace / Unix domain socket integration test ---
+add_executable(sandbox_namespace_tests
+    sandbox/linux/tests/test_main.cc
+    sandbox/linux/integration_tests/namespace_unix_domain_socket_unittest.cc
+)
+target_link_libraries(sandbox_namespace_tests PRIVATE
+    sandbox_test_support
+    GTest::GTest
+    GTest::Main
+)

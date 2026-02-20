@@ -56,6 +56,12 @@ class FilePath {
     return FilePath(path_.substr(pos + 1));
   }
 
+  FilePath AppendASCII(std::string_view component) const {
+    return Append(component);
+  }
+
+  std::string MaybeAsASCII() const { return path_; }
+
   bool operator==(const FilePath& other) const { return path_ == other.path_; }
   bool operator!=(const FilePath& other) const { return path_ != other.path_; }
   bool operator<(const FilePath& other) const { return path_ < other.path_; }

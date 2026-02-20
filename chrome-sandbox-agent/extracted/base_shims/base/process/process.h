@@ -52,6 +52,13 @@ class Process {
 
   static Process Current() { return Process(GetCurrentProcessHandle()); }
 
+  static Process Open(ProcessId pid) { return Process(pid); }
+
+  // Deprecated form used by some tests
+  static Process DeprecatedGetProcessFromHandle(ProcessHandle handle) {
+    return Process(handle);
+  }
+
  private:
   ProcessHandle pid_;
 };

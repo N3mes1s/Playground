@@ -9,6 +9,8 @@
 #include <unistd.h>
 #include <cstdint>
 
+#include "base/time/time.h"
+
 namespace base {
 
 class PlatformThread {
@@ -23,6 +25,9 @@ class PlatformThread {
     sched_yield();
   }
 
+  static void Sleep(const TimeDelta& duration) {
+    usleep(duration.InMicroseconds());
+  }
   static void Sleep(int ms) {
     usleep(ms * 1000);
   }

@@ -81,6 +81,18 @@ class CommandLine {
   const StringVector& GetArgs() const { return args_; }
   void AppendArg(const std::string& arg) { args_.push_back(arg); }
 
+  // PrependWrapper: prepend a wrapper command (e.g., setuid sandbox binary)
+  void PrependWrapper(const std::string& wrapper) {
+    // Insert wrapper as first element, shift existing argv[0] to args
+    StringVector old_argv = argv();
+    program_ = FilePath(wrapper);
+    args_.clear();
+    switches_.clear();
+    for (size_t i = 0; i < old_argv.size(); ++i) {
+      args_.push_back(old_argv[i]);
+    }
+  }
+
  private:
   FilePath program_;
   SwitchMap switches_;

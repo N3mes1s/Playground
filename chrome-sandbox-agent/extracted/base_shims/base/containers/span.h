@@ -48,7 +48,8 @@ class span {
 
   template <typename Container,
             typename = std::enable_if_t<
-                !std::is_same_v<std::remove_cv_t<Container>, span>>>
+                !std::is_same_v<std::remove_cv_t<Container>, span> &&
+                std::is_convertible_v<decltype(std::declval<Container&>().data()), T*>>>
   constexpr span(Container& c) noexcept : data_(c.data()), size_(c.size()) {}
 
   // Conversion from span<U> to span<const U>
@@ -121,12 +122,30 @@ class span {
   size_t size_;
 };
 
+// Comparison operators
+template <typename T1, size_t E1, typename P1, typename T2, size_t E2, typename P2>
+bool operator==(const span<T1, E1, P1>& lhs, const span<T2, E2, P2>& rhs) {
+  if (lhs.size() != rhs.size()) return false;
+  for (size_t i = 0; i < lhs.size(); ++i) {
+    if (!(lhs[i] == rhs[i])) return false;
+  }
+  return true;
+}
+
+template <typename T1, size_t E1, typename P1, typename T2, size_t E2, typename P2>
+bool operator!=(const span<T1, E1, P1>& lhs, const span<T2, E2, P2>& rhs) {
+  return !(lhs == rhs);
+}
+
 // Deduction guides
 template <typename T, size_t N>
 span(T (&)[N]) -> span<T, N>;
 
 template <typename Container>
 span(Container&) -> span<typename Container::value_type>;
+
+template <typename Container>
+span(const Container&) -> span<const typename Container::value_type>;
 
 // as_bytes / as_writable_bytes
 template <typename T, size_t E>
@@ -172,6 +191,16 @@ span<T> make_span(T* data, size_t size) {
 template <typename Container>
 auto make_span(Container& c) {
   return span(c);
+}
+
+// byte_span_from_cstring: returns span of bytes from a C string (without nul)
+inline span<const uint8_t> byte_span_from_cstring(const char* s) {
+  return span<const uint8_t>(reinterpret_cast<const uint8_t*>(s), strlen(s));
+}
+
+// byte_span_with_nul_from_cstring: returns span of bytes including the nul terminator
+inline span<const uint8_t> byte_span_with_nul_from_cstring(const char* s) {
+  return span<const uint8_t>(reinterpret_cast<const uint8_t*>(s), strlen(s) + 1);
 }
 
 }  // namespace base

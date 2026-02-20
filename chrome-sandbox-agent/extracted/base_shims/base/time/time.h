@@ -61,6 +61,17 @@ class TimeTicks {
   int64_t us_ = 0;
 };
 
+// Free-function constructors matching Chromium style
+inline constexpr TimeDelta Milliseconds(int64_t ms) {
+  return TimeDelta::FromMilliseconds(ms);
+}
+inline constexpr TimeDelta Seconds(int64_t s) {
+  return TimeDelta::FromSeconds(s);
+}
+inline constexpr TimeDelta Microseconds(int64_t us) {
+  return TimeDelta::FromMicroseconds(us);
+}
+
 }  // namespace base
 
 #endif  // BASE_TIME_TIME_H_

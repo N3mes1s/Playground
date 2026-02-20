@@ -55,8 +55,10 @@ class raw_ptr {
   ~raw_ptr() = default;
 
   T* get() const { return ptr_; }
-  T& operator*() const { return *ptr_; }
-  T* operator->() const { return ptr_; }
+  template <typename U = T, typename = std::enable_if_t<!std::is_void_v<U>>>
+  U& operator*() const { return *ptr_; }
+  template <typename U = T, typename = std::enable_if_t<!std::is_void_v<U>>>
+  U* operator->() const { return ptr_; }
 
   // NOLINTNEXTLINE(google-explicit-constructor)
   operator T*() const { return ptr_; }

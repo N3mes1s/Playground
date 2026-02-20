@@ -2,8 +2,11 @@
 #ifndef BASE_SYNCHRONIZATION_WAITABLE_EVENT_H_
 #define BASE_SYNCHRONIZATION_WAITABLE_EVENT_H_
 
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
+
+#include "base/time/time.h"
 
 namespace base {
 
@@ -27,6 +30,15 @@ class WaitableEvent {
     std::unique_lock<std::mutex> lock(mu_);
     cv_.wait(lock, [this] { return signaled_; });
     if (auto_reset_) signaled_ = false;
+  }
+
+  bool TimedWait(const TimeDelta& timeout) {
+    std::unique_lock<std::mutex> lock(mu_);
+    auto deadline = std::chrono::steady_clock::now() +
+                    std::chrono::microseconds(timeout.InMicroseconds());
+    bool result = cv_.wait_until(lock, deadline, [this] { return signaled_; });
+    if (result && auto_reset_) signaled_ = false;
+    return result;
   }
 
   bool IsSignaled() {

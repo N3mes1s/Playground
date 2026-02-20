@@ -5,22 +5,53 @@
 #define BASE_FUNCTIONAL_BIND_H_
 
 #include <functional>
+#include <tuple>
+#include <utility>
+
 #include "base/functional/callback.h"
 
 namespace base {
 
-// Map base::BindOnce / base::BindRepeating to std::bind / lambda captures.
-// The real Chromium versions are much more sophisticated, but for sandbox
-// usage this is sufficient.
+namespace internal {
 
-template <typename Functor, typename... Args>
-auto BindOnce(Functor&& f, Args&&... args) {
-  return std::bind(std::forward<Functor>(f), std::forward<Args>(args)...);
+// Helper to invoke a callable with bound args + remaining args.
+// Uses tuple to store bound args and std::apply for invocation.
+template <typename F, typename BoundTuple, typename... RemainingArgs>
+decltype(auto) InvokeWithBound(F&& f, BoundTuple&& bound,
+                                RemainingArgs&&... remaining) {
+  return std::apply(
+      [&](auto&&... bound_args) -> decltype(auto) {
+        return std::invoke(std::forward<F>(f),
+                           std::forward<decltype(bound_args)>(bound_args)...,
+                           std::forward<RemainingArgs>(remaining)...);
+      },
+      std::forward<BoundTuple>(bound));
 }
 
-template <typename Functor, typename... Args>
-auto BindRepeating(Functor&& f, Args&&... args) {
-  return std::bind(std::forward<Functor>(f), std::forward<Args>(args)...);
+}  // namespace internal
+
+// BindOnce: creates a callable that captures bound args and forwards remaining args.
+// Unlike std::bind, this properly handles partial application without placeholders.
+template <typename Functor, typename... BoundArgs>
+auto BindOnce(Functor&& f, BoundArgs&&... bound_args) {
+  auto bound = std::make_tuple(std::forward<BoundArgs>(bound_args)...);
+  return [f = std::forward<Functor>(f),
+          bound = std::move(bound)](auto&&... remaining) mutable -> decltype(auto) {
+    return internal::InvokeWithBound(
+        std::move(f), std::move(bound),
+        std::forward<decltype(remaining)>(remaining)...);
+  };
+}
+
+template <typename Functor, typename... BoundArgs>
+auto BindRepeating(Functor&& f, BoundArgs&&... bound_args) {
+  auto bound = std::make_tuple(std::forward<BoundArgs>(bound_args)...);
+  return [f = std::forward<Functor>(f),
+          bound = std::move(bound)](auto&&... remaining) mutable -> decltype(auto) {
+    return internal::InvokeWithBound(
+        f, bound,
+        std::forward<decltype(remaining)>(remaining)...);
+  };
 }
 
 // Unretained: raw pointer binding (dangerous, but used throughout Chromium)

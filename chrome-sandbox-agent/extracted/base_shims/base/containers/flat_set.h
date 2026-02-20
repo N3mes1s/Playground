@@ -50,6 +50,14 @@ class flat_set {
     return {data_.insert(it, key), true};
   }
 
+  // Range insert
+  template <typename InputIt>
+  void insert(InputIt first, InputIt last) {
+    for (; first != last; ++first) {
+      insert(*first);
+    }
+  }
+
   iterator erase(const_iterator pos) { return data_.erase(pos); }
   size_type erase(const Key& key) {
     auto it = find(key);

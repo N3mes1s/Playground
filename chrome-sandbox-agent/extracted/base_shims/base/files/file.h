@@ -2,9 +2,12 @@
 #ifndef BASE_FILES_FILE_H_
 #define BASE_FILES_FILE_H_
 
+#include <cstdint>
 #include <fcntl.h>
 #include <unistd.h>
 #include <string>
+
+#include "base/containers/span.h"
 
 #include "base/files/file_path.h"
 #include "base/files/scoped_file.h"
@@ -58,6 +61,30 @@ class File {
   bool IsValid() const { return fd_ >= 0; }
   int GetPlatformFile() const { return fd_; }
   int TakePlatformFile() { int f = fd_; fd_ = -1; return f; }
+
+  // Write data at the given offset. Returns number of bytes written or -1.
+  int Write(int64_t offset, span<const uint8_t> data) {
+    if (fd_ < 0) return -1;
+    return static_cast<int>(pwrite(fd_, data.data(), data.size(), offset));
+  }
+
+  // Write raw char data at offset.
+  int Write(int64_t offset, const char* data, int size) {
+    if (fd_ < 0) return -1;
+    return static_cast<int>(pwrite(fd_, data, size, offset));
+  }
+
+  bool Flush() {
+    if (fd_ < 0) return false;
+    return fsync(fd_) == 0;
+  }
+
+  void Close() {
+    if (fd_ >= 0) {
+      close(fd_);
+      fd_ = -1;
+    }
+  }
 
  private:
   int fd_;
