@@ -10,6 +10,8 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -21,11 +23,15 @@
 namespace base {
 
 // Simple task runner that queues and executes closures on a thread.
+// Uses condition variable for efficient wakeup when tasks are posted.
 class SimpleTaskRunner {
  public:
   void PostTask(const Location&, std::function<void()> task) {
-    std::lock_guard<std::mutex> lock(mu_);
-    tasks_.push(std::move(task));
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      tasks_.push(std::move(task));
+    }
+    cv_.notify_one();
   }
 
   bool RunPendingTask() {
@@ -40,8 +46,17 @@ class SimpleTaskRunner {
     return true;
   }
 
+  // Wait for a task to become available, up to timeout_us microseconds.
+  bool WaitForTask(unsigned int timeout_us) {
+    std::unique_lock<std::mutex> lock(mu_);
+    if (!tasks_.empty()) return true;
+    return cv_.wait_for(lock, std::chrono::microseconds(timeout_us),
+                        [this] { return !tasks_.empty(); });
+  }
+
  private:
   std::mutex mu_;
+  std::condition_variable cv_;
   std::queue<std::function<void()>> tasks_;
 };
 
@@ -72,6 +87,8 @@ class Thread {
   void Stop() {
     if (!running_.load()) return;
     running_.store(false);
+    // Wake the thread so it sees running_==false and exits
+    task_runner_->PostTask(FROM_HERE, [](){});
     pthread_join(thread_, nullptr);
     tid_.store(0);
   }
@@ -90,9 +107,9 @@ class Thread {
     self->tid_.store(
         static_cast<PlatformThreadId>(syscall(SYS_gettid)));
     while (self->running_.load()) {
-      // Try to run a pending task
+      // Try to run a pending task; if none, wait efficiently
       if (!self->task_runner_->RunPendingTask()) {
-        usleep(500);  // Sleep 0.5ms if no tasks
+        self->task_runner_->WaitForTask(10000);  // wait up to 10ms
       }
     }
     // Drain remaining tasks

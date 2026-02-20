@@ -5,6 +5,7 @@
 #include "sandbox/linux/syscall_broker/broker_simple_message.h"
 
 #include <errno.h>
+#include <poll.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -76,6 +77,20 @@ ssize_t BrokerSimpleMessage::SendRecvMsgWithFlagsMultipleFds(
   // return EOF instead of hanging.
   send_sock.reset();
 
+  // Use poll() with a timeout to avoid hanging if the broker has died.
+  // On kernel <= 4.4, there's a race where sendmsg to a just-killed broker
+  // can succeed (message queued in kernel buffer) but the SCM_RIGHTS fd
+  // reference isn't properly released when the dead process's socket is
+  // cleaned up, causing recvmsg on recv_sock to block forever. Normal broker
+  // IPC responds in microseconds, so 500ms is very conservative.
+  struct pollfd pfd = {recv_sock.get(), POLLIN, 0};
+  const int poll_ret = HANDLE_EINTR(poll(&pfd, 1, 500));
+  if (poll_ret <= 0) {
+    // Timeout or error - broker is likely dead.
+    recv_sock.reset();
+    return -1;
+  }
+
   const ssize_t reply_len = reply->RecvMsgWithFlagsMultipleFds(
       recv_sock.get(), recvmsg_flags, result_fds);
   recv_sock.reset();
@@ -100,7 +115,13 @@ bool BrokerSimpleMessage::SendMsgMultipleFds(int fd,
 
   struct msghdr msg = {};
   const void* buf = reinterpret_cast<const void*>(message_.data());
-  struct iovec iov = {const_cast<void*>(buf), length_};
+  // Workaround for kernel <= 4.4: 0-byte SOCK_SEQPACKET messages are silently
+  // dropped by the kernel (never delivered to recvmsg). Pad empty messages to
+  // 1 byte. The receiver strips this padding (any message < sizeof(EntryType)
+  // bytes is treated as empty, since the minimum legitimate non-empty message
+  // is sizeof(EntryType) + sizeof(int) = 8 bytes).
+  const size_t send_len = (length_ == 0) ? 1 : length_;
+  struct iovec iov = {const_cast<void*>(buf), send_len};
   msg.msg_iov = &iov;
   msg.msg_iovlen = 1;
 
@@ -136,7 +157,7 @@ bool BrokerSimpleMessage::SendMsgMultipleFds(int fd,
   // POSIX.
   const int flags = MSG_NOSIGNAL;
   const ssize_t r = HANDLE_EINTR(sendmsg(fd, &msg, flags));
-  return static_cast<ssize_t>(length_) == r;
+  return static_cast<ssize_t>(send_len) == r;
 }
 
 ssize_t BrokerSimpleMessage::RecvMsgWithFlags(int fd,
@@ -230,7 +251,14 @@ ssize_t BrokerSimpleMessage::RecvMsgWithFlagsMultipleFds(
   }
 
   // At this point, |r| is guaranteed to be >= 0.
+  // Workaround for kernel <= 4.4: empty messages are padded to 1 byte by the
+  // sender. A legitimate non-empty message is always >= sizeof(EntryType) (4)
+  // bytes, so any message shorter than that is treated as empty.
   length_ = static_cast<size_t>(r);
+  if (length_ > 0 && length_ < sizeof(EntryType)) {
+    length_ = 0;
+    return 0;
+  }
   return r;
 }
 

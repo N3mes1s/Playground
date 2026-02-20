@@ -94,8 +94,48 @@ class UnixDomainSocket {
   static ssize_t RecvMsgWithPid(int fd, base::span<uint8_t> msg,
                                 std::vector<ScopedFD>* fds,
                                 ProcessId* pid) {
-    ssize_t result = RecvMsg(fd, msg, fds);
-    if (pid) *pid = 0;  // Simplified: not extracting PID from SCM_CREDENTIALS
+    struct msghdr msgh = {};
+    struct iovec iov;
+    iov.iov_base = msg.data();
+    iov.iov_len = msg.size();
+    msgh.msg_iov = &iov;
+    msgh.msg_iovlen = 1;
+
+    // Allocate control buffer for both SCM_RIGHTS and SCM_CREDENTIALS.
+    const size_t kControlBufSize =
+        CMSG_SPACE(sizeof(int) * kMaxFileDescriptors) +
+        CMSG_SPACE(sizeof(struct ucred));
+    char control_buf[kControlBufSize] = {};
+    msgh.msg_control = control_buf;
+    msgh.msg_controllen = sizeof(control_buf);
+
+    ssize_t result = recvmsg(fd, &msgh, 0);
+    if (result < 0) return result;
+
+    if (fds) fds->clear();
+    if (pid) *pid = -1;
+
+    for (struct cmsghdr* cmsg = CMSG_FIRSTHDR(&msgh); cmsg;
+         cmsg = CMSG_NXTHDR(&msgh, cmsg)) {
+      if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
+        if (fds) {
+          size_t payload_len = cmsg->cmsg_len - CMSG_LEN(0);
+          size_t num_fds = payload_len / sizeof(int);
+          const int* fd_array = reinterpret_cast<const int*>(CMSG_DATA(cmsg));
+          for (size_t i = 0; i < num_fds; ++i)
+            fds->emplace_back(fd_array[i]);
+        }
+      }
+      if (cmsg->cmsg_level == SOL_SOCKET &&
+          cmsg->cmsg_type == SCM_CREDENTIALS) {
+        if (pid) {
+          struct ucred* cred =
+              reinterpret_cast<struct ucred*>(CMSG_DATA(cmsg));
+          *pid = cred->pid;
+        }
+      }
+    }
+
     return result;
   }
 };

@@ -109,10 +109,20 @@ class FilePathWatcher {
     auto& reader = InotifyReader::Instance();
     if (!reader.Valid()) return false;
 
-    uint32_t mask = IN_MODIFY | IN_CREATE | IN_DELETE | IN_MOVE |
-                    IN_ATTRIB | IN_CLOSE_WRITE | IN_DELETE_SELF |
-                    IN_MOVE_SELF;
-    wd_ = reader.AddWatch(path, mask, callback);
+    // Chrome's file_path_watcher_inotify.cc watches the parent DIRECTORY of
+    // the target file (with IN_ONLYDIR to ensure the target is a directory).
+    // Events for the target file are delivered as events on the parent dir.
+    // The broker's CheckInotifyAddWatchWithIntermediates only allows this
+    // specific mask.
+    uint32_t mask = IN_ATTRIB | IN_CREATE | IN_DELETE | IN_CLOSE_WRITE |
+                    IN_MOVE | IN_ONLYDIR;
+    target_path_ = path;
+    FilePath dir = path.DirName();
+    // Wrap the callback to pass the original target path (Chrome behavior).
+    auto wrapped_callback = [callback, path](const FilePath&, bool error) {
+      callback(path, error);
+    };
+    wd_ = reader.AddWatch(dir, mask, wrapped_callback);
     return wd_ >= 0;
   }
 
@@ -130,6 +140,7 @@ class FilePathWatcher {
 
  private:
   int wd_ = -1;
+  FilePath target_path_;
 };
 
 }  // namespace base
