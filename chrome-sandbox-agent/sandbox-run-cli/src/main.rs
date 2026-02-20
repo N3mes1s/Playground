@@ -355,6 +355,12 @@ fn main() -> ExitCode {
         }
     }
 
+    // Apply environment variables from config/preset.
+    // Must be set before sandbox_init() so the zygote inherits them.
+    for (key, value) in &cfg.env {
+        std::env::set_var(key, value);
+    }
+
     // Initialize sandbox (creates zygote with full namespace isolation)
     let rc = unsafe { ffi::sandbox_init() };
     if rc != 0 {

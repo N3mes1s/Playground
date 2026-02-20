@@ -516,6 +516,27 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
     // data. Not an info leak risk in a sandbox context.
     if (sysno == __NR_sysinfo) return Allow();
 
+    // pwrite64: allow (positional write to an already-opened FD).
+    // Essential for SQLite — writes database pages at specific offsets.
+    // Same security model as write() — operates on an existing FD,
+    // no new file access. Chrome's baseline omits it because Chrome
+    // doesn't use SQLite from sandboxed renderers, but it's safe.
+    if (sysno == __NR_pwrite64) return Allow();
+
+    // fsync/fdatasync: allow (flush file buffers to disk).
+    // Essential for SQLite — commits transactions durably. Without
+    // these, SQLite returns "disk I/O error" on any write operation.
+    // Operates on existing FDs only. No path access, no privilege
+    // escalation. Chrome omits these because its renderer doesn't
+    // do durable writes, but any tool using SQLite needs them.
+    if (sysno == __NR_fsync || sysno == __NR_fdatasync) return Allow();
+
+    // rt_sigsuspend: allow (atomically replaces signal mask and waits).
+    // Used by Bun/Node.js for signal handling in async runtimes.
+    // Only affects the calling thread's signal mask — no privilege
+    // escalation, no cross-process effect.
+    if (sysno == __NR_rt_sigsuspend) return Allow();
+
     // getrandom: restrict flags
     if (sysno == __NR_getrandom) {
       return sandbox::RestrictGetRandom();
@@ -1901,6 +1922,12 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
       _exit(126);
     }
 
+    // chdir to workspace (first allowed path) so tools that write to CWD
+    // (e.g. Bun's JIT .so extraction) land in a writable directory.
+    if (!g_allowed_paths.empty()) {
+      chdir(g_allowed_paths[0].c_str());
+    }
+
     // Now exec the target command
     execvp(argv[0], const_cast<char* const*>(argv));
     _exit(127);
@@ -1973,8 +2000,9 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
   // /proc, making the tracer's (outer namespace) PIDs invisible.
   // Instead, we track chdir() calls and fork() inheritance.
   std::map<pid_t, std::string> cwd_map;
-  cwd_map[child] = "/";  // Child starts at / (set by chroot setup)
-  std::string last_fork_cwd = "/";  // See passthrough section comment
+  std::string initial_cwd = g_allowed_paths.empty() ? "/" : g_allowed_paths[0];
+  cwd_map[child] = initial_cwd;  // Child starts at workspace (or / if none)
+  std::string last_fork_cwd = initial_cwd;
 
   while (!traced_pids.empty()) {
     pid_t pid;
@@ -2613,6 +2641,11 @@ static int exec_passthrough(const char* const* argv) {
       _exit(126);
     }
 
+    // chdir to workspace (same as exec_with_tracing)
+    if (!g_allowed_paths.empty()) {
+      chdir(g_allowed_paths[0].c_str());
+    }
+
     execvp(argv[0], const_cast<char* const*>(argv));
     perror("exec");
     _exit(127);
@@ -2666,12 +2699,13 @@ static int exec_passthrough(const char* const* argv) {
 
   // CWD tracking per PID (same as exec_with_tracing — see comment there)
   std::map<pid_t, std::string> cwd_map;
-  cwd_map[child] = "/";
+  std::string pt_initial_cwd = g_allowed_paths.empty() ? "/" : g_allowed_paths[0];
+  cwd_map[child] = pt_initial_cwd;
   // Last fork parent's CWD: used to assign CWD to new PIDs that appear
   // in waitpid but weren't added via PTRACE_GETEVENTMSG (PID namespace
   // mapping causes GETEVENTMSG to return inner-namespace PIDs while
   // waitpid returns outer-namespace PIDs).
-  std::string last_fork_cwd = "/";
+  std::string last_fork_cwd = pt_initial_cwd;
 
   // Ptrace broker loop — same security as exec_with_tracing but:
   //   - Uses PTRACE_CONT for performance (no entry/exit stops)

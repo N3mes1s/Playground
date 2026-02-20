@@ -147,7 +147,14 @@ impl SandboxConfig {
                 ioctls: vec!["tty".into()],
                 ..Default::default()
             },
-            ..Default::default()
+            env: [
+                // Redirect HOME so opencode writes data/log/config to workspace
+                ("HOME".into(), "/tmp".into()),
+                // Redirect TMPDIR so Bun's JIT .so extraction goes to writable dir
+                ("TMPDIR".into(), "/tmp".into()),
+            ]
+            .into_iter()
+            .collect(),
         }
     }
 
