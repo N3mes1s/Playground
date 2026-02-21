@@ -44,6 +44,15 @@ ioctls = ["tty"]
 # Socket options for HTTPS/TLS
 sockopts = ["tcp_nodelay", "so_keepalive"]
 
+# Extra syscalls needed by codex for child process execution:
+#   prctl     — prctl() syscall (codex sub-sandbox uses PR_SET_NO_NEW_PRIVS + PR_SET_SECCOMP)
+#   seccomp   — seccomp() syscall (codex creates its own seccomp filter)
+#   setsid    — session management for child processes
+#   setpgid   — process group management for child processes
+#   fadvise64 — posix_fadvise performance hint (used by ripgrep)
+#   personality — used by musl for ADDR_NO_RANDOMIZE queries
+syscalls = ["prctl", "seccomp", "setsid", "setpgid", "getpgrp", "fadvise64", "personality"]
+
 [env]
 # Redirect HOME/TMPDIR to writable /tmp inside the sandbox.
 HOME = "/tmp"

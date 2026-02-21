@@ -206,6 +206,7 @@ fn main() -> ExitCode {
     // Parse filter lists
     let ioctl_cmds = config::parse_ioctls(&cfg.filters.ioctls);
     let sockopt_vals = config::parse_sockopts(&cfg.filters.sockopts);
+    let syscall_exts = config::parse_syscalls(&cfg.filters.syscalls);
 
     // Verbose output
     let verbose = cfg.sandbox.verbose.unwrap_or(false) || std::env::var("SANDBOX_VERBOSE").is_ok();
@@ -347,6 +348,16 @@ fn main() -> ExitCode {
             ffi::sandbox_allow_sockopts(
                 sockopt_vals.as_ptr(),
                 sockopt_vals.len() as std::os::raw::c_int,
+            );
+        }
+    }
+
+    // Configure extra syscall extensions
+    if !syscall_exts.is_empty() {
+        unsafe {
+            ffi::sandbox_allow_syscalls(
+                syscall_exts.as_ptr(),
+                syscall_exts.len() as std::os::raw::c_int,
             );
         }
     }

@@ -70,6 +70,8 @@ pub struct FiltersSection {
     pub ioctls: Vec<String>,
     /// Extra socket options to allow. Supports named options.
     pub sockopts: Vec<String>,
+    /// Extra syscalls to allow. Named syscalls like "flock", "getxattr", etc.
+    pub syscalls: Vec<String>,
 }
 
 impl SandboxConfig {
@@ -223,6 +225,57 @@ pub fn parse_ioctls(specs: &[String]) -> Vec<std::os::raw::c_ulong> {
             }
         } else if let Ok(val) = s.parse::<u64>() {
             result.push(val as std::os::raw::c_ulong);
+        }
+    }
+    result
+}
+
+/// Parse syscall extension strings into numeric syscall numbers.
+///
+/// All names map to real Linux x86_64 syscall numbers. The BPF policy
+/// checks `extra_syscalls_.count(sysno)` at the very top of evaluation,
+/// so ANY syscall listed here bypasses Chrome's default category handlers.
+/// No sentinel values, no special-case handling — just real numbers.
+pub fn parse_syscalls(specs: &[String]) -> Vec<std::os::raw::c_int> {
+    let mut result = Vec::new();
+    for spec in specs {
+        let s = spec.trim();
+        match s.to_ascii_lowercase().as_str() {
+            // Sub-sandbox support (agents that create their own seccomp sandbox)
+            "prctl" | "prctl_no_new_privs" => result.push(157), // __NR_prctl
+            "seccomp" => result.push(317),                       // __NR_seccomp
+            // Process group/session management (needed by agents running commands)
+            "setsid" => result.push(112),
+            "setpgid" => result.push(109),
+            "getpgid" => result.push(121),
+            "getpgrp" => result.push(111),
+            // File locking (advisory, FD-only)
+            "flock" => result.push(73),
+            // Extended attributes (metadata queries)
+            "getxattr" => result.push(191),
+            "lgetxattr" => result.push(192),
+            "listxattr" => result.push(193),
+            "llistxattr" => result.push(194),
+            "xattr" => {
+                result.push(191); // getxattr
+                result.push(192); // lgetxattr
+                result.push(193); // listxattr
+                result.push(194); // llistxattr
+            }
+            // File advisory (posix_fadvise — performance hint only)
+            "fadvise64" => result.push(221),
+            // Process personality (ADDR_NO_RANDOMIZE etc.)
+            "personality" => result.push(135),
+            // Anything else: try numeric
+            _ => {
+                if let Some(hex) = s.strip_prefix("0x") {
+                    if let Ok(val) = i32::from_str_radix(hex, 16) {
+                        result.push(val);
+                    }
+                } else if let Ok(val) = s.parse::<i32>() {
+                    result.push(val);
+                }
+            }
         }
     }
     result

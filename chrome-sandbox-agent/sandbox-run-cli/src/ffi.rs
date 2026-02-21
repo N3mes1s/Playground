@@ -40,6 +40,7 @@ extern "C" {
     // Per-execution extensions (called BEFORE sandbox_exec/sandbox_exec_interactive)
     pub fn sandbox_allow_ioctls(cmds: *const std::os::raw::c_ulong, count: c_int) -> c_int;
     pub fn sandbox_allow_sockopts(optnames: *const c_int, count: c_int) -> c_int;
+    pub fn sandbox_allow_syscalls(syscall_nrs: *const c_int, count: c_int) -> c_int;
 
     // Execution
     pub fn sandbox_exec_interactive(argv: *const *const c_char) -> c_int;

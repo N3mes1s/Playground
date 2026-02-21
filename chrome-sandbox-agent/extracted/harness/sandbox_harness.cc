@@ -325,10 +325,12 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
   AgentSandboxPolicy(SandboxPolicyLevel level,
                      std::set<unsigned long> extra_ioctls,
                      std::set<int> extra_sockopts,
+                     std::set<int> extra_syscalls,
                      bool allow_networking)
       : level_(level), policy_pid_(sandbox::sys_getpid()),
         extra_ioctls_(std::move(extra_ioctls)),
         extra_sockopts_(std::move(extra_sockopts)),
+        extra_syscalls_(std::move(extra_syscalls)),
         allow_networking_(allow_networking) {
     // Allocate crash keys for Chrome's SIGSYS handler logging
     sandbox::AllocateCrashKeys();
@@ -479,6 +481,19 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
   static ResultExpr Broker() { return Trace(TRACE_BROKER); }
 
   ResultExpr EvaluateStrict(int sysno) const {
+    // ── TOML-configured extra syscalls (highest priority) ────────────
+    // Checked FIRST, before any Chrome category handler. This ensures
+    // user-configured syscalls always work regardless of how Chrome
+    // classifies them. No sentinel values — real syscall numbers only.
+    if (extra_syscalls_.count(sysno)) {
+      // Filesystem syscalls still go through the broker for path validation.
+      if (sandbox::SyscallSets::IsFileSystem(sysno) ||
+          sandbox::SyscallSets::IsCurrentDirectory(sysno)) {
+        return Broker();
+      }
+      return Allow();
+    }
+
     // ── Use Chrome's SyscallSets for comprehensive classification ────
 
     // Sendfile: return EPERM (allow fallback to read/write)
@@ -580,7 +595,9 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       return sandbox::RestrictFcntlCommands();
     }
 
-    // prctl: restrict operations
+    // prctl: restrict operations (default Chrome policy).
+    // If prctl (157) is in extra_syscalls_, the early check above already
+    // returned Allow(). Otherwise, apply Chrome's default restrictions.
     if (sysno == __NR_prctl) {
       return sandbox::RestrictPrctl();
     }
@@ -644,6 +661,22 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
     // escalation. Chrome omits these because its renderer doesn't
     // do durable writes, but any tool using SQLite needs them.
     if (sysno == __NR_fsync || sysno == __NR_fdatasync) return Allow();
+
+    // flock: allow (advisory file locking on existing FDs).
+    // Used by SQLite, musl libc, and tools like Codex for lock files.
+    // Operates only on an already-opened FD — no path access, no
+    // privilege escalation. Chrome omits it because renderers don't
+    // use file locking, but it's safe.
+    if (sysno == __NR_flock) return Allow();
+
+    // Extended attributes: allow read-only queries (getxattr, lgetxattr,
+    // listxattr, llistxattr). Used by ls -la, cp -a, tar, etc. to read
+    // SELinux labels and POSIX ACLs. Read-only metadata — no security risk.
+    // Without these, ls -la shows "Operation not permitted" for every entry.
+    if (sysno == __NR_getxattr || sysno == __NR_lgetxattr ||
+        sysno == __NR_listxattr || sysno == __NR_llistxattr) {
+      return Broker();  // Route through broker for path validation
+    }
 
     // rt_sigsuspend: allow (atomically replaces signal mask and waits).
     // Used by Bun/Node.js for signal handling in async runtimes.
@@ -850,7 +883,8 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       return Broker();
     }
 
-    // Seccomp reconfiguration
+    // Seccomp reconfiguration: if seccomp (317) is in extra_syscalls_,
+    // the early check above already returned Allow().
     if (sandbox::SyscallSets::IsSeccomp(sysno)) return Error(EPERM);
 
     // SystemV IPC
@@ -945,6 +979,7 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
   pid_t policy_pid_;
   std::set<unsigned long> extra_ioctls_;   // runtime-configured ioctl extensions
   std::set<int> extra_sockopts_;           // runtime-configured sockopt extensions
+  std::set<int> extra_syscalls_;           // runtime-configured extra syscalls
   bool allow_networking_;                  // allow AF_INET/AF_INET6 + connect/bind
 };
 
@@ -959,6 +994,7 @@ static std::vector<std::string> g_readonly_paths;       // read-only paths (runt
 static std::vector<std::string> g_denied_paths;         // blocklist — always denied even if in allowed dirs
 static std::set<unsigned long> g_extra_ioctls;          // additional allowed ioctl cmds
 static std::set<int> g_extra_sockopts;                  // additional allowed SOL_SOCKET options
+static std::set<int> g_extra_syscalls;                  // additional allowed syscalls (from TOML config)
 static bool g_initialized = false;
 
 // Broker process (Chrome's real BrokerProcess)
@@ -1043,6 +1079,7 @@ static bool zygote_send_command(int fd, const char* const* argv,
                                 SandboxPolicyLevel sandbox_policy,
                                 const std::set<unsigned long>& extra_ioctls,
                                 const std::set<int>& extra_sockopts,
+                                const std::set<int>& extra_syscalls,
                                 bool passthrough = false) {
   // Count args
   uint32_t argc = 0;
@@ -1056,6 +1093,7 @@ static bool zygote_send_command(int fd, const char* const* argv,
   total += sizeof(int32_t) * 2;  // exec_policy + sandbox_policy
   total += sizeof(uint32_t) + extra_ioctls.size() * sizeof(unsigned long);
   total += sizeof(uint32_t) + extra_sockopts.size() * sizeof(int32_t);
+  total += sizeof(uint32_t) + extra_syscalls.size() * sizeof(int32_t);
   total += sizeof(uint8_t);  // passthrough flag
 
   // Write total length
@@ -1092,6 +1130,14 @@ static bool zygote_send_command(int fd, const char* const* argv,
     if (!write_all(fd, &opt32, sizeof(opt32))) return false;
   }
 
+  // Write per-execution syscall extensions
+  uint32_t n_syscalls = (uint32_t)extra_syscalls.size();
+  if (!write_all(fd, &n_syscalls, sizeof(n_syscalls))) return false;
+  for (int sc : extra_syscalls) {
+    int32_t sc32 = (int32_t)sc;
+    if (!write_all(fd, &sc32, sizeof(sc32))) return false;
+  }
+
   // Write passthrough flag
   uint8_t pt = passthrough ? 1 : 0;
   if (!write_all(fd, &pt, sizeof(pt))) return false;
@@ -1105,6 +1151,7 @@ static bool zygote_recv_command(int fd, std::vector<std::string>& args,
                                 SandboxPolicyLevel& sandbox_policy,
                                 std::set<unsigned long>& extra_ioctls,
                                 std::set<int>& extra_sockopts,
+                                std::set<int>& extra_syscalls,
                                 bool& passthrough) {
   uint32_t total_len;
   if (!read_all(fd, &total_len, sizeof(total_len))) return false;
@@ -1148,6 +1195,17 @@ static bool zygote_recv_command(int fd, std::vector<std::string>& args,
     int32_t opt;
     if (!read_all(fd, &opt, sizeof(opt))) return false;
     extra_sockopts.insert((int)opt);
+  }
+
+  // Read per-execution syscall extensions
+  extra_syscalls.clear();
+  uint32_t n_syscalls;
+  if (!read_all(fd, &n_syscalls, sizeof(n_syscalls))) return false;
+  if (n_syscalls > 256) return false;  // Sanity check
+  for (uint32_t i = 0; i < n_syscalls; i++) {
+    int32_t sc;
+    if (!read_all(fd, &sc, sizeof(sc))) return false;
+    extra_syscalls.insert((int)sc);
   }
 
   // Read passthrough flag
@@ -2117,7 +2175,7 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
     // Install Chrome's seccomp-BPF sandbox using the actual Chromium code.
     // This is the innermost layer and filters every syscall.
     auto policy = std::make_unique<AgentSandboxPolicy>(
-        g_policy_level, g_extra_ioctls, g_extra_sockopts,
+        g_policy_level, g_extra_ioctls, g_extra_sockopts, g_extra_syscalls,
         !g_enable_network_isolation);
     sandbox::SandboxBPF sandbox_bpf(std::move(policy));
     if (!sandbox_bpf.StartSandbox(sandbox::SandboxBPF::SeccompLevel::SINGLE_THREADED)) {
@@ -2292,7 +2350,9 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
                  nr == __NR_readlink || nr == __NR_creat ||
                  nr == __NR_link || nr == __NR_symlink ||
                  nr == __NR_rename || nr == __NR_statfs ||
-                 nr == __NR_lchown || nr == __NR_mknod) {
+                 nr == __NR_lchown || nr == __NR_mknod ||
+                 nr == __NR_getxattr || nr == __NR_lgetxattr ||
+                 nr == __NR_listxattr || nr == __NR_llistxattr) {
           path_addr = regs.rdi;
           path_str = read_child_string(pid, path_addr);
           if (nr == __NR_open) open_flags = (int)regs.rsi;
@@ -2430,6 +2490,12 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
           } else if (nr == __NR_stat || nr == __NR_lstat ||
                      nr == __NR_newfstatat || nr == __NR_statfs) {
             // stat family: use stat permission check
+            allowed = (broker_policy.GetFileNameIfAllowedToStat(
+                path_c) != nullptr);
+          } else if (nr == __NR_getxattr || nr == __NR_lgetxattr ||
+                     nr == __NR_listxattr || nr == __NR_llistxattr) {
+            // Extended attributes: read-only metadata (SELinux, ACLs).
+            // Treat same as stat — check read access to the path.
             allowed = (broker_policy.GetFileNameIfAllowedToStat(
                 path_c) != nullptr);
           } else if (nr == __NR_execve || nr == __NR_execveat) {
@@ -2849,7 +2915,7 @@ static int exec_passthrough(const char* const* argv) {
 
     // Install seccomp-BPF (same as exec_with_tracing - STRICT policy works!)
     auto policy = std::make_unique<AgentSandboxPolicy>(
-        g_policy_level, g_extra_ioctls, g_extra_sockopts,
+        g_policy_level, g_extra_ioctls, g_extra_sockopts, g_extra_syscalls,
         !g_enable_network_isolation);
     sandbox::SandboxBPF sandbox_bpf(std::move(policy));
     if (!sandbox_bpf.StartSandbox(sandbox::SandboxBPF::SeccompLevel::SINGLE_THREADED)) {
@@ -3023,7 +3089,9 @@ static int exec_passthrough(const char* const* argv) {
                      nr == __NR_readlink || nr == __NR_creat ||
                      nr == __NR_link || nr == __NR_symlink ||
                      nr == __NR_rename || nr == __NR_statfs ||
-                     nr == __NR_lchown || nr == __NR_mknod) {
+                     nr == __NR_lchown || nr == __NR_mknod ||
+                     nr == __NR_getxattr || nr == __NR_lgetxattr ||
+                     nr == __NR_listxattr || nr == __NR_llistxattr) {
             path_addr = regs.rdi;
             path_str = read_child_string(pid, path_addr);
             if (nr == __NR_open) open_flags = (int)regs.rsi;
@@ -3132,7 +3200,9 @@ static int exec_passthrough(const char* const* argv) {
                        nr == __NR_faccessat2 || nr == __NR_stat ||
                        nr == __NR_lstat || nr == __NR_newfstatat ||
                        nr == __NR_readlink || nr == __NR_readlinkat ||
-                       nr == __NR_statfs || nr == __NR_chdir) {
+                       nr == __NR_statfs || nr == __NR_chdir ||
+                       nr == __NR_getxattr || nr == __NR_lgetxattr ||
+                       nr == __NR_listxattr || nr == __NR_llistxattr) {
               auto result = broker_policy.GetFileNameIfAllowedToOpen(
                   path_c, O_RDONLY);
               allowed = (result.first != nullptr);
@@ -3430,11 +3500,12 @@ build_broker_permissions() {
     SandboxPolicyLevel sandbox_policy;
     std::set<unsigned long> cmd_extra_ioctls;
     std::set<int> cmd_extra_sockopts;
+    std::set<int> cmd_extra_syscalls;
     bool passthrough = false;
 
     if (!zygote_recv_command(zygote_fd, args, exec_policy, sandbox_policy,
                              cmd_extra_ioctls, cmd_extra_sockopts,
-                             passthrough)) {
+                             cmd_extra_syscalls, passthrough)) {
       break;  // Agent closed the socket or sent invalid data
     }
 
@@ -3444,11 +3515,12 @@ build_broker_permissions() {
     // Per-exec seccomp extensions (scoped to this single command)
     g_extra_ioctls = std::move(cmd_extra_ioctls);
     g_extra_sockopts = std::move(cmd_extra_sockopts);
+    g_extra_syscalls = std::move(cmd_extra_syscalls);
 
     // Audit log: report active extensions
-    if (!g_extra_ioctls.empty() || !g_extra_sockopts.empty()) {
-      fprintf(stderr, "[sandbox-audit] exec extensions: %zu ioctls, %zu sockopts\n",
-              g_extra_ioctls.size(), g_extra_sockopts.size());
+    if (!g_extra_ioctls.empty() || !g_extra_sockopts.empty() || !g_extra_syscalls.empty()) {
+      fprintf(stderr, "[sandbox-audit] exec extensions: %zu ioctls, %zu sockopts, %zu syscalls\n",
+              g_extra_ioctls.size(), g_extra_sockopts.size(), g_extra_syscalls.size());
     }
 
     // Build argv
@@ -3476,6 +3548,7 @@ build_broker_permissions() {
       // Clear per-exec extensions (auto-reset after each command)
       g_extra_ioctls.clear();
       g_extra_sockopts.clear();
+      g_extra_syscalls.clear();
 
       // Send results back to the agent
       zygote_send_result(zygote_fd, cmd_result);
@@ -3641,9 +3714,20 @@ int sandbox_allow_sockopts(const int* optnames, int count) {
   return 0;
 }
 
+int sandbox_allow_syscalls(const int* syscall_nrs, int count) {
+  if (!syscall_nrs || count <= 0) return -1;
+  for (int i = 0; i < count; i++) {
+    g_extra_syscalls.insert(syscall_nrs[i]);
+  }
+  fprintf(stderr, "[sandbox-audit] exec extensions: %zu ioctls, %zu sockopts, %zu syscalls\n",
+          g_extra_ioctls.size(), g_extra_sockopts.size(), g_extra_syscalls.size());
+  return 0;
+}
+
 void sandbox_clear_extensions(void) {
   g_extra_ioctls.clear();
   g_extra_sockopts.clear();
+  g_extra_syscalls.clear();
 }
 
 void sandbox_set_network_enabled(int enabled) {
@@ -3654,15 +3738,17 @@ SandboxResult sandbox_exec(const char* const* argv) {
   // Capture current extensions (will be sent via IPC then auto-cleared)
   std::set<unsigned long> exec_ioctls = g_extra_ioctls;
   std::set<int> exec_sockopts = g_extra_sockopts;
+  std::set<int> exec_syscalls = g_extra_syscalls;
 
   // Auto-clear extensions after capturing (per-exec scoping)
   g_extra_ioctls.clear();
   g_extra_sockopts.clear();
+  g_extra_syscalls.clear();
 
   // If zygote is running, dispatch via zygote for inherited namespace isolation
   if (g_zygote_pid > 0 && g_zygote_fd >= 0) {
     if (zygote_send_command(g_zygote_fd, argv, g_exec_policy, g_policy_level,
-                            exec_ioctls, exec_sockopts)) {
+                            exec_ioctls, exec_sockopts, exec_syscalls)) {
       SandboxResult result = {};
       if (zygote_recv_result(g_zygote_fd, result)) {
         return result;
@@ -3677,9 +3763,11 @@ SandboxResult sandbox_exec(const char* const* argv) {
   // Set globals for exec_with_tracing to pick up
   g_extra_ioctls = std::move(exec_ioctls);
   g_extra_sockopts = std::move(exec_sockopts);
+  g_extra_syscalls = std::move(exec_syscalls);
   SandboxResult result = exec_with_tracing(argv);
   g_extra_ioctls.clear();
   g_extra_sockopts.clear();
+  g_extra_syscalls.clear();
   return result;
 }
 
@@ -3707,13 +3795,15 @@ int sandbox_exec_interactive(const char* const* argv) {
   // Capture and clear extensions
   std::set<unsigned long> exec_ioctls = g_extra_ioctls;
   std::set<int> exec_sockopts = g_extra_sockopts;
+  std::set<int> exec_syscalls = g_extra_syscalls;
   g_extra_ioctls.clear();
   g_extra_sockopts.clear();
+  g_extra_syscalls.clear();
 
   if (g_zygote_pid > 0 && g_zygote_fd >= 0) {
     // Dispatch via zygote with passthrough flag
     if (zygote_send_command(g_zygote_fd, argv, g_exec_policy, g_policy_level,
-                            exec_ioctls, exec_sockopts,
+                            exec_ioctls, exec_sockopts, exec_syscalls,
                             /*passthrough=*/true)) {
       SandboxResult result = {};
       if (zygote_recv_result(g_zygote_fd, result)) {
@@ -3728,11 +3818,13 @@ int sandbox_exec_interactive(const char* const* argv) {
   // No zygote — direct passthrough execution
   g_extra_ioctls = std::move(exec_ioctls);
   g_extra_sockopts = std::move(exec_sockopts);
+  g_extra_syscalls = std::move(exec_syscalls);
 
   int code = exec_passthrough(argv);
 
   g_extra_ioctls.clear();
   g_extra_sockopts.clear();
+  g_extra_syscalls.clear();
   return code;
 }
 
