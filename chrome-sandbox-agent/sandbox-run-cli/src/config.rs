@@ -268,9 +268,13 @@ pub fn parse_syscalls(specs: &[String]) -> Vec<std::os::raw::c_int> {
             }
             // File advisory (posix_fadvise — performance hint only)
             "fadvise64" => result.push(221),
-            // Process personality (ADDR_NO_RANDOMIZE etc.)
+            // Process personality (query only — ADDR_NO_RANDOMIZE blocked by harness)
             "personality" => result.push(135),
-            // Anything else: try numeric
+            // Anything else: try numeric.
+            // SECURITY NOTE: The C harness enforces an unconditional deny list
+            // (unshare, mount, ptrace, bpf, etc.) and argument-level filtering
+            // (prctl, seccomp, personality) regardless of how syscall numbers
+            // reach extra_syscalls_. Raw numbers cannot bypass these protections.
             _ => {
                 if let Some(hex) = s.strip_prefix("0x") {
                     if let Ok(val) = i32::from_str_radix(hex, 16) {

@@ -486,6 +486,30 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
     // user-configured syscalls always work regardless of how Chrome
     // classifies them. No sentinel values — real syscall numbers only.
     if (extra_syscalls_.count(sysno)) {
+      // ── Unconditional deny list (NEVER allowed, even via TOML) ──────
+      // These syscalls enable sandbox escape, privilege escalation, or
+      // kernel exploitation. No TOML config should override these blocks.
+      // Defense against misconfiguration or numeric syscall smuggling
+      // (e.g. syscalls = ["272"] to sneak in unshare).
+      if (sysno == __NR_unshare || sysno == __NR_setns ||   // namespace escape
+          sysno == __NR_mount || sysno == __NR_umount2 ||    // filesystem manipulation
+          sysno == __NR_pivot_root || sysno == __NR_chroot ||// root escape
+          sysno == __NR_ptrace ||                            // process inspection
+          sysno == __NR_process_vm_readv ||                  // cross-process memory read
+          sysno == __NR_process_vm_writev ||                 // cross-process memory write
+          sysno == __NR_keyctl ||                            // CVE-2016-0728
+          sysno == __NR_add_key || sysno == __NR_request_key ||
+          sysno == __NR_bpf ||                               // kernel BPF programs
+          sysno == __NR_perf_event_open ||                   // side channels
+          sysno == __NR_init_module ||                       // kernel module loading
+          sysno == __NR_finit_module ||
+          sysno == __NR_delete_module ||
+          sysno == __NR_reboot ||
+          sysno == __NR_kexec_load ||                        // kernel replacement
+          sysno == __NR_clone3) {                            // uninspectable flags
+        return Error(EPERM);
+      }
+
       // Filesystem syscalls still go through the broker for path validation.
       if (sandbox::SyscallSets::IsFileSystem(sysno) ||
           sandbox::SyscallSets::IsCurrentDirectory(sysno)) {
@@ -525,6 +549,18 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
         return sandbox::bpf_dsl::If(
             op == SECCOMP_SET_MODE_FILTER, Allow())
             .Else(Error(EPERM));
+      }
+      // personality: only allow querying (0xffffffff) or setting PER_LINUX (0).
+      // Block ADDR_NO_RANDOMIZE (0x0040000) which disables ASLR — makes
+      // kernel exploit development easier inside the sandbox.
+      // musl calls personality(0xffffffff) during init to query personality.
+      if (sysno == __NR_personality) {
+        const Arg<unsigned long> persona(0);
+        return sandbox::bpf_dsl::If(
+            sandbox::bpf_dsl::AnyOf(
+                persona == 0xffffffffUL,  // Query current (read-only)
+                persona == PER_LINUX),    // Reset to default (ASLR on)
+            Allow()).Else(Error(EPERM));
       }
       return Allow();
     }
