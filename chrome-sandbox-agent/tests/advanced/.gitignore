@@ -72,3 +72,6 @@ test_70_ptrace_attacks
 test_71_af_alg_crypto
 test_72_setns_nsenter
 test_73_ioperm_sched
+test_74_xattrat_new
+test_75_kernel_timing_leak
+test_76_wrgsbase_cfi
