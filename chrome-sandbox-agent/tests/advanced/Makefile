@@ -83,7 +83,11 @@ TESTS := test_01_fd_smuggling \
          test_73_ioperm_sched \
          test_74_xattrat_new \
          test_75_kernel_timing_leak \
-         test_76_wrgsbase_cfi
+         test_76_wrgsbase_cfi \
+         test_77_io_uring_deep \
+         test_78_cachestat_sidechan \
+         test_79_landlock_bypass \
+         test_80_futex2_covert
 
 .PHONY: all clean run-all
 
@@ -100,7 +104,7 @@ run-all: all
 	echo ""; \
 	echo "\033[1m╔══════════════════════════════════════════════════╗\033[0m"; \
 	echo "\033[1m║   ADVANCED SANDBOX BYPASS TEST SUITE             ║\033[0m"; \
-	echo "\033[1m║   76 attack categories, ~608 individual tests    ║\033[0m"; \
+	echo "\033[1m║   80 attack categories, ~640 individual tests    ║\033[0m"; \
 	echo "\033[1m╚══════════════════════════════════════════════════╝\033[0m"; \
 	for t in $(TESTS); do \
 		echo ""; \

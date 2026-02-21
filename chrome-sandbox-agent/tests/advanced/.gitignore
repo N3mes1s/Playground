@@ -75,3 +75,7 @@ test_73_ioperm_sched
 test_74_xattrat_new
 test_75_kernel_timing_leak
 test_76_wrgsbase_cfi
+test_77_io_uring_deep
+test_78_cachestat_sidechan
+test_79_landlock_bypass
+test_80_futex2_covert
