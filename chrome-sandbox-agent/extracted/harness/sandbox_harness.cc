@@ -1674,15 +1674,43 @@ static bool setup_chroot_filesystem() {
     }
   }
 
+  // Bind-mount user-configured read-only paths under /etc/ BEFORE the
+  // /etc tmpfs is remounted read-only. Paths outside /etc are handled later.
+  for (const auto& ro_path : g_readonly_paths) {
+    if (ro_path.empty() || ro_path[0] != '/') continue;
+    // Only handle /etc/* paths here (not /etc itself)
+    if (ro_path.rfind("/etc/", 0) != 0) continue;
+    // Deny list takes priority
+    bool denied = false;
+    for (const auto& dp : g_denied_paths) {
+      if (ro_path == dp || ro_path.rfind(dp + "/", 0) == 0) { denied = true; break; }
+    }
+    if (denied) continue;
+    struct stat st;
+    if (stat(ro_path.c_str(), &st) != 0) continue;
+    snprintf(path, sizeof(path), "%s%s", sandbox_root, ro_path.c_str());
+    if (S_ISDIR(st.st_mode)) {
+      mkdir(path, 0755);
+      bind_mount_readonly(ro_path.c_str(), path);
+    } else {
+      int fd = open(path, O_WRONLY | O_CREAT, 0644);
+      if (fd >= 0) close(fd);
+      mount(ro_path.c_str(), path, nullptr, MS_BIND, nullptr);
+      mount(nullptr, path, nullptr, MS_BIND | MS_REMOUNT | MS_RDONLY, nullptr);
+    }
+  }
+
   // Remount /etc tmpfs read-only now that all safe files are populated.
   // Prevents attackers from creating /etc/ld.so.preload or modifying
   // /etc/ld.so.cache to hijack dynamic linking in future exec()s.
   snprintf(path, sizeof(path), "%s/etc", sandbox_root);
   mount(nullptr, path, nullptr, MS_REMOUNT | MS_RDONLY | MS_NOSUID | MS_NODEV, nullptr);
 
-  // Bind-mount user-configured read-only paths (runtimes, tools)
+  // Bind-mount user-configured read-only paths (runtimes, tools).
+  // Paths under /etc/ were already handled above.
   for (const auto& ro_path : g_readonly_paths) {
     if (ro_path.empty() || ro_path[0] != '/') continue;
+    if (ro_path.rfind("/etc/", 0) == 0) continue;  // Already done above
     struct stat st;
     if (stat(ro_path.c_str(), &st) != 0) continue;  // Skip if doesn't exist
     // Create the mount point in new root
@@ -2386,7 +2414,10 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
             // Chrome's IPC-based broker handles O_CLOEXEC via MSG_CMSG_CLOEXEC
             // on the receiving end. Our ptrace broker doesn't proxy FDs, so the
             // kernel applies O_CLOEXEC directly. We just need to not reject it.
-            int broker_flags = open_flags & ~O_CLOEXEC;
+            // Also strip O_LARGEFILE (0100000 = 0x8000): musl libc sets it
+            // explicitly while glibc doesn't on x86_64. It only tells the kernel
+            // to allow files > 2GB — not a security-relevant flag.
+            int broker_flags = open_flags & ~(O_CLOEXEC | 0100000 /* O_LARGEFILE */);
             auto result = broker_policy.GetFileNameIfAllowedToOpen(
                 path_c, broker_flags);
             allowed = (result.first != nullptr);
@@ -3090,7 +3121,8 @@ static int exec_passthrough(const char* const* argv) {
             // Strip O_CLOEXEC: Chrome's SIGSYS broker also strips it because
             // the broker proxies file operations but not FD flags. We check
             // the access mode (read/write/create) only.
-            int broker_flags = open_flags & ~O_CLOEXEC;
+            // Also strip O_LARGEFILE (musl libc sets 0x8000 on x86_64; glibc doesn't).
+            int broker_flags = open_flags & ~(O_CLOEXEC | 0100000 /* O_LARGEFILE */);
 
             if (nr == __NR_open || nr == __NR_openat || nr == __NR_creat) {
               auto result = broker_policy.GetFileNameIfAllowedToOpen(

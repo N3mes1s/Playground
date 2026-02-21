@@ -1,0 +1,48 @@
+# sandbox-run config for OpenAI Codex CLI (native Rust binary, static-pie)
+#
+# Usage: sandbox-run --config codex.toml -- codex exec "prompt"
+#
+# Codex CLI is distributed via npm but the actual agent is a statically
+# linked Rust binary. It bundles its own ripgrep (rg) for code search.
+#
+# Security: policy is always STRICT. This config only relaxes specific
+# path filters and extensions — all 8 isolation layers remain active.
+
+[sandbox]
+# Network access required for OpenAI API calls
+network = true
+
+[paths]
+# Codex binary and its bundled tools (read-only)
+# /opt/node22 — npm shim invokes Node which spawns the native binary
+# /etc/codex  — system-level managed config (requirements.toml etc.)
+readonly = [
+    "/opt/node22",
+    "/usr/local/bin",
+    "/usr/share/zoneinfo",
+    "/etc/ssl",
+    "/etc/codex",
+    "/lib/x86_64-linux-gnu",
+]
+
+# Extra read-write paths (workspace is added automatically)
+allowed = []
+
+# Blocked paths — always denied
+deny = [
+    "/etc/shadow",
+    "/etc/gshadow",
+]
+
+[filters]
+# Terminal ioctls for interactive TUI
+ioctls = ["tty"]
+
+# Socket options for HTTPS/TLS
+sockopts = ["tcp_nodelay", "so_keepalive"]
+
+[env]
+# Redirect HOME so codex writes config/state to the writable workspace
+# instead of /root/.codex (which is outside the sandbox).
+HOME = "/tmp"
+TMPDIR = "/tmp"

@@ -39,3 +39,4 @@ test_37_socket_options
 test_38_fuse_access
 test_39_nested_namespace
 test_40_syscall_enum
+test_41_open_flags

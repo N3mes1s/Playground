@@ -82,109 +82,39 @@ impl SandboxConfig {
         Ok(config)
     }
 
-    /// Load a built-in preset by name.
-    pub fn preset(name: &str) -> Option<Self> {
-        match name {
-            "aider" => Some(Self::preset_aider()),
-            "opencode" => Some(Self::preset_opencode()),
-            "claude-code" | "claude" => Some(Self::preset_claude_code()),
-            _ => None,
+    /// Load a preset by name from the config directory.
+    /// Looks for `<name>.toml` in: $SANDBOX_CONFIG_DIR, ./configs/, /etc/sandbox-run/
+    pub fn preset(name: &str) -> Result<Self, String> {
+        // Sanitize name: only alphanumeric, hyphens, underscores
+        if !name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+            return Err(format!("invalid preset name: {}", name));
         }
-    }
+        let filename = format!("{}.toml", name);
 
-    fn preset_aider() -> Self {
-        SandboxConfig {
-            sandbox: SandboxSection {
-                policy: Some("STRICT".into()),
-                network: Some(true),
-                ..Default::default()
-            },
-            paths: PathsSection {
-                readonly: vec![
-                    "/usr/local/lib/python3.11".into(),
-                    "/usr/local/bin".into(),
-                    "/usr/lib/python3.11".into(),
-                    "/usr/lib/python3".into(),
-                    "/usr/share/zoneinfo".into(),
-                    "/etc/ssl".into(),
-                    "/lib/x86_64-linux-gnu".into(),
-                ],
-                deny: vec![
-                    "/etc/shadow".into(),
-                    "/etc/gshadow".into(),
-                ],
-                ..Default::default()
-            },
-            filters: FiltersSection {
-                ioctls: vec!["tty".into()],
-                ..Default::default()
-            },
-            ..Default::default()
-        }
-    }
+        // Search order: env var > local configs/ > system /etc/sandbox-run/
+        let search_dirs: Vec<std::path::PathBuf> = vec![
+            std::env::var("SANDBOX_CONFIG_DIR")
+                .ok()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_default(),
+            std::path::PathBuf::from("configs"),
+            std::path::PathBuf::from("/etc/sandbox-run"),
+        ];
 
-    fn preset_opencode() -> Self {
-        SandboxConfig {
-            sandbox: SandboxSection {
-                policy: Some("STRICT".into()),
-                network: Some(true),
-                ..Default::default()
-            },
-            paths: PathsSection {
-                readonly: vec![
-                    "/opt/node22".into(),
-                    "/usr/local/bin".into(),
-                    "/etc/ssl".into(),
-                    "/lib/x86_64-linux-gnu".into(),
-                ],
-                deny: vec![
-                    "/etc/shadow".into(),
-                    "/etc/gshadow".into(),
-                ],
-                ..Default::default()
-            },
-            filters: FiltersSection {
-                ioctls: vec!["tty".into()],
-                ..Default::default()
-            },
-            env: [
-                // Redirect HOME so opencode writes data/log/config to workspace
-                ("HOME".into(), "/tmp".into()),
-                // Redirect TMPDIR so Bun's JIT .so extraction goes to writable dir
-                ("TMPDIR".into(), "/tmp".into()),
-            ]
-            .into_iter()
-            .collect(),
+        for dir in &search_dirs {
+            if dir.as_os_str().is_empty() {
+                continue;
+            }
+            let path = dir.join(&filename);
+            if path.exists() {
+                return Self::load(&path);
+            }
         }
-    }
 
-    fn preset_claude_code() -> Self {
-        SandboxConfig {
-            sandbox: SandboxSection {
-                policy: Some("STRICT".into()),
-                network: Some(true),
-                ..Default::default()
-            },
-            paths: PathsSection {
-                readonly: vec![
-                    "/opt/node22".into(),
-                    "/usr/local/bin".into(),
-                    "/usr/share/zoneinfo".into(),
-                    "/etc/ssl".into(),
-                    "/lib/x86_64-linux-gnu".into(),
-                ],
-                deny: vec![
-                    "/etc/shadow".into(),
-                    "/etc/gshadow".into(),
-                ],
-                ..Default::default()
-            },
-            filters: FiltersSection {
-                ioctls: vec!["tty".into()],
-                ..Default::default()
-            },
-            ..Default::default()
-        }
+        Err(format!(
+            "preset '{}' not found (searched for {} in: $SANDBOX_CONFIG_DIR, ./configs/, /etc/sandbox-run/)",
+            name, filename
+        ))
     }
 
     /// Merge CLI overrides into this config. CLI values take precedence.

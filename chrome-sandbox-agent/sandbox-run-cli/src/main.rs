@@ -41,9 +41,8 @@ EXAMPLES:
     sandbox-run --audit /tmp/audit.jsonl --network -- python3 -m aider --version
 
 PRESETS:
-    aider        Python-based AI coding agent
-    opencode     Node.js-based AI coding agent
-    claude-code  Claude Code (Node.js)
+    Loads <name>.toml from: $SANDBOX_CONFIG_DIR, ./configs/, /etc/sandbox-run/
+    Example: --preset codex  loads codex.toml from the search path
 
 SECURITY:
     8 isolation layers (user/PID/IPC/net NS, chroot, caps, seccomp-BPF,
@@ -140,12 +139,9 @@ fn main() -> ExitCode {
         }
     } else if let Some(ref preset_name) = cli.preset {
         match SandboxConfig::preset(preset_name) {
-            Some(c) => c,
-            None => {
-                eprintln!(
-                    "sandbox-run: unknown preset '{}' (available: aider, opencode, claude-code)",
-                    preset_name
-                );
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("sandbox-run: {}", e);
                 return ExitCode::from(1);
             }
         }

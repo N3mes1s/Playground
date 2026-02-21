@@ -47,7 +47,8 @@ TESTS := test_01_fd_smuggling \
          test_37_socket_options \
          test_38_fuse_access \
          test_39_nested_namespace \
-         test_40_syscall_enum
+         test_40_syscall_enum \
+         test_41_open_flags
 
 .PHONY: all clean run-all
 
