@@ -19,3 +19,13 @@ test_17_vsock
 test_18_procfs_race
 test_19_ebpf
 test_20_landlock
+test_21_memfd_secret
+test_22_keyctl
+test_23_watch_queue
+test_24_splice_tee
+test_25_tty_pushback
+test_26_process_vm
+test_27_handle_ops
+test_28_credential_spoof
+test_29_fanotify_inotify
+test_30_misc_kernel

@@ -376,6 +376,28 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
         if (sysno == __NR_unshare || sysno == __NR_setns) {
           return Block();
         }
+        // Cross-process memory access: block process_vm_readv/writev.
+        // These allow reading/writing another process's memory without
+        // ptrace, enabling secret theft from broker or other sandboxed procs.
+        if (sysno == __NR_process_vm_readv ||
+            sysno == __NR_process_vm_writev) {
+          return Block();
+        }
+        // Keyring subsystem: block keyctl/add_key/request_key.
+        // CVE-2016-0728 (keyring UAF), cross-cache spray via key objects.
+        // keyctl(KEYCTL_JOIN_SESSION_KEYRING) creates kernel objects usable
+        // for slab manipulation attacks.
+        if (sysno == __NR_keyctl || sysno == __NR_add_key ||
+            sysno == __NR_request_key) {
+          return Block();
+        }
+        // Seccomp reconfiguration: block adding new seccomp filters.
+        // A sandboxed process must not weaken or modify its own seccomp
+        // policy. IsSeccomp() covers __NR_seccomp and __NR_prctl with
+        // PR_SET_SECCOMP, but we block it explicitly here too.
+        if (sandbox::SyscallSets::IsSeccomp(sysno)) {
+          return Block();
+        }
         // Netlink: restrict socket creation to AF_UNIX only.
         // NETLINK_ROUTE and NETLINK_NETFILTER enable nftables LPE
         // (CVE-2024-1086) and network namespace manipulation.
