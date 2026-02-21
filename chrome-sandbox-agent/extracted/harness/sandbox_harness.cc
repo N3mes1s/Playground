@@ -750,6 +750,39 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       return Broker();  // Route through broker for path validation
     }
 
+    // Extended attributes *at() variants (Linux 6.13, January 2025):
+    // getxattrat (463), setxattrat (464), listxattrat (465), removexattrat (466).
+    // These operate on xattrs relative to a directory FD. They were added
+    // in kernel 6.13 and are NOT in Chrome's SyscallSets (written pre-6.13).
+    //
+    // SECURITY: Block setxattrat/removexattrat (write operations) explicitly.
+    // Route getxattrat/listxattrat through broker for read-only path validation,
+    // matching the treatment of their non-*at counterparts above.
+    //
+    // NOTE: Even without these explicit entries, the allowlist catch-all
+    // (Error(ENOSYS)) would block them. This explicit handling provides:
+    //   1. Correct errno semantics (EPERM for writes, broker for reads)
+    //   2. Documentation that these syscalls were consciously evaluated
+    //   3. Audit logging via ptrace for broker-routed calls
+#ifdef __NR_getxattrat
+    if (sysno == __NR_getxattrat || sysno == __NR_listxattrat) {
+      return Broker();  // Read-only: route through broker for path validation
+    }
+    if (sysno == __NR_setxattrat || sysno == __NR_removexattrat) {
+      return Block();   // Write/modify: always block
+    }
+#else
+    // Kernel headers don't define xattrat yet — use raw numbers (x86-64).
+    // These are blocked by the allowlist catch-all regardless, but
+    // explicit handling ensures correct behavior when headers are updated.
+    if (sysno == 463 || sysno == 465) {
+      return Broker();  // getxattrat, listxattrat: read-only broker
+    }
+    if (sysno == 464 || sysno == 466) {
+      return Block();   // setxattrat, removexattrat: always block
+    }
+#endif
+
     // rt_sigsuspend: allow (atomically replaces signal mask and waits).
     // Used by Bun/Node.js for signal handling in async runtimes.
     // Only affects the calling thread's signal mask — no privilege
@@ -1021,9 +1054,26 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       return Block();
     }
 
-    // Everything else: block via ptrace.
-    // Unknown/unclassified syscalls are denied with -EACCES by the tracer.
-    return Block();
+    // ── ALLOWLIST DEFAULT: reject unknown/unclassified syscalls ────────
+    //
+    // SECURITY: This is the critical allowlist enforcement point. Any
+    // syscall that reaches here was NOT explicitly allowed above.
+    //
+    // We return Error(ENOSYS) directly from seccomp-BPF rather than
+    // routing through ptrace (Block()). This ensures unknown syscalls
+    // are rejected even if the ptrace tracer has gaps, race conditions,
+    // or kernel-version-specific quirks (e.g., kernel 4.4 PTRACE_CONT
+    // not stopping for SECCOMP_RET_TRACE events).
+    //
+    // ENOSYS (not EPERM) is chosen so glibc/musl can gracefully fall
+    // back to older syscalls — matching Docker/runc's ENOSYS stub
+    // strategy (runc PR #2750).
+    //
+    // This catch-all protects against NEW SYSCALLS added in future
+    // kernels (e.g., Linux 6.13's getxattrat/setxattrat/listxattrat/
+    // removexattrat which bypass denylist-based sandboxes like Flatpak
+    // and Firejail). With an allowlist, they are blocked by default.
+    return Error(ENOSYS);
   }
 
   ResultExpr EvaluatePermissive(int sysno) const {
