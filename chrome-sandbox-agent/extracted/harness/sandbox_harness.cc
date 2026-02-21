@@ -491,6 +491,41 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
           sandbox::SyscallSets::IsCurrentDirectory(sysno)) {
         return Broker();
       }
+      // ── Argument-level restrictions for dangerous syscalls ──────────
+      // Even when explicitly allowed via TOML config, these syscalls
+      // MUST have argument filtering to prevent sandbox escape.
+      //
+      // prctl: only allow safe operations needed by sub-sandboxing agents.
+      // PR_SET_NO_NEW_PRIVS (38) — required for seccomp sub-sandbox.
+      // PR_SET_NAME (15) / PR_GET_NAME (16) — thread naming, benign.
+      // PR_GET_DUMPABLE (3) — read-only query, safe.
+      // Block PR_SET_DUMPABLE (4) — would re-enable core dumps (memory
+      //   disclosure of API keys, tokens, etc.).
+      // Block PR_SET_PTRACER (0x59616d61) — would allow another process
+      //   to ptrace this one, bypassing isolation.
+      // Block PR_SET_SECCOMP (22) — use __NR_seccomp instead, where we
+      //   enforce SECCOMP_SET_MODE_FILTER + SECCOMP_FILTER_FLAG_TSYNC only.
+      if (sysno == __NR_prctl) {
+        const Arg<int> option(0);
+        return sandbox::bpf_dsl::If(
+            sandbox::bpf_dsl::AnyOf(
+                option == PR_SET_NO_NEW_PRIVS,
+                option == PR_SET_NAME,
+                option == PR_GET_NAME,
+                option == PR_GET_DUMPABLE),
+            Allow()).Else(Error(EPERM));
+      }
+      // seccomp: only allow installing new filters (SECCOMP_SET_MODE_FILTER).
+      // The kernel enforces that filters can only ADD restrictions (they stack),
+      // so a sandboxed process cannot weaken our policy. However, we block
+      // SECCOMP_SET_MODE_STRICT (mode 1) which would kill the process on any
+      // syscall we need for broker communication.
+      if (sysno == __NR_seccomp) {
+        const Arg<unsigned int> op(0);
+        return sandbox::bpf_dsl::If(
+            op == SECCOMP_SET_MODE_FILTER, Allow())
+            .Else(Error(EPERM));
+      }
       return Allow();
     }
 
@@ -596,8 +631,9 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
     }
 
     // prctl: restrict operations (default Chrome policy).
-    // If prctl (157) is in extra_syscalls_, the early check above already
-    // returned Allow(). Otherwise, apply Chrome's default restrictions.
+    // If prctl (157) is in extra_syscalls_, the early check above applies
+    // argument-level filtering (only safe operations). Otherwise, apply
+    // Chrome's default restrictions.
     if (sysno == __NR_prctl) {
       return sandbox::RestrictPrctl();
     }

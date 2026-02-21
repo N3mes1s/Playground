@@ -241,7 +241,11 @@ pub fn parse_syscalls(specs: &[String]) -> Vec<std::os::raw::c_int> {
     for spec in specs {
         let s = spec.trim();
         match s.to_ascii_lowercase().as_str() {
-            // Sub-sandbox support (agents that create their own seccomp sandbox)
+            // Sub-sandbox support (agents that create their own seccomp sandbox).
+            // SECURITY: Even when allowed here, the C harness applies argument-
+            // level filtering: prctl only permits PR_SET_NO_NEW_PRIVS,
+            // PR_SET_NAME, PR_GET_NAME, PR_GET_DUMPABLE. seccomp only permits
+            // SECCOMP_SET_MODE_FILTER (install additive filters).
             "prctl" | "prctl_no_new_privs" => result.push(157), // __NR_prctl
             "seccomp" => result.push(317),                       // __NR_seccomp
             // Process group/session management (needed by agents running commands)
