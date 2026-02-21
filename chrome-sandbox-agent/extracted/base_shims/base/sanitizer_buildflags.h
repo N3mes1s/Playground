@@ -1,0 +1,9 @@
+// Standalone shim: base/sanitizer_buildflags.h
+#ifndef BASE_SANITIZER_BUILDFLAGS_H_
+#define BASE_SANITIZER_BUILDFLAGS_H_
+#define BUILDFLAG_INTERNAL_IS_HWASAN() (0)
+#define BUILDFLAG_INTERNAL_IS_ASAN() (0)
+#define BUILDFLAG_INTERNAL_IS_MSAN() (0)
+#define BUILDFLAG_INTERNAL_IS_TSAN() (0)
+#define BUILDFLAG_INTERNAL_USING_SANITIZER() (0)
+#endif

@@ -1,0 +1,6 @@
+// Standalone shim: base/clang_profiling_buildflags.h
+#ifndef BASE_CLANG_PROFILING_BUILDFLAGS_H_
+#define BASE_CLANG_PROFILING_BUILDFLAGS_H_
+#define BUILDFLAG_INTERNAL_CLANG_PROFILING() (0)
+#define BUILDFLAG_INTERNAL_CLANG_PROFILING_INSIDE_SANDBOX() (0)
+#endif

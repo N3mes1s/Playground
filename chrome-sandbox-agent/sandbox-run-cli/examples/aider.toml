@@ -1,0 +1,46 @@
+# sandbox-run config for Aider (Python-based AI coding agent)
+#
+# Generated via: sandbox-run --generate-config audit.jsonl > aider.toml
+# Usage:         sandbox-run --config aider.toml -- python3 -m aider --message "fix it"
+#
+# Security: policy is always STRICT. This config only relaxes specific
+# path filters and extensions — all 8 isolation layers remain active.
+
+[sandbox]
+# Network access required for Anthropic API calls
+network = true
+
+[paths]
+# Python runtime and system libraries (read-only)
+readonly = [
+    "/usr/local/lib/python3.11",
+    "/usr/local/bin",
+    "/usr/lib/python3.11",
+    "/usr/lib/python3",
+    "/usr/share/zoneinfo",
+    "/etc/ssl",
+    "/lib/x86_64-linux-gnu",
+]
+
+# Extra read-write paths (workspace is added automatically)
+allowed = []
+
+# Blocked paths — always denied even if inside allowed/readonly dirs.
+# These take priority over all allow lists.
+deny = [
+    "/etc/shadow",
+    "/etc/gshadow",
+]
+
+[filters]
+# Terminal ioctls for interactive use
+ioctls = ["tty"]
+
+# Socket options for HTTPS/TLS connections
+sockopts = ["tcp_nodelay", "so_keepalive"]
+
+# Environment variables (documentation only — not applied automatically)
+# Set these before running sandbox-run:
+#   ANTHROPIC_API_KEY=sk-...
+#   SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+[env]
