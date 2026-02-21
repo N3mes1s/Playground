@@ -1027,23 +1027,111 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
   }
 
   ResultExpr EvaluatePermissive(int sysno) const {
-    // Only block truly dangerous operations that could escape the sandbox
+    // PERMISSIVE mode: allow most syscalls but enforce the same critical
+    // security blocks as TRACE_ALL. Without these, an accidental use of
+    // PERMISSIVE mode would allow namespace escape, kernel exploitation,
+    // and cross-process memory access.
+    //
+    // NOTE: The Rust CLI hardcodes STRICT. PERMISSIVE exists only for the
+    // C API. If you don't need it, prefer removing it entirely.
+
+    // Filesystem/exec: route through broker for path validation
+    if (sysno == __NR_execve || sysno == __NR_execveat) return Broker();
+    if (sandbox::SyscallSets::IsFileSystem(sysno) ||
+        sandbox::SyscallSets::IsCurrentDirectory(sysno)) {
+      return Broker();
+    }
+
+    // Namespace escape
+    if (sysno == __NR_unshare || sysno == __NR_setns) return Block();
+#ifdef __NR_clone3
+    if (sysno == __NR_clone3) return Block();
+#endif
+    if (sysno == __NR_clone) {
+      const Arg<unsigned long> flags(0);
+      constexpr unsigned long kNsFlags =
+          CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWNET |
+          CLONE_NEWPID | CLONE_NEWIPC | CLONE_NEWUTS |
+          CLONE_NEWCGROUP;
+      return sandbox::bpf_dsl::If(
+          (flags & kNsFlags) == 0, Allow()).Else(Block());
+    }
+
+    // Cross-process memory access
     if (sysno == __NR_ptrace || sysno == __NR_process_vm_readv ||
         sysno == __NR_process_vm_writev) {
       return Block();
     }
+
+    // Filesystem manipulation / root escape
     if (sysno == __NR_mount || sysno == __NR_umount2 ||
         sysno == __NR_chroot || sysno == __NR_pivot_root) {
       return Block();
     }
-    if (sysno == __NR_reboot || sysno == __NR_init_module ||
-        sysno == __NR_finit_module || sysno == __NR_delete_module) {
+
+    // Kernel module / system control
+    if (sysno == __NR_reboot || sysno == __NR_kexec_load ||
+        sysno == __NR_init_module || sysno == __NR_finit_module ||
+        sysno == __NR_delete_module) {
       return Block();
     }
+
+    // Privilege changes
     if (sysno == __NR_capset || sysno == __NR_setuid ||
-        sysno == __NR_setgid) {
+        sysno == __NR_setgid || sysno == __NR_setresuid ||
+        sysno == __NR_setresgid || sysno == __NR_setreuid ||
+        sysno == __NR_setregid) {
       return Block();
     }
+
+    // Keyring subsystem (CVE-2016-0728)
+    if (sysno == __NR_keyctl || sysno == __NR_add_key ||
+        sysno == __NR_request_key) {
+      return Block();
+    }
+
+    // BPF / perf (kernel exploit primitives)
+    if (sysno == __NR_bpf || sysno == __NR_perf_event_open) return Block();
+
+    // Seccomp reconfiguration
+    if (sandbox::SyscallSets::IsSeccomp(sysno)) return Block();
+    if (sysno == __NR_prctl) {
+      const Arg<int> option(0);
+      return sandbox::bpf_dsl::If(
+          option == PR_SET_SECCOMP, Block()).Else(Allow());
+    }
+
+    // memfd_create: fileless execution bypass
+    if (sysno == __NR_memfd_create) return Block();
+
+    // MSG_OOB: CVE-2025-38236
+    if (sandbox::SyscallSets::IsSockSendOneMsg(sysno)) {
+      return sandbox::RestrictSockSendFlags(sysno);
+    }
+
+    // Socket domain restriction
+    if (sysno == __NR_socket) {
+      const Arg<int> domain(0);
+      if (allow_networking_) {
+        return sandbox::bpf_dsl::If(
+            sandbox::bpf_dsl::AnyOf(domain == AF_UNIX, domain == AF_INET,
+                                     domain == AF_INET6),
+            Allow()).Else(Block());
+      }
+      return sandbox::bpf_dsl::If(domain == AF_UNIX, Allow()).Else(Block());
+    }
+
+    // SO_ATTACH_FILTER: cBPF code execution
+    if (sysno == __NR_setsockopt) {
+      const Arg<int> level(1);
+      const Arg<int> optname(2);
+      return sandbox::bpf_dsl::If(
+          sandbox::bpf_dsl::AllOf(level == SOL_SOCKET,
+              sandbox::bpf_dsl::AnyOf(optname == SO_ATTACH_FILTER,
+                                       optname == SO_ATTACH_REUSEPORT_CBPF)),
+          Block()).Else(Allow());
+    }
+
     return Allow();
   }
 
@@ -1995,7 +2083,14 @@ static bool drop_all_capabilities() {
   // On Linux 4.4, PR_CAPBSET_DROP may require CAP_SETPCAP.
   // If that's not available, we at least have seccomp + namespace
   // isolation preventing exploitation of remaining bounding set caps.
-  for (int cap = 0; cap <= 40; cap++) {
+  // Use PR_CAPBSET_READ to find the actual last valid cap — future
+  // kernels may add caps beyond 40 (CAP_CHECKPOINT_RESTORE).
+  int last_cap = 40;
+  for (int c = 41; c < 64; c++) {
+    if (prctl(PR_CAPBSET_READ, c, 0, 0, 0) >= 0) last_cap = c;
+    else break;
+  }
+  for (int cap = 0; cap <= last_cap; cap++) {
     prctl(PR_CAPBSET_DROP, cap, 0, 0, 0);
   }
 
@@ -2083,7 +2178,13 @@ static NamespaceStatus apply_namespace_isolation(bool skip_pid_ns = false) {
   // a full bounding set lets an attacker regain privileges through exploits.
   // We must do this HERE because drop_capabilities() zeroes the effective
   // set, and PR_CAPBSET_DROP requires CAP_SETPCAP to be effective.
-  for (int cap = 0; cap <= 40; cap++) {
+  // Discover actual last cap (future-proof against kernels adding caps > 40)
+  int ns_last_cap = 40;
+  for (int c = 41; c < 64; c++) {
+    if (prctl(PR_CAPBSET_READ, c, 0, 0, 0) >= 0) ns_last_cap = c;
+    else break;
+  }
+  for (int cap = 0; cap <= ns_last_cap; cap++) {
     // Skip CAP_SYS_ADMIN (21) and CAP_SETPCAP (24) if we need to keep
     // them for zygote PID NS setup. CAP_SETPCAP is needed so the worker
     // can later drop CAP_SYS_ADMIN from the bounding set when it calls
@@ -2622,16 +2723,24 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
             auto result_old = broker_policy.GetFileNameIfAllowedToOpen(
                 path_c, O_RDWR);
             // Read new path (rsi for rename, r10 for renameat/renameat2)
-            std::string new_path;
-            if (nr == __NR_rename) {
-              new_path = read_child_string(pid, regs.rsi);
-            } else {
-              new_path = read_child_string(pid, regs.r10);
+            unsigned long new_path_addr = (nr == __NR_rename) ? regs.rsi : regs.r10;
+            std::string new_path = read_child_string(pid, new_path_addr);
+            std::string new_path_original = new_path;
+            if (!new_path.empty() && new_path[0] == '/') {
+              new_path = normalize_path_lexical(new_path);
             }
             auto result_new = broker_policy.GetFileNameIfAllowedToOpen(
                 new_path.c_str(), O_RDWR | O_CREAT);
             allowed = (result_old.first != nullptr &&
                        result_new.first != nullptr);
+            // TOCTOU: write back validated new_path too (covers destination)
+            if (allowed && new_path_addr != 0 && !new_path.empty()) {
+              std::string wb = new_path;
+              if (wb.size() < new_path_original.size()) {
+                wb.append(new_path_original.size() - wb.size(), '\0');
+              }
+              write_child_string(pid, new_path_addr, wb);
+            }
           } else if (nr == __NR_chmod || nr == __NR_fchmodat ||
                      nr == __NR_chown || nr == __NR_fchownat ||
                      nr == __NR_lchown) {
@@ -2689,16 +2798,17 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
               // have swapped the path to a forbidden target. By rewriting,
               // the kernel reads OUR validated copy, not the attacker's.
               //
-              // EXCEPTION: skip write-back when normalization shortened the
-              // path. The dynamic linker (ld.so) reuses path buffers and
-              // modifies them in-place between hwcaps iterations. Writing a
-              // shorter string corrupts the linker's offset calculations,
-              // causing garbled paths on subsequent searches. The kernel
-              // resolves ".." natively, so the original path reaches the
-              // same file — TOCTOU write-back is unnecessary here.
-              if (path_str.size() >= original_path_str.size()) {
-                write_child_string(pid, path_addr, path_str);
+              // When normalization shortened the path (e.g., /a/../b → /b),
+              // null-pad to original length so we fully overwrite the child's
+              // buffer. The null terminator after the shortened path ensures
+              // the kernel reads only our validated path, and the padding
+              // covers the remaining bytes the attacker could swap in.
+              // This stays within the original allocation (no overflow).
+              std::string writeback = path_str;
+              if (writeback.size() < original_path_str.size()) {
+                writeback.append(original_path_str.size() - writeback.size(), '\0');
               }
+              write_child_string(pid, path_addr, writeback);
             }
           }
         }
@@ -3289,9 +3399,31 @@ static int exec_passthrough(const char* const* argv) {
               allowed = (result.first != nullptr);
             } else if (nr == __NR_rename || nr == __NR_renameat ||
                        nr == __NR_renameat2) {
-              auto result = broker_policy.GetFileNameIfAllowedToOpen(
+              // Validate BOTH old and new paths (same as exec_with_tracing)
+              auto result_old = broker_policy.GetFileNameIfAllowedToOpen(
                   path_c, O_RDWR);
-              allowed = (result.first != nullptr);
+              unsigned long new_path_addr = (nr == __NR_rename) ? regs.rsi : regs.r10;
+              std::string new_path = read_child_string(pid, new_path_addr);
+              std::string new_path_original = new_path;
+              if (!new_path.empty() && new_path[0] == '/') {
+                new_path = normalize_path_lexical(new_path);
+              }
+              auto result_new = broker_policy.GetFileNameIfAllowedToOpen(
+                  new_path.c_str(), O_RDWR | O_CREAT);
+              allowed = (result_old.first != nullptr &&
+                         result_new.first != nullptr);
+              // Deny list on new path too
+              if (allowed && !new_path.empty() && is_path_denied(new_path)) {
+                allowed = false;
+              }
+              // TOCTOU: write back validated new_path (covers destination)
+              if (allowed && new_path_addr != 0 && !new_path.empty()) {
+                std::string wb = new_path;
+                if (wb.size() < new_path_original.size()) {
+                  wb.append(new_path_original.size() - wb.size(), '\0');
+                }
+                write_child_string(pid, new_path_addr, wb);
+              }
             } else if (nr == __NR_chmod || nr == __NR_fchmodat ||
                        nr == __NR_chown || nr == __NR_fchownat ||
                        nr == __NR_lchown) {
@@ -3334,11 +3466,12 @@ static int exec_passthrough(const char* const* argv) {
               }
               if (path_addr != 0 && !path_str.empty() && !skip_writeback) {
                 // TOCTOU defense: rewrite validated path (same as exec_with_tracing).
-                // Skip when normalization shortened the path — see exec_with_tracing
-                // comment for why (ld.so in-place buffer modification).
-                if (path_str.size() >= original_path_str.size()) {
-                  write_child_string(pid, path_addr, path_str);
+                // Null-pad shortened paths to cover the original buffer.
+                std::string writeback = path_str;
+                if (writeback.size() < original_path_str.size()) {
+                  writeback.append(original_path_str.size() - writeback.size(), '\0');
                 }
+                write_child_string(pid, path_addr, writeback);
               }
             }
 
@@ -3617,11 +3750,6 @@ build_broker_permissions() {
       // Standard mode: capture stdout/stderr, full ptrace tracing
       SandboxResult cmd_result = exec_with_tracing(argv.data());
 
-      // Clear per-exec extensions (auto-reset after each command)
-      g_extra_ioctls.clear();
-      g_extra_sockopts.clear();
-      g_extra_syscalls.clear();
-
       // Send results back to the agent
       zygote_send_result(zygote_fd, cmd_result);
 
@@ -3630,6 +3758,13 @@ build_broker_permissions() {
       free(cmd_result.stderr_buf);
       free(cmd_result.syscall_log);
     }
+
+    // Clear per-exec extensions AFTER both modes (auto-reset after each command).
+    // Must be outside the if/else to prevent extension leak from passthrough
+    // to subsequent standard-mode commands.
+    g_extra_ioctls.clear();
+    g_extra_sockopts.clear();
+    g_extra_syscalls.clear();
   }
 
   _exit(0);

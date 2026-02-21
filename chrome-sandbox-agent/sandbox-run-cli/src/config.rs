@@ -81,6 +81,16 @@ impl SandboxConfig {
             .map_err(|e| format!("failed to read config file {}: {}", path.display(), e))?;
         let config: SandboxConfig = toml::from_str(&content)
             .map_err(|e| format!("failed to parse config file {}: {}", path.display(), e))?;
+        // Warn if config specifies a policy — it's always STRICT regardless.
+        // This prevents confusion where an operator thinks they're running
+        // PERMISSIVE but the CLI ignores it.
+        if let Some(ref p) = config.sandbox.policy {
+            eprintln!(
+                "warning: config file sets policy = \"{}\" but sandbox-run always uses STRICT. \
+                 The policy field is ignored.",
+                p
+            );
+        }
         Ok(config)
     }
 
