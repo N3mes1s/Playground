@@ -79,3 +79,7 @@ test_77_io_uring_deep
 test_78_cachestat_sidechan
 test_79_landlock_bypass
 test_80_futex2_covert
+test_81_apparmor_userns
+test_82_page_spray
+test_83_ghostrace_scuaf
+test_84_tlb_slub_sidechan
