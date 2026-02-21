@@ -29,3 +29,13 @@ test_27_handle_ops
 test_28_credential_spoof
 test_29_fanotify_inotify
 test_30_misc_kernel
+test_31_signalfd_sigsys
+test_32_mprotect_timing
+test_33_posix_timer
+test_34_prctl_audit
+test_35_resource_limits
+test_36_broker_ipc
+test_37_socket_options
+test_38_fuse_access
+test_39_nested_namespace
+test_40_syscall_enum

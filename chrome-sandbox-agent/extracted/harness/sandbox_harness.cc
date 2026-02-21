@@ -373,8 +373,25 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
               (flags & MSG_OOB) == 0, Allow()).Else(Block());
         }
         // Namespace escape: block even in TRACE_ALL.
+        // Also block clone/clone3 with namespace flags (Qualys 2025 bypasses).
         if (sysno == __NR_unshare || sysno == __NR_setns) {
           return Block();
+        }
+#ifdef __NR_clone3
+        if (sysno == __NR_clone3) {
+          // clone3 passes flags in a struct — can't inspect via BPF.
+          // Block entirely; fork/clone with SIGCHLD suffice.
+          return Block();
+        }
+#endif
+        if (sysno == __NR_clone) {
+          const Arg<unsigned long> flags(0);
+          constexpr unsigned long kNsFlags =
+              CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWNET |
+              CLONE_NEWPID | CLONE_NEWIPC | CLONE_NEWUTS |
+              CLONE_NEWCGROUP;
+          return sandbox::bpf_dsl::If(
+              (flags & kNsFlags) == 0, Allow()).Else(Block());
         }
         // Cross-process memory access: block process_vm_readv/writev.
         // These allow reading/writing another process's memory without
@@ -392,11 +409,36 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
           return Block();
         }
         // Seccomp reconfiguration: block adding new seccomp filters.
-        // A sandboxed process must not weaken or modify its own seccomp
-        // policy. IsSeccomp() covers __NR_seccomp and __NR_prctl with
-        // PR_SET_SECCOMP, but we block it explicitly here too.
+        // IsSeccomp() covers __NR_seccomp but NOT prctl(PR_SET_SECCOMP).
+        // Block both paths explicitly.
         if (sandbox::SyscallSets::IsSeccomp(sysno)) {
           return Block();
+        }
+        if (sysno == __NR_prctl) {
+          const Arg<int> option(0);
+          return sandbox::bpf_dsl::If(
+              option == PR_SET_SECCOMP, Block()).Else(Allow());
+        }
+        // BPF: block bpf() syscall. Loading BPF programs into kernel is
+        // a powerful attack primitive (code execution, info leak).
+        if (sysno == __NR_bpf) {
+          return Block();
+        }
+        // perf_event_open: block performance monitoring from sandbox.
+        // Enables timing side-channels and kernel info leaks.
+        if (sysno == __NR_perf_event_open) {
+          return Block();
+        }
+        // SO_ATTACH_FILTER: block attaching cBPF programs to sockets.
+        // This allows arbitrary BPF code execution on packet data.
+        if (sysno == __NR_setsockopt) {
+          const Arg<int> level(1);
+          const Arg<int> optname(2);
+          return sandbox::bpf_dsl::If(
+              sandbox::bpf_dsl::AllOf(level == SOL_SOCKET,
+                  sandbox::bpf_dsl::AnyOf(optname == SO_ATTACH_FILTER,
+                                           optname == SO_ATTACH_REUSEPORT_CBPF)),
+              Block()).Else(Allow());
         }
         // Netlink: restrict socket creation to AF_UNIX only.
         // NETLINK_ROUTE and NETLINK_NETFILTER enable nftables LPE

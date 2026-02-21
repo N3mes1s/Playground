@@ -37,7 +37,17 @@ TESTS := test_01_fd_smuggling \
          test_27_handle_ops \
          test_28_credential_spoof \
          test_29_fanotify_inotify \
-         test_30_misc_kernel
+         test_30_misc_kernel \
+         test_31_signalfd_sigsys \
+         test_32_mprotect_timing \
+         test_33_posix_timer \
+         test_34_prctl_audit \
+         test_35_resource_limits \
+         test_36_broker_ipc \
+         test_37_socket_options \
+         test_38_fuse_access \
+         test_39_nested_namespace \
+         test_40_syscall_enum
 
 .PHONY: all clean run-all
 
@@ -54,7 +64,7 @@ run-all: all
 	echo ""; \
 	echo "\033[1m╔══════════════════════════════════════════════════╗\033[0m"; \
 	echo "\033[1m║   ADVANCED SANDBOX BYPASS TEST SUITE             ║\033[0m"; \
-	echo "\033[1m║   30 attack categories, ~240 individual tests    ║\033[0m"; \
+	echo "\033[1m║   40 attack categories, ~320 individual tests    ║\033[0m"; \
 	echo "\033[1m╚══════════════════════════════════════════════════╝\033[0m"; \
 	for t in $(TESTS); do \
 		echo ""; \
