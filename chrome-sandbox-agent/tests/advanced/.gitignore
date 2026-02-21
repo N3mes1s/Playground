@@ -1,0 +1,11 @@
+# Compiled test binaries
+test_01_fd_smuggling
+test_02_dirty_pipe
+test_03_abstract_socket
+test_04_proc_self_mem
+test_05_mmap_shared
+test_06_scm_rights
+test_07_futex_covert
+test_08_ld_preload
+test_09_renameat2_toctou
+test_10_compound_attack
