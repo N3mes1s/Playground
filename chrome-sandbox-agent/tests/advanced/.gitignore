@@ -9,3 +9,13 @@ test_07_futex_covert
 test_08_ld_preload
 test_09_renameat2_toctou
 test_10_compound_attack
+test_11_io_uring
+test_12_msg_oob
+test_13_userfaultfd
+test_14_cross_cache
+test_15_cgroup_escape
+test_16_netfilter
+test_17_vsock
+test_18_procfs_race
+test_19_ebpf
+test_20_landlock

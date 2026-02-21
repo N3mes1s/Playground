@@ -342,15 +342,53 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
         return EvaluatePermissive(sysno);
       case SANDBOX_POLICY_TRACE_ALL:
       default:
-        // TRACE_ALL allows most syscalls but still enforces exec policy
-        // and filesystem brokering through the ptrace tracer. Without
-        // this, execveat(AT_EMPTY_PATH) bypasses path validation entirely.
+        // TRACE_ALL allows most syscalls but still enforces critical
+        // security policies through the ptrace tracer and seccomp.
+
+        // Exec/filesystem: route through broker for path validation.
         if (sysno == __NR_execve || sysno == __NR_execveat) {
           return Broker();
         }
         if (sandbox::SyscallSets::IsFileSystem(sysno) ||
             sandbox::SyscallSets::IsCurrentDirectory(sysno)) {
           return Broker();
+        }
+        // MSG_OOB: block on send/recv (CVE-2025-38236 — UAF in UNIX
+        // domain socket OOB handling, exploitable from Chrome sandbox).
+        // Chrome already blocks this in STRICT mode via RestrictSockSendFlags.
+        if (sandbox::SyscallSets::IsSockSendOneMsg(sysno)) {
+          return sandbox::RestrictSockSendFlags(sysno);
+        }
+        // recv flags: block MSG_OOB on receive side too.
+        // RestrictSockSendFlags doesn't handle recv syscalls, so we
+        // implement our own flag restriction here.
+        if (sysno == __NR_recvfrom) {
+          const Arg<int> flags(3);
+          return sandbox::bpf_dsl::If(
+              (flags & MSG_OOB) == 0, Allow()).Else(Block());
+        }
+        if (sysno == __NR_recvmsg) {
+          const Arg<int> flags(2);
+          return sandbox::bpf_dsl::If(
+              (flags & MSG_OOB) == 0, Allow()).Else(Block());
+        }
+        // Namespace escape: block even in TRACE_ALL.
+        if (sysno == __NR_unshare || sysno == __NR_setns) {
+          return Block();
+        }
+        // Netlink: restrict socket creation to AF_UNIX only.
+        // NETLINK_ROUTE and NETLINK_NETFILTER enable nftables LPE
+        // (CVE-2024-1086) and network namespace manipulation.
+        if (sysno == __NR_socket) {
+          const Arg<int> domain(0);
+          if (allow_networking_) {
+            return sandbox::bpf_dsl::If(
+                sandbox::bpf_dsl::AnyOf(domain == AF_UNIX, domain == AF_INET,
+                                         domain == AF_INET6),
+                Allow()).Else(Block());
+          }
+          return sandbox::bpf_dsl::If(domain == AF_UNIX, Allow())
+              .Else(Block());
         }
         return Allow();
     }
@@ -425,7 +463,8 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
       const Arg<unsigned long> flags(0);
       const unsigned long kDangerousCloneFlags =
           CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWPID |
-          CLONE_NEWNET | CLONE_NEWIPC | CLONE_NEWUTS;
+          CLONE_NEWNET | CLONE_NEWIPC | CLONE_NEWUTS |
+          0x02000000UL /* CLONE_NEWCGROUP */;
       return sandbox::bpf_dsl::If(
           (flags & kDangerousCloneFlags) == 0, Allow())
           .Else(Error(EPERM));
@@ -1693,15 +1732,52 @@ static bool drop_capabilities(bool keep_sys_admin = false) {
   hdr.version = _LINUX_CAPABILITY_VERSION_3;
   struct cap_data data[_LINUX_CAPABILITY_U32S_3] = {};
   if (keep_sys_admin) {
-    // CAP_SYS_ADMIN = 21 → bit 21 in the first 32-bit word
-    data[0].effective = (1U << 21);
-    data[0].permitted = (1U << 21);
+    // CAP_SYS_ADMIN (21) for PID NS setup, CAP_SETPCAP (24) so the
+    // worker can later drop CAP_SYS_ADMIN from the bounding set.
+    data[0].effective  = (1U << 21) | (1U << 24);
+    data[0].permitted  = (1U << 21) | (1U << 24);
     data[0].inheritable = 0;  // Don't inherit across exec
   }
   return sandbox::sys_capset(&hdr, data) == 0;
 }
 
 static bool drop_all_capabilities() {
+  // The zygote preserved CAP_SYS_ADMIN (21) in the bounding set for
+  // PID NS setup. Now we need to drop it (and any other remaining caps).
+  // PR_CAPBSET_DROP requires CAP_SETPCAP (24) in the effective set.
+  // The worker only has CAP_SYS_ADMIN effective, so we temporarily
+  // grant ourselves CAP_SETPCAP too. This is safe because:
+  //  1. We're about to drop everything anyway
+  //  2. CAP_SETPCAP is only in the bounding set if not already dropped
+  //  3. The bounding set was already cleared except CAP_SYS_ADMIN
+  // Ensure CAP_SETPCAP (24) is effective — needed for PR_CAPBSET_DROP.
+  {
+    struct cap_hdr hdr = {};
+    hdr.version = _LINUX_CAPABILITY_VERSION_3;
+    struct cap_data data[_LINUX_CAPABILITY_U32S_3] = {};
+    data[0].effective  = (1U << 21) | (1U << 24);
+    data[0].permitted  = (1U << 21) | (1U << 24);
+    data[0].inheritable = 0;
+    int rc = sandbox::sys_capset(&hdr, data);
+    if (rc != 0) {
+      // capset failed — possibly bounding set doesn't include SETPCAP.
+      // Try with just SYS_ADMIN (some kernels still allow bounding drop
+      // from the init user namespace owner without CAP_SETPCAP).
+      data[0].effective  = (1U << 21);
+      data[0].permitted  = (1U << 21);
+      sandbox::sys_capset(&hdr, data);
+    }
+  }
+
+  // Drop ALL capabilities from the bounding set.
+  // On Linux 4.4, PR_CAPBSET_DROP may require CAP_SETPCAP.
+  // If that's not available, we at least have seccomp + namespace
+  // isolation preventing exploitation of remaining bounding set caps.
+  for (int cap = 0; cap <= 40; cap++) {
+    prctl(PR_CAPBSET_DROP, cap, 0, 0, 0);
+  }
+
+  // Finally drop effective/permitted/inheritable capabilities
   return drop_capabilities(false);
 }
 
@@ -1779,6 +1855,21 @@ static NamespaceStatus apply_namespace_isolation(bool skip_pid_ns = false) {
   // NOTE: We must do this AFTER mount namespace setup (which needs
   // CAP_SYS_ADMIN) but BEFORE seccomp-BPF installation.
   //
+  // First, drop ALL capabilities from the bounding set while we still
+  // have CAP_SETPCAP. The bounding set limits what caps can be acquired
+  // via exec of suid/capability binaries. Even with effective caps zeroed,
+  // a full bounding set lets an attacker regain privileges through exploits.
+  // We must do this HERE because drop_capabilities() zeroes the effective
+  // set, and PR_CAPBSET_DROP requires CAP_SETPCAP to be effective.
+  for (int cap = 0; cap <= 40; cap++) {
+    // Skip CAP_SYS_ADMIN (21) and CAP_SETPCAP (24) if we need to keep
+    // them for zygote PID NS setup. CAP_SETPCAP is needed so the worker
+    // can later drop CAP_SYS_ADMIN from the bounding set when it calls
+    // drop_all_capabilities() after PID NS creation.
+    if (skip_pid_ns && (cap == 21 || cap == 24)) continue;
+    prctl(PR_CAPBSET_DROP, cap, 0, 0, 0);
+  }
+
   // When skip_pid_ns is true (zygote mode), we preserve CAP_SYS_ADMIN
   // so forked workers can create per-command PID namespaces and remount
   // /proc. Each worker drops CAP_SYS_ADMIN after setting up its PID NS.
@@ -1924,11 +2015,11 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
             "hidepid=2");
     }
 
-    // Drop CAP_SYS_ADMIN if still held (zygote path preserves it for PID NS).
-    // Must happen AFTER proc mount but BEFORE seccomp-BPF install.
-    if (!ns_status.caps_dropped) {
-      drop_all_capabilities();
-    }
+    // Drop ALL capabilities (including bounding set).
+    // Always call this — even if the zygote already dropped effective caps,
+    // it preserved CAP_SYS_ADMIN and CAP_SETPCAP for PID NS setup. Now
+    // that PID NS is set up, drop everything from effective AND bounding set.
+    drop_all_capabilities();
 
     // === LAYER 6: seccomp-BPF ===
     // Install Chrome's seccomp-BPF sandbox using the actual Chromium code.
@@ -2658,10 +2749,8 @@ static int exec_passthrough(const char* const* argv) {
       mount("proc", "/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, "hidepid=2");
     }
 
-    // Drop CAP_SYS_ADMIN if still held (zygote path preserves it for PID NS)
-    if (!ns_status.caps_dropped) {
-      drop_all_capabilities();
-    }
+    // Drop ALL capabilities (including bounding set).
+    drop_all_capabilities();
 
     // Install seccomp-BPF (same as exec_with_tracing - STRICT policy works!)
     auto policy = std::make_unique<AgentSandboxPolicy>(
