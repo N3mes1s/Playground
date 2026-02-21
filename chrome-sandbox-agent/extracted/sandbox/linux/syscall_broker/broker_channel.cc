@@ -21,7 +21,9 @@ void BrokerChannel::CreatePair(EndPoint* reader, EndPoint* writer) {
   // Use SOCK_SEQPACKET, to preserve message boundaries but we also want to be
   // notified (recvmsg should return and not block) when the connection has
   // been broken which could mean that the other end has been closed.
-  PCHECK(0 == socketpair(AF_UNIX, SOCK_SEQPACKET, 0, socket_pair));
+  // Use SOCK_CLOEXEC to prevent broker FDs from leaking into child
+  // processes on exec (prevents broker injection attacks via leaked FDs).
+  PCHECK(0 == socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, socket_pair));
 
   reader->reset(socket_pair[0]);
   PCHECK(0 == shutdown(reader->get(), SHUT_WR));

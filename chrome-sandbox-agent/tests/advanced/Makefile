@@ -5,8 +5,8 @@
 # Run all:            make run-all
 
 CC      ?= gcc
-CFLAGS  := -O2 -Wall -Wextra -std=c11 -D_GNU_SOURCE
-LDFLAGS := -static -pthread
+CFLAGS  := -O2 -Wall -Wextra -std=c11 -D_GNU_SOURCE -fpie
+LDFLAGS := -static-pie -pthread
 
 TESTS := test_01_fd_smuggling \
          test_02_dirty_pipe \

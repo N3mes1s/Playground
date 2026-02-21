@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
+#include <sys/personality.h>
 #include <sys/prctl.h>
 #include <sys/ptrace.h>
 #include <sys/mman.h>
@@ -341,6 +342,16 @@ class AgentSandboxPolicy : public sandbox::bpf_dsl::Policy {
         return EvaluatePermissive(sysno);
       case SANDBOX_POLICY_TRACE_ALL:
       default:
+        // TRACE_ALL allows most syscalls but still enforces exec policy
+        // and filesystem brokering through the ptrace tracer. Without
+        // this, execveat(AT_EMPTY_PATH) bypasses path validation entirely.
+        if (sysno == __NR_execve || sysno == __NR_execveat) {
+          return Broker();
+        }
+        if (sandbox::SyscallSets::IsFileSystem(sysno) ||
+            sandbox::SyscallSets::IsCurrentDirectory(sysno)) {
+          return Broker();
+        }
         return Allow();
     }
   }
@@ -1560,6 +1571,12 @@ static bool setup_chroot_filesystem() {
     }
   }
 
+  // Remount /etc tmpfs read-only now that all safe files are populated.
+  // Prevents attackers from creating /etc/ld.so.preload or modifying
+  // /etc/ld.so.cache to hijack dynamic linking in future exec()s.
+  snprintf(path, sizeof(path), "%s/etc", sandbox_root);
+  mount(nullptr, path, nullptr, MS_REMOUNT | MS_RDONLY | MS_NOSUID | MS_NODEV, nullptr);
+
   // Bind-mount user-configured read-only paths (runtimes, tools)
   for (const auto& ro_path : g_readonly_paths) {
     if (ro_path.empty() || ro_path[0] != '/') continue;
@@ -1625,9 +1642,11 @@ static bool setup_chroot_filesystem() {
 
   // Mount procfs in new root (needed by ptrace broker to read child memory
   // via /proc/pid/mem, and by tools like ps, top, /proc/self/*)
+  // Use hidepid=2 to prevent sandboxed processes from reading /proc/<pid>/
+  // for other processes (blocks /proc/1/maps, /proc/1/environ, etc.)
   snprintf(path, sizeof(path), "%s/proc", sandbox_root);
   mkdir(path, 0555);
-  mount("proc", path, "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, nullptr);
+  mount("proc", path, "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, "hidepid=2");
 
   // pivot_root: switch the root filesystem
   // Create a directory for the old root
@@ -1808,7 +1827,7 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
 
   // Create pipes for stdout/stderr capture
   int stdout_pipe[2], stderr_pipe[2];
-  if (pipe(stdout_pipe) < 0 || pipe(stderr_pipe) < 0) {
+  if (pipe2(stdout_pipe, O_CLOEXEC) < 0 || pipe2(stderr_pipe, O_CLOEXEC) < 0) {
     result.exit_code = -1;
     return result;
   }
@@ -1902,7 +1921,7 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
       // Remount /proc to reflect the new PID namespace.
       // This ensures /proc only shows processes in our namespace.
       mount("proc", "/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC,
-            nullptr);
+            "hidepid=2");
     }
 
     // Drop CAP_SYS_ADMIN if still held (zygote path preserves it for PID NS).
@@ -1921,6 +1940,18 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
     if (!sandbox_bpf.StartSandbox(sandbox::SandboxBPF::SeccompLevel::SINGLE_THREADED)) {
       _exit(126);
     }
+
+    // Enforce ASLR: reset personality to PER_LINUX so static binaries
+    // cannot inherit ADDR_NO_RANDOMIZE from the parent process.
+    personality(PER_LINUX);
+
+    // Sanitize dangerous LD_* environment variables that could be used
+    // for library injection (LD_PRELOAD, LD_LIBRARY_PATH) or DoS
+    // (crashing the dynamic linker with fake .so files).
+    unsetenv("LD_PRELOAD");
+    unsetenv("LD_LIBRARY_PATH");
+    unsetenv("LD_AUDIT");
+    unsetenv("LD_PROFILE");
 
     // chdir to workspace (first allowed path) so tools that write to CWD
     // (e.g. Bun's JIT .so extraction) land in a writable directory.
@@ -2624,7 +2655,7 @@ static int exec_passthrough(const char* const* argv) {
         }
         _exit(exit_code);
       }
-      mount("proc", "/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, nullptr);
+      mount("proc", "/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, "hidepid=2");
     }
 
     // Drop CAP_SYS_ADMIN if still held (zygote path preserves it for PID NS)
@@ -2640,6 +2671,16 @@ static int exec_passthrough(const char* const* argv) {
     if (!sandbox_bpf.StartSandbox(sandbox::SandboxBPF::SeccompLevel::SINGLE_THREADED)) {
       _exit(126);
     }
+
+    // Enforce ASLR: reset personality to PER_LINUX so static binaries
+    // cannot inherit ADDR_NO_RANDOMIZE from the parent process.
+    personality(PER_LINUX);
+
+    // Sanitize dangerous LD_* environment variables.
+    unsetenv("LD_PRELOAD");
+    unsetenv("LD_LIBRARY_PATH");
+    unsetenv("LD_AUDIT");
+    unsetenv("LD_PROFILE");
 
     // chdir to workspace (same as exec_with_tracing)
     if (!g_allowed_paths.empty()) {
@@ -2852,6 +2893,12 @@ static int exec_passthrough(const char* const* argv) {
                 auto result = broker_policy.GetFileNameIfAllowedToOpen(
                     path_c, O_RDONLY);
                 allow_exec = (result.first != nullptr);
+              } else {
+                // Empty path = execveat(fd, "", ..., AT_EMPTY_PATH).
+                // This bypasses path-based validation since there's no path
+                // to check. Block it: attackers can use memfd_create() to
+                // create anonymous ELFs and exec them without any path check.
+                allow_exec = false;
               }
             }
             if (!allow_exec) {
@@ -3259,7 +3306,7 @@ int sandbox_init(void) {
 
   // Create socketpair for agent ↔ zygote IPC
   int sv[2];
-  if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) {
+  if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv) < 0) {
     return -1;
   }
 
