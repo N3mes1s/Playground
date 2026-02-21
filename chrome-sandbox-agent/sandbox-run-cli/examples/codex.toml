@@ -26,7 +26,10 @@ readonly = [
 ]
 
 # Extra read-write paths (workspace is added automatically)
-allowed = []
+# /root/.codex — codex needs to write sessions, rollout data, shell snapshots
+allowed = [
+    "/root/.codex",
+]
 
 # Blocked paths — always denied
 deny = [
@@ -42,7 +45,11 @@ ioctls = ["tty"]
 sockopts = ["tcp_nodelay", "so_keepalive"]
 
 [env]
-# Redirect HOME so codex writes config/state to the writable workspace
-# instead of /root/.codex (which is outside the sandbox).
+# Redirect HOME/TMPDIR to writable /tmp inside the sandbox.
 HOME = "/tmp"
 TMPDIR = "/tmp"
+# Point CODEX_HOME to the real ~/.codex (mounted read-only above) so
+# codex can read auth.json and config.toml.  Session/rollout writes
+# will fail harmlessly.  Run `codex login --with-api-key` on the host
+# before first use.
+CODEX_HOME = "/root/.codex"

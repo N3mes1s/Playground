@@ -3381,6 +3381,16 @@ build_broker_permissions() {
       std::string p = path;
       if (p.back() != '/') p += '/';
       perms.push_back(BrokerFilePermission::ReadWriteCreateRecursive(p));
+      // Also allow stat/opendir on the directory itself and parents
+      // (ReadWriteCreateRecursive only matches children, not the entry)
+      perms.push_back(BrokerFilePermission::ReadOnly(path));
+      std::string parent = path;
+      while (true) {
+        size_t pos = parent.find_last_of('/');
+        if (pos == 0) break;
+        parent = parent.substr(0, pos);
+        perms.push_back(BrokerFilePermission::ReadOnly(parent));
+      }
     }
   }
 
