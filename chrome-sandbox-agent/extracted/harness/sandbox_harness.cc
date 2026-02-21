@@ -1672,10 +1672,30 @@ static std::string resolve_relative_path(const std::string& cwd,
   return normalize_path_lexical(joined);
 }
 
+// Built-in deny patterns: paths that are ALWAYS denied regardless of config.
+// These prevent namespace escape, kernel info disclosure, and credential theft.
+// The deny list is checked before the allow list for defense-in-depth.
+static bool matches_builtin_deny(const std::string& path) {
+  // Block /proc/*/ns/* — namespace FDs enable setns() escape.
+  // Even though setns() is in the unconditional seccomp deny list,
+  // blocking the FD open is defense-in-depth.
+  if (path.compare(0, 6, "/proc/") == 0) {
+    auto ns_pos = path.find("/ns/");
+    if (ns_pos != std::string::npos && ns_pos > 6) return true;
+    auto ns_end = path.find("/ns");
+    if (ns_end != std::string::npos && ns_end + 3 == path.size()) return true;
+  }
+  return false;
+}
+
 // Check if a normalized absolute path is in the deny list.
 // Deny list takes priority over allow list — used for sensitive files
 // that should never be accessible even if inside an allowed directory.
 static bool is_path_denied(const std::string& path) {
+  // Check built-in deny patterns first (always enforced)
+  if (matches_builtin_deny(path)) return true;
+
+  // Check user-configured deny list
   for (const auto& denied : g_denied_paths) {
     if (path == denied) return true;
     // Also deny if path is under a denied directory prefix
