@@ -1315,6 +1315,9 @@ static bool zygote_recv_command(int fd, std::vector<std::string>& args,
                                 bool& passthrough) {
   uint32_t total_len;
   if (!read_all(fd, &total_len, sizeof(total_len))) return false;
+  // Reject absurdly large messages (16MB cap prevents memory exhaustion).
+  // A realistic command message is a few KB at most.
+  if (total_len > 16 * 1024 * 1024) return false;
 
   uint32_t argc;
   if (!read_all(fd, &argc, sizeof(argc))) return false;
@@ -1333,6 +1336,9 @@ static bool zygote_recv_command(int fd, std::vector<std::string>& args,
   int32_t ep, sp;
   if (!read_all(fd, &ep, sizeof(ep))) return false;
   if (!read_all(fd, &sp, sizeof(sp))) return false;
+  // Validate enum ranges to prevent use of undefined policy values.
+  if (ep < 0 || ep > 2) return false;  // CHROME=0, BROKERED=1, BLOCKED=2
+  if (sp < 0 || sp > 2) return false;  // STRICT=0, PERMISSIVE=1, TRACE_ALL=2
   exec_policy = (SandboxExecPolicy)ep;
   sandbox_policy = (SandboxPolicyLevel)sp;
 
@@ -1415,9 +1421,15 @@ static bool zygote_send_result(int fd, const SandboxResult& result) {
 }
 
 // Receive results in the agent
+// Maximum size for any single buffer in a result message (256MB).
+// Prevents a corrupted zygote from causing unbounded malloc.
+static constexpr uint32_t kMaxResultBufLen = 256 * 1024 * 1024;
+
 static bool zygote_recv_result(int fd, SandboxResult& result) {
   uint32_t total_len;
   if (!read_all(fd, &total_len, sizeof(total_len))) return false;
+  // Reject absurdly large result messages (512MB cap).
+  if (total_len > 512 * 1024 * 1024) return false;
 
   int32_t ec;
   if (!read_all(fd, &ec, sizeof(ec))) return false;
@@ -1425,26 +1437,29 @@ static bool zygote_recv_result(int fd, SandboxResult& result) {
 
   uint32_t slen;
   if (!read_all(fd, &slen, sizeof(slen))) return false;
+  if (slen > kMaxResultBufLen) return false;
   result.stdout_len = slen;
   result.stdout_buf = slen > 0 ? (char*)malloc(slen + 1) : nullptr;
   if (slen > 0) {
-    if (!read_all(fd, result.stdout_buf, slen)) return false;
+    if (!result.stdout_buf || !read_all(fd, result.stdout_buf, slen)) return false;
     result.stdout_buf[slen] = '\0';
   }
 
   if (!read_all(fd, &slen, sizeof(slen))) return false;
+  if (slen > kMaxResultBufLen) return false;
   result.stderr_len = slen;
   result.stderr_buf = slen > 0 ? (char*)malloc(slen + 1) : nullptr;
   if (slen > 0) {
-    if (!read_all(fd, result.stderr_buf, slen)) return false;
+    if (!result.stderr_buf || !read_all(fd, result.stderr_buf, slen)) return false;
     result.stderr_buf[slen] = '\0';
   }
 
   if (!read_all(fd, &slen, sizeof(slen))) return false;
+  if (slen > kMaxResultBufLen) return false;
   result.syscall_log_len = slen;
   result.syscall_log = slen > 0 ? (char*)malloc(slen + 1) : nullptr;
   if (slen > 0) {
-    if (!read_all(fd, result.syscall_log, slen)) return false;
+    if (!result.syscall_log || !read_all(fd, result.syscall_log, slen)) return false;
     result.syscall_log[slen] = '\0';
   }
 
@@ -1695,6 +1710,10 @@ static bool g_enable_network_isolation = true;  // default: Chrome's behavior
 static bool g_audit_mode = false;
 static int g_audit_fd = -1;            // fd for audit log output (-1 = stderr)
 static bool g_audit_owns_fd = false;   // true if we opened the fd (need to close)
+static size_t g_audit_bytes_written = 0;
+// 256MB audit log cap prevents disk exhaustion from runaway tracing.
+// After hitting the cap, audit_log() silently stops writing.
+static constexpr size_t kAuditLogMaxBytes = 256 * 1024 * 1024;
 
 // Set up user namespace and map current uid/gid.
 // Returns true on success, false if namespaces unavailable (non-fatal).
@@ -2222,6 +2241,12 @@ static NamespaceStatus apply_namespace_isolation(bool skip_pid_ns = false) {
   static constexpr rlim_t kNprocLimit = 256;
   (void)sandbox::ResourceLimits::Lower(RLIMIT_NPROC, kNprocLimit);
 
+  // Limit file descriptors to prevent FD exhaustion attacks.
+  // 4096 is generous for tools that need many connections/files, but prevents
+  // an attacker from exhausting the host's FD table via epoll/eventfd/pipe spray.
+  static constexpr rlim_t kNofileLimit = 4096;
+  (void)sandbox::ResourceLimits::Lower(RLIMIT_NOFILE, kNofileLimit);
+
   // Disk space is bounded by tmpfs size (32MB) + workspace quotas.
 
   return status;
@@ -2359,13 +2384,26 @@ static SandboxResult exec_with_tracing(const char* const* argv) {
     // cannot inherit ADDR_NO_RANDOMIZE from the parent process.
     personality(PER_LINUX);
 
-    // Sanitize dangerous LD_* environment variables that could be used
-    // for library injection (LD_PRELOAD, LD_LIBRARY_PATH) or DoS
-    // (crashing the dynamic linker with fake .so files).
-    unsetenv("LD_PRELOAD");
-    unsetenv("LD_LIBRARY_PATH");
-    unsetenv("LD_AUDIT");
-    unsetenv("LD_PROFILE");
+    // Sanitize ALL dangerous environment variables from Chromium's
+    // kSUIDUnsafeEnvironmentVariables list. These can be used for:
+    // - Library injection (LD_PRELOAD, LD_LIBRARY_PATH, LD_AUDIT)
+    // - Library search hijacking (LD_ORIGIN_PATH, LD_AOUT_*)
+    // - Debug/profile output to attacker paths (LD_DEBUG_OUTPUT, LD_PROFILE)
+    // - Locale/resolver hijacking (GCONV_PATH, HOSTALIASES, RESOLV_HOST_CONF)
+    // - Memory tracing to attacker files (MALLOC_TRACE)
+    // - Temp directory hijacking (TMPDIR, TZDIR)
+    static const char* const kUnsafeEnvVars[] = {
+      "LD_AOUT_LIBRARY_PATH", "LD_AOUT_PRELOAD", "GCONV_PATH",
+      "GETCONF_DIR", "HOSTALIASES", "LD_AUDIT", "LD_DEBUG",
+      "LD_DEBUG_OUTPUT", "LD_DYNAMIC_WEAK", "LD_LIBRARY_PATH",
+      "LD_ORIGIN_PATH", "LD_PRELOAD", "LD_PROFILE", "LD_PROFILE_OUTPUT",
+      "LD_SHOW_AUXV", "LD_USE_LOAD_BIAS", "LOCALDOMAIN", "LOCPATH",
+      "MALLOC_TRACE", "NIS_PATH", "NLSPATH", "RESOLV_HOST_CONF",
+      "RES_OPTIONS", "TMPDIR", "TZDIR", nullptr
+    };
+    for (const char* const* p = kUnsafeEnvVars; *p; ++p) {
+      unsetenv(*p);
+    }
 
     // chdir to workspace (first allowed path) so tools that write to CWD
     // (e.g. Bun's JIT .so extraction) land in a writable directory.
@@ -2976,6 +3014,10 @@ static void audit_log(const char* fmt, ...) __attribute__((format(printf, 1, 2))
 static void audit_log(const char* fmt, ...) {
   if (!g_audit_mode) return;
 
+  // Enforce audit log size cap to prevent disk exhaustion.
+  // Once the cap is hit, silently stop logging (sandbox continues running).
+  if (g_audit_owns_fd && g_audit_bytes_written >= kAuditLogMaxBytes) return;
+
   int fd = (g_audit_fd >= 0) ? g_audit_fd : STDERR_FILENO;
 
   char buf[4096];
@@ -2990,7 +3032,10 @@ static void audit_log(const char* fmt, ...) {
       buf[len++] = '\n';
     }
     // Write atomically (single write call)
-    (void)write(fd, buf, len);
+    ssize_t written = write(fd, buf, len);
+    if (written > 0 && g_audit_owns_fd) {
+      g_audit_bytes_written += (size_t)written;
+    }
   }
 }
 
@@ -3108,11 +3153,19 @@ static int exec_passthrough(const char* const* argv) {
     // cannot inherit ADDR_NO_RANDOMIZE from the parent process.
     personality(PER_LINUX);
 
-    // Sanitize dangerous LD_* environment variables.
-    unsetenv("LD_PRELOAD");
-    unsetenv("LD_LIBRARY_PATH");
-    unsetenv("LD_AUDIT");
-    unsetenv("LD_PROFILE");
+    // Sanitize ALL dangerous environment variables (matches exec_with_tracing).
+    static const char* const kUnsafeEnvVars[] = {
+      "LD_AOUT_LIBRARY_PATH", "LD_AOUT_PRELOAD", "GCONV_PATH",
+      "GETCONF_DIR", "HOSTALIASES", "LD_AUDIT", "LD_DEBUG",
+      "LD_DEBUG_OUTPUT", "LD_DYNAMIC_WEAK", "LD_LIBRARY_PATH",
+      "LD_ORIGIN_PATH", "LD_PRELOAD", "LD_PROFILE", "LD_PROFILE_OUTPUT",
+      "LD_SHOW_AUXV", "LD_USE_LOAD_BIAS", "LOCALDOMAIN", "LOCPATH",
+      "MALLOC_TRACE", "NIS_PATH", "NLSPATH", "RESOLV_HOST_CONF",
+      "RES_OPTIONS", "TMPDIR", "TZDIR", nullptr
+    };
+    for (const char* const* p = kUnsafeEnvVars; *p; ++p) {
+      unsetenv(*p);
+    }
 
     // chdir to workspace (same as exec_with_tracing)
     if (!g_allowed_paths.empty()) {
@@ -4069,6 +4122,7 @@ int sandbox_set_audit_mode(int enabled, const char* log_path) {
   }
 
   g_audit_mode = (enabled != 0);
+  g_audit_bytes_written = 0;  // Reset byte counter for new audit session
   if (!g_audit_mode) return 0;
 
   if (log_path && log_path[0] != '\0') {

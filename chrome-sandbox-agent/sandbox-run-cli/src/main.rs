@@ -368,11 +368,34 @@ fn main() -> ExitCode {
         std::env::set_var(key, value);
     }
 
+    // Pre-flight kernel capability checks.
+    // Fail fast with clear diagnostics instead of cryptic errors from deep
+    // inside the namespace/seccomp setup code.
+    unsafe {
+        let has_seccomp = ffi::sandbox_has_seccomp_bpf();
+        if has_seccomp != 1 {
+            eprintln!("sandbox-run: FATAL: kernel does not support seccomp-BPF");
+            eprintln!("  seccomp-BPF (CONFIG_SECCOMP_FILTER) is required for sandbox isolation.");
+            eprintln!("  Ensure your kernel is >= 3.5 and has seccomp-BPF enabled.");
+            return ExitCode::from(1);
+        }
+
+        let has_userns = ffi::sandbox_has_user_namespaces();
+        if has_userns != 1 {
+            eprintln!("sandbox-run: WARNING: unprivileged user namespaces not available");
+            eprintln!("  Namespace isolation layers will be degraded.");
+            eprintln!("  To enable: sysctl kernel.unprivileged_userns_clone=1");
+            eprintln!("  Continuing with seccomp-BPF + ptrace broker only...");
+            // Non-fatal: sandbox can still provide seccomp + ptrace isolation
+        }
+    }
+
     // Initialize sandbox (creates zygote with full namespace isolation)
     let rc = unsafe { ffi::sandbox_init() };
     if rc != 0 {
         eprintln!("sandbox-run: failed to initialize sandbox (rc={})", rc);
         eprintln!("Ensure you have: unprivileged user namespaces, seccomp-BPF");
+        eprintln!("Check: sysctl kernel.unprivileged_userns_clone, /proc/sys/kernel/yama/ptrace_scope");
         return ExitCode::from(1);
     }
 
