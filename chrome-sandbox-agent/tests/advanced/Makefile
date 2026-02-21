@@ -56,7 +56,15 @@ TESTS := test_01_fd_smuggling \
          test_46_seccomp_notify \
          test_47_rlimit_escape \
          test_48_network_raw \
-         test_49_covert_channels
+         test_49_covert_channels \
+         test_50_pidfd_getfd \
+         test_51_new_mount_api \
+         test_52_mseal_bypass \
+         test_53_dirty_pagetable \
+         test_54_listmount_statmount \
+         test_55_process_madvise \
+         test_56_shadow_stack \
+         test_57_userns_capability
 
 .PHONY: all clean run-all
 
@@ -73,7 +81,7 @@ run-all: all
 	echo ""; \
 	echo "\033[1m╔══════════════════════════════════════════════════╗\033[0m"; \
 	echo "\033[1m║   ADVANCED SANDBOX BYPASS TEST SUITE             ║\033[0m"; \
-	echo "\033[1m║   49 attack categories, ~390 individual tests    ║\033[0m"; \
+	echo "\033[1m║   57 attack categories, ~456 individual tests    ║\033[0m"; \
 	echo "\033[1m╚══════════════════════════════════════════════════╝\033[0m"; \
 	for t in $(TESTS); do \
 		echo ""; \
