@@ -1,0 +1,64 @@
+# sandbox-run config for OpenAI Codex CLI (native Rust binary, static-pie)
+#
+# Usage: sandbox-run --config codex.toml -- codex exec "prompt"
+#
+# Codex CLI is distributed via npm but the actual agent is a statically
+# linked Rust binary. It bundles its own ripgrep (rg) for code search.
+#
+# Security: policy is always STRICT. This config only relaxes specific
+# path filters and extensions — all 8 isolation layers remain active.
+
+[sandbox]
+# Network access required for OpenAI API calls
+network = true
+
+[paths]
+# Codex binary and its bundled tools (read-only)
+# /opt/node22 — npm shim invokes Node which spawns the native binary
+# /etc/codex  — system-level managed config (requirements.toml etc.)
+readonly = [
+    "/opt/node22",
+    "/usr/local/bin",
+    "/usr/share/zoneinfo",
+    "/etc/ssl",
+    "/etc/codex",
+    "/lib/x86_64-linux-gnu",
+]
+
+# Extra read-write paths (workspace is added automatically)
+# /root/.codex — codex needs to write sessions, rollout data, shell snapshots
+allowed = [
+    "/root/.codex",
+]
+
+# Blocked paths — always denied
+deny = [
+    "/etc/shadow",
+    "/etc/gshadow",
+]
+
+[filters]
+# Terminal ioctls for interactive TUI
+ioctls = ["tty"]
+
+# Socket options for HTTPS/TLS
+sockopts = ["tcp_nodelay", "so_keepalive"]
+
+# Extra syscalls needed by codex for child process execution:
+#   prctl     — prctl() syscall (codex sub-sandbox uses PR_SET_NO_NEW_PRIVS + PR_SET_SECCOMP)
+#   seccomp   — seccomp() syscall (codex creates its own seccomp filter)
+#   setsid    — session management for child processes
+#   setpgid   — process group management for child processes
+#   fadvise64 — posix_fadvise performance hint (used by ripgrep)
+#   personality — used by musl for ADDR_NO_RANDOMIZE queries
+syscalls = ["prctl", "seccomp", "setsid", "setpgid", "getpgrp", "fadvise64", "personality"]
+
+[env]
+# Redirect HOME/TMPDIR to writable /tmp inside the sandbox.
+HOME = "/tmp"
+TMPDIR = "/tmp"
+# Point CODEX_HOME to the real ~/.codex (mounted read-only above) so
+# codex can read auth.json and config.toml.  Session/rollout writes
+# will fail harmlessly.  Run `codex login --with-api-key` on the host
+# before first use.
+CODEX_HOME = "/root/.codex"

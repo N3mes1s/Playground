@@ -1,0 +1,41 @@
+# sandbox-run config for opencode (Go/Bun-based AI coding agent)
+#
+# Usage: sandbox-run --config opencode.toml -- opencode
+#
+# Security: policy is always STRICT. This config only relaxes specific
+# path filters and extensions — all 8 isolation layers remain active.
+
+[sandbox]
+# Network access required for API calls
+network = true
+
+[paths]
+# Node.js/Bun runtime and system libraries (read-only)
+readonly = [
+    "/opt/node22",
+    "/usr/local/bin",
+    "/etc/ssl",
+    "/lib/x86_64-linux-gnu",
+]
+
+# Extra read-write paths (workspace is added automatically)
+allowed = []
+
+# Blocked paths — always denied
+deny = [
+    "/etc/shadow",
+    "/etc/gshadow",
+]
+
+[filters]
+# Terminal ioctls for interactive TUI
+ioctls = ["tty"]
+
+# Socket options for HTTPS/TLS
+sockopts = ["tcp_nodelay", "so_keepalive"]
+
+[env]
+# Redirect HOME so opencode writes data/log/config to writable /tmp
+HOME = "/tmp"
+# Redirect TMPDIR so Bun's JIT .so extraction goes to writable dir
+TMPDIR = "/tmp"

@@ -7,3 +7,14 @@ __pycache__/
 
 # Sliver source files fetched for scanning (not our code)
 vulnllm-analyzer/sliver-src/
+
+# Compiled debug/test binaries (sandbox agent)
+chrome-sandbox-agent/extracted/test_broker_check
+chrome-sandbox-agent/extracted/test_ptrace_debug
+chrome-sandbox-agent/extracted/test_quick
+
+# Rust service sandbox (created by Claude inside sandbox, not our code)
+rust-service-sandbox/
+
+# Aider history files (from sandbox testing)
+.aider.*
