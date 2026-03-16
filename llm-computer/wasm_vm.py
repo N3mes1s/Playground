@@ -105,7 +105,7 @@ class Instruction:
         """
         if self.operand is not None:
             # Encode operand as 4 little-endian bytes (signed i32)
-            b = struct.pack('<i', self.operand & 0xFFFFFFFF)
+            b = struct.pack('<I', self.operand & 0xFFFFFFFF)
             return [self.op, b[0], b[1], b[2], b[3]]
         return [self.op, 0, 0, 0, 0]
 
