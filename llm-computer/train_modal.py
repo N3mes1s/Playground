@@ -186,6 +186,48 @@ def train():
 
 @app.function(
     image=image,
+    timeout=600,
+)
+def test_data():
+    """Test the training data generator on Modal."""
+    import sys
+    sys.path.insert(0, "/root/llm-computer")
+
+    from train_data import TrainingDataGenerator
+
+    gen = TrainingDataGenerator(seed=42)
+    dataset = gen.generate_dataset(1000, max_trace_len=512)
+
+    tiers = {}
+    types = {}
+    total_trace = 0
+    for d in dataset:
+        types[d['type']] = types.get(d['type'], 0) + 1
+        tiers[d['tier']] = tiers.get(d['tier'], 0) + 1
+        total_trace += d['output_len']
+
+    tier_names = {1: 'Arithmetic', 2: 'Conditionals', 3: 'Loops',
+                  4: 'Nested', 5: 'Complex'}
+
+    print(f"Generated {len(dataset)} samples")
+    print(f"Avg trace length: {total_trace / len(dataset):.0f} tokens")
+    print(f"\nTier distribution:")
+    for t in sorted(tiers):
+        pct = tiers[t] / len(dataset) * 100
+        print(f"  Tier {t} ({tier_names[t]}): {tiers[t]} ({pct:.0f}%)")
+    print(f"\nType distribution:")
+    for t, c in sorted(types.items(), key=lambda x: -x[1]):
+        print(f"  {t}: {c}")
+
+    return {
+        'n_samples': len(dataset),
+        'avg_trace_len': total_trace / len(dataset),
+        'tiers': {tier_names[k]: v for k, v in tiers.items()},
+    }
+
+
+@app.function(
+    image=image,
     volumes={"/checkpoints": volume},
 )
 def download_checkpoint():
@@ -199,8 +241,14 @@ def download_checkpoint():
 
 
 @app.local_entrypoint()
-def main():
-    """Run training on Modal, then download the checkpoint."""
+def main(test_only: bool = False):
+    """Train on Modal GPU, or test data generator with --test-only."""
+    if test_only:
+        print("Testing data generator on Modal...")
+        result = test_data.remote()
+        print(f"\nResult: {result}")
+        return
+
     print("Launching training on Modal GPU...")
     result = train.remote()
     print(f"\nTraining complete!")
