@@ -16,7 +16,6 @@ This will:
 """
 
 import modal
-from modal.mount import _MountDir
 
 app = modal.App("llm-compute-train")
 
@@ -34,7 +33,7 @@ volume = modal.Volume.from_name("llm-compute-checkpoints", create_if_missing=Tru
 @app.function(
     image=image,
     gpu="A10G",
-    timeout=7200,  # 2 hours max
+    timeout=14400,  # 4 hours max
     volumes={"/checkpoints": volume},
 )
 def train():
@@ -60,7 +59,9 @@ def train():
     print(f"Device: {device}")
     if device == "cuda":
         print(f"GPU: {torch.cuda.get_device_name(0)}")
-        print(f"Memory: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f}GB")
+        props = torch.cuda.get_device_properties(0)
+        mem = getattr(props, 'total_memory', getattr(props, 'total_mem', 0))
+        print(f"Memory: {mem / 1e9:.1f}GB")
 
     # ---- Generate training data ----
     print("\n=== Generating 100K training samples ===")
@@ -86,9 +87,9 @@ def train():
     print(f"  Train sequences: {len(train_dataset)}")
     print(f"  Val sequences: {len(val_dataset)}")
 
-    train_loader = DataLoader(train_dataset, batch_size=256, shuffle=True,
+    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True,
                                num_workers=4, pin_memory=True)
-    val_loader = DataLoader(val_dataset, batch_size=256, shuffle=False,
+    val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False,
                              num_workers=2, pin_memory=True)
 
     # ---- Create model ----
@@ -105,12 +106,30 @@ def train():
         optimizer, T_max=30, eta_min=5e-5
     )
 
-    # ---- Train ----
+    # ---- Resume from checkpoint if available ----
     n_epochs = 30
     best_val_loss = float('inf')
-    print(f"\n=== Training for {n_epochs} epochs ===\n")
+    best_val_acc = 0.0
+    val_acc = 0.0
+    start_epoch = 0
 
-    for epoch in range(n_epochs):
+    latest_ckpt = "/checkpoints/latest.pt"
+    if os.path.exists(latest_ckpt):
+        print(f"Resuming from {latest_ckpt}...")
+        ckpt = torch.load(latest_ckpt, map_location=device)
+        model.load_state_dict(ckpt['model'])
+        optimizer.load_state_dict(ckpt['optimizer'])
+        start_epoch = ckpt.get('epoch', 0) + 1
+        best_val_loss = ckpt.get('best_val_loss', float('inf'))
+        best_val_acc = ckpt.get('val_acc', 0.0)
+        # Advance scheduler to correct position
+        for _ in range(start_epoch):
+            scheduler.step()
+        print(f"  Resumed at epoch {start_epoch}, best_val_loss={best_val_loss:.4f}")
+
+    print(f"\n=== Training for {n_epochs} epochs (starting at {start_epoch}) ===\n")
+
+    for epoch in range(start_epoch, n_epochs):
         t_start = time.perf_counter()
         train_loss = train_epoch(model, train_loader, optimizer, device, epoch)
         val_loss, val_acc = evaluate(model, val_loader, device)
@@ -131,6 +150,7 @@ def train():
         is_best = val_loss < best_val_loss
         if is_best:
             best_val_loss = val_loss
+            best_val_acc = val_acc
             torch.save({
                 'epoch': epoch,
                 'model': model.state_dict(),
@@ -151,12 +171,13 @@ def train():
         }, "/checkpoints/latest.pt")
 
     volume.commit()
-    print(f"\n=== Done! Best val_loss={best_val_loss:.4f} ===")
+    print(f"\n=== Done! Best val_loss={best_val_loss:.4f}, best_val_acc={best_val_acc:.2%} ===")
     print("Checkpoints saved to Modal volume 'llm-compute-checkpoints'")
 
     return {
-        'best_val_loss': best_val_loss,
-        'final_val_acc': val_acc,
+        'best_val_loss': float(best_val_loss),
+        'best_val_acc': float(best_val_acc),
+        'final_val_acc': float(val_acc),
         'n_train': len(train_dataset),
         'n_val': len(val_dataset),
         'n_epochs': n_epochs,
@@ -184,6 +205,7 @@ def main():
     result = train.remote()
     print(f"\nTraining complete!")
     print(f"  Best val_loss: {result['best_val_loss']:.4f}")
+    print(f"  Best val_acc:  {result['best_val_acc']:.2%}")
     print(f"  Final val_acc: {result['final_val_acc']:.2%}")
     print(f"  Samples: {result['n_train']} train, {result['n_val']} val")
 
