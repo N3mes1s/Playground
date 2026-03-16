@@ -59,7 +59,8 @@ class TraceVocab:
     @staticmethod
     def encode_i32(val: int) -> list[int]:
         """Encode an i32 value as 4 byte tokens."""
-        b = struct.pack('<i', val & 0xFFFFFFFF)
+        # Use unsigned pack to handle any int value
+        b = struct.pack('<I', val & 0xFFFFFFFF)
         return [b[0], b[1], b[2], b[3]]
 
     @staticmethod

@@ -79,9 +79,16 @@ class Op(IntEnum):
     DROP = 0x1A
     SELECT = 0x1B
 
-    # Custom extensions
-    OUTPUT = 0xFF  # Emit value to output stream
-    HALT = 0xFE    # Stop execution
+    # Byte-level memory
+    I32_LOAD8_U = 0x2D   # Load unsigned byte from memory
+    I32_LOAD8_S = 0x2C   # Load signed byte from memory
+    I32_STORE8 = 0x3A    # Store byte to memory
+
+    # Custom extensions for I/O and sandbox
+    OUTPUT = 0xFF        # Emit i32 to output stream
+    OUTPUT_CHAR = 0xFD   # Emit byte as character to output stream
+    INPUT_SIZE = 0xFC    # Push size of input buffer onto stack
+    HALT = 0xFE          # Stop execution
 
 
 @dataclass
@@ -161,6 +168,31 @@ class WasmVM:
         self.functions: dict[int, Function] = {}
         self.code: list[Instruction] = []
         self.trace: list[dict] = []  # Execution trace
+
+    def load_input(self, data: bytes, offset: int = 0):
+        """
+        Load input data into VM memory at the given offset.
+        This is how the transformer feeds data into the sandbox for processing.
+        """
+        end = offset + len(data)
+        if end > len(self.memory):
+            raise ValueError(f"Input data exceeds memory: {end} > {self.MEMORY_SIZE}")
+        self.memory[offset:end] = data
+        self._input_size = len(data)
+
+    def load_string(self, s: str, offset: int = 0):
+        """Load a string into memory (null-terminated)."""
+        data = s.encode('utf-8') + b'\x00'
+        self.load_input(data, offset)
+
+    def read_string(self, offset: int = 0) -> str:
+        """Read a null-terminated string from memory."""
+        end = self.memory.index(0, offset)
+        return self.memory[offset:end].decode('utf-8', errors='replace')
+
+    def get_output_string(self) -> str:
+        """Interpret output values as characters and return as string."""
+        return ''.join(chr(b) for b in self.output if 32 <= b < 127 or b in (10, 13))
 
     def load_program(self, code: list[Instruction], n_locals: int = 16):
         """Load a program (list of instructions) into the VM."""
@@ -349,6 +381,37 @@ class WasmVM:
             if 0 <= addr and addr + 4 <= len(self.memory):
                 struct.pack_into('<i', self.memory, addr, self._i32(val))
 
+        elif inst.op == Op.I32_LOAD8_U:
+            addr = self._pop()
+            if 0 <= addr < len(self.memory):
+                self._push(self.memory[addr])
+            else:
+                self._push(0)
+
+        elif inst.op == Op.I32_LOAD8_S:
+            addr = self._pop()
+            if 0 <= addr < len(self.memory):
+                val = self.memory[addr]
+                if val >= 128:
+                    val -= 256
+                self._push(val)
+            else:
+                self._push(0)
+
+        elif inst.op == Op.I32_STORE8:
+            val = self._pop()
+            addr = self._pop()
+            if 0 <= addr < len(self.memory):
+                self.memory[addr] = val & 0xFF
+
+        elif inst.op == Op.OUTPUT_CHAR:
+            val = self._pop()
+            self.output.append(val & 0xFF)
+            trace_entry["output"] = val & 0xFF
+
+        elif inst.op == Op.INPUT_SIZE:
+            self._push(getattr(self, '_input_size', 0))
+
         elif inst.op == Op.BLOCK:
             end_ip = self._block_ends.get(self.ip - 1, len(self.code))
             self.control_stack.append(ControlFrame("block", self.ip - 1, end_ip))
@@ -362,19 +425,23 @@ class WasmVM:
             start = self.ip - 1
             end_ip = self._block_ends.get(start, len(self.code))
             else_ip = self._else_positions.get(start)
-            self.control_stack.append(ControlFrame("if", start, end_ip, else_ip))
-            if cond == 0:
-                # Jump to else or end
+            if cond != 0:
+                # Condition true: enter then-branch
+                self.control_stack.append(ControlFrame("if", start, end_ip, else_ip))
+            else:
+                # Condition false: skip to else or past end
                 if else_ip is not None:
+                    self.control_stack.append(ControlFrame("if", start, end_ip, else_ip))
                     self.ip = else_ip + 1
                 else:
+                    # No else branch: skip past END entirely, don't push frame
                     self.ip = end_ip + 1
                 trace_entry["branch_taken"] = True
 
         elif inst.op == Op.ELSE:
-            # Jump to end of if block
+            # True branch finished: pop the IF frame and skip past END
             if self.control_stack:
-                frame = self.control_stack[-1]
+                frame = self.control_stack.pop()
                 self.ip = frame.end_ip + 1
 
         elif inst.op == Op.END:
