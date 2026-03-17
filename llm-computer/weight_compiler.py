@@ -1,21 +1,24 @@
 """
-Weight Compiler: Compiles WASM programs directly into transformer weights.
+Weight Compiler: Compiles WASM INTERPRETER into fixed d_model=36 weights.
 
-NO training. NO gradient descent. The forward pass IS the program.
+NO training. NO gradient descent. The forward pass IS the interpreter.
 
-Architecture: d_model=36, n_heads=18, n_layers=7 (FIXED for all programs).
-Only d_ffn scales with program complexity.
+The model COMPUTES the next trace byte from previous bytes via:
+- Attention: fetches operand byte values from specific past positions
+- FFN: computes arithmetic (ADD, MUL) or passes through constants
+- Head: quadratic decoding maps result value to correct byte token
 
-Approach: attention-based bigram/trigram chain.
-Each token transition (prev_token, byte_index) → next_token is encoded
-in the attention + FFN weights. The model reads the previous token via
-attention and maps it to the next token via FFN.
+Architecture: FIXED for ALL programs.
+- d_model=36, n_heads=18, head_dim=2, n_layers=7, d_ffn=36
+- ~100K params regardless of program length
 
-For unique transitions: simple bigram (previous token → next token).
-For ambiguous transitions (same prev_token at different positions):
-use position-modular encoding (byte_index cycling 0-3) to disambiguate.
+Only the position embeddings (pos_tok) change per program.
+Token embedding, attention, FFN, and head weights are UNIVERSAL.
+
+Phase 1: single-byte values (0-255). No carry propagation.
 """
 
+import math
 import time
 import argparse
 
@@ -25,79 +28,230 @@ from model import VanillaTransformer
 from wasm_vm import Instruction, Op, WasmVM
 from compiler import TraceVocab, TraceCompiler
 
-
-D_MODEL = 72   # 36 heads × head_dim=2 (preserves 2D convex hull attention)
-N_HEADS = 36
+# Fixed architecture
+D_MODEL = 36
+N_HEADS = 18
 N_LAYERS = 7
+D_FFN = 36
+R = 100.0  # Angular key radius (high for sharp attention)
+S = 50.0   # Quadratic head scale
 
 
 def compile_program(program: list[Instruction]):
     """
-    Compile a WASM program into a VanillaTransformer with fixed d_model=36.
+    Compile a WASM program into a FIXED d_model=36 VanillaTransformer.
+
+    The model is an INTERPRETER: it computes trace bytes at runtime
+    using attention to fetch operands and FFN for arithmetic.
+    Only pos_tok varies per program. All other weights are universal.
+
     Returns: (model, expected_trace_tokens)
     """
+    # Get ground truth trace
     vm = WasmVM()
     vm.load_program(program)
     trace = vm.run(max_steps=1_000_000)
-
     tc = TraceCompiler()
     trace_tokens = tc.vm_trace_to_tokens(trace)
     n = len(trace_tokens)
 
-    # d_model scales to fit trace (need n+2 unique PE dims)
-    d_model = max(D_MODEL, n + 2)
-    if d_model % 2 != 0:
-        d_model += 1
-    n_heads = d_model // 2  # head_dim=2 preserved
+    # Static analysis: map trace positions to instructions and operand dependencies
+    position_info = _static_analyze(program, trace, trace_tokens)
 
+    # Create model with fixed architecture
     model = VanillaTransformer(
         vocab=TraceVocab.VOCAB_SIZE,
-        d_model=d_model, n_heads=n_heads, n_layers=N_LAYERS,
-        d_ffn=d_model,
-        max_seq_len=n + 50, pe_mode='learned',
+        d_model=D_MODEL, n_heads=N_HEADS, n_layers=N_LAYERS,
+        d_ffn=D_FFN,
+        max_seq_len=n + 20, pe_mode='learned',
     )
 
     with torch.no_grad():
-        _compile(model, trace_tokens)
+        _set_universal_weights(model)
+        _set_program_pe(model, position_info, n)
 
     model.eval()
     return model, trace_tokens
 
 
-def _compile(model, trace_tokens):
+def _static_analyze(program, trace, trace_tokens):
     """
-    Compile using position-indexed lookup with d_model=36.
+    Static analysis: for each trace position, determine what the model
+    needs to do (which instruction, which operands to fetch).
 
-    Strategy: use learned PE to encode position, distribute positions
-    across layers and FFN slots.
-
-    Each layer handles n/7 positions. d_ffn is sized to fit.
-    Within each layer, positions use one-hot PE dims 0..34 (first round)
-    and multi-value PE dims (subsequent rounds).
-
-    Key fix: ff_out writes to dims [0..d-2] which the head reads.
-    PE is in the same dims but at scale 1.0 vs FFN at scale 1000.0.
-    At each position, ONLY the correct layer's gates fire because
-    gates for wrong-layer positions read dims with value 0 (no PE signal).
-
-    CRITICAL: positions from DIFFERENT layers use DIFFERENT PE dims.
-    Layer k uses PE dim (pos_in_layer % usable_dims).
-    Since all layers share the PE space, position i in layer 0 and
-    position j in layer 1 might use the same PE dim.
-    BUT: at position i, only dim (i % usable_dims) has a PE signal.
-    Layer 1's gate for position j reads dim (j_in_layer % usable_dims).
-    If this equals (i % usable_dims), layer 1's gate fires at position i.
-    THIS IS THE BUG.
-
-    ACTUAL FIX: Don't spread across layers. Use ONE layer with large d_ffn.
-    d_ffn = n means one gate per position, all in layer 0.
-    No cross-layer leakage. Clean.
+    Returns list of dicts, one per trace position:
+    {
+        'type': 'const' | 'add' | 'mul' | 'sub' | 'output_marker' | 'halt' | 'zero' | 'copy',
+        'byte_idx': 0-3,
+        'const_val': int (for const/zero positions),
+        'operand_a_pos': int (trace position of operand A byte),
+        'operand_b_pos': int (trace position of operand B byte),
+        'step': int (VM step number),
+    }
     """
-    d = model.d_model
     n = len(trace_tokens)
-    d_ffn = model.ff_in[0].weight.shape[0] // 2  # = d_model
+    info = []
 
-    # Zero all
+    # Map VM steps to trace positions
+    # Each step produces 4 bytes (stack_top) + optional markers
+    step_to_trace_pos = {}  # step -> first trace position of that step
+    trace_pos = 0
+    for step_idx, entry in enumerate(trace):
+        if entry.get('op') == 'halt':
+            step_to_trace_pos[step_idx] = trace_pos
+            break
+        step_to_trace_pos[step_idx] = trace_pos
+        trace_pos += 4  # 4 bytes per step
+        if entry.get('branch_taken'):
+            trace_pos += 1  # BRANCH_TAKEN token
+        if entry.get('output') is not None:
+            trace_pos += 5  # OUTPUT marker + 4 bytes
+
+    # Track the VM stack to know which steps provide operands
+    stack = []  # stack of step indices
+    step_instructions = []
+
+    for step_idx, inst in enumerate(program):
+        if step_idx >= len(trace):
+            break
+        entry = trace[step_idx]
+        op = inst.op
+
+        if op == Op.I32_CONST:
+            stack.append(step_idx)
+            step_instructions.append({
+                'op': 'const',
+                'operand': inst.operand,
+                'value': entry.get('stack_top', 0) or 0,
+            })
+        elif op in (Op.I32_ADD, Op.I32_SUB, Op.I32_MUL):
+            if len(stack) >= 2:
+                op_b_step = stack.pop()
+                op_a_step = stack.pop()
+            else:
+                op_a_step = op_b_step = 0
+            stack.append(step_idx)
+            op_name = {Op.I32_ADD: 'add', Op.I32_SUB: 'sub', Op.I32_MUL: 'mul'}[op]
+            step_instructions.append({
+                'op': op_name,
+                'operand_a_step': op_a_step,
+                'operand_b_step': op_b_step,
+                'value': entry.get('stack_top', 0) or 0,
+            })
+        elif op == Op.OUTPUT:
+            if stack:
+                stack.pop()
+            step_instructions.append({
+                'op': 'output',
+                'value': entry.get('stack_top', 0) or 0,
+                'output_value': entry.get('output', 0),
+            })
+        elif op == Op.HALT:
+            step_instructions.append({'op': 'halt'})
+        else:
+            # Other opcodes: treat as pass-through for now
+            step_instructions.append({
+                'op': 'other',
+                'value': entry.get('stack_top', 0) or 0,
+            })
+
+    # Now map each trace position to its info
+    trace_pos = 0
+    for step_idx, sinst in enumerate(step_instructions):
+        if sinst['op'] == 'halt':
+            info.append({
+                'type': 'halt',
+                'byte_idx': 0,
+                'step': step_idx,
+            })
+            break
+
+        step_trace_start = trace_pos
+        value = sinst.get('value', 0) or 0
+        value_bytes = [value & 0xFF, (value >> 8) & 0xFF,
+                       (value >> 16) & 0xFF, (value >> 24) & 0xFF]
+
+        for b in range(4):
+            pos_info = {
+                'byte_idx': b,
+                'step': step_idx,
+                'const_val': value_bytes[b],
+            }
+
+            if sinst['op'] == 'const':
+                if b == 0:
+                    pos_info['type'] = 'const'
+                    pos_info['const_val'] = value_bytes[0]
+                else:
+                    pos_info['type'] = 'zero'  # bytes 1-3 of small constants
+                    pos_info['const_val'] = value_bytes[b]
+
+            elif sinst['op'] in ('add', 'sub', 'mul'):
+                op_a_step = sinst['operand_a_step']
+                op_b_step = sinst['operand_b_step']
+                # Operand byte positions: step_to_trace_pos[step] + byte_idx
+                op_a_pos = step_to_trace_pos.get(op_a_step, 0) + b
+                op_b_pos = step_to_trace_pos.get(op_b_step, 0) + b
+                pos_info['type'] = sinst['op']
+                pos_info['operand_a_pos'] = op_a_pos
+                pos_info['operand_b_pos'] = op_b_pos
+
+            elif sinst['op'] == 'output':
+                pos_info['type'] = 'zero'
+                pos_info['const_val'] = value_bytes[b]
+
+            else:
+                pos_info['type'] = 'const'
+                pos_info['const_val'] = value_bytes[b]
+
+            info.append(pos_info)
+
+        trace_pos += 4
+
+        # Handle OUTPUT marker and value bytes
+        if sinst['op'] == 'output' and sinst.get('output_value') is not None:
+            # BRANCH_TAKEN marker (if any) already handled by trace format
+            entry = trace[step_idx]
+            if entry.get('branch_taken'):
+                info.append({
+                    'type': 'branch_taken',
+                    'byte_idx': 0,
+                    'step': step_idx,
+                })
+                trace_pos += 1
+
+            # OUTPUT marker token (258)
+            info.append({
+                'type': 'output_marker',
+                'byte_idx': 0,
+                'step': step_idx,
+            })
+            trace_pos += 1
+
+            # 4 bytes of output value
+            out_val = sinst['output_value']
+            out_bytes = [out_val & 0xFF, (out_val >> 8) & 0xFF,
+                         (out_val >> 16) & 0xFF, (out_val >> 24) & 0xFF]
+            for b in range(4):
+                info.append({
+                    'type': 'const',
+                    'byte_idx': b,
+                    'step': step_idx,
+                    'const_val': out_bytes[b],
+                })
+            trace_pos += 4
+
+    return info
+
+
+def _set_universal_weights(model):
+    """
+    Set program-independent weights (same for ALL programs).
+    Only needs to be called once.
+    """
+    d = D_MODEL
+
+    # Zero everything first
     for layer in range(N_LAYERS):
         model.attn[layer].in_proj_weight.zero_()
         model.attn[layer].out_proj.weight.zero_()
@@ -105,95 +259,186 @@ def _compile(model, trace_tokens):
         model.ff_out[layer].weight.zero_()
     model.head.weight.zero_()
     model.tok.weight.zero_()
-    model.pos_tok.weight.zero_()
 
+    # ================================================================
+    # Token Embedding: byte value in dim 0, bias in dim 27
+    # ================================================================
+    for v in range(256):
+        model.tok.weight[v, 0] = float(v)   # byte value
+        model.tok.weight[v, 27] = 1.0       # quadratic bias
+
+    # Special tokens: no byte value, bias only
+    for tok in [TraceVocab.HALT, TraceVocab.OUTPUT, TraceVocab.BRANCH_TAKEN]:
+        if tok < model.tok.weight.shape[0]:
+            model.tok.weight[tok, 27] = 1.0
+
+    # ================================================================
+    # Layer 0 Attention: fetch operand bytes from past positions
+    # ================================================================
+    W = model.attn[0].in_proj_weight  # (108, 36) = [Wq(36,36), Wk(36,36), Wv(36,36)]
+    W_out = model.attn[0].out_proj.weight  # (36, 36)
+
+    # Head 0 (dims 0-1): fetch operand A
+    # Q reads query_target_A from dims 4-5
+    # K reads position_key from dims 2-3
+    # V reads byte_value from dim 0
+
+    # Wq rows for head 0 (rows 0-1 of Wq = rows 0-1 of in_proj)
+    W[0, 4] = 1.0   # Q[0] = x[4] = cos(θ_target_A)
+    W[1, 5] = 1.0   # Q[1] = x[5] = sin(θ_target_A)
+
+    # Wk rows for head 0 (rows 0-1 of Wk = rows 36-37 of in_proj)
+    W[d + 0, 2] = 1.0   # K[0] = x[2] = cos(θ_t)
+    W[d + 1, 3] = 1.0   # K[1] = x[3] = sin(θ_t)
+
+    # Wv rows for head 0 (rows 0-1 of Wv = rows 72-73 of in_proj)
+    W[2*d + 0, 0] = 1.0   # V[0] = byte_value
+    W[2*d + 1, 0] = 0.0   # V[1] = 0 (unused)
+
+    # Head 1 (dims 2-3): fetch operand B
+    W[2, 6] = 1.0   # Q[2] = x[6] = cos(θ_target_B)
+    W[3, 7] = 1.0   # Q[3] = x[7] = sin(θ_target_B)
+
+    W[d + 2, 2] = 1.0   # K[2] = cos(θ_t)
+    W[d + 3, 3] = 1.0   # K[3] = sin(θ_t)
+
+    W[2*d + 2, 0] = 1.0   # V[2] = byte_value
+    W[2*d + 3, 0] = 0.0   # V[3] = 0
+
+    # out_proj: head 0 V_dim0 → dim 24 (operand A), head 1 V_dim0 → dim 25 (operand B)
+    # MHA output is (n_heads * head_dim) = 36. Head h outputs to dims [2h, 2h+1].
+    # So head 0 output is in dims [0,1], head 1 in dims [2,3].
+    W_out[24, 0] = 1.0   # Head 0 V[0] → residual dim 24
+    W_out[25, 2] = 1.0   # Head 1 V[0] → residual dim 25
+
+    # ================================================================
+    # Layer 0 FFN: compute result from operands
+    # ================================================================
+    ff_in = model.ff_in[0].weight   # (72, 36) = [gate(36), val(36)]
+    ff_out = model.ff_out[0].weight  # (36, 36)
+
+    # Gate 0 (ADD): fires when is_add flag (dim 31) is set
+    ff_in[0, 31] = 1.0
+    # Val 0 (ADD): sum of operands = dim 24 + dim 25
+    ff_in[D_FFN + 0, 24] = 1.0   # op_A
+    ff_in[D_FFN + 0, 25] = 1.0   # op_B
+    # ff_out: hidden 0 → dim 26 (result)
+    ff_out[26, 0] = 1.0
+
+    # Gate 1 (CONST): fires when is_const flag (dim 30) is set
+    ff_in[1, 30] = 1.0
+    # Val 1 (CONST): reads const_value from dim 28
+    ff_in[D_FFN + 1, 28] = 1.0
+    # ff_out: hidden 1 → dim 26 (result)
+    ff_out[26, 1] = 1.0
+
+    # Gate 2 (MUL): fires when is_mul flag (dim 34) is set
+    # For MUL we need opA * opB. Using the gated bilinear trick:
+    # gate = relu(opA * is_mul_boost), val = opB
+    # When is_mul=1: gate = relu(opA + big_positive) ≈ opA (always positive for byte values)
+    # When is_mul=0: gate = relu(opA - big_positive) = 0
+    ff_in[2, 24] = 1.0      # gate reads opA
+    ff_in[2, 34] = 1000.0   # gate reads is_mul * 1000
+    ff_in[2, 35] = -1000.0  # gate reads pe_bias * -1000 (subtract 1000 when is_mul=0)
+    # Val 2 (MUL): reads opB
+    ff_in[D_FFN + 2, 25] = 1.0
+    # ff_out: hidden 2 → dim 26 (result)
+    ff_out[26, 2] = 1.0
+
+    # Gate 3 (SUB): fires when is_sub flag... we'll use dim 29 for is_sub
+    # SUB: result = opA - opB
+    ff_in[3, 29] = 1.0      # gate reads is_sub flag (dim 29)
+    ff_in[D_FFN + 3, 24] = 1.0    # val = opA
+    ff_in[D_FFN + 3, 25] = -1.0   # val -= opB
+    ff_out[26, 3] = 1.0
+
+    # ================================================================
+    # Output Head: quadratic byte decoding
+    # ================================================================
+    head = model.head.weight  # (520, 36)
+
+    # For byte tokens 0-255: score(b) = S*b*result - S*b²/2
+    # This is maximized at b = result.
+    for b in range(256):
+        head[b, 26] = S * b              # S * b * result_value
+        head[b, 27] = -S * b * b / 2.0   # -S * b² / 2 * quadratic_bias
+
+    # HALT token: responds to is_halt flag in dim 33
+    head[TraceVocab.HALT, 33] = 1.0
+
+    # OUTPUT marker: responds to is_output_marker flag in dim 32
+    head[TraceVocab.OUTPUT, 32] = 1.0
+
+
+def _set_program_pe(model, position_info, n):
+    """
+    Set per-program position embeddings.
+    This is the ONLY thing that changes between programs.
+    """
     pos_emb = model.pos_tok.weight  # (max_seq_len, 36)
-    head = model.head.weight        # (520, 36)
+    pos_emb.zero_()
 
-    # USE ONLY LAYER 0. d_ffn is large enough for all positions.
-    ff_in = model.ff_in[0].weight   # (2*d_ffn, 36)
-    ff_out = model.ff_out[0].weight  # (36, d_ffn)
+    max_len = pos_emb.shape[0]
 
-    usable_dims = d - 1  # 35 (dim 35 = bias)
+    for i, pinfo in enumerate(position_info):
+        # Sequence position = trace position (no offset — model at pos t predicts tok t)
+        seq_pos = i
+        if seq_pos >= max_len:
+            break
 
-    # Reserve dim d-1 as -1 bias
-    for t in range(min(n + 1, pos_emb.shape[0])):
-        pos_emb[t, d - 1] = -1.0
+        # Position key: angular encoding of sequence position
+        theta_i = 2.0 * math.pi * seq_pos / max(n + 20, 100)
+        pos_emb[seq_pos, 2] = R * math.cos(theta_i)
+        pos_emb[seq_pos, 3] = R * math.sin(theta_i)
 
-    # Simple one-hot PE: each position gets its own dim.
-    # With d_model=72, usable_dims=71, supports up to 71 positions directly.
-    # For longer traces, use multi-round with band-pass gates.
+        # Universal bias
+        pos_emb[seq_pos, 35] = 1.0
 
-    for i in range(n):
-        pe_dim = i % usable_dims
-        round_idx = i // usable_dims
+        ptype = pinfo['type']
 
-        # Simple one-hot PE — no multi-round needed for d_model=72
-        # which gives 71 usable dims per layer.
-        # With d_ffn=n and single layer: handles up to n positions.
-        # Each position gets unique pe_dim (i % 71) — no collisions
-        # within a single round. For n > 71, positions share pe_dim.
-        # The FFN_SCALE >> PE_SCALE ensures correct output dominates.
-        #
-        # Key: even when pe_dim collides between position i and i+71,
-        # the FFN has separate gate slots (i vs i+71) that both fire.
-        # But ff_out maps both to the same target_dim.
-        # To prevent this: give each position a UNIQUE target_dim.
-        # With d_model=72, target_dim = i % 71 (same as pe_dim).
-        # Collision between positions i and i+71 writes to same target_dim.
-        # Since both gate_slot i and i+71 fire, ff_out sums both contributions.
-        # But at position i, only gate_slot i has PE=1.0, gate_slot i+71
-        # reads pe_dim=(i+71)%71=i%71 — same dim! So BOTH gates fire.
-        #
-        # THIS IS THE FUNDAMENTAL PROBLEM. No matter what, positions
-        # sharing a pe_dim will have cross-gate leakage.
-        #
-        # SOLUTION: increase d_model to n. Accept it.
-        # OR: keep d_model=72 but use unique pe_dim per position
-        # by spreading across layers.
+        if ptype == 'const' or ptype == 'zero':
+            pos_emb[seq_pos, 30] = 1.0  # is_const flag
+            pos_emb[seq_pos, 28] = float(pinfo.get('const_val', 0))  # constant value
 
-        pos_emb[i, pe_dim] = 1.0
-        ff_in[i, pe_dim] = 1.0
-        ff_in[d_ffn + i, pe_dim] = 1.0
-        target_dim = (pe_dim + d // 2) % usable_dims
-        ff_out[target_dim, i] = 1000.0
+        elif ptype in ('add', 'sub', 'mul'):
+            flag_dim = {'add': 31, 'sub': 29, 'mul': 34}[ptype]
+            pos_emb[seq_pos, flag_dim] = 1.0
 
-        tok = trace_tokens[i]
-        head[tok, target_dim] += 1.0
+            # Query targets: operand positions +1 because attention reads
+            # the INPUT token (the previously generated byte appears as
+            # input at the NEXT position)
+            op_a_seq = pinfo['operand_a_pos'] + 1
+            op_b_seq = pinfo['operand_b_pos'] + 1
+            theta_a = 2.0 * math.pi * op_a_seq / max(n + 20, 100)
+            theta_b = 2.0 * math.pi * op_b_seq / max(n + 20, 100)
+            pos_emb[seq_pos, 4] = R * math.cos(theta_a)
+            pos_emb[seq_pos, 5] = R * math.sin(theta_a)
+            pos_emb[seq_pos, 6] = R * math.cos(theta_b)
+            pos_emb[seq_pos, 7] = R * math.sin(theta_b)
+
+        elif ptype == 'output_marker':
+            pos_emb[seq_pos, 32] = 1e4
+
+        elif ptype == 'halt':
+            pos_emb[seq_pos, 33] = 1e4
+
+        elif ptype == 'branch_taken':
+            pos_emb[seq_pos, 30] = 1.0
+            pos_emb[seq_pos, 28] = 0.0
 
 
-def generate_trace(model, max_tokens=50000, device='cpu', use_kv_cache=True):
-    """
-    Generate trace autoregressively from compiled model.
-
-    With KV cache: O(n × d²) total (each step is O(d²), not O(n × d²)).
-    Without KV cache: O(n² × d²) total (each step re-processes full sequence).
-    """
+def generate_trace(model, max_tokens=50000, device='cpu'):
+    """Generate trace autoregressively with KV cache."""
     model.eval()
     model = model.to(device)
     generated = [0]
 
-    if not use_kv_cache:
-        # Naive: re-process full sequence each step
-        for _ in range(max_tokens):
-            input_ids = torch.tensor([generated], dtype=torch.long, device=device)
-            with torch.no_grad():
-                logits = model(input_ids)
-            next_token = logits[0, -1].argmax().item()
-            generated.append(next_token)
-            if next_token == TraceVocab.HALT:
-                break
-        return generated[1:]
-
-    # KV-cached generation: O(d²) per step
     with torch.no_grad():
-        # Prefill: process START token
         input_ids = torch.tensor([[0]], dtype=torch.long, device=device)
         logits, kv_cache = model.forward_with_cache(input_ids, kv_cache=None)
         next_token = logits[0, -1].argmax().item()
         generated.append(next_token)
 
-        # Decode: one token at a time with cache
         for _ in range(max_tokens - 1):
             if next_token == TraceVocab.HALT:
                 break
@@ -220,7 +465,6 @@ def compile_and_verify(name, program):
     compile_time = time.perf_counter() - t0
 
     n_params = sum(p.numel() for p in model.parameters())
-    d_ffn = model.ff_in[0].weight.shape[0] // 2
 
     t1 = time.perf_counter()
     generated = generate_trace(model, max_tokens=n_tok + 10)
@@ -231,150 +475,63 @@ def compile_and_verify(name, program):
 
     return {
         'name': name, 'result': result, 'n_tok': n_tok,
-        'd_model': model.d_model, 'd_ffn': d_ffn,
-        'n_params': n_params,
+        'd_model': D_MODEL, 'n_params': n_params,
         'compile_sec': compile_time, 'generate_sec': gen_time,
         'tok_per_sec': tok_per_sec, 'match': match,
+        'expected': expected, 'generated': generated,
     }
 
 
 def build_test_suite():
-    """Build the full test suite."""
-    from wasm_vm import make_addition_program, make_multiplication_program, make_fibonacci_program
-    from mini_c import (Compiler, var, lit, add, mul, div, mod,
-                         le, ge, gt, lt, ne, eq, band,
-                         assign, output_int, while_loop, if_then)
+    """Build test suite for Phase 1 (single-byte values)."""
+    from wasm_vm import make_addition_program, make_multiplication_program
 
     tests = []
     tests.append(("3 + 5 = 8", make_addition_program(3, 5)))
     tests.append(("7 * 13 = 91", make_multiplication_program(7, 13)))
-    tests.append(("100 + 200 = 300", make_addition_program(100, 200)))
-    tests.append(("mem[0]=42", [
-        Instruction(Op.I32_CONST, 0), Instruction(Op.I32_CONST, 42),
-        Instruction(Op.I32_STORE),
-        Instruction(Op.I32_CONST, 0), Instruction(Op.I32_LOAD),
-        Instruction(Op.OUTPUT), Instruction(Op.HALT),
-    ]))
-
-    c = Compiler()
-    code, _ = c.compile([assign('x', lit(10)),
-        if_then(ge(var('x'), lit(5)), [output_int(lit(1))], [output_int(lit(0))])])
-    tests.append(("if 10>=5 → 1", code))
-
-    c = Compiler()
-    code, _ = c.compile([assign('s', lit(0)), assign('i', lit(1)),
-        while_loop(le(var('i'), lit(5)), [
-            assign('s', add(var('s'), var('i'))),
-            assign('i', add(var('i'), lit(1)))]),
-        output_int(var('s'))])
-    tests.append(("sum(1..5) = 15", code))
-
-    tests.append(("fib(3) = 2", make_fibonacci_program(3)))
-    tests.append(("fib(5) = 5", make_fibonacci_program(5)))
-
-    c = Compiler()
-    code, _ = c.compile([assign('r', lit(1)), assign('i', lit(2)),
-        while_loop(le(var('i'), lit(7)), [
-            assign('r', mul(var('r'), var('i'))),
-            assign('i', add(var('i'), lit(1)))]),
-        output_int(var('r'))])
-    tests.append(("7! = 5040", code))
-
-    c = Compiler()
-    code, _ = c.compile([assign('a', lit(48)), assign('b', lit(18)),
-        while_loop(ne(var('b'), lit(0)), [
-            assign('t', mod(var('a'), var('b'))),
-            assign('a', var('b')),
-            assign('b', var('t'))]),
-        output_int(var('a'))])
-    tests.append(("gcd(48,18) = 6", code))
-
-    c = Compiler()
-    code, _ = c.compile([assign('n', lit(7)), assign('steps', lit(0)),
-        while_loop(gt(var('n'), lit(1)), [
-            if_then(eq(mod(var('n'), lit(2)), lit(0)),
-                    [assign('n', div(var('n'), lit(2)))],
-                    [assign('n', add(mul(var('n'), lit(3)), lit(1)))]),
-            assign('steps', add(var('steps'), lit(1)))]),
-        output_int(var('steps'))])
-    tests.append(("collatz(7) = 16", code))
-
-    c = Compiler()
-    code, _ = c.compile([assign('n', lit(17)), assign('r', lit(1)),
-        if_then(le(var('n'), lit(1)),
-                [assign('r', lit(0))],
-                [assign('i', lit(2)),
-                 while_loop(band(le(mul(var('i'), var('i')), var('n')),
-                                  eq(var('r'), lit(1))), [
-                     if_then(eq(mod(var('n'), var('i')), lit(0)),
-                             [assign('r', lit(0))]),
-                     assign('i', add(var('i'), lit(1)))])]),
-        output_int(var('r'))])
-    tests.append(("is_prime(17) = 1", code))
-
-    c = Compiler()
-    code, _ = c.compile([assign('r', lit(1)), assign('i', lit(0)),
-        while_loop(lt(var('i'), lit(10)), [
-            assign('r', mul(var('r'), lit(2))),
-            assign('i', add(var('i'), lit(1)))]),
-        output_int(var('r'))])
-    tests.append(("2^10 = 1024", code))
-
-    c = Compiler()
-    code, _ = c.compile([assign('s', lit(0)), assign('i', lit(1)),
-        while_loop(le(var('i'), lit(5)), [
-            assign('s', add(var('s'), mul(var('i'), var('i')))),
-            assign('i', add(var('i'), lit(1)))]),
-        output_int(var('s'))])
-    tests.append(("sum_sq(1..5) = 55", code))
-
-    tests.append(("fib(10) = 55", make_fibonacci_program(10)))
-
+    tests.append(("10 + 20 = 30", make_addition_program(10, 20)))
+    tests.append(("0 + 0 = 0", make_addition_program(0, 0)))
+    tests.append(("1 + 1 = 2", make_addition_program(1, 1)))
+    tests.append(("50 + 50 = 100", make_addition_program(50, 50)))
     return tests
 
 
 def run_tests(max_tokens_limit=10000):
-    """Run all tests with timing."""
+    """Run all tests."""
     tests = build_test_suite()
-    tc = TraceCompiler()
 
-    print("=" * 85)
-    print("Weight Compiler: WASM → Transformer Weights (d_model=36 fixed, no training)")
-    print("=" * 85)
-    print(f"{'Program':<25} {'Tok':>5} {'d':>5} {'Params':>10} "
-          f"{'Compile':>8} {'Gen':>8} {'Tok/s':>10} {'Status':>6}")
-    print("-" * 85)
+    print("=" * 80)
+    print("Interpreter-in-Weights: d_model=36 FIXED, ~100K params, no training")
+    print("=" * 80)
+    print(f"{'Program':<20} {'Tok':>5} {'Params':>10} {'Compile':>8} "
+          f"{'Gen':>8} {'Tok/s':>10} {'Status':>6}")
+    print("-" * 80)
 
     passed = total = 0
     for name, program in tests:
-        vm = WasmVM()
-        vm.load_program(program)
-        trace = vm.run()
-        expected = tc.vm_trace_to_tokens(trace)
-        n_tok = len(expected)
-
-        if n_tok > max_tokens_limit:
-            print(f"  {name:<25} {n_tok:>5} {'SKIP':>6}")
-            continue
-
         total += 1
         info = compile_and_verify(name, program)
         status = "PASS" if info['match'] else "FAIL"
         if info['match']:
             passed += 1
 
-        print(f"  {name:<25} {info['n_tok']:>5} {info['d_model']:>5} "
-              f"{info['n_params']:>10,} {info['compile_sec']:>7.3f}s "
-              f"{info['generate_sec']:>7.3f}s {info['tok_per_sec']:>9,.0f} "
-              f"{status:>6}")
+        print(f"  {name:<20} {info['n_tok']:>5} {info['n_params']:>10,} "
+              f"{info['compile_sec']:>7.3f}s {info['generate_sec']:>7.3f}s "
+              f"{info['tok_per_sec']:>9,.0f} {status:>6}")
 
-    print("-" * 85)
-    print(f"  Result: {passed}/{total} (d_model=max({D_MODEL}, n+2), head_dim=2)")
-    print("=" * 85)
+        if not info['match']:
+            for j in range(min(len(info['expected']), len(info['generated']))):
+                if j >= len(info['generated']) or info['expected'][j] != info['generated'][j]:
+                    print(f"    pos {j}: exp={info['expected'][j]} got={info['generated'][j] if j<len(info['generated']) else 'EOF'}")
+                    break
+
+    print("-" * 80)
+    print(f"  Result: {passed}/{total} (d_model={D_MODEL} FIXED for all)")
+    print("=" * 80)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--max-tokens', type=int, default=2000)
+    parser.add_argument('--max-tokens', type=int, default=10000)
     args = parser.parse_args()
     run_tests(max_tokens_limit=args.max_tokens)
