@@ -26,7 +26,8 @@ import torch
 from model import VanillaTransformer
 from hull_kv_cache import HullKVCache, StandardKVCache
 from wasm_vm import WasmVM, Instruction, Op
-from compiler import WeightCompiler, TraceCompiler, TraceVocab
+from compiler import TraceCompiler, TraceVocab
+from weight_compiler import compile_program
 
 
 class ExecutionResult:
@@ -79,9 +80,8 @@ class Executor:
         if compiled_model is not None:
             self.model = compiled_model
         else:
-            # Compile a default model
-            compiler = WeightCompiler()
-            self.model = compiler.compile()
+            # No default model — provide one via compile_program()
+            self.model = None
 
     def execute_on_vm(self, program: list[Instruction],
                       n_locals: int = 16,

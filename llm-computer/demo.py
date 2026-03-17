@@ -30,7 +30,8 @@ from wasm_vm import (
     make_multidigit_addition_program,
     SudokuSolver,
 )
-from compiler import WeightCompiler, TraceCompiler, TraceVocab
+from compiler import TraceCompiler, TraceVocab
+from weight_compiler import compile_program
 from executor import Executor, StreamingExecutor, format_execution_display
 from hull_kv_cache import HullKVCache, StandardKVCache, ConvexHull2D
 
@@ -343,8 +344,8 @@ def demo_transformer_model():
     print("=" * 60)
     print()
 
-    compiler = WeightCompiler()
-    model = compiler.compile()
+    # Compile a simple program to get a real model with correct weights
+    model, _ = compile_program(make_addition_program(1, 1))
 
     total_params = sum(p.numel() for p in model.parameters())
 
