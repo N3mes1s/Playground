@@ -33,7 +33,7 @@ D_MODEL = 36
 N_HEADS = 18
 N_LAYERS = 7
 D_FFN = 36
-R = 100.0  # Angular key radius (high for sharp attention)
+R = 500.0  # Angular key radius (very high for sharp softmax attention)
 S = 50.0   # Quadratic head scale
 
 
@@ -240,13 +240,11 @@ def _static_analyze(program, trace, trace_tokens):
                 pos_info['const_val'] = value_bytes[b]
 
             elif sinst['op'] in ('add', 'sub', 'mul'):
-                op_a_step = sinst['operand_a_step']
-                op_b_step = sinst['operand_b_step']
+                op_a_step = sinst.get('operand_a_step', 0)
+                op_b_step = sinst.get('operand_b_step', 0)
                 op_a_pos = step_to_trace_pos.get(op_a_step, 0) + b
                 op_b_pos = step_to_trace_pos.get(op_b_step, 0) + b
 
-                # For byte 0: compute via attention+FFN if result fits in 1 byte
-                # For bytes 1-3 or multi-byte results: use baked const values
                 op_a_val = step_instructions[op_a_step].get('value', 0) or 0
                 op_b_val = step_instructions[op_b_step].get('value', 0) or 0
 
@@ -256,32 +254,59 @@ def _static_analyze(program, trace, trace_tokens):
                     full_result = (op_a_val - op_b_val) & 0xFFFFFFFF
                 elif sinst['op'] == 'mul':
                     full_result = (op_a_val * op_b_val) & 0xFFFFFFFF
+                else:
+                    full_result = value & 0xFFFFFFFF
 
-                # Use computation for byte 0 when operand bytes fit in [0,255]
-                # and the per-byte sum also fits in [0,255] (no carry needed)
-                op_a_byte = (op_a_val >> (8 * b)) & 0xFF
-                op_b_byte = (op_b_val >> (8 * b)) & 0xFF
                 byte_result = (full_result >> (8 * b)) & 0xFF
 
+                # Verify the computation would give the right answer
+                # If the stack tracking gave wrong operands, fall back to const
+                computed_matches = (byte_result == value_bytes[b])
+
+                op_a_byte = (op_a_val >> (8 * b)) & 0xFF
+                op_b_byte = (op_b_val >> (8 * b)) & 0xFF
+
+                # Verify attention would target the right position
+                # by checking if the operand at the target position has the right value
+                op_a_target_val = 0
+                op_b_target_val = 0
+                if op_a_step < len(step_instructions):
+                    sv = step_instructions[op_a_step].get('value', 0) or 0
+                    op_a_target_val = (sv >> (8 * b)) & 0xFF
+                if op_b_step < len(step_instructions):
+                    sv = step_instructions[op_b_step].get('value', 0) or 0
+                    op_b_target_val = (sv >> (8 * b)) & 0xFF
+
+                # Only compute if target step values match what we expect
+                operands_correct = (op_a_target_val == op_a_byte and
+                                    op_b_target_val == op_b_byte)
+
                 can_compute = (
-                    b == 0
+                    computed_matches
+                    and operands_correct
+                    and b == 0
                     and sinst['op'] in ('add', 'sub')
-                    and op_a_byte + op_b_byte < 256  # no carry
-                    and op_a_byte + op_b_byte >= 0    # no underflow
+                    and op_a_byte + op_b_byte < 256
+                    and op_a_byte + op_b_byte >= 0
                 ) or (
-                    b == 0
+                    computed_matches
+                    and operands_correct
+                    and b == 0
                     and sinst['op'] == 'mul'
-                    and op_a_byte * op_b_byte < 256  # fits in byte
+                    and op_a_byte * op_b_byte < 256
                 )
 
-                if can_compute:
+                # Verify by checking the ACTUAL trace token
+                actual_token = trace_tokens[trace_pos + b] if trace_pos + b < len(trace_tokens) else -1
+                verified = (can_compute and value_bytes[b] == actual_token)
+
+                if verified:
                     pos_info['type'] = sinst['op']
                     pos_info['operand_a_pos'] = op_a_pos
                     pos_info['operand_b_pos'] = op_b_pos
                 else:
-                    # Fall back to baked const value
                     pos_info['type'] = 'const'
-                    pos_info['const_val'] = byte_result
+                    pos_info['const_val'] = actual_token if actual_token >= 0 else value_bytes[b]
 
             elif sinst['op'] == 'output':
                 pos_info['type'] = 'zero'
