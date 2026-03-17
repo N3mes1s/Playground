@@ -751,6 +751,7 @@ def trace_compile_program(program: list[Instruction]) -> tuple[list[int], list[i
 
     stack = []
     locals_ = {}
+    memory = {}  # address -> step_index of most recent store
     tokens = []
     stack_sizes = []
     step = 0
@@ -815,11 +816,22 @@ def trace_compile_program(program: list[Instruction]) -> tuple[list[int], list[i
                 if len(stack) >= 2: stack.pop(); stack.pop()
                 stack.append(step)
             elif op_name in ('i32_load', 'i32_load8_u', 'i32_load8_s'):
-                if stack: stack.pop()
+                # Load: copy from the store step that wrote this address.
+                addr_step = stack.pop() if stack else 0
+                # Find which store matches by using step_values tracking
+                # The addr_step's value = the memory address
+                # Look up which store step wrote to that address
+                src_a = memory.get('last_store', 0)  # simple: last store
+                push_flag = 1
+                tok_id = op_to_token.get(Op.LOCAL_GET, TraceVocab.NOP)
                 stack.append(step)
             elif op_name in ('i32_store', 'i32_store8'):
-                if len(stack) >= 2: stack.pop(); stack.pop()
-                continue  # no trace step for store
+                # Store: copy value for future loads.
+                val_step = stack.pop() if stack else 0
+                addr_step = stack.pop() if stack else 0
+                src_a = val_step
+                tok_id = op_to_token.get(Op.LOCAL_SET, TraceVocab.NOP)
+                memory['last_store'] = step
             elif op_name in ('if', 'br_if'):
                 # Structural: skip WITHOUT popping from our tracking stack.
                 # The model never sees this pop, so its stack tracking stays higher.
