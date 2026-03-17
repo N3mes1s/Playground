@@ -31,7 +31,9 @@ class TraceVocab:
     OUTPUT = 258
     BRANCH_TAKEN = 259
     OPCODE_OFFSET = 260
-    VOCAB_SIZE = 520  # Generous ceiling
+    NOP = 518           # No-operation (for padding)
+    SEP = 519           # Separator between program and trace
+    VOCAB_SIZE = 520
 
     @staticmethod
     def encode_i32(val: int) -> list[int]:
