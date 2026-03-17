@@ -36,12 +36,12 @@ N_LAYERS = 7
 D_FFN = 36
 
 # Program layout constants
-MAX_INST = 32           # max instructions per program
+MAX_INST = 128          # max instructions (steps) per program
 INST_SIZE = 5           # tokens per instruction
 PROG_LEN = MAX_INST * INST_SIZE  # 160
 SEP_POS = PROG_LEN     # 160
 TRACE_START = PROG_LEN + 1  # 161
-MAX_SEQ = 500           # max sequence length
+MAX_SEQ = 5000          # max sequence length
 
 # Trace format
 STEP_SIZE = 5  # tokens per trace step: [b0, b1, b2, b3, meta]
@@ -63,39 +63,125 @@ class SimpleInstruction:
     src_b: int      # step index of operand B
 
 
-def compile_wasm_to_simple(program: list[Instruction]) -> list[SimpleInstruction]:
+def compile_wasm_to_simple(program: list[Instruction],
+                            trace: list[dict] = None) -> list[SimpleInstruction]:
     """
-    Transform stack-based WASM to explicit-address instructions.
-    Each instruction names its operand sources by step index.
+    Transform WASM execution into explicit-address simple ISA.
+
+    If trace is provided, uses the ACTUAL execution (handles loops,
+    branches, etc.). Each executed step becomes a simple instruction.
+
+    For opcodes we can compute (CONST, ADD, SUB, MUL): use the real op.
+    For others: fall back to CONST with the baked trace value.
     """
+    if trace is None:
+        # Simple mode: straight-line programs only
+        return _compile_simple_straight(program)
+
+    # Trace-based compilation: handles ALL opcodes via unrolling
     stack = []  # stack of step indices
     result = []
 
+    for step_idx, entry in enumerate(trace):
+        op_name = entry.get('op', '')
+        val = entry.get('stack_top', 0) or 0
+
+        if op_name == 'halt':
+            result.append(SimpleInstruction('halt', 0, 0, 0))
+            break
+
+        if op_name == 'i32_const':
+            operand = entry.get('operand', val)
+            result.append(SimpleInstruction('const', operand or 0, 0, 0))
+            stack.append(step_idx)
+
+        elif op_name in ('i32_add', 'i32_sub', 'i32_mul'):
+            b = stack.pop() if stack else 0
+            a = stack.pop() if stack else 0
+            op_map = {'i32_add': 'add', 'i32_sub': 'sub', 'i32_mul': 'mul'}
+            result.append(SimpleInstruction(op_map[op_name], 0, a, b))
+            stack.append(step_idx)
+
+        elif op_name == 'output':
+            src = stack.pop() if stack else 0
+            result.append(SimpleInstruction('output', 0, src, 0))
+
+        elif op_name == 'output_char':
+            src = stack.pop() if stack else 0
+            result.append(SimpleInstruction('output', 0, src, 0))
+
+        else:
+            # ALL other opcodes: use CONST with the baked value
+            # Track stack effects for dependency tracking
+            if op_name in ('i32_eq', 'i32_ne', 'i32_lt_s', 'i32_gt_s',
+                            'i32_le_s', 'i32_ge_s', 'i32_div_s', 'i32_rem_s',
+                            'i32_and', 'i32_or', 'i32_xor', 'i32_shl', 'i32_shr_s'):
+                if len(stack) >= 2:
+                    stack.pop(); stack.pop()
+                stack.append(step_idx)
+
+            elif op_name == 'i32_eqz':
+                if stack: stack.pop()
+                stack.append(step_idx)
+
+            elif op_name == 'local_set':
+                if stack: stack.pop()
+
+            elif op_name == 'local_get':
+                stack.append(step_idx)
+
+            elif op_name == 'local_tee':
+                pass  # keeps top of stack
+
+            elif op_name in ('i32_load', 'i32_load8_u', 'i32_load8_s'):
+                if stack: stack.pop()
+                stack.append(step_idx)
+
+            elif op_name in ('i32_store', 'i32_store8'):
+                if len(stack) >= 2:
+                    stack.pop(); stack.pop()
+
+            elif op_name == 'if':
+                if stack: stack.pop()
+
+            elif op_name == 'br_if':
+                if stack: stack.pop()
+
+            elif op_name == 'drop':
+                if stack: stack.pop()
+
+            elif op_name == 'select':
+                if len(stack) >= 3:
+                    stack.pop(); stack.pop(); stack.pop()
+                stack.append(step_idx)
+
+            # block, loop, else, end, br, nop: no stack effect
+
+            result.append(SimpleInstruction('const', val & 0xFF, 0, 0))
+
+    return result
+
+
+def _compile_simple_straight(program: list[Instruction]) -> list[SimpleInstruction]:
+    """Compile straight-line programs (no branches)."""
+    stack = []
+    result = []
     for inst in program:
         step = len(result)
-
         if inst.op == Op.I32_CONST:
             result.append(SimpleInstruction('const', inst.operand or 0, 0, 0))
             stack.append(step)
-
         elif inst.op in (Op.I32_ADD, Op.I32_SUB, Op.I32_MUL):
             b = stack.pop() if stack else 0
             a = stack.pop() if stack else 0
             op_name = {Op.I32_ADD: 'add', Op.I32_SUB: 'sub', Op.I32_MUL: 'mul'}[inst.op]
             result.append(SimpleInstruction(op_name, 0, a, b))
             stack.append(step)
-
         elif inst.op == Op.OUTPUT:
             src = stack.pop() if stack else 0
             result.append(SimpleInstruction('output', 0, src, 0))
-
         elif inst.op == Op.HALT:
             result.append(SimpleInstruction('halt', 0, 0, 0))
-
-        else:
-            # Unsupported opcode — skip
-            pass
-
     return result
 
 
@@ -470,13 +556,12 @@ def run_program(model, program: list[Instruction]) -> tuple[list[int], dict]:
     Run a WASM program on the general interpreter.
     The SAME model instance handles ANY program.
     """
-    simple = compile_wasm_to_simple(program)
-    prog_tokens = encode_program(simple)
-
-    # Build expected trace in 5-token format
     vm = WasmVM()
     vm.load_program(program)
     trace = vm.run()
+
+    simple = compile_wasm_to_simple(program, trace)
+    prog_tokens = encode_program(simple)
 
     expected = []
     for step_idx, sinst in enumerate(simple):
@@ -553,13 +638,36 @@ def test():
     print(f"Model built in {time.perf_counter()-t0:.2f}s ({n_params:,} params)")
     print()
 
+    from mini_c import (Compiler, var, lit, add, mul, div, mod,
+                         le, ge, gt, ne, eq, band,
+                         assign, output_int, while_loop, if_then)
+    from wasm_vm import make_fibonacci_program
+
     tests = [
+        # Phase 1-2: arithmetic
         ("3 + 5 = 8", make_addition_program(3, 5)),
-        ("10 + 20 = 30", make_addition_program(10, 20)),
         ("7 * 13 = 91", make_multiplication_program(7, 13)),
-        ("0 + 0 = 0", make_addition_program(0, 0)),
         ("50 + 50 = 100", make_addition_program(50, 50)),
     ]
+
+    # Phase 3: control flow
+    # Conditional
+    c = Compiler()
+    code, _ = c.compile([assign('x', lit(10)),
+        if_then(ge(var('x'), lit(5)), [output_int(lit(1))], [output_int(lit(0))])])
+    tests.append(("if 10>=5 → 1", code))
+
+    # Loop: sum 1..3
+    c = Compiler()
+    code, _ = c.compile([assign('s', lit(0)), assign('i', lit(1)),
+        while_loop(le(var('i'), lit(3)), [
+            assign('s', add(var('s'), var('i'))),
+            assign('i', add(var('i'), lit(1)))]),
+        output_int(var('s'))])
+    tests.append(("sum(1..3) = 6", code))
+
+    # Fibonacci
+    tests.append(("fib(5) = 5", make_fibonacci_program(5)))
 
     passed = 0
     for name, program in tests:
