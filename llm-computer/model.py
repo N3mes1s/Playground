@@ -46,15 +46,23 @@ class VanillaTransformer(nn.Module):
     """
 
     def __init__(self, vocab: int, d_model: int = 36, n_heads: int = 18,
-                 n_layers: int = 7, d_ffn: int = 36):
+                 n_layers: int = 7, d_ffn: int = 36,
+                 max_seq_len: int = 0, pe_mode: str = 'sinusoidal'):
         super().__init__()
         assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
         self.d_model = d_model
         self.n_heads = n_heads
         self.n_layers = n_layers
         self.head_dim = d_model // n_heads  # Should be 2 for fast path
+        self.pe_mode = pe_mode
 
         self.tok = nn.Embedding(vocab, d_model)
+
+        # Learnable position embeddings (used when pe_mode='learned')
+        if pe_mode == 'learned' and max_seq_len > 0:
+            self.pos_tok = nn.Embedding(max_seq_len, d_model)
+        else:
+            self.pos_tok = None
         self.attn = nn.ModuleList([
             nn.MultiheadAttention(d_model, n_heads, batch_first=True, bias=False)
             for _ in range(n_layers)
@@ -84,7 +92,11 @@ class VanillaTransformer(nn.Module):
         T = idx.shape[1]
         device = idx.device
 
-        x = self.tok(idx) + pos_emb(T, self.d_model, device)
+        if self.pe_mode == 'learned' and self.pos_tok is not None:
+            positions = torch.arange(T, device=device)
+            x = self.tok(idx) + self.pos_tok(positions)
+        else:
+            x = self.tok(idx) + pos_emb(T, self.d_model, device)
 
         # Causal mask: True means "do not attend"
         causal = torch.triu(
