@@ -9,7 +9,11 @@ Based on the SUBLEQ transformer approach (anadim/subleq-transformer):
 - Program tokens encode instructions with explicit operand addresses
 - Position embeddings are universal (function of position only)
 
-Phase 1: CONST + ADD/SUB/MUL + OUTPUT + HALT, single-byte values.
+Trace format: fixed 5 tokens per step:
+  [result_b0, result_b1, result_b2, result_b3, meta]
+  meta: 0=normal, 1=output (emits value), 2=halt
+
+This fixed format keeps PE alignment: step = trace_offset // 5.
 """
 
 import math
@@ -39,9 +43,15 @@ SEP_POS = PROG_LEN     # 160
 TRACE_START = PROG_LEN + 1  # 161
 MAX_SEQ = 500           # max sequence length
 
+# Trace format
+STEP_SIZE = 5  # tokens per trace step: [b0, b1, b2, b3, meta]
+META_NORMAL = 0
+META_OUTPUT = 1  # this step's value is an output
+META_HALT = 2
+
 # Quadratic addressing scale
-S_QUAD = 100.0  # high for sharp quadratic attention
-S_HEAD = 50.0  # output head quadratic scale
+S_QUAD = 100.0
+S_HEAD = 50.0
 
 
 @dataclass
@@ -167,20 +177,22 @@ def _set_universal_pe(model):
 
         elif t == SEP_POS:
             pe[t, 3] = 1.0  # is_sep
-            # SEP predicts the first trace token (step 0, byte 0)
-            pe[t, 4] = 1.0  # is_trace (for prediction)
+            # SEP predicts the first trace token (step 0, slot 0)
+            pe[t, 4] = 1.0
             pe[t, 7] = 0.0  # step 0
-            pe[t, 8] = 0.0  # byte 0
+            pe[t, 8] = 0.0  # slot 0
 
         else:
             # Trace region: PE at position t predicts the token at t+1
-            # So encode metadata for position t+1
             next_trace_offset = (t + 1) - TRACE_START
-            step = next_trace_offset // 4
-            byte_idx = next_trace_offset % 4
+            step = next_trace_offset // STEP_SIZE
+            slot = next_trace_offset % STEP_SIZE  # 0-3 = result bytes, 4 = meta
             pe[t, 4] = 1.0  # is_trace
-            pe[t, 7] = float(step)  # step number (for prediction target)
-            pe[t, 8] = float(byte_idx)  # byte index (for prediction target)
+            pe[t, 7] = float(step)  # step number
+            pe[t, 8] = float(slot)  # slot within step (0-4)
+            # dim 9: is_meta_slot (1.0 when slot=4)
+            if slot == 4:
+                pe[t, 9] = 1.0
 
 
 def _set_universal_weights(model):
@@ -277,32 +289,38 @@ def _set_universal_weights(model):
     ff0_in = model.ff_in[0].weight   # (72, 36)
     ff0_out = model.ff_out[0].weight  # (36, 36)
 
-    # Gate 0: fires for binary ops (is_add OR is_sub OR is_mul)
+    # With 5-token steps: trace position of step s, slot k =
+    #   TRACE_START + s * STEP_SIZE + k
+    # The input token at that position was generated at that seq position,
+    # so the VALUE is available at seq position TRACE_START + s*5 + k + 1
+    # (due to autoregressive shift: token generated at pos p is input at p+1)
+
+    # Gate 0: binary ops → compute fetch address for operand A
     ff0_in[0, 11] = 1.0  # is_add
     ff0_in[0, 12] = 1.0  # is_sub
     ff0_in[0, 13] = 1.0  # is_mul
-    # Val 0: 2*S*(TRACE_START + 4*src_a_step + byte_idx)
-    ff0_in[D_FFN + 0, 17] = 2 * S_QUAD * 4    # 8*S * src_a_step
-    ff0_in[D_FFN + 0, 8] = 2 * S_QUAD          # 2*S * byte_idx
-    ff0_in[D_FFN + 0, 27] = 2 * S_QUAD * TRACE_START  # constant
-    ff0_out[19, 0] = 1.0  # -> dim 19 (Q target for op A)
+    # Fetch address = TRACE_START + STEP_SIZE * src_step + slot
+    # Q value = 2 * S_QUAD * fetch_address
+    ff0_in[D_FFN + 0, 17] = 2 * S_QUAD * STEP_SIZE
+    ff0_in[D_FFN + 0, 8] = 2 * S_QUAD
+    ff0_in[D_FFN + 0, 27] = 2 * S_QUAD * TRACE_START
+    ff0_out[19, 0] = 1.0
 
-    # Gate 1: same condition
+    # Gate 1: binary ops → operand B
     ff0_in[1, 11] = 1.0
     ff0_in[1, 12] = 1.0
     ff0_in[1, 13] = 1.0
-    # Val 1: 2*S*(TRACE_START + 4*src_b_step + byte_idx)
-    ff0_in[D_FFN + 1, 18] = 2 * S_QUAD * 4
+    ff0_in[D_FFN + 1, 18] = 2 * S_QUAD * STEP_SIZE
     ff0_in[D_FFN + 1, 8] = 2 * S_QUAD
     ff0_in[D_FFN + 1, 27] = 2 * S_QUAD * TRACE_START
-    ff0_out[20, 1] = 1.0  # -> dim 20 (Q target for op B)
+    ff0_out[20, 1] = 1.0
 
-    # Gate 2: for OUTPUT — fetch source value (like binary op A)
-    ff0_in[2, 14] = 1.0  # is_output
-    ff0_in[D_FFN + 2, 17] = 2 * S_QUAD * 4  # src_a_step (output source)
+    # Gate 2: OUTPUT → fetch source value
+    ff0_in[2, 14] = 1.0
+    ff0_in[D_FFN + 2, 17] = 2 * S_QUAD * STEP_SIZE
     ff0_in[D_FFN + 2, 8] = 2 * S_QUAD
     ff0_in[D_FFN + 2, 27] = 2 * S_QUAD * TRACE_START
-    ff0_out[19, 2] = 1.0  # -> dim 19
+    ff0_out[19, 2] = 1.0
 
     # ================================================================
     # Layer 1 Attention: Operand Fetch from Trace (2 heads)
@@ -332,50 +350,56 @@ def _set_universal_weights(model):
     ff1_in = model.ff_in[1].weight
     ff1_out = model.ff_out[1].weight
 
-    # Gate 0 (ADD) — only at byte 0
+    # All ALU gates fire only at slot 0 (result byte 0).
+    # Slots 1-3 (result bytes 1-3): no gate fires → result=0 → head emits 0.
+    # Slot 4 (meta): handled separately below.
+    # dim 8 = slot (0-4). Gate suppression: subtract 2*slot so gate<0 at slot>0.
+
+    # Gate 0 (ADD) — slot 0 only
     ff1_in[0, 11] = 1.0    # is_add
-    ff1_in[0, 8] = -2.0    # suppress at bytes 1-3
+    ff1_in[0, 8] = -2.0    # suppress at slot > 0
     ff1_in[D_FFN + 0, 23] = 1.0  # opA
     ff1_in[D_FFN + 0, 24] = 1.0  # opB
     ff1_out[25, 0] = 1.0
 
-    # Gate 1 (CONST): only fires at byte 0 (byte_idx=0 means dim 8=0)
-    # Use is_const AND (1 - byte_idx) as gate. But we can't AND without bias.
-    # Simpler: the CONST gate reads is_const flag. It fires for ALL bytes.
-    # But the val only has byte0 (dim 16). For bytes 1-3, dim 16 still has
-    # the byte0 value (same fetch). We need byte 0 at position 0, byte 1 at
-    # position 1 (which is 0 for small values).
-    #
-    # For Phase 1 (values < 256): bytes 1-3 are ALWAYS 0.
-    # The model should output 0 for bytes 1-3. If no gate fires, dim 25 = 0
-    # and the quadratic head decodes 0. So DON'T fire CONST gate for bytes 1-3.
-    #
-    # Trick: use dim 8 (byte_idx) to suppress. When byte_idx > 0, subtract
-    # from the gate to make it negative.
-    ff1_in[1, 10] = 1.0        # is_const flag
-    ff1_in[1, 8] = -2.0        # subtract 2*byte_idx (negative for byte 1+)
+    # Gate 1 (CONST) — slot 0 only
+    ff1_in[1, 10] = 1.0
+    ff1_in[1, 8] = -2.0
     ff1_in[D_FFN + 1, 16] = 1.0  # immediate byte0
     ff1_out[25, 1] = 1.0
 
-    # Gate 2 (SUB) — only at byte 0
+    # Gate 2 (SUB) — slot 0 only
     ff1_in[2, 12] = 1.0
     ff1_in[2, 8] = -2.0
     ff1_in[D_FFN + 2, 23] = 1.0
     ff1_in[D_FFN + 2, 24] = -1.0
     ff1_out[25, 2] = 1.0
 
-    # Gate 3 (MUL) — bilinear, only at byte 0
+    # Gate 3 (MUL) — slot 0 only, bilinear
     ff1_in[3, 23] = 1.0
     ff1_in[3, 13] = 1000.0
     ff1_in[3, 27] = -1000.0
-    ff1_in[3, 8] = -2000.0  # suppress at bytes 1-3
+    ff1_in[3, 8] = -2000.0
     ff1_in[D_FFN + 3, 24] = 1.0
     ff1_out[25, 3] = 1.0
 
-    # Gate 4 (OUTPUT) — outputs 0 for stack_top bytes (no gate = result stays 0)
-    # The OUTPUT value bytes and marker are handled separately via the PE
-    # For now, don't fire any gate for OUTPUT — result defaults to 0
-    # (correct for the stack_top portion of the trace)
+    # Gate 5 (META: OUTPUT) — fires at slot 4 when is_output
+    # At slot 4, output META_OUTPUT (=1) if this step is OUTPUT
+    ff1_in[5, 14] = 1.0     # is_output
+    ff1_in[5, 9] = 1.0      # is_meta_slot (dim 9 = 1 at slot 4)
+    ff1_in[5, 27] = -1.0    # need both: gate = is_output + is_meta - 1 > 0 only when both=1
+    ff1_in[D_FFN + 5, 27] = float(META_OUTPUT)  # val = 1 (META_OUTPUT)
+    ff1_out[25, 5] = 1.0
+
+    # Gate 6 (META: HALT) — fires at slot 4 when is_halt
+    ff1_in[6, 15] = 1.0
+    ff1_in[6, 9] = 1.0
+    ff1_in[6, 27] = -1.0
+    ff1_in[D_FFN + 6, 27] = float(META_HALT)  # val = 2 (META_HALT)
+    ff1_out[25, 6] = 1.0
+
+    # Gate 7 (META: NORMAL) — fires at slot 4 for non-output, non-halt steps
+    # meta = 0 (normal). Since no gate fires, dim 25 stays 0 = META_NORMAL. Good.
 
     # ================================================================
     # Layer 2 FFN: Copy result to decode dim
@@ -401,38 +425,81 @@ def _set_universal_weights(model):
     # but special tokens also score 0 — bias breaks the tie)
     head[0, 27] = 1.0  # small positive bias for token 0
 
-    # HALT and OUTPUT markers need special handling:
-    # They only appear at specific positions (not at every byte of the step).
-    # For Phase 1: suppress them — we verify the first 12 trace bytes
-    # (the computation portion) are correct.
-    # Phase 2 will handle the OUTPUT marker/value and HALT positions.
-    # head[TraceVocab.HALT, 15] = 1e4
-    # head[TraceVocab.OUTPUT, 14] = 1e4
+    # Meta values (0, 1, 2) are emitted as regular byte tokens at slot 4.
+    # The quadratic head naturally decodes them: result=0→token 0, result=1→token 1, etc.
+
+
+def _build_expected_trace(simple_insts: list[SimpleInstruction],
+                           vm: WasmVM) -> list[int]:
+    """Build expected trace in 5-token-per-step format."""
+    trace_entries = vm.run.__wrapped__ if hasattr(vm.run, '__wrapped__') else None
+    # Re-run VM to get step-by-step values
+    vm2 = WasmVM()
+    vm2.load_program(vm.code[:], n_locals=16)
+    trace = vm2.run()
+
+    expected = []
+    for step_idx, sinst in enumerate(simple_insts):
+        if sinst.op == 'halt':
+            expected.extend([0, 0, 0, 0, META_HALT])
+            break
+
+        # Get value from trace
+        if step_idx < len(trace):
+            entry = trace[step_idx]
+            val = entry.get('stack_top', 0) or 0
+        else:
+            val = 0
+
+        val_bytes = [val & 0xFF, (val >> 8) & 0xFF,
+                     (val >> 16) & 0xFF, (val >> 24) & 0xFF]
+
+        if sinst.op == 'output':
+            # OUTPUT step: value bytes = 0 (stack empty after pop)
+            # but the OUTPUT VALUE is what was popped
+            expected.extend([0, 0, 0, 0, META_OUTPUT])
+        else:
+            meta = META_NORMAL
+            expected.extend(val_bytes + [meta])
+
+    return expected
 
 
 def run_program(model, program: list[Instruction]) -> tuple[list[int], dict]:
     """
     Run a WASM program on the general interpreter.
     The SAME model instance handles ANY program.
-
-    Returns: (generated_trace_tokens, info_dict)
     """
-    # Compile WASM to simple ISA
     simple = compile_wasm_to_simple(program)
-
-    # Encode as token sequence
     prog_tokens = encode_program(simple)
 
-    # Get expected trace from VM
+    # Build expected trace in 5-token format
     vm = WasmVM()
     vm.load_program(program)
     trace = vm.run()
-    tc = TraceCompiler()
-    expected = tc.vm_trace_to_tokens(trace)
 
-    # Generate trace autoregressively
+    expected = []
+    for step_idx, sinst in enumerate(simple):
+        if sinst.op == 'halt':
+            expected.extend([0, 0, 0, 0, META_HALT])
+            break
+
+        if step_idx < len(trace):
+            val = trace[step_idx].get('stack_top', 0) or 0
+        else:
+            val = 0
+
+        vb = [val & 0xFF, (val >> 8) & 0xFF, (val >> 16) & 0xFF, (val >> 24) & 0xFF]
+
+        if sinst.op == 'output':
+            expected.extend([0, 0, 0, 0, META_OUTPUT])
+        else:
+            expected.extend(vb + [META_NORMAL])
+
+    # Generate
+    max_trace = len(expected) + 10
     t0 = time.perf_counter()
-    generated = _generate(model, prog_tokens, max_trace_tokens=len(expected) + 10)
+    generated = _generate(model, prog_tokens, max_trace_tokens=max_trace)
     gen_time = time.perf_counter() - t0
 
     match = generated == expected
@@ -449,20 +516,22 @@ def run_program(model, program: list[Instruction]) -> tuple[list[int], dict]:
 
 
 def _generate(model, prog_tokens: list[int], max_trace_tokens=500):
-    """Generate trace tokens autoregressively."""
+    """Generate trace tokens autoregressively. Stops when meta=META_HALT."""
     model.eval()
-    sequence = list(prog_tokens)  # start with program + SEP
+    sequence = list(prog_tokens)
     trace_tokens = []
 
     with torch.no_grad():
-        for _ in range(max_trace_tokens):
+        for i in range(max_trace_tokens):
             input_ids = torch.tensor([sequence], dtype=torch.long)
             logits = model(input_ids)
             next_token = logits[0, -1].argmax().item()
             sequence.append(next_token)
             trace_tokens.append(next_token)
 
-            if next_token == TraceVocab.HALT:
+            # Check if we just emitted a META_HALT at slot 4
+            slot = i % STEP_SIZE
+            if slot == 4 and next_token == META_HALT:
                 break
 
     return trace_tokens
