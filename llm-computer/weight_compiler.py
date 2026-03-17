@@ -162,20 +162,45 @@ def _compile(model, trace_tokens):
         head[tok, target_dim] += 1.0
 
 
-def generate_trace(model, max_tokens=50000, device='cpu'):
-    """Generate trace autoregressively from compiled model."""
+def generate_trace(model, max_tokens=50000, device='cpu', use_kv_cache=True):
+    """
+    Generate trace autoregressively from compiled model.
+
+    With KV cache: O(n × d²) total (each step is O(d²), not O(n × d²)).
+    Without KV cache: O(n² × d²) total (each step re-processes full sequence).
+    """
     model.eval()
     model = model.to(device)
     generated = [0]
 
-    for _ in range(max_tokens):
-        input_ids = torch.tensor([generated], dtype=torch.long, device=device)
-        with torch.no_grad():
-            logits = model(input_ids)
+    if not use_kv_cache:
+        # Naive: re-process full sequence each step
+        for _ in range(max_tokens):
+            input_ids = torch.tensor([generated], dtype=torch.long, device=device)
+            with torch.no_grad():
+                logits = model(input_ids)
+            next_token = logits[0, -1].argmax().item()
+            generated.append(next_token)
+            if next_token == TraceVocab.HALT:
+                break
+        return generated[1:]
+
+    # KV-cached generation: O(d²) per step
+    with torch.no_grad():
+        # Prefill: process START token
+        input_ids = torch.tensor([[0]], dtype=torch.long, device=device)
+        logits, kv_cache = model.forward_with_cache(input_ids, kv_cache=None)
         next_token = logits[0, -1].argmax().item()
         generated.append(next_token)
-        if next_token == TraceVocab.HALT:
-            break
+
+        # Decode: one token at a time with cache
+        for _ in range(max_tokens - 1):
+            if next_token == TraceVocab.HALT:
+                break
+            input_ids = torch.tensor([[next_token]], dtype=torch.long, device=device)
+            logits, kv_cache = model.forward_with_cache(input_ids, kv_cache=kv_cache)
+            next_token = logits[0, -1].argmax().item()
+            generated.append(next_token)
 
     return generated[1:]
 

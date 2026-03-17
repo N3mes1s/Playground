@@ -117,29 +117,29 @@ class VanillaTransformer(nn.Module):
     def forward_with_cache(self, idx: torch.Tensor, kv_cache=None):
         """
         Forward pass with KV cache for efficient autoregressive decoding.
-        Used during execution trace generation.
 
         Args:
-            idx: (batch, 1) single token index (during decoding)
+            idx: (batch, seq) token indices
             kv_cache: list of (K, V) pairs per layer, or None for first step
 
         Returns:
-            logits: (batch, 1, vocab)
+            logits: (batch, seq, vocab)
             new_kv_cache: updated cache
         """
-        if kv_cache is None:
-            # Full forward for prefill
-            return self.forward(idx), None
-
         T_new = idx.shape[1]
         device = idx.device
         new_cache = []
 
         x = self.tok(idx)
-        # Position = total cached length
+        # Position encoding
         cached_len = kv_cache[0][0].shape[1] if kv_cache else 0
-        pos = pos_emb(cached_len + T_new, self.d_model, device)[:, cached_len:]
-        x = x + pos
+        if self.pe_mode == 'learned' and self.pos_tok is not None:
+            positions = torch.arange(cached_len, cached_len + T_new, device=device)
+            positions = positions.clamp(max=self.pos_tok.weight.shape[0] - 1)
+            x = x + self.pos_tok(positions)
+        else:
+            pos = pos_emb(cached_len + T_new, self.d_model, device)[:, cached_len:]
+            x = x + pos
 
         for i, (attn, ff_in, ff_out) in enumerate(
             zip(self.attn, self.ff_in, self.ff_out)
