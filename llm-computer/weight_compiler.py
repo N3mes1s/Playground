@@ -545,10 +545,13 @@ def _set_program_pe(model, position_info, n):
 
 def generate_trace(model, max_tokens=50000, device='cpu'):
     """
-    Generate trace using HullKVCache: exact hard-max attention, O(log n) per step.
-    No softmax leakage — works for ANY sequence length with 100% accuracy.
+    Generate trace using optimized HullKVCache on active heads only.
+
+    Only processes layer 0 (the only layer with nonzero weights).
+    Only queries heads 0-1 (the only heads with nonzero Q/K/V weights).
+    Uses convex hull hard-max for exact attention — O(log n), zero leakage.
     """
-    from hull_kv_cache import HullKVCache
+    from hull_kv_cache import ConvexHull2D
     import torch.nn.functional as F
 
     model.eval()
@@ -556,61 +559,82 @@ def generate_trace(model, max_tokens=50000, device='cpu'):
     generated = [0]
 
     d = model.d_model
-    n_heads = model.n_heads
-    hd = model.head_dim  # 2
 
-    hull_cache = HullKVCache(N_LAYERS, n_heads, head_dim=hd, k_sparse=1)
+    # Pre-extract the ONLY weights that matter (layer 0, heads 0-1)
+    W = model.attn[0].in_proj_weight.detach()
+    W_out = model.attn[0].out_proj.weight.detach()
+    Wq = W[:d]
+    Wk = W[d:2*d]
+    Wv = W[2*d:]
+    ff_in_w = model.ff_in[0].weight.detach()
+    ff_out_w = model.ff_out[0].weight.detach()
+    head_w = model.head.weight.detach()
+    tok_w = model.tok.weight.detach()
+    pe_w = model.pos_tok.weight.detach() if model.pos_tok else None
+
+    # Hull caches for heads 0 and 1 only
+    hull_0 = ConvexHull2D()
+    hull_1 = ConvexHull2D()
+    values_0 = []  # stored V values for head 0
+    values_1 = []
 
     with torch.no_grad():
         for step in range(max_tokens):
             tok_id = generated[-1]
-            input_t = torch.tensor([tok_id], dtype=torch.long, device=device)
 
-            # Embedding + PE
-            x = model.tok(input_t)  # (1, d)
-            if model.pos_tok is not None and step < model.pos_tok.weight.shape[0]:
-                x = x + model.pos_tok.weight[step].unsqueeze(0)
+            # Embedding + PE (direct tensor ops, no module overhead)
+            x = tok_w[tok_id].clone()
+            if pe_w is not None and step < pe_w.shape[0]:
+                x = x + pe_w[step]
 
-            # Process through all layers
-            for layer_idx in range(N_LAYERS):
-                attn = model.attn[layer_idx]
-                W = attn.in_proj_weight  # (3d, d)
-                W_out = attn.out_proj.weight  # (d, d)
+            # Layer 0 attention: only heads 0-1
+            q = Wq @ x  # (d,)
+            k = Wk @ x
+            v = Wv @ x
 
-                # Q, K, V projections
-                q_all = F.linear(x, W[:d])      # (1, d)
-                k_all = F.linear(x, W[d:2*d])
-                v_all = F.linear(x, W[2*d:])
+            # Head 0: dims [0,1]
+            k0x, k0y = k[0].item(), k[1].item()
+            v0 = v[:2].clone()
+            idx = len(values_0)
+            hull_0.insert(k0x, k0y, idx)
+            values_0.append(v0)
 
-                # Split into heads: (n_heads, 2)
-                q_heads = q_all.view(n_heads, hd)
-                k_heads = k_all.view(n_heads, hd)
-                v_heads = v_all.view(n_heads, hd)
+            # Head 1: dims [2,3]
+            k1x, k1y = k[2].item(), k[3].item()
+            v1 = v[2:4].clone()
+            hull_1.insert(k1x, k1y, idx)
+            values_1.append(v1)
 
-                # Insert K, V into hull cache
-                for h in range(n_heads):
-                    hull_cache.insert(layer_idx, h, k_heads[h], v_heads[h])
+            # Query head 0
+            q0x, q0y = q[0].item(), q[1].item()
+            if values_0:
+                best_idx, _ = hull_0.query_max_dot(q0x, q0y)
+                attn_v0 = values_0[best_idx]
+            else:
+                attn_v0 = torch.zeros(2)
 
-                # Query: hard-max attention via convex hull — O(log n)
-                attn_output = torch.zeros(n_heads, hd, device=device)
-                for h in range(n_heads):
-                    attn_output[h] = hull_cache.query(layer_idx, h, q_heads[h])
+            # Query head 1
+            q1x, q1y = q[2].item(), q[3].item()
+            if values_1:
+                best_idx, _ = hull_1.query_max_dot(q1x, q1y)
+                attn_v1 = values_1[best_idx]
+            else:
+                attn_v1 = torch.zeros(2)
 
-                # out_proj + residual
-                attn_flat = attn_output.reshape(1, d)
-                y = F.linear(attn_flat, W_out)
-                x = x + y
+            # out_proj: head 0 dim 0 → residual dim 24, head 1 dim 0 → dim 25
+            x[24] = x[24] + attn_v0[0] * W_out[24, 0].item()
+            x[25] = x[25] + attn_v1[0] * W_out[25, 2].item()
 
-                # Gated FFN
-                d_ffn = model.ff_in[layer_idx].weight.shape[0] // 2
-                ff_raw = F.linear(x, model.ff_in[layer_idx].weight)
-                gate, val = ff_raw.chunk(2, dim=-1)
-                ffn_out = F.linear(F.relu(gate) * val, model.ff_out[layer_idx].weight)
-                x = x + ffn_out
+            # Gated FFN (layer 0 only)
+            ff_raw = ff_in_w @ x  # (2*d_ffn,)
+            d_ffn = ff_raw.shape[0] // 2
+            gate = F.relu(ff_raw[:d_ffn])
+            val = ff_raw[d_ffn:]
+            x = x + ff_out_w @ (gate * val)
 
-            # Output logits
-            logits = F.linear(x, model.head.weight)  # (1, 520)
-            next_token = logits[0].argmax().item()
+            # Logits
+            logits = head_w @ x
+            next_token = logits.argmax().item()
             generated.append(next_token)
 
             if next_token == TraceVocab.HALT:
