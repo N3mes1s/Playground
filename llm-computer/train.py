@@ -168,7 +168,7 @@ def test_execution(model, generator, device, n_tests=10):
 
     for _ in range(n_tests):
         # Generate a simple program
-        result = generator.gen_addition()
+        result = generator.gen_single_add()
         if result is None:
             continue
 

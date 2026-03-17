@@ -241,13 +241,22 @@ def download_checkpoint():
 
 
 @app.local_entrypoint()
-def main(test_only: bool = False):
+def main(test_only: bool = False, fresh: bool = False):
     """Train on Modal GPU, or test data generator with --test-only."""
     if test_only:
         print("Testing data generator on Modal...")
         result = test_data.remote()
         print(f"\nResult: {result}")
         return
+
+    if fresh:
+        print("Clearing old checkpoints for fresh start...")
+        try:
+            import subprocess
+            subprocess.run(["modal", "volume", "rm", "llm-compute-checkpoints", "/latest.pt"], check=False)
+            subprocess.run(["modal", "volume", "rm", "llm-compute-checkpoints", "/best.pt"], check=False)
+        except Exception:
+            pass
 
     print("Launching training on Modal GPU...")
     result = train.remote()
