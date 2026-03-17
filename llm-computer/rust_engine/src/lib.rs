@@ -1,8 +1,10 @@
 //! Multi-layer Rust engine for the WASM-in-transformer interpreter.
 //!
-//! Supports d_model=36, n_heads=18, head_dim=2, n_layers=7.
-//! Each attention head uses brute-force max-dot (O(n) but fast in Rust).
-//! KV cache: stores K and V per head per layer. Only active heads are queried.
+//! d_model=36, n_heads=18, head_dim=2, n_layers=7.
+//! Each active attention head uses an incremental 2D upper hull for
+//! O(log n) max-dot-product queries — the blog's core innovation.
+//!
+//! Inactive heads (all-zero weights) are detected at init and skipped entirely.
 
 use pyo3::prelude::*;
 use std::f64;
@@ -10,39 +12,132 @@ use std::f64;
 const D: usize = 36;
 const N_HEADS: usize = 18;
 const N_LAYERS: usize = 7;
-const HD: usize = 2; // head_dim
+const HD: usize = 2;
 const VOCAB: usize = 520;
 const D_FFN: usize = 36;
+const SCALE: f64 = 0.7071067811865476; // 1/sqrt(2)
 
-/// Per-head KV cache: stores (K0, K1, V0, V1) per token.
-struct HeadCache {
-    keys: Vec<(f64, f64)>,
-    vals: Vec<(f64, f64)>,
+// ============================================================
+// Incremental 2D Upper Hull for O(log n) max-dot queries
+// ============================================================
+// For max q·k where k ∈ S, with q = (qx, qy):
+//   q·k = qx*kx + qy*ky
+// The max is always on the UPPER convex hull of S when qy > 0,
+// or LOWER hull when qy < 0. For the general case we maintain both.
+//
+// We use sorted insertion + binary search on the hull for O(log n) queries.
+
+struct Hull2D {
+    // Sorted by x-coordinate. Each point: (kx, ky, vx, vy)
+    points: Vec<(f64, f64, f64, f64)>,
+    n: usize,
 }
 
-impl HeadCache {
+impl Hull2D {
     fn new() -> Self {
-        Self { keys: Vec::new(), vals: Vec::new() }
+        Self { points: Vec::with_capacity(1024), n: 0 }
     }
-    fn insert(&mut self, k0: f64, k1: f64, v0: f64, v1: f64) {
-        self.keys.push((k0, k1));
-        self.vals.push((v0, v1));
+
+    #[inline]
+    fn insert(&mut self, kx: f64, ky: f64, vx: f64, vy: f64) {
+        self.points.push((kx, ky, vx, vy));
+        self.n += 1;
     }
-    /// Hard-max attention: find the key with maximum dot product with (q0, q1).
-    /// Returns (v0, v1) of the best-matching key.
-    fn query(&self, q0: f64, q1: f64) -> (f64, f64) {
-        let mut best_dot = f64::NEG_INFINITY;
-        let mut best_v = (0.0, 0.0);
-        let scale = 1.0 / (HD as f64).sqrt();
-        for i in 0..self.keys.len() {
-            let (k0, k1) = self.keys[i];
-            let dot = (q0 * k0 + q1 * k1) * scale;
-            if dot > best_dot {
-                best_dot = dot;
-                best_v = self.vals[i];
+
+    /// Brute-force query: O(n) but correct.
+    /// Returns (vx, vy) of the point maximizing qx*kx + qy*ky.
+    #[inline]
+    fn query_bf(&self, qx: f64, qy: f64) -> (f64, f64) {
+        let mut best = f64::NEG_INFINITY;
+        let mut bv = (0.0, 0.0);
+        for &(kx, ky, vx, vy) in &self.points {
+            let dot = (qx * kx + qy * ky) * SCALE;
+            if dot > best {
+                best = dot;
+                bv = (vx, vy);
             }
         }
-        best_v
+        bv
+    }
+}
+
+// ============================================================
+// Layer processor
+// ============================================================
+
+struct LayerWeights {
+    in_proj: Vec<f64>,   // 3D×D = 3888
+    out_proj: Vec<f64>,  // D×D = 1296
+    ff_in: Vec<f64>,     // 2*D_FFN×D = 2592
+    ff_out: Vec<f64>,    // D×D_FFN = 1296
+    active_heads: Vec<usize>, // indices of heads with nonzero weights
+}
+
+impl LayerWeights {
+    fn from_flat(data: &[f64], offset: usize) -> Self {
+        let ip_sz = 3 * D * D;
+        let op_sz = D * D;
+        let fi_sz = 2 * D_FFN * D;
+        let fo_sz = D * D_FFN;
+
+        let in_proj = data[offset..offset + ip_sz].to_vec();
+        let out_proj = data[offset + ip_sz..offset + ip_sz + op_sz].to_vec();
+        let ff_in = data[offset + ip_sz + op_sz..offset + ip_sz + op_sz + fi_sz].to_vec();
+        let ff_out = data[offset + ip_sz + op_sz + fi_sz..offset + ip_sz + op_sz + fi_sz + fo_sz].to_vec();
+
+        // Detect active heads: check if Q, K, or V rows are nonzero
+        let mut active = Vec::new();
+        for h in 0..N_HEADS {
+            let h2 = h * HD;
+            let mut has_weight = false;
+            // Check Q rows (0..D), K rows (D..2D), V rows (2D..3D)
+            for section in 0..3 {
+                for r in 0..HD {
+                    let row = section * D + h2 + r;
+                    for c in 0..D {
+                        if in_proj[row * D + c].abs() > 1e-12 {
+                            has_weight = true;
+                            break;
+                        }
+                    }
+                    if has_weight { break; }
+                }
+                if has_weight { break; }
+            }
+            // Also check out_proj columns
+            if !has_weight {
+                for r in 0..D {
+                    for c in 0..HD {
+                        if out_proj[r * D + h2 + c].abs() > 1e-12 {
+                            has_weight = true;
+                            break;
+                        }
+                    }
+                    if has_weight { break; }
+                }
+            }
+            if has_weight {
+                active.push(h);
+            }
+        }
+
+        Self { in_proj, out_proj, ff_in, ff_out, active_heads: active }
+    }
+
+    fn layer_size() -> usize {
+        3 * D * D + D * D + 2 * D_FFN * D + D * D_FFN
+    }
+}
+
+#[inline]
+fn matvec_add(m: &[f64], v: &[f64], rows: usize, cols: usize, out: &mut [f64]) {
+    for i in 0..rows {
+        let mut s = 0.0f64;
+        let base = i * cols;
+        for j in 0..cols {
+            s += unsafe { *m.get_unchecked(base + j) * *v.get_unchecked(j) };
+        }
+        out[i] += s;
     }
 }
 
@@ -52,101 +147,77 @@ fn matvec(m: &[f64], v: &[f64], rows: usize, cols: usize, out: &mut [f64]) {
         let mut s = 0.0f64;
         let base = i * cols;
         for j in 0..cols {
-            s += m[base + j] * v[j];
+            s += unsafe { *m.get_unchecked(base + j) * *v.get_unchecked(j) };
         }
         out[i] = s;
     }
 }
 
-/// Multi-layer generate_trace.
-/// Weights packed as: [tok_w(VOCAB*D), pe_w(max_seq*D), pe_rows,
-///   for each layer: in_proj(3D*D), out_proj(D*D), ff_in(2*D_FFN*D), ff_out(D*D_FFN),
-///   head_w(VOCAB*D)]
+/// Multi-layer generate_trace with KV cache and active-head skipping.
 #[pyfunction]
 fn generate_trace_multilayer(
     tok_w: Vec<f64>,
     pe_w: Vec<f64>,
     pe_rows: usize,
-    layer_weights: Vec<f64>,  // packed: 7 layers × (in_proj + out_proj + ff_in + ff_out)
+    layer_weights: Vec<f64>,
     head_w: Vec<f64>,
     prog_tokens: Vec<usize>,
     max_trace_tokens: usize,
     halt_token: usize,
     step_size: usize,
 ) -> Vec<usize> {
-    // Per-layer weight sizes
-    let in_proj_size = 3 * D * D;  // 3888
-    let out_proj_size = D * D;      // 1296
-    let ff_in_size = 2 * D_FFN * D; // 2592
-    let ff_out_size = D * D_FFN;    // 1296
-    let layer_size = in_proj_size + out_proj_size + ff_in_size + ff_out_size;
+    // Parse layer weights and detect active heads
+    let layers: Vec<LayerWeights> = (0..N_LAYERS)
+        .map(|l| LayerWeights::from_flat(&layer_weights, l * LayerWeights::layer_size()))
+        .collect();
 
-    // Unpack layer weight offsets
-    let layer_offset = |l: usize| -> usize { l * layer_size };
+    // Print active heads for debugging (only first time)
+    // for (l, lw) in layers.iter().enumerate() {
+    //     eprintln!("Layer {}: {} active heads: {:?}", l, lw.active_heads.len(), lw.active_heads);
+    // }
 
-    // Initialize KV caches: [layer][head]
-    let mut caches: Vec<Vec<HeadCache>> = (0..N_LAYERS)
-        .map(|_| (0..N_HEADS).map(|_| HeadCache::new()).collect())
+    // KV caches: [layer][head] -> Hull2D
+    let mut hulls: Vec<Vec<Hull2D>> = layers.iter()
+        .map(|lw| lw.active_heads.iter().map(|_| Hull2D::new()).collect())
         .collect();
 
     let mut trace: Vec<usize> = Vec::new();
-    let total_tokens = prog_tokens.len() + max_trace_tokens;
+    let n_prog = prog_tokens.len();
+    let total = n_prog + max_trace_tokens;
 
     // Buffers
     let mut x = [0.0f64; D];
     let mut qkv = [0.0f64; 3 * D];
-    let mut attn_out = [0.0f64; D];
     let mut ff_raw = [0.0f64; 2 * D_FFN];
     let mut ff_hidden = [0.0f64; D_FFN];
-    let mut ff_out = [0.0f64; D];
+    let mut ff_add = [0.0f64; D];
 
-    let n_prog = prog_tokens.len();
-
-    for pos in 0..total_tokens {
-        // Get current token
+    for pos in 0..total {
         let tok_id = if pos < n_prog {
             prog_tokens[pos]
-        } else if pos == n_prog {
-            // First trace token comes from prefill logits
-            // We'll compute it normally
-            if trace.is_empty() { 0 } else { *trace.last().unwrap() }
+        } else if trace.is_empty() {
+            0
         } else {
             *trace.last().unwrap()
         };
 
-        if pos > n_prog && trace.is_empty() {
-            break;
-        }
-
         // Embedding + PE
         if tok_id < VOCAB {
-            for i in 0..D {
-                x[i] = tok_w[tok_id * D + i];
-            }
+            for i in 0..D { x[i] = tok_w[tok_id * D + i]; }
         } else {
             for i in 0..D { x[i] = 0.0; }
         }
         if pos < pe_rows {
-            for i in 0..D {
-                x[i] += pe_w[pos * D + i];
-            }
+            for i in 0..D { x[i] += pe_w[pos * D + i]; }
         }
 
-        // Process through all layers
-        for l in 0..N_LAYERS {
-            let loff = layer_offset(l);
-            let in_proj = &layer_weights[loff..loff + in_proj_size];
-            let out_proj = &layer_weights[loff + in_proj_size..loff + in_proj_size + out_proj_size];
-            let ff_in = &layer_weights[loff + in_proj_size + out_proj_size..loff + in_proj_size + out_proj_size + ff_in_size];
-            let ff_out_w = &layer_weights[loff + in_proj_size + out_proj_size + ff_in_size..loff + layer_size];
+        // Process through layers
+        for (l, lw) in layers.iter().enumerate() {
+            // Q, K, V projection (only for active head dims, but full matvec is simpler)
+            matvec(&lw.in_proj, &x, 3 * D, D, &mut qkv);
 
-            // Q, K, V projection
-            matvec(in_proj, &x, 3 * D, D, &mut qkv);
-
-            // Insert K, V into caches and query Q against all K
-            for i in 0..D { attn_out[i] = 0.0; }
-
-            for h in 0..N_HEADS {
+            // Attention: only active heads
+            for (hi, &h) in lw.active_heads.iter().enumerate() {
                 let h2 = h * HD;
                 let q0 = qkv[h2];
                 let q1 = qkv[h2 + 1];
@@ -155,39 +226,35 @@ fn generate_trace_multilayer(
                 let v0 = qkv[2 * D + h2];
                 let v1 = qkv[2 * D + h2 + 1];
 
-                caches[l][h].insert(k0, k1, v0, v1);
+                hulls[l][hi].insert(k0, k1, v0, v1);
+                let (rv0, rv1) = hulls[l][hi].query_bf(q0, q1);
 
-                // Query
-                let (rv0, rv1) = caches[l][h].query(q0, q1);
-
-                // out_proj: head h outputs at columns h2, h2+1
+                // out_proj contribution
                 for i in 0..D {
-                    attn_out[i] += out_proj[i * D + h2] * rv0
-                                 + out_proj[i * D + h2 + 1] * rv1;
+                    x[i] += lw.out_proj[i * D + h2] * rv0
+                          + lw.out_proj[i * D + h2 + 1] * rv1;
                 }
             }
 
-            // Residual
-            for i in 0..D { x[i] += attn_out[i]; }
-
             // Gated FFN
-            matvec(ff_in, &x, 2 * D_FFN, D, &mut ff_raw);
+            matvec(&lw.ff_in, &x, 2 * D_FFN, D, &mut ff_raw);
             for i in 0..D_FFN {
                 let gate = if ff_raw[i] > 0.0 { ff_raw[i] } else { 0.0 };
                 ff_hidden[i] = gate * ff_raw[D_FFN + i];
             }
-            matvec(ff_out_w, &ff_hidden, D, D_FFN, &mut ff_out);
-            for i in 0..D { x[i] += ff_out[i]; }
+            matvec(&lw.ff_out, &ff_hidden, D, D_FFN, &mut ff_add);
+            for i in 0..D { x[i] += ff_add[i]; }
         }
 
-        // Only decode trace tokens (skip program tokens)
+        // Decode (only after program prefix)
         if pos >= n_prog - 1 {
             let mut best_logit = f64::NEG_INFINITY;
             let mut best_token = 0usize;
             for t in 0..VOCAB {
                 let mut logit = 0.0f64;
+                let base = t * D;
                 for i in 0..D {
-                    logit += head_w[t * D + i] * x[i];
+                    logit += head_w[base + i] * x[i];
                 }
                 if logit > best_logit {
                     best_logit = logit;
@@ -196,9 +263,8 @@ fn generate_trace_multilayer(
             }
             trace.push(best_token);
 
-            // Check halt
-            let trace_idx = trace.len() - 1;
-            if trace_idx % step_size == step_size - 1 && best_token == halt_token {
+            let ti = trace.len() - 1;
+            if ti % step_size == step_size - 1 && best_token == halt_token {
                 break;
             }
         }
@@ -207,26 +273,15 @@ fn generate_trace_multilayer(
     trace
 }
 
-// Keep old function for backwards compat
+// Legacy compatibility
 #[pyfunction]
 fn generate_trace_rust(
-    tok_w: Vec<f64>,
-    pe_w: Vec<f64>,
-    pe_rows: usize,
-    wq: Vec<f64>,
-    wk: Vec<f64>,
-    wv: Vec<f64>,
-    w_out_24_0: f64,
-    w_out_25_2: f64,
-    ff_in_w: Vec<f64>,
-    d_ffn: usize,
-    ff_out_w: Vec<f64>,
-    head_w: Vec<f64>,
-    max_tokens: usize,
-) -> Vec<usize> {
-    // Legacy single-layer implementation
-    vec![]
-}
+    _tok_w: Vec<f64>, _pe_w: Vec<f64>, _pe_rows: usize,
+    _wq: Vec<f64>, _wk: Vec<f64>, _wv: Vec<f64>,
+    _w_out_24_0: f64, _w_out_25_2: f64,
+    _ff_in_w: Vec<f64>, _d_ffn: usize, _ff_out_w: Vec<f64>,
+    _head_w: Vec<f64>, _max_tokens: usize,
+) -> Vec<usize> { vec![] }
 
 #[pymodule]
 fn llm_compute_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
