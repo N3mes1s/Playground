@@ -33,9 +33,9 @@ D_FFN = 36
 MAX_SEQ = 5000
 
 # Program layout
-MAX_INST = 128
-INST_SIZE = 5  # [opcode, imm_b0, imm_b1, pad, pad]
-PROG_LEN = MAX_INST * INST_SIZE
+MAX_INST = 512
+INST_SIZE = 5  # [opcode, imm_b0, imm_b1, src_a, push_flag]
+PROG_LEN = MAX_INST * INST_SIZE  # 2560
 SEP_POS = PROG_LEN
 TRACE_START = PROG_LEN + 1
 
@@ -355,7 +355,7 @@ def _set_universal_weights(model):
 
     # Gate 2: add recency bias (ε * position) at commit INPUT positions
     ff0_in[2, 28] = 1.0; ff0_in[2, 27] = -0.5
-    ff0_in[D_FFN + 2, 5] = 1.0  # ε * position (large enough for recency)
+    ff0_in[D_FFN + 2, 5] = 1.0  # ε * position for recency bias
     ff0_out[19, 2] = 1.0  # add to dim 19
 
     # ================================================================
@@ -761,8 +761,10 @@ def generate_trace(model, prog_tokens: list[int], max_trace_tokens=500) -> list[
             Vr = V.view(1, T, n_h, head_dim).transpose(1, 2)
             scores = (Qr @ Kr.transpose(-2, -1)) / (head_dim ** 0.5)
             scores.masked_fill_(mask[:T, :T].unsqueeze(0).unsqueeze(0), float('-inf'))
-            attn = torch.softmax(scores, dim=-1)
-            y = (attn @ Vr).transpose(1, 2).reshape(1, T, d)
+            # Hard-max attention (argmax) — no overflow, matches Rust engine
+            best = scores.argmax(dim=-1, keepdim=True)
+            y = Vr.gather(2, best.expand(-1, -1, -1, head_dim))
+            y = y.transpose(1, 2).reshape(1, T, d)
             y = y @ model.attn[layer].out_proj.weight.T
             x = x + y
             # FFN
@@ -807,8 +809,10 @@ def generate_trace(model, prog_tokens: list[int], max_trace_tokens=500) -> list[
                 Kr = K_all.view(1, -1, n_h, head_dim).transpose(1, 2)  # (1,nh,T,hd)
                 Vr = V_all.view(1, -1, n_h, head_dim).transpose(1, 2)
                 scores = (Qr @ Kr.transpose(-2, -1)) / (head_dim ** 0.5)
-                attn = torch.softmax(scores, dim=-1)
-                y = (attn @ Vr).transpose(1, 2).reshape(1, 1, d)
+                # Hard-max attention (argmax)
+                best = scores.argmax(dim=-1, keepdim=True)
+                y = Vr.gather(2, best.expand(-1, -1, -1, head_dim))
+                y = y.transpose(1, 2).reshape(1, 1, D_MODEL)
                 y = y @ model.attn[layer].out_proj.weight.T
                 x_new = x_new + y
 
@@ -1195,6 +1199,37 @@ def test():
             assign('i', add(var('i'), lit(1)))]),
         output_int(var('r'))])
     tests.append(("5! = 120", code))
+
+    # ---- LONGER PROGRAMS ----
+
+    # Fibonacci(10) = 55
+    tests.append(("fib(10) = 55", make_fibonacci_program(10)))
+
+    # Fibonacci(15) = 610
+    tests.append(("fib(15) = 610", make_fibonacci_program(15)))
+
+    # Sum 1..10 = 55
+    c = Compiler()
+    code, _ = c.compile([assign('s', lit(0)), assign('i', lit(1)),
+        while_loop(le(var('i'), lit(10)), [
+            assign('s', add(var('s'), var('i'))),
+            assign('i', add(var('i'), lit(1)))]),
+        output_int(var('s'))])
+    tests.append(("sum(1..10) = 55", code))
+
+    # GCD(48, 18) = 6 via Euclidean algorithm
+    from mini_c import mod, ne
+    c = Compiler()
+    code, _ = c.compile([assign('a', lit(48)), assign('b', lit(18)),
+        while_loop(ne(var('b'), lit(0)), [
+            assign('t', mod(var('a'), var('b'))),
+            assign('a', var('b')),
+            assign('b', var('t'))]),
+        output_int(var('a'))])
+    tests.append(("gcd(48,18) = 6", code))
+
+    # Fibonacci(20) = 6765 (big program, tests multi-byte + long trace)
+    tests.append(("fib(20) = 6765", make_fibonacci_program(20)))
 
     passed = 0
     for name, program in tests:
