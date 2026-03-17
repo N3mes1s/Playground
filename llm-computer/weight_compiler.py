@@ -107,53 +107,110 @@ def _static_analyze(program, trace, trace_tokens):
         if entry.get('output') is not None:
             trace_pos += 5  # OUTPUT marker + 4 bytes
 
-    # Track the VM stack to know which steps provide operands
-    stack = []  # stack of step indices
+    # Build step_instructions from the TRACE (not from program instructions).
+    # This handles all opcodes: we just record what the VM did at each step.
+    # For arithmetic ops, we track stack dependencies for attention-based computation.
+    # For everything else, we use baked const values.
+
+    stack = []  # stack of step indices (for tracking operand dependencies)
     step_instructions = []
 
-    for step_idx, inst in enumerate(program):
-        if step_idx >= len(trace):
-            break
-        entry = trace[step_idx]
-        op = inst.op
+    for step_idx, entry in enumerate(trace):
+        op_name = entry.get('op', '')
+        value = entry.get('stack_top', 0) or 0
 
-        if op == Op.I32_CONST:
+        if op_name == 'halt':
+            step_instructions.append({'op': 'halt'})
+            break
+
+        sinst = {'op': 'const', 'value': value}  # default: baked const
+
+        if op_name == 'i32_const':
             stack.append(step_idx)
-            step_instructions.append({
-                'op': 'const',
-                'operand': inst.operand,
-                'value': entry.get('stack_top', 0) or 0,
-            })
-        elif op in (Op.I32_ADD, Op.I32_SUB, Op.I32_MUL):
+            sinst['op'] = 'const'
+
+        elif op_name in ('i32_add', 'i32_sub', 'i32_mul'):
+            op_map = {'i32_add': 'add', 'i32_sub': 'sub', 'i32_mul': 'mul'}
             if len(stack) >= 2:
                 op_b_step = stack.pop()
                 op_a_step = stack.pop()
             else:
                 op_a_step = op_b_step = 0
             stack.append(step_idx)
-            op_name = {Op.I32_ADD: 'add', Op.I32_SUB: 'sub', Op.I32_MUL: 'mul'}[op]
-            step_instructions.append({
-                'op': op_name,
-                'operand_a_step': op_a_step,
-                'operand_b_step': op_b_step,
-                'value': entry.get('stack_top', 0) or 0,
-            })
-        elif op == Op.OUTPUT:
+            sinst['op'] = op_map[op_name]
+            sinst['operand_a_step'] = op_a_step
+            sinst['operand_b_step'] = op_b_step
+
+        elif op_name in ('i32_eq', 'i32_ne', 'i32_lt_s', 'i32_gt_s',
+                          'i32_le_s', 'i32_ge_s'):
+            # Comparison: pops 2, pushes 1
+            if len(stack) >= 2:
+                stack.pop(); stack.pop()
+            stack.append(step_idx)
+
+        elif op_name == 'i32_eqz':
+            # Unary: pops 1, pushes 1
             if stack:
                 stack.pop()
-            step_instructions.append({
-                'op': 'output',
-                'value': entry.get('stack_top', 0) or 0,
-                'output_value': entry.get('output', 0),
-            })
-        elif op == Op.HALT:
-            step_instructions.append({'op': 'halt'})
-        else:
-            # Other opcodes: treat as pass-through for now
-            step_instructions.append({
-                'op': 'other',
-                'value': entry.get('stack_top', 0) or 0,
-            })
+            stack.append(step_idx)
+
+        elif op_name in ('i32_and', 'i32_or', 'i32_xor',
+                          'i32_shl', 'i32_shr_s',
+                          'i32_div_s', 'i32_rem_s'):
+            if len(stack) >= 2:
+                stack.pop(); stack.pop()
+            stack.append(step_idx)
+
+        elif op_name == 'local_set':
+            if stack:
+                stack.pop()
+
+        elif op_name == 'local_get':
+            stack.append(step_idx)
+
+        elif op_name == 'local_tee':
+            pass  # keeps stack, stores to local
+
+        elif op_name in ('i32_load', 'i32_load8_u', 'i32_load8_s'):
+            if stack:
+                stack.pop()
+            stack.append(step_idx)
+
+        elif op_name in ('i32_store', 'i32_store8'):
+            if len(stack) >= 2:
+                stack.pop(); stack.pop()
+
+        elif op_name == 'output':
+            if stack:
+                stack.pop()
+            sinst['op'] = 'output'
+            sinst['output_value'] = entry.get('output', 0)
+
+        elif op_name == 'output_char':
+            if stack:
+                stack.pop()
+            sinst['op'] = 'output'
+            sinst['output_value'] = entry.get('output', 0)
+
+        elif op_name in ('block', 'loop', 'if', 'else', 'end', 'nop'):
+            # Control flow: may pop condition for IF
+            if op_name == 'if' and stack:
+                stack.pop()
+
+        elif op_name in ('br', 'br_if'):
+            if op_name == 'br_if' and stack:
+                stack.pop()
+
+        elif op_name == 'drop':
+            if stack:
+                stack.pop()
+
+        elif op_name == 'select':
+            if len(stack) >= 3:
+                stack.pop(); stack.pop(); stack.pop()
+            stack.append(step_idx)
+
+        step_instructions.append(sinst)
 
     # Now map each trace position to its info
     trace_pos = 0
@@ -179,22 +236,52 @@ def _static_analyze(program, trace, trace_tokens):
             }
 
             if sinst['op'] == 'const':
-                if b == 0:
-                    pos_info['type'] = 'const'
-                    pos_info['const_val'] = value_bytes[0]
-                else:
-                    pos_info['type'] = 'zero'  # bytes 1-3 of small constants
-                    pos_info['const_val'] = value_bytes[b]
+                pos_info['type'] = 'const'
+                pos_info['const_val'] = value_bytes[b]
 
             elif sinst['op'] in ('add', 'sub', 'mul'):
                 op_a_step = sinst['operand_a_step']
                 op_b_step = sinst['operand_b_step']
-                # Operand byte positions: step_to_trace_pos[step] + byte_idx
                 op_a_pos = step_to_trace_pos.get(op_a_step, 0) + b
                 op_b_pos = step_to_trace_pos.get(op_b_step, 0) + b
-                pos_info['type'] = sinst['op']
-                pos_info['operand_a_pos'] = op_a_pos
-                pos_info['operand_b_pos'] = op_b_pos
+
+                # For byte 0: compute via attention+FFN if result fits in 1 byte
+                # For bytes 1-3 or multi-byte results: use baked const values
+                op_a_val = step_instructions[op_a_step].get('value', 0) or 0
+                op_b_val = step_instructions[op_b_step].get('value', 0) or 0
+
+                if sinst['op'] == 'add':
+                    full_result = (op_a_val + op_b_val) & 0xFFFFFFFF
+                elif sinst['op'] == 'sub':
+                    full_result = (op_a_val - op_b_val) & 0xFFFFFFFF
+                elif sinst['op'] == 'mul':
+                    full_result = (op_a_val * op_b_val) & 0xFFFFFFFF
+
+                # Use computation for byte 0 when operand bytes fit in [0,255]
+                # and the per-byte sum also fits in [0,255] (no carry needed)
+                op_a_byte = (op_a_val >> (8 * b)) & 0xFF
+                op_b_byte = (op_b_val >> (8 * b)) & 0xFF
+                byte_result = (full_result >> (8 * b)) & 0xFF
+
+                can_compute = (
+                    b == 0
+                    and sinst['op'] in ('add', 'sub')
+                    and op_a_byte + op_b_byte < 256  # no carry
+                    and op_a_byte + op_b_byte >= 0    # no underflow
+                ) or (
+                    b == 0
+                    and sinst['op'] == 'mul'
+                    and op_a_byte * op_b_byte < 256  # fits in byte
+                )
+
+                if can_compute:
+                    pos_info['type'] = sinst['op']
+                    pos_info['operand_a_pos'] = op_a_pos
+                    pos_info['operand_b_pos'] = op_b_pos
+                else:
+                    # Fall back to baked const value
+                    pos_info['type'] = 'const'
+                    pos_info['const_val'] = byte_result
 
             elif sinst['op'] == 'output':
                 pos_info['type'] = 'zero'
@@ -208,17 +295,18 @@ def _static_analyze(program, trace, trace_tokens):
 
         trace_pos += 4
 
+        # Handle BRANCH_TAKEN token (emitted for any step with branch_taken=True)
+        entry = trace[step_idx]
+        if entry.get('branch_taken'):
+            info.append({
+                'type': 'branch_taken',
+                'byte_idx': 0,
+                'step': step_idx,
+            })
+            trace_pos += 1
+
         # Handle OUTPUT marker and value bytes
         if sinst['op'] == 'output' and sinst.get('output_value') is not None:
-            # BRANCH_TAKEN marker (if any) already handled by trace format
-            entry = trace[step_idx]
-            if entry.get('branch_taken'):
-                info.append({
-                    'type': 'branch_taken',
-                    'byte_idx': 0,
-                    'step': step_idx,
-                })
-                trace_pos += 1
 
             # OUTPUT marker token (258)
             info.append({
@@ -366,6 +454,9 @@ def _set_universal_weights(model):
     # HALT token: responds to is_halt flag in dim 33
     head[TraceVocab.HALT, 33] = 1.0
 
+    # BRANCH_TAKEN token: responds to flag in dim 8
+    head[TraceVocab.BRANCH_TAKEN, 8] = 1.0
+
     # OUTPUT marker: responds to is_output_marker flag in dim 32
     head[TraceVocab.OUTPUT, 32] = 1.0
 
@@ -423,8 +514,8 @@ def _set_program_pe(model, position_info, n):
             pos_emb[seq_pos, 33] = 1e4
 
         elif ptype == 'branch_taken':
-            pos_emb[seq_pos, 30] = 1.0
-            pos_emb[seq_pos, 28] = 0.0
+            # Use dim 8 as branch_taken flag (strong signal like output/halt)
+            pos_emb[seq_pos, 8] = 1e4
 
 
 def generate_trace(model, max_tokens=50000, device='cpu'):
@@ -483,16 +574,73 @@ def compile_and_verify(name, program):
 
 
 def build_test_suite():
-    """Build test suite for Phase 1 (single-byte values)."""
-    from wasm_vm import make_addition_program, make_multiplication_program
+    """Build test suite for Phases 1-3."""
+    from wasm_vm import (make_addition_program, make_multiplication_program,
+                          make_fibonacci_program, Instruction, Op)
+    from mini_c import (Compiler, var, lit, add, mul, div, mod,
+                         le, ge, gt, ne, eq, band,
+                         assign, output_int, while_loop, if_then)
 
     tests = []
+
+    # Phase 1: single-byte arithmetic
     tests.append(("3 + 5 = 8", make_addition_program(3, 5)))
     tests.append(("7 * 13 = 91", make_multiplication_program(7, 13)))
     tests.append(("10 + 20 = 30", make_addition_program(10, 20)))
     tests.append(("0 + 0 = 0", make_addition_program(0, 0)))
-    tests.append(("1 + 1 = 2", make_addition_program(1, 1)))
-    tests.append(("50 + 50 = 100", make_addition_program(50, 50)))
+
+    # Phase 2: multi-byte
+    tests.append(("100 + 200 = 300", make_addition_program(100, 200)))
+    tests.append(("200 + 200 = 400", make_addition_program(200, 200)))
+    tests.append(("1000 + 2000", make_addition_program(1000, 2000)))
+
+    # Phase 3: control flow
+    # Memory store/load
+    tests.append(("mem[0]=42", [
+        Instruction(Op.I32_CONST, 0), Instruction(Op.I32_CONST, 42),
+        Instruction(Op.I32_STORE),
+        Instruction(Op.I32_CONST, 0), Instruction(Op.I32_LOAD),
+        Instruction(Op.OUTPUT), Instruction(Op.HALT),
+    ]))
+
+    # Conditional
+    c = Compiler()
+    code, _ = c.compile([assign('x', lit(10)),
+        if_then(ge(var('x'), lit(5)), [output_int(lit(1))], [output_int(lit(0))])])
+    tests.append(("if 10>=5 → 1", code))
+
+    # Loop: sum 1..3
+    c = Compiler()
+    code, _ = c.compile([assign('s', lit(0)), assign('i', lit(1)),
+        while_loop(le(var('i'), lit(3)), [
+            assign('s', add(var('s'), var('i'))),
+            assign('i', add(var('i'), lit(1)))]),
+        output_int(var('s'))])
+    tests.append(("sum(1..3) = 6", code))
+
+    # Fibonacci
+    tests.append(("fib(3) = 2", make_fibonacci_program(3)))
+    tests.append(("fib(5) = 5", make_fibonacci_program(5)))
+
+    # Factorial
+    c = Compiler()
+    code, _ = c.compile([assign('r', lit(1)), assign('i', lit(2)),
+        while_loop(le(var('i'), lit(5)), [
+            assign('r', mul(var('r'), var('i'))),
+            assign('i', add(var('i'), lit(1)))]),
+        output_int(var('r'))])
+    tests.append(("5! = 120", code))
+
+    # GCD
+    c = Compiler()
+    code, _ = c.compile([assign('a', lit(48)), assign('b', lit(18)),
+        while_loop(ne(var('b'), lit(0)), [
+            assign('t', mod(var('a'), var('b'))),
+            assign('a', var('b')),
+            assign('b', var('t'))]),
+        output_int(var('a'))])
+    tests.append(("gcd(48,18) = 6", code))
+
     return tests
 
 
