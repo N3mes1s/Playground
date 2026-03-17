@@ -33,9 +33,9 @@ D_FFN = 36
 MAX_SEQ = 5000
 
 # Program layout
-MAX_INST = 512
-INST_SIZE = 5  # [opcode, imm_b0, imm_b1, src_a, push_flag]
-PROG_LEN = MAX_INST * INST_SIZE  # 2560
+MAX_INST = 400
+INST_SIZE = 6  # [opcode, imm_b0, imm_b1, src_a, src_b, commit_val]
+PROG_LEN = MAX_INST * INST_SIZE  # 2400
 SEP_POS = PROG_LEN
 TRACE_START = PROG_LEN + 1
 
@@ -153,11 +153,14 @@ def encode_program(program: list[Instruction]) -> tuple[list[int], list[int]]:
         elif inst.op in (Op.I32_ADD, Op.I32_SUB, Op.I32_MUL,
                           Op.I32_LE_S, Op.I32_GE_S, Op.I32_LT_S,
                           Op.I32_GT_S, Op.I32_EQ, Op.I32_NE):
-            if len(stack) >= 2:
-                stack.pop(); stack.pop()
+            b_step = stack.pop() if stack else 0
+            a_step = stack.pop() if stack else 0
+            src_a = a_step
+            src_b = b_step
             stack.append(step)
         elif inst.op == Op.I32_EQZ:
-            if stack: stack.pop()
+            a_step = stack.pop() if stack else 0
+            src_b = a_step  # EQZ uses opB path
             stack.append(step)
         elif inst.op == Op.OUTPUT:
             if stack: stack.pop()
@@ -185,17 +188,23 @@ def encode_program(program: list[Instruction]) -> tuple[list[int], list[int]]:
         stack_sizes.append(len(stack))
         step += 1
 
-    # Second pass: encode tokens. Position 4 = push_flag (1 for local.get, 0 else)
+    # Second pass: encode tokens. Position 3 = src_a, Position 4 = src_b/push_flag
     tokens = []
     for i, (inst, src_a, src_b) in enumerate(step_data):
         tok = op_to_token.get(inst.op, TraceVocab.NOP)
         imm = inst.operand or 0
-        push_flag = 1 if inst.op == Op.LOCAL_GET else 0
+        ss = stack_sizes[i] if i < len(stack_sizes) else 0
+        if inst.op == Op.OUTPUT:
+            cv = COMMIT_OUTPUT
+        elif inst.op == Op.HALT:
+            cv = COMMIT_HALT
+        else:
+            cv = ss
         tokens.extend([tok, imm & 0xFF, (imm >> 8) & 0xFF,
-                        src_a & 0xFF, push_flag])
+                        src_a & 0xFF, src_b & 0xFF, cv & 0xFF])
 
     while len(tokens) < PROG_LEN:
-        tokens.extend([TraceVocab.NOP, 0, 0, 0, 0])
+        tokens.extend([TraceVocab.NOP, 0, 0, 0, 0, 0])
     tokens.append(TraceVocab.SEP)
     return tokens, stack_sizes
 
@@ -285,8 +294,9 @@ def _set_universal_weights(model):
         (1, 0, (12, 13), (12, 13)),  # is_sub, is_mul
         (2, 0, (14, 15), (14, 15)),  # is_output, is_halt
         (3, 1, (0, -1), (16, -1)),   # immediate byte
-        (4, 3, (0, -1), (4, -1)),    # src_a explicit addr → dim 4 (safe at trace)
-        (5, 4, (0, -1), (2, -1)),    # commit_val from program pos +4 → dim 2
+        (4, 3, (0, -1), (4, -1)),    # src_a explicit addr → dim 4
+        (5, 4, (0, -1), (2, -1)),    # src_b from prog pos +4 → dim 2
+        (11, 5, (0, -1), (17, -1)),  # commit_val from prog pos +5 → dim 17
         (6, 0, (29, 30), (29, 30)),  # is_le_s, is_ge_s
         (7, 0, (31, 32), (31, 32)),  # is_lt_s, is_gt_s
         (8, 0, (33, 34), (33, 34)),  # is_eq, is_ne
@@ -294,7 +304,7 @@ def _set_universal_weights(model):
     ]
     for head, offset, v_dims, out_dims in fetch_heads:
         h2 = head * 2
-        W0[h2, 7] = 2 * S_QUAD * 5
+        W0[h2, 7] = 2 * S_QUAD * INST_SIZE
         W0[h2, 27] = 2 * S_QUAD * offset
         if head == 3:
             W0[h2, 8] = 2 * S_QUAD  # byte_idx for immediate
@@ -310,17 +320,8 @@ def _set_universal_weights(model):
         if out_dims[1] >= 0:
             out0[out_dims[1], h2 + 1] = 1.0
 
-    # Head 10: read previous commit → get own stack_size
-    # Previous commit is at position: TRACE_START + 5*(step-1) + 4 = TRACE_START + 5*step - 1
-    # Q = [2*S*(TRACE_START + 5*step - 1), 1]
-    h2 = 10 * 2  # = 20
-    W0[h2, 7] = 2 * S_QUAD * 5        # 2*S*5*step
-    W0[h2, 27] = 2 * S_QUAD * (TRACE_START - 1)  # 2*S*(TRACE_START - 1)
-    W0[h2 + 1, 27] = 1.0
-    W0[d + h2, 5] = 1.0               # K[0] = position
-    W0[d + h2 + 1, 6] = 1.0           # K[1] = -S*pos²
-    W0[2*d + h2, 0] = 1.0             # V = byte_value (= stack_size at commit pos)
-    out0[17, h2] = 1.0                 # -> dim 17 (own_stack_size)
+    # Head 10: REMOVED (no longer needed — commit_val pre-encoded in program)
+    # Head 11 fetches commit_val from program position +5 → dim 17.
 
     # ================================================================
     # Layer 0 FFN: Prepare commit K for content matching
@@ -400,31 +401,28 @@ def _set_universal_weights(model):
     ff1_in = model.ff_in[1].weight
     ff1_out = model.ff_out[1].weight
 
-    # Gate 0: fetch addr for operand A (stack-based: from commit position)
-    for fd in (11, 12, 13, 29, 30, 31, 32, 33, 34, 35):
-        ff1_in[0, fd] = 1.0
-    # val = 2*S*(commit_pos_A - 4 + byte_idx)
-    ff1_in[D_FFN + 0, 20] = 2 * S_QUAD    # commit_pos_A (from L1 attn head 1)
-    ff1_in[D_FFN + 0, 8] = 2 * S_QUAD     # + byte_idx
-    ff1_in[D_FFN + 0, 27] = -8 * S_QUAD   # - 4 * 2*S
-    ff1_out[21, 0] = 1.0                   # -> dim 21 (fetch_addr_A)
+    # Gates 0-1: REMOVED (stack-based resolution doesn't scale for long traces)
+    # All operand resolution now uses explicit addresses via gates 2-3 below.
 
-    # Gate 1: fetch addr for operand B (stack-based, includes EQZ)
-    for fd in (11, 12, 13, 29, 30, 31, 32, 33, 34, 35):
-        ff1_in[1, fd] = 1.0
-    ff1_in[D_FFN + 1, 18] = 2 * S_QUAD    # commit_pos_B (from L1 attn head 0)
-    ff1_in[D_FFN + 1, 8] = 2 * S_QUAD
-    ff1_in[D_FFN + 1, 27] = -8 * S_QUAD
-    ff1_out[3, 1] = 1.0                    # -> dim 3 (fetch_addr_B)
-
-    # Gate 2: fetch addr for operand A (explicit-address: for local.get/set/tee)
-    # Uses src_a from program tokens (dim 4 from head 4)
-    # dim 4 = is_trace(1.0) + src_a, so compensate: target = STEP_SIZE*(dim4) + byte_idx + TRACE_START - STEP_SIZE
-    ff1_in[2, 22] = 1.0                    # is_copy flag
+    # Gate 2: fetch addr for operand A (explicit-address: ALL ops with src_a)
+    # src_a from dim 4 (head 4). dim 4 = is_trace(1.0) + src_a, compensate with -STEP_SIZE
+    # Fires for: copy ops + ALL binary ops + EQZ (anything with explicit src_a)
+    for fd in (11, 12, 13, 22, 29, 30, 31, 32, 33, 34, 35):
+        ff1_in[2, fd] = 1.0
     ff1_in[D_FFN + 2, 4] = 2 * S_QUAD * STEP_SIZE
     ff1_in[D_FFN + 2, 8] = 2 * S_QUAD
-    ff1_in[D_FFN + 2, 27] = 2 * S_QUAD * (TRACE_START - STEP_SIZE)  # compensate PE is_trace
+    ff1_in[D_FFN + 2, 27] = 2 * S_QUAD * (TRACE_START - STEP_SIZE)
     ff1_out[21, 2] = 1.0
+
+    # Gate 3: fetch addr for operand B (explicit-address: binary ops)
+    # src_b from dim 2 (head 5 at position +4)
+    # dim 2 = push_flag/src_b. For binary ops: src_b. For local.get: 1 (push flag).
+    for fd in (11, 12, 13, 29, 30, 31, 32, 33, 34, 35):
+        ff1_in[3, fd] = 1.0
+    ff1_in[D_FFN + 3, 2] = 2 * S_QUAD * STEP_SIZE  # src_b
+    ff1_in[D_FFN + 3, 8] = 2 * S_QUAD
+    ff1_in[D_FFN + 3, 27] = 2 * S_QUAD * TRACE_START
+    ff1_out[3, 3] = 1.0  # -> dim 3 (fetch_addr_B, overrides stack-based)
 
     # ================================================================
     # Layer 2 Attention: Fetch operand bytes from trace
@@ -508,53 +506,14 @@ def _set_universal_weights(model):
     ff2_in[28, 35] = BIG; ff2_in[28, 27] = -1.0 - BIG; ff2_in[28, 8] = -2*BIG
     ff2_in[28, 24] = 1.0; ff2_in[D_FFN+28, 27] = 1.0; ff2_out[25, 28] = 1.0
 
-    # ---- Commit gates: computed from prev_ss + opcode delta ----
-    # Strategy: gate = relu(result_value + BIG*flag + BIG*is_commit - 2*BIG), val=1
-
-    # Gate 29: CONST push → ss = prev_ss + 1
-    ff2_in[29, 17] = 1.0; ff2_in[29, 27] = 1.0 - 2*BIG
-    ff2_in[29, 10] = BIG; ff2_in[29, 9] = BIG  # is_const AND is_commit
-    ff2_in[D_FFN+29, 27] = 1.0; ff2_out[25, 29] = 1.0
-
-    # Gate 30: binary pop → ss = prev_ss - 1 (ADD/SUB/MUL)
-    ff2_in[30, 17] = 1.0; ff2_in[30, 27] = -1.0 - 2*BIG
-    for fd in (11, 12, 13):
-        ff2_in[30, fd] = BIG
-    ff2_in[30, 9] = BIG
-    ff2_in[D_FFN+30, 27] = 1.0; ff2_out[25, 30] = 1.0
-
-    # Gate 31: comparison pop → ss = prev_ss - 1 (requires any cmp + commit)
-    ff2_in[31, 17] = 1.0; ff2_in[31, 27] = -1.0 - 2*BIG
-    for fd in (29, 30, 31, 32, 33, 34):  # cmp flags
-        ff2_in[31, fd] = BIG
-    ff2_in[31, 9] = BIG
-    ff2_in[D_FFN+31, 27] = 1.0; ff2_out[25, 31] = 1.0
-
-    # Gate 32: EQZ → ss = prev_ss (delta 0)
-    ff2_in[32, 17] = 1.0; ff2_in[32, 27] = -2*BIG
-    ff2_in[32, 35] = BIG; ff2_in[32, 9] = BIG
-    ff2_in[D_FFN+32, 27] = 1.0; ff2_out[25, 32] = 1.0
-
-    # Gate 33: OUTPUT → COMMIT_OUTPUT (254)
-    ff2_in[33, 27] = float(COMMIT_OUTPUT) - 2*BIG
-    ff2_in[33, 14] = BIG; ff2_in[33, 9] = BIG
-    ff2_in[D_FFN+33, 27] = 1.0; ff2_out[25, 33] = 1.0
-
-    # Gate 34: HALT → COMMIT_HALT (255)
-    ff2_in[34, 27] = float(COMMIT_HALT) - 2*BIG
-    ff2_in[34, 15] = BIG; ff2_in[34, 9] = BIG
-    ff2_in[D_FFN+34, 27] = 1.0; ff2_out[25, 34] = 1.0
-
-    # Gate 35: local.get push → ss = prev_ss + 1
-    # push_flag in dim 2 from head 5 (1 for local.get, 0 for local.set)
-    ff2_in[35, 17] = 1.0; ff2_in[35, 27] = 1.0 - 3*BIG
-    ff2_in[35, 22] = BIG; ff2_in[35, 2] = BIG; ff2_in[35, 9] = BIG
-    ff2_in[D_FFN+35, 27] = 1.0; ff2_out[25, 35] = 1.0
-
-    # Gate 5: local.set pop → ss = prev_ss - 1
-    ff2_in[5, 17] = 1.0; ff2_in[5, 27] = -1.0 - 2*BIG
-    ff2_in[5, 22] = BIG; ff2_in[5, 9] = BIG; ff2_in[5, 2] = -BIG
-    ff2_in[D_FFN+5, 27] = 1.0; ff2_out[25, 5] = 1.0
+    # ---- Single commit gate: reads pre-encoded commit_val from dim 17 (head 11) ----
+    # At commit slot (dim 9=1): output = commit_val.
+    # At byte slots (dim 9=0): doesn't fire.
+    ff2_in[29, 17] = 1.0       # commit_val
+    ff2_in[29, 9] = BIG        # is_commit_slot
+    ff2_in[29, 27] = -BIG      # threshold
+    ff2_in[D_FFN+29, 27] = 1.0
+    ff2_out[25, 29] = 1.0
 
     # ================================================================
     # Layer 3 Attention: Fetch prev-byte operands for carry detection
@@ -868,7 +827,7 @@ def trace_compile_program(program: list[Instruction]) -> tuple[list[int], list[i
 
         if op_name == 'halt':
             tok_id = op_to_token[Op.HALT]
-            tokens.extend([tok_id, 0, 0, 0, 0])
+            tokens.extend([tok_id, 0, 0, 0, 0, COMMIT_HALT])
             stack_sizes.append(len(stack))
             break
         elif op_name == 'i32_const':
@@ -877,12 +836,16 @@ def trace_compile_program(program: list[Instruction]) -> tuple[list[int], list[i
             stack.append(step)
         elif op_name in _BINARY:
             tok_id = op_to_token[_BINARY[op_name]]
-            if len(stack) >= 2:
-                stack.pop(); stack.pop()
+            b_step = stack.pop() if stack else 0
+            a_step = stack.pop() if stack else 0
+            src_a = a_step  # explicit address for operand A
+            # src_b goes in push_flag position (overloaded for binary ops)
+            push_flag = b_step  # explicit address for operand B
             stack.append(step)
         elif op_name == 'i32_eqz':
             tok_id = op_to_token[Op.I32_EQZ]
-            if stack: stack.pop()
+            a_step = stack.pop() if stack else 0
+            push_flag = a_step  # EQZ operand via explicit address (opB path)
             stack.append(step)
         elif op_name in ('output', 'output_char'):
             tok_id = op_to_token[Op.OUTPUT]
@@ -938,13 +901,15 @@ def trace_compile_program(program: list[Instruction]) -> tuple[list[int], list[i
             cv = COMMIT_HALT
         else:
             cv = ss
+        # 6-token encoding: [opcode, imm_b0, imm_b1, src_a, src_b, commit_val]
+        src_b = push_flag  # src_b from trace compilation (step index for binary, 0 for others)
         tokens.extend([tok_id, imm & 0xFF, (imm >> 8) & 0xFF,
-                        src_a & 0xFF, push_flag])
+                        src_a & 0xFF, src_b & 0xFF, cv & 0xFF])
         stack_sizes.append(ss)
         step += 1
 
     while len(tokens) < PROG_LEN:
-        tokens.extend([TraceVocab.NOP, 0, 0, 0, 0])
+        tokens.extend([TraceVocab.NOP, 0, 0, 0, 0, 0])
     tokens.append(TraceVocab.SEP)
     return tokens, stack_sizes
 
