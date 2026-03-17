@@ -3,9 +3,12 @@ Weight Compiler: Compiles WASM programs directly into transformer weights.
 
 NO training. NO gradient descent. The forward pass IS the program.
 
-Approach: one-hot learned PE with unique dims per position.
-Each position gets a dedicated PE dim, the FFN detects it and injects
-the target token signal. Multi-layer support for traces > 35 tokens.
+Architecture scales with trace length:
+- d_model = max(36, trace_length + 2) rounded to next even number
+- n_heads = d_model / 2 (head_dim=2 for convex hull fast path)
+- n_layers = 7 (fixed)
+
+Each position gets a unique PE dim. Single-layer FFN handles all positions.
 """
 
 import torch
@@ -15,40 +18,62 @@ from wasm_vm import Instruction, WasmVM
 from compiler import TraceVocab, TraceCompiler
 
 
-PE_SCALE = 1.0
-FFN_SCALE = 1000.0
-DIMS_PER_LAYER = 5  # each of 7 layers gets 5 dedicated dims
-
-
 def compile_program(program: list[Instruction]):
     """
     Compile a WASM program into a VanillaTransformer.
+    Model dimensions scale to fit the trace length.
     Returns: (model, expected_trace_tokens)
     """
     vm = WasmVM()
     vm.load_program(program)
-    trace = vm.run(max_steps=100_000)
+    trace = vm.run(max_steps=1_000_000)
 
     tc = TraceCompiler()
     trace_tokens = tc.vm_trace_to_tokens(trace)
     n = len(trace_tokens)
 
+    # Scale d_model to fit all positions + headroom
+    # Each position needs 1 PE dim + 1 target dim = 2 dims
+    # Plus 1 bias dim. So d_model ≥ n + 1 for single-round.
+    # But PE and target dims are offset by d//2 and don't collide,
+    # so d_model ≥ n is sufficient.
+    min_d = n + 2  # +2 for headroom
+    d_model = max(36, min_d)
+    if d_model % 2 != 0:
+        d_model += 1  # must be even for head_dim=2
+
+    n_heads = d_model // 2  # head_dim = 2
+
     model = VanillaTransformer(
         vocab=TraceVocab.VOCAB_SIZE,
-        d_model=36, n_heads=18, n_layers=7, d_ffn=36,
+        d_model=d_model, n_heads=n_heads, n_layers=7,
+        d_ffn=d_model,
         max_seq_len=n + 20, pe_mode='learned',
     )
 
     with torch.no_grad():
-        _zero_all(model)
         _compile(model, trace_tokens)
 
     model.eval()
     return model, trace_tokens
 
 
-def _zero_all(model):
-    """Zero all weights. Residual connections make layers identity."""
+def _compile(model, trace_tokens):
+    """
+    Set weights so autoregressive generation produces trace_tokens.
+
+    With d_model ≥ n+2, every position gets its own unique PE dim.
+    No wrapping, no multi-round, no collisions. Clean and exact.
+
+    Layout:
+    - PE dims [0..n-1]: one-hot position encoding
+    - Target dims [d//2..d//2+n-1]: FFN output (offset avoids PE collision)
+    - Dim d-1: unused (available for future bias)
+    """
+    d = model.d_model
+    n = len(trace_tokens)
+
+    # Zero all weights
     for layer in range(7):
         model.attn[layer].in_proj_weight.zero_()
         model.attn[layer].out_proj.weight.zero_()
@@ -58,77 +83,35 @@ def _zero_all(model):
     model.tok.weight.zero_()
     model.pos_tok.weight.zero_()
 
-
-def _compile(model, trace_tokens):
-    """
-    Set weights so autoregressive generation produces trace_tokens.
-
-    Round 0: positions 0..34 each get a unique PE dim (0..34).
-    Round r>0: positions 35r..35(r+1)-1 reuse dims 0..34 with PE_SCALE*(1+2r).
-    Threshold-based val discrimination prevents cross-round gate collision.
-    Dim 35 is a constant -1 bias for threshold subtraction.
-
-    This supports up to 35 * (d_ffn // DIMS_PER_LAYER) positions per layer.
-    With 7 layers × 35 dims × ~7 rounds = ~1700+ positions.
-    """
-    d = model.d_model  # 36
-    n = len(trace_tokens)
-
     pos_emb = model.pos_tok.weight
-    head = model.head.weight
+    ff_in = model.ff_in[0].weight   # (2*d, d)
+    ff_out = model.ff_out[0].weight  # (d, d)
+    head = model.head.weight         # (520, d)
 
-    # Bias dim for threshold subtraction
-    for t in range(pos_emb.shape[0]):
-        pos_emb[t, d - 1] = -1.0
-
-    usable_dims = d - 1  # 35 (dim 35 = bias)
-    gate_slots_per_layer = d  # 36 gate slots available in FFN
+    PE_SCALE = 1.0
+    FFN_SCALE = 1000.0
 
     for i in range(n):
-        round_idx = i // usable_dims
-        pos_in_round = i % usable_dims
+        pe_dim = i                        # unique PE dim
+        target_dim = (i + d // 2) % d     # offset target dim, no collision with PE
 
-        pe_dim = pos_in_round
-        layer_idx = pe_dim // DIMS_PER_LAYER
-        slot_in_layer = pe_dim % DIMS_PER_LAYER
+        # Position embedding: one-hot
+        pos_emb[i, pe_dim] = PE_SCALE
 
-        if layer_idx >= 7:
-            print(f"  Warning: position {i} exceeds layer capacity")
-            continue
+        # FFN gate[i]: read PE dim i
+        ff_in[i, pe_dim] = 1.0
+        # FFN val[i]: read same PE dim
+        ff_in[d + i, pe_dim] = 1.0
 
-        # Gate slot within this layer: offset by round
-        gate_slot = slot_in_layer + DIMS_PER_LAYER * round_idx
-        if gate_slot >= gate_slots_per_layer:
-            print(f"  Warning: position {i} exceeds gate capacity")
-            continue
+        # FFN output: write FFN_SCALE to target dim
+        ff_out[target_dim, i] = FFN_SCALE / (PE_SCALE ** 2)
 
-        # PE value: different per round to avoid collision
-        pe_val = PE_SCALE * (1.0 + 2.0 * round_idx)
-        pos_emb[i, pe_dim] = pe_val
-
-        ff_in = model.ff_in[layer_idx].weight
-        ff_out = model.ff_out[layer_idx].weight
-
-        # Gate: read PE dim
-        ff_in[gate_slot, pe_dim] = 1.0
-
-        # Val: threshold-based discrimination for round > 0
-        if round_idx == 0:
-            ff_in[d + gate_slot, pe_dim] = 1.0
-        else:
-            threshold = pe_val - PE_SCALE  # midpoint below this round's PE
-            ff_in[d + gate_slot, pe_dim] = 1.0
-            ff_in[d + gate_slot, d - 1] = threshold  # subtracts threshold via bias
-
-        # ff_out: write to pe_dim at FFN_SCALE
-        ff_out[pe_dim, gate_slot] = FFN_SCALE / (pe_val ** 2)
-
-        # Head: this token gets a boost from pe_dim
+        # Output head: target dim → token logit
         tok = trace_tokens[i]
-        head[tok, pe_dim] += 1.0
+        head[tok, target_dim] += 1.0
 
 
-def generate_trace(model, max_tokens=500, device='cpu'):
+def generate_trace(model, max_tokens=5000, device='cpu'):
     """Generate trace autoregressively from compiled model."""
     model.eval()
     model = model.to(device)
@@ -195,6 +178,7 @@ def test_compiled():
     # Fibonacci
     tests.append(("fib(3) = 2", make_fibonacci_program(3)))
     tests.append(("fib(5) = 5", make_fibonacci_program(5)))
+    tests.append(("fib(10) = 55", make_fibonacci_program(10)))
 
     passed = 0
     for name, program in tests:
@@ -205,12 +189,14 @@ def test_compiled():
 
         try:
             model, _ = compile_program(program)
+            n_params = sum(p.numel() for p in model.parameters())
             generated = generate_trace(model, max_tokens=len(expected) + 10)
             match = generated == expected
             if match:
                 passed += 1
             n_tok = len(expected)
-            print(f"  {name} ({n_tok} tok): {'PASS' if match else 'FAIL'}")
+            print(f"  {name} ({n_tok} tok, d={model.d_model}, {n_params:,} params): "
+                  f"{'PASS' if match else 'FAIL'}")
             if not match:
                 mismatches = 0
                 for j in range(min(len(expected), len(generated))):
