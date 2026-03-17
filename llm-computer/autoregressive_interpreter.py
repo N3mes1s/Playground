@@ -221,10 +221,10 @@ def build_interpreter() -> VanillaTransformer:
         d_ffn=D_FFN,
         max_seq_len=MAX_SEQ, pe_mode='learned',
     )
+    model = model.double()  # convert to float64 BEFORE setting weights to avoid precision loss
     with torch.no_grad():
         _set_universal_weights(model)
         _set_universal_pe(model)
-    model = model.double()
     model.eval()
     return model
 
@@ -295,7 +295,7 @@ def _set_universal_weights(model):
         (2, 0, (14, 15), (14, 15)),  # is_output, is_halt
         (3, 1, (0, -1), (16, -1)),   # immediate byte
         (4, 3, (0, -1), (4, -1)),    # src_a explicit addr → dim 4
-        (5, 4, (0, -1), (2, -1)),    # src_b from prog pos +4 → dim 2
+        (5, 4, (0, -1), (18, -1)),   # src_b from prog pos +4 → dim 18 (clean at L1)
         (11, 5, (0, -1), (17, -1)),  # commit_val from prog pos +5 → dim 17
         (6, 0, (29, 30), (29, 30)),  # is_le_s, is_ge_s
         (7, 0, (31, 32), (31, 32)),  # is_lt_s, is_gt_s
@@ -324,73 +324,10 @@ def _set_universal_weights(model):
     # Head 11 fetches commit_val from program position +5 → dim 17.
 
     # ================================================================
-    # Layer 0 FFN: Prepare commit K for content matching
+    # Layer 0 FFN: (no stack-based commit K needed — using explicit addresses)
     # ================================================================
-    # At commit positions (slot 4), we need K to encode:
-    #   K = (stack_size + COMMIT_OFFSET, -S_STACK*(stack_size + COMMIT_OFFSET)²)
-    # We compute:
-    #   dim 22 = (byte_value + COMMIT_OFFSET) * is_commit  [for K[0]]
-    #   dim 19 = -(byte_value + COMMIT_OFFSET)² * S_STACK * is_commit  [for K[1]]
-    # Using gated FFN: gate fires only at commit positions
-    ff0_in = model.ff_in[0].weight
-    ff0_out = model.ff_out[0].weight
 
-    # Gate 0: at commit INPUT positions, output stack_size + COMMIT_OFFSET
-    # gate = relu(is_commit_input - 0.5) → fires where commit token is input
-    ff0_in[0, 28] = 1.0       # is_commit_input (PE dim 28)
-    ff0_in[0, 27] = -0.5      # threshold
-    # val = 2 * (byte_value + COMMIT_OFFSET) to compensate for gate=0.5
-    ff0_in[D_FFN + 0, 0] = 2.0
-    ff0_in[D_FFN + 0, 27] = 2 * COMMIT_OFFSET
-    ff0_out[1, 0] = 1.0       # -> dim 1 (filtered stack_key, safe at trace pos)
-
-    # Gate 1: compute -(stack_size + OFFSET)² at commit INPUT pos using bilinear trick
-    ff0_in[1, 0] = 1.0
-    ff0_in[1, 27] = COMMIT_OFFSET - BIG
-    ff0_in[1, 28] = BIG                   # is_commit_input
-    # val = byte_value + OFFSET
-    ff0_in[D_FFN + 1, 0] = 1.0
-    ff0_in[D_FFN + 1, 27] = COMMIT_OFFSET
-    # output = (byte_value + OFFSET)² at commit positions, 0 elsewhere
-    ff0_out[19, 1] = -S_STACK  # -> dim 19 = -S_STACK * (stack+OFFSET)²
-
-    # Gate 2: add recency bias (ε * position) at commit INPUT positions
-    ff0_in[2, 28] = 1.0; ff0_in[2, 27] = -0.5
-    ff0_in[D_FFN + 2, 5] = 1.0  # ε * position for recency bias
-    ff0_out[19, 2] = 1.0  # add to dim 19
-
-    # ================================================================
-    # Layer 1 Attention: Stack-based Operand Resolution
-    # ================================================================
-    # Head 0: find commit with stack_size = own_stack_size → operand B position
-    # Head 1: find commit with stack_size = own_stack_size - 1 → operand A position
-    # K = (dim 22, dim 19) = (stack_key, -S*stack_key² + ε*pos) at commit pos
-    # Q = (2*S_STACK*target, 1)
-    # V = position (dim 5 from PE) → returns commit position
-    W1 = model.attn[1].in_proj_weight
-    out1 = model.attn[1].out_proj.weight
-
-    # Head 0: operand B (stack_size = own_stack_size)
-    # target = own_stack_size + COMMIT_OFFSET
-    # Q = [2*S_STACK*(own_stack_size + OFFSET), 1]
-    # own_stack_size is in dim 17 (from L0 head 10)
-    W1[0, 17] = 2 * S_STACK              # Q[0] = 2*S*own_stack_size
-    W1[0, 27] = 2 * S_STACK * COMMIT_OFFSET  # + 2*S*OFFSET
-    W1[1, 27] = 1.0                       # Q[1] = 1
-    W1[d + 0, 1] = 1.0                    # K[0] = filtered stack_key (dim 1)
-    W1[d + 1, 19] = 1.0                   # K[1] = -S*stack_key² + ε*pos (dim 19)
-    W1[2*d + 0, 5] = 1.0                  # V[0] = position
-    out1[18, 0] = 1.0                      # -> dim 18 (operand_B_commit_pos)
-
-    # Head 1: operand A (stack_size = own_stack_size - 1)
-    # target = own_stack_size - 1 + COMMIT_OFFSET
-    W1[2, 17] = 2 * S_STACK
-    W1[2, 27] = 2 * S_STACK * (COMMIT_OFFSET - 1)  # -1 for A
-    W1[3, 27] = 1.0
-    W1[d + 2, 1] = 1.0
-    W1[d + 3, 19] = 1.0
-    W1[2*d + 2, 5] = 1.0
-    out1[20, 2] = 1.0                      # -> dim 20 (operand_A_commit_pos)
+    # Layer 1: (no stack-based operand resolution — using explicit addresses)
 
     # ================================================================
     # Layer 1 FFN: Compute byte fetch addresses from commit positions
@@ -419,7 +356,7 @@ def _set_universal_weights(model):
     # dim 2 = push_flag/src_b. For binary ops: src_b. For local.get: 1 (push flag).
     for fd in (11, 12, 13, 29, 30, 31, 32, 33, 34, 35):
         ff1_in[3, fd] = 1.0
-    ff1_in[D_FFN + 3, 2] = 2 * S_QUAD * STEP_SIZE  # src_b
+    ff1_in[D_FFN + 3, 18] = 2 * S_QUAD * STEP_SIZE  # src_b (from dim 18, head 5)
     ff1_in[D_FFN + 3, 8] = 2 * S_QUAD
     ff1_in[D_FFN + 3, 27] = 2 * S_QUAD * TRACE_START
     ff1_out[3, 3] = 1.0  # -> dim 3 (fetch_addr_B, overrides stack-based)
@@ -523,15 +460,18 @@ def _set_universal_weights(model):
     W3 = model.attn[3].in_proj_weight
     out3 = model.attn[3].out_proj.weight
 
-    # Head 0: prev opA → write to dim 26 (decode dim, will be cleared after use)
-    W3[0, 21] = 1.0; W3[0, 27] = -2 * S_QUAD
+    # Head 0: prev opA — use fetch_addr from L1 FFN minus one position
+    # Compute prev_fetch_addr_A = fetch_addr_A - 2*S (targets byte k-1 of operand A)
+    # fetch_addr_A is in dim 21. Q = [dim21 - 2*S, 1]
+    W3[0, 21] = 1.0; W3[0, 27] = -2.0 * S_QUAD  # fetch_addr_A - 2*S
     W3[1, 27] = 1.0
     W3[d+0, 5] = 1.0; W3[d+1, 6] = 1.0
     W3[2*d+0, 0] = 1.0
     out3[26, 0] = 1.0  # -> dim 26 (temp prevA)
 
-    # Head 1: prev opB → write to dim 2 (is_opcode_pos, 0 at trace positions)
-    W3[2, 3] = 1.0; W3[2, 27] = -2 * S_QUAD
+    # Head 1: prev opB — Q = [fetch_addr_B - 2*S, 1]
+    # fetch_addr_B is in dim 3.
+    W3[2, 3] = 1.0; W3[2, 27] = -2.0 * S_QUAD
     W3[3, 27] = 1.0
     W3[d+2, 5] = 1.0; W3[d+3, 6] = 1.0
     W3[2*d+2, 0] = 1.0
@@ -990,10 +930,13 @@ def _build_expected_trace(prog_tokens: list[int], stack_sizes: list[int]) -> lis
             vb = [imm & 0xFF, (imm >> 8) & 0xFF, (imm >> 16) & 0xFF, (imm >> 24) & 0xFF]
             expected.extend(vb + [stack_sizes[step]])
         elif op in (Op.I32_ADD, Op.I32_SUB, Op.I32_MUL):
-            # Stack-based: find operands from stack_sizes
-            # This is complex. Use the VM values instead.
-            # HACK: run VM to get ground truth values
-            val = _get_step_value_from_sim(step, step_values, prog_tokens, stack_sizes)
+            # Use explicit addresses from program tokens
+            a_val = step_values.get(src_a, 0)
+            b_step = prog_tokens[base + 4]
+            b_val = step_values.get(b_step, 0)
+            if op == Op.I32_ADD: val = (a_val + b_val) & 0xFFFFFFFF
+            elif op == Op.I32_SUB: val = (a_val - b_val) & 0xFFFFFFFF
+            else: val = (a_val * b_val) & 0xFFFFFFFF
             step_values[step] = val
             vb = [val & 0xFF, (val >> 8) & 0xFF, (val >> 16) & 0xFF, (val >> 24) & 0xFF]
             expected.extend(vb + [stack_sizes[step]])
@@ -1005,11 +948,23 @@ def _build_expected_trace(prog_tokens: list[int], stack_sizes: list[int]) -> lis
             expected.extend(vb + [stack_sizes[step]])
         elif op in (Op.I32_LE_S, Op.I32_GE_S, Op.I32_LT_S, Op.I32_GT_S,
                     Op.I32_EQ, Op.I32_NE):
-            val = _get_step_value_from_sim(step, step_values, prog_tokens, stack_sizes)
+            a_val = step_values.get(src_a, 0)
+            b_step = prog_tokens[base + 4]
+            b_val = step_values.get(b_step, 0)
+            a, b = a_val, b_val
+            if a >= 0x80000000: a -= 0x100000000
+            if b >= 0x80000000: b -= 0x100000000
+            cmp_map = {Op.I32_LE_S: a <= b, Op.I32_GE_S: a >= b,
+                       Op.I32_LT_S: a < b, Op.I32_GT_S: a > b,
+                       Op.I32_EQ: a == b, Op.I32_NE: a != b}
+            val = 1 if cmp_map[op] else 0
             step_values[step] = val
             expected.extend([val & 0xFF, 0, 0, 0, stack_sizes[step]])
         elif op == Op.I32_EQZ:
-            val = _get_step_value_from_sim(step, step_values, prog_tokens, stack_sizes)
+            # EQZ reads from opB (src_b position)
+            b_step = prog_tokens[base + 4]
+            b_val = step_values.get(b_step, 0)
+            val = 1 if b_val == 0 else 0
             step_values[step] = val
             expected.extend([val & 0xFF, 0, 0, 0, stack_sizes[step]])
         else:
