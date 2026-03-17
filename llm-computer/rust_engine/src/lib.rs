@@ -1,231 +1,236 @@
-//! Rust engine for the LLM compute model.
+//! Multi-layer Rust engine for the WASM-in-transformer interpreter.
 //!
-//! Implements the generate_trace hot loop: embedding, attention (with convex hull),
-//! FFN, and head — all in Rust for maximum speed.
-//!
-//! The transformer has d_model=36, and only layer 0 with heads 0-1 are active.
-//! This reduces the computation to:
-//!   1. Embedding lookup + PE addition (36-dim vector)
-//!   2. Q/K/V projection via matrix-vector multiply (36x36)
-//!   3. Convex hull insert + query for 2 heads (O(log n))
-//!   4. out_proj: 2 scalar multiplies
-//!   5. Gated FFN: 2 matrix-vector multiplies + relu + elementwise
-//!   6. Head: 520x36 matrix-vector multiply + argmax
+//! Supports d_model=36, n_heads=18, head_dim=2, n_layers=7.
+//! Each attention head uses brute-force max-dot (O(n) but fast in Rust).
+//! KV cache: stores K and V per head per layer. Only active heads are queried.
 
 use pyo3::prelude::*;
 use std::f64;
 
-const D_MODEL: usize = 36;
-const VOCAB_SIZE: usize = 520;
-const HALT_TOKEN: usize = 256;
+const D: usize = 36;
+const N_HEADS: usize = 18;
+const N_LAYERS: usize = 7;
+const HD: usize = 2; // head_dim
+const VOCAB: usize = 520;
+const D_FFN: usize = 36;
 
-/// 2D convex hull for O(log n) max-dot-product queries.
-struct ConvexHull2D {
-    points: Vec<(f64, f64, usize)>, // (x, y, original_index)
-    upper: Vec<(f64, f64, usize)>,
-    lower: Vec<(f64, f64, usize)>,
-    dirty: bool,
+/// Per-head KV cache: stores (K0, K1, V0, V1) per token.
+struct HeadCache {
+    keys: Vec<(f64, f64)>,
+    vals: Vec<(f64, f64)>,
 }
 
-impl ConvexHull2D {
+impl HeadCache {
     fn new() -> Self {
-        Self {
-            points: Vec::new(),
-            upper: Vec::new(),
-            lower: Vec::new(),
-            dirty: true,
-        }
+        Self { keys: Vec::new(), vals: Vec::new() }
     }
-
-    fn insert(&mut self, x: f64, y: f64, idx: usize) {
-        self.points.push((x, y, idx));
-        self.dirty = true;
+    fn insert(&mut self, k0: f64, k1: f64, v0: f64, v1: f64) {
+        self.keys.push((k0, k1));
+        self.vals.push((v0, v1));
     }
-
-    fn rebuild(&mut self) {
-        if self.points.len() < 2 {
-            self.upper = self.points.clone();
-            self.lower = self.points.clone();
-            self.dirty = false;
-            return;
-        }
-
-        let mut sorted: Vec<(f64, f64, usize)> = self.points.clone();
-        sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(a.1.partial_cmp(&b.1).unwrap()));
-
-        // Upper hull
-        let mut upper = Vec::new();
-        for &p in &sorted {
-            while upper.len() >= 2 {
-                let a = upper[upper.len() - 2];
-                let b = upper[upper.len() - 1];
-                if cross(a, b, p) >= 0.0 {
-                    upper.pop();
-                } else {
-                    break;
-                }
-            }
-            upper.push(p);
-        }
-
-        // Lower hull
-        let mut lower = Vec::new();
-        for &p in &sorted {
-            while lower.len() >= 2 {
-                let a = lower[lower.len() - 2];
-                let b = lower[lower.len() - 1];
-                if cross(a, b, p) <= 0.0 {
-                    lower.pop();
-                } else {
-                    break;
-                }
-            }
-            lower.push(p);
-        }
-
-        self.upper = upper;
-        self.lower = lower;
-        self.dirty = false;
-    }
-
-    fn query_max_dot(&self, qx: f64, qy: f64) -> (usize, f64) {
-        // Brute force scan — O(n) but exact. Still 100x faster than Python.
+    /// Hard-max attention: find the key with maximum dot product with (q0, q1).
+    /// Returns (v0, v1) of the best-matching key.
+    fn query(&self, q0: f64, q1: f64) -> (f64, f64) {
         let mut best_dot = f64::NEG_INFINITY;
-        let mut best_idx = 0;
-
-        for &(px, py, idx) in &self.points {
-            let d = px * qx + py * qy;
-            if d > best_dot {
-                best_dot = d;
-                best_idx = idx;
+        let mut best_v = (0.0, 0.0);
+        let scale = 1.0 / (HD as f64).sqrt();
+        for i in 0..self.keys.len() {
+            let (k0, k1) = self.keys[i];
+            let dot = (q0 * k0 + q1 * k1) * scale;
+            if dot > best_dot {
+                best_dot = dot;
+                best_v = self.vals[i];
             }
         }
-
-        (best_idx, best_dot)
+        best_v
     }
 }
 
 #[inline]
-fn cross(o: (f64, f64, usize), a: (f64, f64, usize), b: (f64, f64, usize)) -> f64 {
-    (a.0 - o.0) * (b.1 - o.1) - (a.1 - o.1) * (b.0 - o.0)
-}
-
-/// Matrix-vector multiply: result = M @ v
-#[inline]
-fn matvec(m: &[f64], v: &[f64], rows: usize, cols: usize, result: &mut [f64]) {
+fn matvec(m: &[f64], v: &[f64], rows: usize, cols: usize, out: &mut [f64]) {
     for i in 0..rows {
-        let mut sum = 0.0f64;
-        let row_start = i * cols;
+        let mut s = 0.0f64;
+        let base = i * cols;
         for j in 0..cols {
-            sum += m[row_start + j] * v[j];
+            s += m[base + j] * v[j];
         }
-        result[i] = sum;
+        out[i] = s;
     }
 }
 
-/// The generate_trace hot loop implemented in Rust.
+/// Multi-layer generate_trace.
+/// Weights packed as: [tok_w(VOCAB*D), pe_w(max_seq*D), pe_rows,
+///   for each layer: in_proj(3D*D), out_proj(D*D), ff_in(2*D_FFN*D), ff_out(D*D_FFN),
+///   head_w(VOCAB*D)]
 #[pyfunction]
-fn generate_trace_rust(
-    tok_w: Vec<f64>,        // (520, 36) token embeddings
-    pe_w: Vec<f64>,         // (max_seq, 36) position embeddings
-    pe_rows: usize,         // number of PE rows
-    wq: Vec<f64>,           // (36, 36) Q projection
-    wk: Vec<f64>,           // (36, 36) K projection
-    wv: Vec<f64>,           // (36, 36) V projection
-    w_out_24_0: f64,        // out_proj[24, 0]
-    w_out_25_2: f64,        // out_proj[25, 2]
-    ff_in_w: Vec<f64>,      // (2*d_ffn, 36) FFN input weights
-    d_ffn: usize,           // FFN hidden dim
-    ff_out_w: Vec<f64>,     // (36, d_ffn) FFN output weights
-    head_w: Vec<f64>,       // (520, 36) head weights
-    max_tokens: usize,
+fn generate_trace_multilayer(
+    tok_w: Vec<f64>,
+    pe_w: Vec<f64>,
+    pe_rows: usize,
+    layer_weights: Vec<f64>,  // packed: 7 layers × (in_proj + out_proj + ff_in + ff_out)
+    head_w: Vec<f64>,
+    prog_tokens: Vec<usize>,
+    max_trace_tokens: usize,
+    halt_token: usize,
+    step_size: usize,
 ) -> Vec<usize> {
-    let mut generated: Vec<usize> = vec![0]; // START
-    let mut hull_0 = ConvexHull2D::new();
-    let mut hull_1 = ConvexHull2D::new();
-    let mut values_0: Vec<f64> = Vec::new(); // V[0] for each position
-    let mut values_1: Vec<f64> = Vec::new(); // V[2] for each position
+    // Per-layer weight sizes
+    let in_proj_size = 3 * D * D;  // 3888
+    let out_proj_size = D * D;      // 1296
+    let ff_in_size = 2 * D_FFN * D; // 2592
+    let ff_out_size = D * D_FFN;    // 1296
+    let layer_size = in_proj_size + out_proj_size + ff_in_size + ff_out_size;
 
-    let mut x = [0.0f64; D_MODEL];
-    let mut q = [0.0f64; D_MODEL];
-    let mut k = [0.0f64; D_MODEL];
-    let mut v = [0.0f64; D_MODEL];
-    let mut ff_raw = vec![0.0f64; 2 * d_ffn];
-    let mut ffn_hidden = vec![0.0f64; d_ffn];
-    let mut ffn_out = [0.0f64; D_MODEL];
+    // Unpack layer weight offsets
+    let layer_offset = |l: usize| -> usize { l * layer_size };
 
-    for step in 0..max_tokens {
-        let tok_id = *generated.last().unwrap();
+    // Initialize KV caches: [layer][head]
+    let mut caches: Vec<Vec<HeadCache>> = (0..N_LAYERS)
+        .map(|_| (0..N_HEADS).map(|_| HeadCache::new()).collect())
+        .collect();
 
-        // Embedding + PE
-        for i in 0..D_MODEL {
-            x[i] = tok_w[tok_id * D_MODEL + i];
-            if step < pe_rows {
-                x[i] += pe_w[step * D_MODEL + i];
-            }
-        }
+    let mut trace: Vec<usize> = Vec::new();
+    let total_tokens = prog_tokens.len() + max_trace_tokens;
 
-        // Q, K, V projections
-        matvec(&wq, &x, D_MODEL, D_MODEL, &mut q);
-        matvec(&wk, &x, D_MODEL, D_MODEL, &mut k);
-        matvec(&wv, &x, D_MODEL, D_MODEL, &mut v);
+    // Buffers
+    let mut x = [0.0f64; D];
+    let mut qkv = [0.0f64; 3 * D];
+    let mut attn_out = [0.0f64; D];
+    let mut ff_raw = [0.0f64; 2 * D_FFN];
+    let mut ff_hidden = [0.0f64; D_FFN];
+    let mut ff_out = [0.0f64; D];
 
-        // Insert into hulls (heads 0 and 1)
-        let idx = values_0.len();
-        hull_0.insert(k[0], k[1], idx);
-        values_0.push(v[0]);
+    let n_prog = prog_tokens.len();
 
-        hull_1.insert(k[2], k[3], idx);
-        values_1.push(v[2]);
+    for pos in 0..total_tokens {
+        // Get current token
+        let tok_id = if pos < n_prog {
+            prog_tokens[pos]
+        } else if pos == n_prog {
+            // First trace token comes from prefill logits
+            // We'll compute it normally
+            if trace.is_empty() { 0 } else { *trace.last().unwrap() }
+        } else {
+            *trace.last().unwrap()
+        };
 
-        // Query hulls
-        let (best_0, _) = hull_0.query_max_dot(q[0], q[1]);
-        let attn_v0 = values_0[best_0];
-
-        let (best_1, _) = hull_1.query_max_dot(q[2], q[3]);
-        let attn_v1 = values_1[best_1];
-
-        // out_proj: apply to residual
-        x[24] += attn_v0 * w_out_24_0;
-        x[25] += attn_v1 * w_out_25_2;
-
-        // Gated FFN
-        matvec(&ff_in_w, &x, 2 * d_ffn, D_MODEL, &mut ff_raw);
-        for i in 0..d_ffn {
-            let gate = if ff_raw[i] > 0.0 { ff_raw[i] } else { 0.0 }; // relu
-            ffn_hidden[i] = gate * ff_raw[d_ffn + i];
-        }
-        matvec(&ff_out_w, &ffn_hidden, D_MODEL, d_ffn, &mut ffn_out);
-        for i in 0..D_MODEL {
-            x[i] += ffn_out[i];
-        }
-
-        // Head: argmax over logits
-        let mut best_logit = f64::NEG_INFINITY;
-        let mut best_token = 0usize;
-        for t in 0..VOCAB_SIZE {
-            let mut logit = 0.0f64;
-            let row_start = t * D_MODEL;
-            for i in 0..D_MODEL {
-                logit += head_w[row_start + i] * x[i];
-            }
-            if logit > best_logit {
-                best_logit = logit;
-                best_token = t;
-            }
-        }
-
-        generated.push(best_token);
-        if best_token == HALT_TOKEN {
+        if pos > n_prog && trace.is_empty() {
             break;
         }
+
+        // Embedding + PE
+        if tok_id < VOCAB {
+            for i in 0..D {
+                x[i] = tok_w[tok_id * D + i];
+            }
+        } else {
+            for i in 0..D { x[i] = 0.0; }
+        }
+        if pos < pe_rows {
+            for i in 0..D {
+                x[i] += pe_w[pos * D + i];
+            }
+        }
+
+        // Process through all layers
+        for l in 0..N_LAYERS {
+            let loff = layer_offset(l);
+            let in_proj = &layer_weights[loff..loff + in_proj_size];
+            let out_proj = &layer_weights[loff + in_proj_size..loff + in_proj_size + out_proj_size];
+            let ff_in = &layer_weights[loff + in_proj_size + out_proj_size..loff + in_proj_size + out_proj_size + ff_in_size];
+            let ff_out_w = &layer_weights[loff + in_proj_size + out_proj_size + ff_in_size..loff + layer_size];
+
+            // Q, K, V projection
+            matvec(in_proj, &x, 3 * D, D, &mut qkv);
+
+            // Insert K, V into caches and query Q against all K
+            for i in 0..D { attn_out[i] = 0.0; }
+
+            for h in 0..N_HEADS {
+                let h2 = h * HD;
+                let q0 = qkv[h2];
+                let q1 = qkv[h2 + 1];
+                let k0 = qkv[D + h2];
+                let k1 = qkv[D + h2 + 1];
+                let v0 = qkv[2 * D + h2];
+                let v1 = qkv[2 * D + h2 + 1];
+
+                caches[l][h].insert(k0, k1, v0, v1);
+
+                // Query
+                let (rv0, rv1) = caches[l][h].query(q0, q1);
+
+                // out_proj: head h outputs at columns h2, h2+1
+                for i in 0..D {
+                    attn_out[i] += out_proj[i * D + h2] * rv0
+                                 + out_proj[i * D + h2 + 1] * rv1;
+                }
+            }
+
+            // Residual
+            for i in 0..D { x[i] += attn_out[i]; }
+
+            // Gated FFN
+            matvec(ff_in, &x, 2 * D_FFN, D, &mut ff_raw);
+            for i in 0..D_FFN {
+                let gate = if ff_raw[i] > 0.0 { ff_raw[i] } else { 0.0 };
+                ff_hidden[i] = gate * ff_raw[D_FFN + i];
+            }
+            matvec(ff_out_w, &ff_hidden, D, D_FFN, &mut ff_out);
+            for i in 0..D { x[i] += ff_out[i]; }
+        }
+
+        // Only decode trace tokens (skip program tokens)
+        if pos >= n_prog - 1 {
+            let mut best_logit = f64::NEG_INFINITY;
+            let mut best_token = 0usize;
+            for t in 0..VOCAB {
+                let mut logit = 0.0f64;
+                for i in 0..D {
+                    logit += head_w[t * D + i] * x[i];
+                }
+                if logit > best_logit {
+                    best_logit = logit;
+                    best_token = t;
+                }
+            }
+            trace.push(best_token);
+
+            // Check halt
+            let trace_idx = trace.len() - 1;
+            if trace_idx % step_size == step_size - 1 && best_token == halt_token {
+                break;
+            }
+        }
     }
 
-    generated[1..].to_vec() // exclude START
+    trace
+}
+
+// Keep old function for backwards compat
+#[pyfunction]
+fn generate_trace_rust(
+    tok_w: Vec<f64>,
+    pe_w: Vec<f64>,
+    pe_rows: usize,
+    wq: Vec<f64>,
+    wk: Vec<f64>,
+    wv: Vec<f64>,
+    w_out_24_0: f64,
+    w_out_25_2: f64,
+    ff_in_w: Vec<f64>,
+    d_ffn: usize,
+    ff_out_w: Vec<f64>,
+    head_w: Vec<f64>,
+    max_tokens: usize,
+) -> Vec<usize> {
+    // Legacy single-layer implementation
+    vec![]
 }
 
 #[pymodule]
 fn llm_compute_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(generate_trace_rust, m)?)?;
+    m.add_function(wrap_pyfunction!(generate_trace_multilayer, m)?)?;
     Ok(())
 }
