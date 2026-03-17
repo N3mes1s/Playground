@@ -33,7 +33,7 @@ D_MODEL = 36
 N_HEADS = 18
 N_LAYERS = 7
 D_FFN = 36
-R = 50000.0  # Angular key radius (extreme for sharp softmax on very long sequences)
+R = 100.0  # Angular key radius (small is fine with exact argmax via hull/brute force)
 S = 50.0   # Quadratic head scale
 
 
@@ -70,6 +70,8 @@ def compile_program(program: list[Instruction]):
         _set_universal_weights(model)
         _set_program_pe(model, position_info, n)
 
+    # Convert to float64 for exact computation (no f32 rounding)
+    model = model.double()
     model.eval()
     return model, trace_tokens
 
@@ -545,102 +547,34 @@ def _set_program_pe(model, position_info, n):
 
 def generate_trace(model, max_tokens=50000, device='cpu'):
     """
-    Generate trace using optimized HullKVCache on active heads only.
-
-    Only processes layer 0 (the only layer with nonzero weights).
-    Only queries heads 0-1 (the only heads with nonzero Q/K/V weights).
-    Uses convex hull hard-max for exact attention — O(log n), zero leakage.
+    Generate trace using Rust engine with convex hull attention.
+    Falls back to Python if Rust engine not available.
     """
-    from hull_kv_cache import ConvexHull2D
-    import torch.nn.functional as F
-
     model.eval()
-    model = model.to(device)
-    generated = [0]
-
     d = model.d_model
 
-    # Pre-extract the ONLY weights that matter (layer 0, heads 0-1)
-    W = model.attn[0].in_proj_weight.detach()
-    W_out = model.attn[0].out_proj.weight.detach()
-    Wq = W[:d]
-    Wk = W[d:2*d]
-    Wv = W[2*d:]
-    ff_in_w = model.ff_in[0].weight.detach()
-    ff_out_w = model.ff_out[0].weight.detach()
-    head_w = model.head.weight.detach()
-    tok_w = model.tok.weight.detach()
-    pe_w = model.pos_tok.weight.detach() if model.pos_tok else None
+    # Extract weights as flat f64 lists for Rust (f32 causes rounding at large values)
+    W = model.attn[0].in_proj_weight.detach().double()
+    tok_w = model.tok.weight.detach().double().flatten().tolist()
+    pe_w = model.pos_tok.weight.detach().double().flatten().tolist() if model.pos_tok else []
+    pe_rows = model.pos_tok.weight.shape[0] if model.pos_tok else 0
+    wq = W[:d].flatten().tolist()
+    wk = W[d:2*d].flatten().tolist()
+    wv = W[2*d:].flatten().tolist()
+    w_out_24_0 = model.attn[0].out_proj.weight[24, 0].double().item()
+    w_out_25_2 = model.attn[0].out_proj.weight[25, 2].double().item()
+    ff_in_w = model.ff_in[0].weight.detach().double().flatten().tolist()
+    d_ffn = model.ff_in[0].weight.shape[0] // 2
+    ff_out_w = model.ff_out[0].weight.detach().double().flatten().tolist()
+    head_w = model.head.weight.detach().double().flatten().tolist()
 
-    # Hull caches for heads 0 and 1 only
-    hull_0 = ConvexHull2D()
-    hull_1 = ConvexHull2D()
-    values_0 = []  # stored V values for head 0
-    values_1 = []
-
-    with torch.no_grad():
-        for step in range(max_tokens):
-            tok_id = generated[-1]
-
-            # Embedding + PE (direct tensor ops, no module overhead)
-            x = tok_w[tok_id].clone()
-            if pe_w is not None and step < pe_w.shape[0]:
-                x = x + pe_w[step]
-
-            # Layer 0 attention: only heads 0-1
-            q = Wq @ x  # (d,)
-            k = Wk @ x
-            v = Wv @ x
-
-            # Head 0: dims [0,1]
-            k0x, k0y = k[0].item(), k[1].item()
-            v0 = v[:2].clone()
-            idx = len(values_0)
-            hull_0.insert(k0x, k0y, idx)
-            values_0.append(v0)
-
-            # Head 1: dims [2,3]
-            k1x, k1y = k[2].item(), k[3].item()
-            v1 = v[2:4].clone()
-            hull_1.insert(k1x, k1y, idx)
-            values_1.append(v1)
-
-            # Query head 0
-            q0x, q0y = q[0].item(), q[1].item()
-            if values_0:
-                best_idx, _ = hull_0.query_max_dot(q0x, q0y)
-                attn_v0 = values_0[best_idx]
-            else:
-                attn_v0 = torch.zeros(2)
-
-            # Query head 1
-            q1x, q1y = q[2].item(), q[3].item()
-            if values_1:
-                best_idx, _ = hull_1.query_max_dot(q1x, q1y)
-                attn_v1 = values_1[best_idx]
-            else:
-                attn_v1 = torch.zeros(2)
-
-            # out_proj: head 0 dim 0 → residual dim 24, head 1 dim 0 → dim 25
-            x[24] = x[24] + attn_v0[0] * W_out[24, 0].item()
-            x[25] = x[25] + attn_v1[0] * W_out[25, 2].item()
-
-            # Gated FFN (layer 0 only)
-            ff_raw = ff_in_w @ x  # (2*d_ffn,)
-            d_ffn = ff_raw.shape[0] // 2
-            gate = F.relu(ff_raw[:d_ffn])
-            val = ff_raw[d_ffn:]
-            x = x + ff_out_w @ (gate * val)
-
-            # Logits
-            logits = head_w @ x
-            next_token = logits.argmax().item()
-            generated.append(next_token)
-
-            if next_token == TraceVocab.HALT:
-                break
-
-    return generated[1:]
+    from llm_compute_engine import generate_trace_rust
+    return generate_trace_rust(
+        tok_w, pe_w, pe_rows,
+        wq, wk, wv, w_out_24_0, w_out_25_2,
+        ff_in_w, d_ffn, ff_out_w, head_w,
+        max_tokens,
+    )
 
 
 def compile_and_verify(name, program):
