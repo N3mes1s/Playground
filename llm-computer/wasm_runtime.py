@@ -273,7 +273,7 @@ def build_wasm_binary(functions: dict[str, tuple[list[int], list[int], bytes]],
                 type_list.append((params, results))
 
     for name in func_names:
-        params, results, _ = functions[name]
+        params, results = functions[name][:2]
         key = (tuple(params), tuple(results))
         if key not in type_map:
             type_map[key] = len(type_list)
@@ -312,7 +312,7 @@ def build_wasm_binary(functions: dict[str, tuple[list[int], list[int], bytes]],
     func_sec = bytearray()
     _leb128(func_sec, n_funcs)
     for name in func_names:
-        params, results, _ = functions[name]
+        params, results = functions[name][:2]
         key = (tuple(params), tuple(results))
         _leb128(func_sec, type_map[key])
     _section(buf, 3, func_sec)
@@ -344,9 +344,19 @@ def build_wasm_binary(functions: dict[str, tuple[list[int], list[int], bytes]],
     code_sec = bytearray()
     _leb128(code_sec, n_funcs)
     for name in func_names:
-        _, _, body = functions[name]
+        func_spec = functions[name]
+        if len(func_spec) == 4:
+            _, _, body, n_locals = func_spec
+        else:
+            _, _, body = func_spec
+            n_locals = 0
         func_body = bytearray()
-        _leb128(func_body, 0)  # 0 local declarations
+        if n_locals > 0:
+            _leb128(func_body, 1)  # 1 local declaration group
+            _leb128(func_body, n_locals)
+            func_body.append(0x7F)  # i32
+        else:
+            _leb128(func_body, 0)  # 0 local declarations
         func_body.extend(body)
         func_body.append(0x0B)  # END
 
