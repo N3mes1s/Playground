@@ -30,10 +30,10 @@ D_MODEL = 36
 N_HEADS = 18
 N_LAYERS = 7
 D_FFN = 36
-MAX_SEQ = 5000
+MAX_SEQ = 10000
 
 # Program layout
-MAX_INST = 400
+MAX_INST = 600
 INST_SIZE = 6  # [opcode, imm_b0, imm_b1, src_a, src_b, commit_val]
 PROG_LEN = MAX_INST * INST_SIZE  # 2400
 SEP_POS = PROG_LEN
@@ -1150,6 +1150,51 @@ def test():
 
     # Fibonacci(20) = 6765 (big program, tests multi-byte + long trace)
     tests.append(("fib(20) = 6765", make_fibonacci_program(20)))
+
+    # Fibonacci(25) = 75025 (even longer)
+    tests.append(("fib(25) = 75025", make_fibonacci_program(25)))
+
+    # Fibonacci(30) = 832040
+    tests.append(("fib(30) = 832040", make_fibonacci_program(30)))
+
+    # Collatz(7) = 16 steps
+    from mini_c import ne, mod, gt, div, eq as eq_c, mul as mul_c2
+    c = Compiler()
+    code, _ = c.compile([
+        assign('n', lit(17)),
+        assign('i', lit(2)),
+        assign('is_prime', lit(1)),
+        while_loop(le(mul_c(var('i'), var('i')), var('n')), [
+            if_then(
+                ne(mod(var('n'), var('i')), lit(0)),
+                [],  # not divisible, continue
+                [assign('is_prime', lit(0))]),  # divisible, not prime
+            assign('i', add(var('i'), lit(1)))]),
+        output_int(var('is_prime'))])
+    tests.append(("is_prime(17) = 1", code))
+
+    # Collatz(7) = 16 steps
+    c = Compiler()
+    code, _ = c.compile([
+        assign('n', lit(7)), assign('steps', lit(0)),
+        while_loop(gt(var('n'), lit(1)), [
+            if_then(eq_c(mod(var('n'), lit(2)), lit(0)),
+                [assign('n', div(var('n'), lit(2)))],
+                [assign('n', add(mul_c2(lit(3), var('n')), lit(1)))]),
+            assign('steps', add(var('steps'), lit(1)))]),
+        output_int(var('steps'))])
+    tests.append(("collatz(7) = 16", code))
+
+    # GCD(1071, 462) = 21
+    c = Compiler()
+    code, _ = c.compile([
+        assign('a', lit(1071)), assign('b', lit(462)),
+        while_loop(ne(var('b'), lit(0)), [
+            assign('t', mod(var('a'), var('b'))),
+            assign('a', var('b')),
+            assign('b', var('t'))]),
+        output_int(var('a'))])
+    tests.append(("gcd(1071,462) = 21", code))
 
     passed = 0
     for name, program in tests:
