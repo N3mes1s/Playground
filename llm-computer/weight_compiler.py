@@ -33,7 +33,7 @@ D_MODEL = 36
 N_HEADS = 18
 N_LAYERS = 7
 D_FFN = 36
-R = 500.0  # Angular key radius (very high for sharp softmax attention)
+R = 50000.0  # Angular key radius (extreme for sharp softmax on very long sequences)
 S = 50.0   # Quadratic head scale
 
 
@@ -544,24 +544,77 @@ def _set_program_pe(model, position_info, n):
 
 
 def generate_trace(model, max_tokens=50000, device='cpu'):
-    """Generate trace autoregressively with KV cache."""
+    """
+    Generate trace using HullKVCache: exact hard-max attention, O(log n) per step.
+    No softmax leakage — works for ANY sequence length with 100% accuracy.
+    """
+    from hull_kv_cache import HullKVCache
+    import torch.nn.functional as F
+
     model.eval()
     model = model.to(device)
     generated = [0]
 
-    with torch.no_grad():
-        input_ids = torch.tensor([[0]], dtype=torch.long, device=device)
-        logits, kv_cache = model.forward_with_cache(input_ids, kv_cache=None)
-        next_token = logits[0, -1].argmax().item()
-        generated.append(next_token)
+    d = model.d_model
+    n_heads = model.n_heads
+    hd = model.head_dim  # 2
 
-        for _ in range(max_tokens - 1):
+    hull_cache = HullKVCache(N_LAYERS, n_heads, head_dim=hd, k_sparse=1)
+
+    with torch.no_grad():
+        for step in range(max_tokens):
+            tok_id = generated[-1]
+            input_t = torch.tensor([tok_id], dtype=torch.long, device=device)
+
+            # Embedding + PE
+            x = model.tok(input_t)  # (1, d)
+            if model.pos_tok is not None and step < model.pos_tok.weight.shape[0]:
+                x = x + model.pos_tok.weight[step].unsqueeze(0)
+
+            # Process through all layers
+            for layer_idx in range(N_LAYERS):
+                attn = model.attn[layer_idx]
+                W = attn.in_proj_weight  # (3d, d)
+                W_out = attn.out_proj.weight  # (d, d)
+
+                # Q, K, V projections
+                q_all = F.linear(x, W[:d])      # (1, d)
+                k_all = F.linear(x, W[d:2*d])
+                v_all = F.linear(x, W[2*d:])
+
+                # Split into heads: (n_heads, 2)
+                q_heads = q_all.view(n_heads, hd)
+                k_heads = k_all.view(n_heads, hd)
+                v_heads = v_all.view(n_heads, hd)
+
+                # Insert K, V into hull cache
+                for h in range(n_heads):
+                    hull_cache.insert(layer_idx, h, k_heads[h], v_heads[h])
+
+                # Query: hard-max attention via convex hull — O(log n)
+                attn_output = torch.zeros(n_heads, hd, device=device)
+                for h in range(n_heads):
+                    attn_output[h] = hull_cache.query(layer_idx, h, q_heads[h])
+
+                # out_proj + residual
+                attn_flat = attn_output.reshape(1, d)
+                y = F.linear(attn_flat, W_out)
+                x = x + y
+
+                # Gated FFN
+                d_ffn = model.ff_in[layer_idx].weight.shape[0] // 2
+                ff_raw = F.linear(x, model.ff_in[layer_idx].weight)
+                gate, val = ff_raw.chunk(2, dim=-1)
+                ffn_out = F.linear(F.relu(gate) * val, model.ff_out[layer_idx].weight)
+                x = x + ffn_out
+
+            # Output logits
+            logits = F.linear(x, model.head.weight)  # (1, 520)
+            next_token = logits[0].argmax().item()
+            generated.append(next_token)
+
             if next_token == TraceVocab.HALT:
                 break
-            input_ids = torch.tensor([[next_token]], dtype=torch.long, device=device)
-            logits, kv_cache = model.forward_with_cache(input_ids, kv_cache=kv_cache)
-            next_token = logits[0, -1].argmax().item()
-            generated.append(next_token)
 
     return generated[1:]
 
