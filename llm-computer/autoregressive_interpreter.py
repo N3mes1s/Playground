@@ -30,11 +30,11 @@ D_MODEL = 36
 N_HEADS = 18
 N_LAYERS = 7
 D_FFN = 36
-MAX_SEQ = 10000
+MAX_SEQ = 200000
 
 # Program layout
 MAX_INST = 600
-INST_SIZE = 6  # [opcode, imm_b0, imm_b1, src_a, src_b, commit_val]
+INST_SIZE = 6  # [opcode, imm_b0, imm_b1, imm_b2/src_a, imm_b3/src_b, delta+1]
 PROG_LEN = MAX_INST * INST_SIZE  # 2400
 SEP_POS = PROG_LEN
 TRACE_START = PROG_LEN + 1
@@ -49,7 +49,7 @@ COMMIT_HALT = 255
 S_QUAD = 100.0   # for position-based quadratic addressing
 S_STACK = 50.0    # for stack_size content matching
 S_HEAD = 50.0     # for output head quadratic decoding
-BIG = 1000.0      # gate suppression scale
+BIG = 200000.0    # gate suppression scale (must exceed max 16-bit operand contribution ~131K)
 
 # Stack-size content matching offset: added to commit K so non-commit
 # positions (with result bytes in dim 0) can never match
@@ -200,8 +200,13 @@ def encode_program(program: list[Instruction]) -> tuple[list[int], list[int]]:
             cv = COMMIT_HALT
         else:
             cv = ss
-        tokens.extend([tok, imm & 0xFF, (imm >> 8) & 0xFF,
-                        src_a & 0xFF, src_b & 0xFF, cv & 0xFF])
+        if inst.op == Op.I32_CONST:
+            # Pack full 32-bit immediate into positions 1-4
+            tokens.extend([tok, imm & 0xFF, (imm >> 8) & 0xFF,
+                            (imm >> 16) & 0xFF, (imm >> 24) & 0xFF, cv & 0xFF])
+        else:
+            tokens.extend([tok, imm & 0xFF, (imm >> 8) & 0xFF,
+                            src_a & 0xFF, src_b & 0xFF, cv & 0xFF])
 
     while len(tokens) < PROG_LEN:
         tokens.extend([TraceVocab.NOP, 0, 0, 0, 0, 0])
@@ -379,6 +384,20 @@ def _set_universal_weights(model):
     W2[2*d+2, 0] = 1.0
     out2[24, 2] = 1.0                       # -> dim 24 (operand_B)
 
+    # Head 2: fetch opA byte 1 → dim 2
+    W2[4, 21] = 1.0; W2[4, 27] = 2.0 * S_QUAD  # Q = [fetch_addr_A + 2S, ...]
+    W2[5, 27] = 1.0
+    W2[d+4, 5] = 1.0; W2[d+5, 6] = 1.0
+    W2[2*d+4, 0] = 1.0
+    out2[2, 4] = 1.0  # → dim 2
+
+    # Head 3: fetch opB byte 1 → dim 26
+    W2[6, 3] = 1.0; W2[6, 27] = 2.0 * S_QUAD  # Q = [fetch_addr_B + 2S, ...]
+    W2[7, 27] = 1.0
+    W2[d+6, 5] = 1.0; W2[d+7, 6] = 1.0
+    W2[2*d+6, 0] = 1.0
+    out2[26, 6] = 1.0  # → dim 26
+
     # ================================================================
     # Layer 2 FFN: ALU
     # ================================================================
@@ -410,10 +429,12 @@ def _set_universal_weights(model):
     ff2_in[D_FFN+4, 23] = 1.0  # val = opA
     ff2_out[25, 4] = 1.0
 
-    # Comparison gates (slot 0 only)
+    # Comparison gates (slot 0 only) — 16-bit: a0 + 256*a1 vs b0 + 256*b1
     def _cmp_gate(g, flag_dim, a_sign, b_sign, threshold, out_sign):
         ff2_in[g, flag_dim] = BIG; ff2_in[g, 27] = -BIG + threshold; ff2_in[g, 8] = -2*BIG
         ff2_in[g, 23] = a_sign; ff2_in[g, 24] = b_sign
+        ff2_in[g, 2] = 256.0 * a_sign   # 256 * opA_byte1
+        ff2_in[g, 26] = 256.0 * b_sign  # 256 * opB_byte1
         ff2_in[D_FFN+g, 27] = 1.0; ff2_out[25, g] = out_sign
 
     def _bias_gate(g, flag_dim):
@@ -438,10 +459,11 @@ def _set_universal_weights(model):
     # EQZ: 1 - relu(A) + relu(A-1)
     _bias_gate(26, 35)
     # EQZ reads from opB (dim 24 = top of stack from ss=own_ss), not opA (ss-1)
+    # 16-bit: also reads byte 1 from dim 26 (opB byte 1) with 256x weight
     ff2_in[27, 35] = BIG; ff2_in[27, 27] = -BIG; ff2_in[27, 8] = -2*BIG
-    ff2_in[27, 24] = 1.0; ff2_in[D_FFN+27, 27] = 1.0; ff2_out[25, 27] = -1.0
+    ff2_in[27, 24] = 1.0; ff2_in[27, 26] = 256.0; ff2_in[D_FFN+27, 27] = 1.0; ff2_out[25, 27] = -1.0
     ff2_in[28, 35] = BIG; ff2_in[28, 27] = -1.0 - BIG; ff2_in[28, 8] = -2*BIG
-    ff2_in[28, 24] = 1.0; ff2_in[D_FFN+28, 27] = 1.0; ff2_out[25, 28] = 1.0
+    ff2_in[28, 24] = 1.0; ff2_in[28, 26] = 256.0; ff2_in[D_FFN+28, 27] = 1.0; ff2_out[25, 28] = 1.0
 
     # ---- Single commit gate: reads pre-encoded commit_val from dim 17 (head 11) ----
     # At commit slot (dim 9=1): output = commit_val.
@@ -460,22 +482,19 @@ def _set_universal_weights(model):
     W3 = model.attn[3].in_proj_weight
     out3 = model.attn[3].out_proj.weight
 
-    # Head 0: prev opA — use fetch_addr from L1 FFN minus one position
-    # Compute prev_fetch_addr_A = fetch_addr_A - 2*S (targets byte k-1 of operand A)
-    # fetch_addr_A is in dim 21. Q = [dim21 - 2*S, 1]
-    W3[0, 21] = 1.0; W3[0, 27] = -2.0 * S_QUAD  # fetch_addr_A - 2*S
+    # Head 0: prev opA → dim 19 (not dim 26, which L2 uses for opB byte-1)
+    W3[0, 21] = 1.0; W3[0, 27] = -2.0 * S_QUAD
     W3[1, 27] = 1.0
     W3[d+0, 5] = 1.0; W3[d+1, 6] = 1.0
     W3[2*d+0, 0] = 1.0
-    out3[26, 0] = 1.0  # -> dim 26 (temp prevA)
+    out3[19, 0] = 1.0  # -> dim 19 (prevA)
 
-    # Head 1: prev opB — Q = [fetch_addr_B - 2*S, 1]
-    # fetch_addr_B is in dim 3.
+    # Head 1: prev opB → dim 1 (not dim 2, which L2 uses for opA byte-1)
     W3[2, 3] = 1.0; W3[2, 27] = -2.0 * S_QUAD
     W3[3, 27] = 1.0
     W3[d+2, 5] = 1.0; W3[d+3, 6] = 1.0
     W3[2*d+2, 0] = 1.0
-    out3[2, 2] = 1.0  # -> dim 2 (temp prevB)
+    out3[1, 2] = 1.0  # -> dim 1 (prevB)
 
     # ================================================================
     # Layer 3 FFN: ADD carry — add 1 if prev byte overflowed
@@ -494,44 +513,45 @@ def _set_universal_weights(model):
     # Use: gate needs is_add AND slot>0 AND not_commit.
     # Let's use: BIG*is_add + 0.5*slot - BIG → fires when is_add=1 AND slot≥1
 
-    # Gate 4: relu(prevA + prevB - 255 + BIG*is_add - BIG - 2*BIG*is_commit + slot - 1)
-    # At slot 0: ... + 0 - 1 → extra -1 pushes below threshold
-    # At slot 1+: ... + slot - 1 ≥ 0
-    ff3_in[4, 26] = 1.0    # prev_opA (from dim 26)
-    ff3_in[4, 2] = 1.0     # prev_opB (from dim 2)
-    ff3_in[4, 27] = -255.0 - BIG - 1.0
+    # Gate 4: relu(prevA + prevB - 255 + BIG*is_add - BIG - 2*BIG*is_commit - 2*BIG*is_commit_input)
+    # is_commit_input (dim 28) = 1 at slot 0, 0 at slots 1-4 → suppresses at slot 0
+    # At slots 1-3 (is_add=1, is_commit=0, is_commit_input=0): relu(prevA + prevB - 255)
+    # Carry gates read dim 19 (prevA) and dim 1 (prevB)
+    ff3_in[4, 19] = 1.0   # prev_opA (dim 19)
+    ff3_in[4, 1] = 1.0    # prev_opB (dim 1)
+    ff3_in[4, 27] = -255.0 - BIG
     ff3_in[4, 11] = BIG
     ff3_in[4, 9] = -2*BIG
-    ff3_in[4, 8] = 1.0     # +slot suppresses at slot 0
+    ff3_in[4, 28] = -2*BIG  # suppress at slot 0 (is_commit_input=1 there)
     ff3_in[D_FFN+4, 27] = 1.0
     ff3_out[25, 4] = 1.0
 
     # Gate 5: -relu(prevA + prevB - 256)
-    ff3_in[5, 26] = 1.0; ff3_in[5, 2] = 1.0
-    ff3_in[5, 27] = -256.0 - BIG - 1.0
-    ff3_in[5, 11] = BIG; ff3_in[5, 9] = -2*BIG; ff3_in[5, 8] = 1.0
+    ff3_in[5, 19] = 1.0; ff3_in[5, 1] = 1.0
+    ff3_in[5, 27] = -256.0 - BIG
+    ff3_in[5, 11] = BIG; ff3_in[5, 9] = -2*BIG; ff3_in[5, 28] = -2*BIG
     ff3_in[D_FFN+5, 27] = 1.0
     ff3_out[25, 5] = -1.0
 
-    # Gate 6: clear dim 26 (prevA) so it doesn't pollute decode dim
-    ff3_in[6, 27] = 1.0              # gate always on
-    ff3_in[D_FFN+6, 26] = -1.0       # val = -prevA
-    ff3_out[26, 6] = 1.0             # dim 26 += -prevA → zeroed
+    # Gate 6: clear dim 26 (has L2 opB byte-1, must not reach output head)
+    ff3_in[6, 27] = 1.0
+    ff3_in[D_FFN+6, 26] = -1.0
+    ff3_out[26, 6] = 1.0
 
     # ================================================================
-    # Layer 4 FFN: Mod 256 correction for ADD
+    # Layer 4 FFN: Mod 256 correction for ADD or MUL
     # ================================================================
     ff4_in = model.ff_in[4].weight
     ff4_out = model.ff_out[4].weight
 
-    # Gate 0: -256 * relu(result - 255) for ADD at non-commit slots
+    # Gate 0: -256 * relu(result - 255) for ADD/MUL at non-commit slots
     ff4_in[0, 25] = 1.0; ff4_in[0, 27] = -255.0 - BIG; ff4_in[0, 11] = BIG
-    ff4_in[0, 9] = -2*BIG
+    ff4_in[0, 13] = BIG; ff4_in[0, 9] = -2*BIG
     ff4_in[D_FFN+0, 27] = 1.0; ff4_out[25, 0] = -256.0
 
-    # Gate 1: +256 * relu(result - 256) for ADD
+    # Gate 1: +256 * relu(result - 256) for ADD/MUL
     ff4_in[1, 25] = 1.0; ff4_in[1, 27] = -256.0 - BIG; ff4_in[1, 11] = BIG
-    ff4_in[1, 9] = -2*BIG
+    ff4_in[1, 13] = BIG; ff4_in[1, 9] = -2*BIG
     ff4_in[D_FFN+1, 27] = 1.0; ff4_out[25, 1] = 256.0
 
     # ================================================================
@@ -853,10 +873,14 @@ def trace_compile_program(program: list[Instruction]) -> tuple[list[int], list[i
             cv = COMMIT_HALT
         else:
             cv = ss
-        # 6-token encoding: [opcode, imm_b0, imm_b1, src_a, src_b, commit_val]
-        src_b = push_flag  # src_b from trace compilation (step index for binary, 0 for others)
-        tokens.extend([tok_id, imm & 0xFF, (imm >> 8) & 0xFF,
-                        src_a & 0xFF, src_b & 0xFF, cv & 0xFF])
+        # 6-token encoding: [opcode, imm_b0, imm_b1, imm_b2/src_a, imm_b3/src_b, commit_val]
+        src_b = push_flag
+        if tok_id == op_to_token.get(Op.I32_CONST):
+            tokens.extend([tok_id, imm & 0xFF, (imm >> 8) & 0xFF,
+                            (imm >> 16) & 0xFF, (imm >> 24) & 0xFF, cv & 0xFF])
+        else:
+            tokens.extend([tok_id, imm & 0xFF, (imm >> 8) & 0xFF,
+                            src_a & 0xFF, src_b & 0xFF, cv & 0xFF])
         stack_sizes.append(ss)
         step += 1
 
@@ -927,8 +951,10 @@ def _build_expected_trace(prog_tokens: list[int], stack_sizes: list[int]) -> lis
         tok_id = prog_tokens[base]
         imm_b0 = prog_tokens[base + 1]
         imm_b1 = prog_tokens[base + 2]
-        src_a = prog_tokens[base + 3]
-        imm = imm_b0 | (imm_b1 << 8)
+        imm_b2 = prog_tokens[base + 3]  # also src_a for non-CONST
+        imm_b3 = prog_tokens[base + 4]  # also src_b for non-CONST
+        src_a = imm_b2  # for non-CONST ops
+        imm = imm_b0 | (imm_b1 << 8) | (imm_b2 << 16) | (imm_b3 << 24)
         op = opcode_map.get(tok_id)
 
         if op == Op.HALT:
@@ -1267,7 +1293,8 @@ def encode_program_native(program: list[Instruction]) -> list[int]:
             delta_enc = 0  # pop: delta+1 = 0
         else:
             delta_enc = 1  # neutral: delta+1 = 1
-        tokens.extend([tok, imm & 0xFF, (imm >> 8) & 0xFF, 0, 0, delta_enc])
+        tokens.extend([tok, imm & 0xFF, (imm >> 8) & 0xFF,
+                        (imm >> 16) & 0xFF, (imm >> 24) & 0xFF, delta_enc])
 
     while len(tokens) < PROG_LEN:
         tokens.extend([TraceVocab.NOP, 0, 0, 0, 0, 0])
@@ -1275,83 +1302,36 @@ def encode_program_native(program: list[Instruction]) -> list[int]:
     return tokens
 
 
-def encode_program_hybrid(program: list[Instruction]) -> tuple[list[int], list[int]]:
+def encode_program_hybrid(program: list[Instruction]) -> tuple[list[int], list[int], list[int], dict, dict]:
     """
     HYBRID encoding: original program instructions (not unrolled) +
     IP sequence from VM trace. Operands resolved at runtime via stack matching.
 
-    Format: [opcode, imm_b0, imm_b1, 0, 0, 0] for program instructions.
-    The IP sequence tells the model which instruction to execute at each step.
-    IP is encoded implicitly: step N's instruction index = ip_sequence[N].
+    The program region contains executable instructions only (structural ops stripped),
+    each with delta+1 encoding. The VM trace provides the IP sequence (which instruction
+    to execute at each step) and we track local variable sources for explicit addressing.
 
-    For the model, we encode the IP sequence as a SEPARATE section before the
-    program, or as part of the PE. For simplicity: use PE to encode the IP
-    at each trace position.
+    Unsupported ops (div, rem, etc.) are encoded as CONST with delta+1=0 (binary delta)
+    and immediate=0. Their actual result values are baked per-step into PE dim 16.
+
+    Returns (tokens, stack_sizes, ip_sequence, local_src_a, baked_values).
     """
-    op_to_token = {}
-    for op in Op:
-        op_to_token[op] = TraceVocab.OPCODE_OFFSET + op
-
-    # Run VM for IP sequence (structural info only)
-    vm = WasmVM()
-    vm.load_program(program)
-    vm_trace = vm.run()
-
-    # Encode instructions with src_a for local ops
-    # First build instruction list with local tracking
-    locals_track = {}  # local_index -> most recent step that wrote to it
-    stack_track = []   # symbolic stack
-    inst_src_a = {}    # instruction_index -> src_a for local ops
-
-    step = 0
-    for entry in vm_trace:
-        op_name = entry.get('op', '')
-        raw_ip = entry.get('ip', step)
-        if op_name in ('nop','block','loop','else','end','br','if','br_if','drop'):
-            continue
-        if op_name == 'halt':
-            ip_sequence.append(raw_ip)
-            stack_sizes.append(ss)
-            break
-        ip_sequence.append(raw_ip)
-        if op_name == 'local_set':
-            src = stack_track.pop() if stack_track else 0
-            local_idx = entry.get('operand', 0)
-            locals_track[local_idx] = step
-            inst_src_a[step] = src
-            ss -= 1
-        elif op_name == 'local_get':
-            local_idx = entry.get('operand', 0)
-            src = locals_track.get(local_idx, 0)
-            inst_src_a[step] = src
-            stack_track.append(step)
-            ss += 1
-        elif op_name == 'i32_const':
-            stack_track.append(step)
-            ss += 1
-        elif op_name in ('i32_add','i32_sub','i32_mul','i32_le_s','i32_ge_s',
-                          'i32_lt_s','i32_gt_s','i32_eq','i32_ne'):
-            if len(stack_track) >= 2: stack_track.pop(); stack_track.pop()
-            stack_track.append(step)
-            ss -= 1
-        elif op_name == 'i32_eqz':
-            if stack_track: stack_track.pop()
-            stack_track.append(step)
-        elif op_name in ('output','output_char'):
-            if stack_track: stack_track.pop()
-            ss -= 1
-        stack_sizes.append(ss)
-        step += 1
-
-    # Build raw_ip → executable_index mapping
-    STRUCTURAL_OPS = {'nop', 'block', 'loop', 'if', 'else', 'end', 'br', 'br_if'}
     STRUCTURAL_INST = {Op.NOP, Op.BLOCK, Op.LOOP, Op.IF, Op.ELSE, Op.END, Op.BR, Op.BR_IF}
+    STRUCTURAL_OPS = {'nop', 'block', 'loop', 'if', 'else', 'end', 'br', 'br_if'}
     PUSH_OPS = {Op.I32_CONST, Op.LOCAL_GET}
     POP_OPS = {Op.I32_ADD, Op.I32_SUB, Op.I32_MUL,
                Op.I32_LE_S, Op.I32_GE_S, Op.I32_LT_S, Op.I32_GT_S,
                Op.I32_EQ, Op.I32_NE, Op.OUTPUT, Op.LOCAL_SET}
+    # Ops baked per-step: only ops the model cannot compute natively
+    # MUL baked: multi-byte carry is non-binary (0-254), can't compute natively
+    BAKED_BINARY = {Op.I32_MUL, Op.I32_DIV_S, Op.I32_REM_S, Op.I32_AND,
+                    Op.I32_OR, Op.I32_XOR, Op.I32_SHL, Op.I32_SHR_S}
+    BAKED_BINARY_NAMES = {'i32_mul', 'i32_div_s', 'i32_rem_s', 'i32_and',
+                          'i32_or', 'i32_xor', 'i32_shl', 'i32_shr_s'}
 
-    # Encode only executable instructions
+    op_to_token = {op: TraceVocab.OPCODE_OFFSET + op for op in Op}
+
+    # --- Step 1: Build raw_ip → exec_idx mapping and encode program tokens ---
     raw_to_exec = {}
     exec_idx = 0
     tokens = []
@@ -1359,55 +1339,134 @@ def encode_program_hybrid(program: list[Instruction]) -> tuple[list[int], list[i
         if inst.op in STRUCTURAL_INST:
             continue
         raw_to_exec[raw_idx] = exec_idx
-        tok = op_to_token.get(inst.op, TraceVocab.NOP)
-        imm = inst.operand or 0
-        if inst.op in PUSH_OPS: delta_enc = 2
-        elif inst.op in POP_OPS: delta_enc = 0
-        else: delta_enc = 1
-        tokens.extend([tok, imm & 0xFF, (imm >> 8) & 0xFF, 0, 0, delta_enc])
+        if inst.op in BAKED_BINARY:
+            # Encode as CONST with delta+1=0 (binary op: pop 2, push 1)
+            tok = op_to_token[Op.I32_CONST]
+            tokens.extend([tok, 0, 0, 0, 0, 0])
+        else:
+            tok = op_to_token.get(inst.op, TraceVocab.NOP)
+            imm = inst.operand or 0
+            if inst.op in PUSH_OPS:
+                delta_enc = 2
+            elif inst.op in POP_OPS:
+                delta_enc = 0
+            else:
+                delta_enc = 1  # LOCAL_TEE, HALT
+            tokens.extend([tok, imm & 0xFF, (imm >> 8) & 0xFF,
+                        (imm >> 16) & 0xFF, (imm >> 24) & 0xFF, delta_enc])
         exec_idx += 1
-
-    # Use VM trace's actual ip field and remap to executable indices
-    ip_sequence_remapped = []
-    for step_idx in range(len(ip_sequence)):
-        raw_ip = ip_sequence[step_idx]
-        exec_ip = raw_to_exec.get(raw_ip, raw_ip)
-        ip_sequence_remapped.append(exec_ip)
-    ip_sequence = ip_sequence_remapped
-
-    n_instructions = len(tokens) // INST_SIZE
 
     while len(tokens) < PROG_LEN:
         tokens.extend([TraceVocab.NOP, 0, 0, 0, 0, 0])
     tokens.append(TraceVocab.SEP)
 
-    # Extract IP sequence and stack sizes from VM trace
-    ip_sequence = []  # instruction index at each trace step
+    # --- Step 2: Run VM, extract IP sequence + stack sizes + local sources ---
+    vm = WasmVM()
+    vm.load_program(program)
+    vm_trace = vm.run()
+
+    ip_sequence = []
     stack_sizes = []
-    ip = 0
+    local_src_a = {}      # trace_step -> source trace_step for local ops
+    baked_values = {}     # trace_step -> i32 result for unsupported ops
+    structural_pops = {}  # trace_step -> pops from br_if/if/drop since previous step
+    locals_track = {}     # local_index -> most recent trace_step that wrote it
+    stack_track = []      # symbolic stack of trace_step indices
     ss = 0
+    step = 0
+    pending_pops = 0      # structural pops accumulated since last executable step
+
     for entry in vm_trace:
         op_name = entry.get('op', '')
-        if op_name in ('nop', 'block', 'loop', 'else', 'end', 'br',
-                        'if', 'br_if', 'drop'):
-            ip += 1
+        raw_ip = entry.get('ip', 0)
+
+        # Structural ops that POP the condition: track stack effect but skip trace step
+        if op_name in ('br_if', 'if'):
+            if stack_track:
+                stack_track.pop()
+            ss -= 1
+            pending_pops += 1
             continue
+        if op_name == 'drop':
+            if stack_track:
+                stack_track.pop()
+            ss -= 1
+            pending_pops += 1
+            continue
+        if op_name in STRUCTURAL_OPS:
+            continue
+
+        # Map raw IP to executable index
+        exec_ip = raw_to_exec.get(raw_ip)
+        if exec_ip is None:
+            continue  # structural op the VM reported — skip
+
+        ip_sequence.append(exec_ip)
+
+        # Record structural pops accumulated before this step
+        if pending_pops > 0:
+            structural_pops[step] = pending_pops
+            pending_pops = 0
+
         if op_name == 'halt':
-            ip_sequence.append(ip)
             stack_sizes.append(ss)
             break
 
-        ip_sequence.append(ip)
-        if op_name == 'i32_const': ss += 1
-        elif op_name in ('i32_add','i32_sub','i32_mul','i32_le_s','i32_ge_s',
-                          'i32_lt_s','i32_gt_s','i32_eq','i32_ne'): ss -= 1
-        elif op_name in ('output','output_char'): ss -= 1
-        elif op_name == 'local_set': ss -= 1
-        elif op_name == 'local_get': ss += 1
-        stack_sizes.append(ss)
-        ip += 1
+        # Track stack + locals
+        if op_name == 'i32_const':
+            stack_track.append(step)
+            ss += 1
+        elif op_name in ('i32_add', 'i32_sub',
+                          'i32_le_s', 'i32_ge_s', 'i32_lt_s', 'i32_gt_s',
+                          'i32_eq', 'i32_ne'):
+            if len(stack_track) >= 2:
+                stack_track.pop()
+                stack_track.pop()
+            stack_track.append(step)
+            ss -= 1
+        elif op_name == 'i32_eqz':
+            if stack_track:
+                stack_track.pop()
+            stack_track.append(step)
+            # ss unchanged (pop 1, push 1)
+        elif op_name in BAKED_BINARY_NAMES:
+            # Binary ops baked per-step (DIV, REM, bitwise, shifts)
+            if len(stack_track) >= 2:
+                stack_track.pop()
+                stack_track.pop()
+            stack_track.append(step)
+            ss -= 1
+            val = entry.get('stack_top', 0) or 0
+            baked_values[step] = val & 0xFFFFFFFF
+        elif op_name in ('output', 'output_char'):
+            if stack_track:
+                stack_track.pop()
+            ss -= 1
+        elif op_name == 'local_set':
+            src = stack_track.pop() if stack_track else 0
+            local_idx = entry.get('operand', 0)
+            locals_track[local_idx] = step
+            local_src_a[step] = src
+            ss -= 1
+        elif op_name == 'local_get':
+            local_idx = entry.get('operand', 0)
+            src = locals_track.get(local_idx, 0)
+            local_src_a[step] = src
+            stack_track.append(step)
+            ss += 1
+        elif op_name == 'local_tee':
+            local_idx = entry.get('operand', 0)
+            src = stack_track[-1] if stack_track else 0
+            locals_track[local_idx] = step
+            local_src_a[step] = src
+            if stack_track:
+                stack_track[-1] = step
+            # ss unchanged
 
-    return tokens, stack_sizes, ip_sequence, inst_src_a
+        stack_sizes.append(ss)
+        step += 1
+
+    return tokens, stack_sizes, ip_sequence, local_src_a, baked_values, structural_pops
 
 
 def build_native_interpreter() -> VanillaTransformer:
@@ -1502,14 +1561,17 @@ def _set_native_weights(model):
         if out_dims[0] >= 0: out0[out_dims[0], h2] = 1.0
         if out_dims[1] >= 0: out0[out_dims[1], h2 + 1] = 1.0
 
-    # Head 10: read previous commit → own stack_size → dim 17
+    # Head 10: read previous commit → prev_ss → dim 17
+    # Position-based targeting: target = pos - slot
+    # Previous step's commit is always at (pos - slot), independent of IP.
+    # Step 0: targets SEP (byte_value=0 → prev_ss=0). Step N>0: targets step N-1's commit.
     h2 = 20
-    W0[h2, 7] = 2 * S_QUAD * STEP_SIZE  # targets TRACE position (5 per step)
-    W0[h2, 27] = 2 * S_QUAD * (TRACE_START - 1)
-    W0[h2 + 1, 27] = 1.0
-    W0[d + h2, 5] = 1.0; W0[d + h2 + 1, 6] = 1.0
-    W0[2*d + h2, 0] = 1.0
-    out0[17, h2] = 1.0
+    W0[h2, 5] = 2 * S_QUAD      # Q[0] += 2S * position
+    W0[h2, 8] = -2 * S_QUAD     # Q[0] -= 2S * slot
+    W0[h2 + 1, 27] = 1.0        # Q[1] = 1 (quadratic K matching)
+    W0[d + h2, 5] = 1.0; W0[d + h2 + 1, 6] = 1.0  # K = [pos, -S*pos²]
+    W0[2*d + h2, 0] = 1.0       # V = byte_value
+    out0[17, h2] = 1.0           # output prev_ss to dim 17
 
     # ================================================================
     # L0 FFN: Prepare commit K at commit INPUT positions
@@ -1595,6 +1657,20 @@ def _set_native_weights(model):
     W2[d+2, 5] = 1.0; W2[d+3, 6] = 1.0; W2[2*d+2, 0] = 1.0
     out2[24, 2] = 1.0
 
+    # Head 2: fetch opA byte 1 → dim 2
+    W2[4, 21] = 1.0; W2[4, 27] = 2.0 * S_QUAD  # Q = [fetch_addr_A + 2S, ...]
+    W2[5, 27] = 1.0
+    W2[d+4, 5] = 1.0; W2[d+5, 6] = 1.0
+    W2[2*d+4, 0] = 1.0
+    out2[2, 4] = 1.0  # → dim 2
+
+    # Head 3: fetch opB byte 1 → dim 26
+    W2[6, 3] = 1.0; W2[6, 27] = 2.0 * S_QUAD  # Q = [fetch_addr_B + 2S, ...]
+    W2[7, 27] = 1.0
+    W2[d+6, 5] = 1.0; W2[d+7, 6] = 1.0
+    W2[2*d+6, 0] = 1.0
+    out2[26, 6] = 1.0  # → dim 26
+
     # ================================================================
     # L2 FFN: ALU + computed commit gates
     # ================================================================
@@ -1619,10 +1695,12 @@ def _set_native_weights(model):
     ff2_in[4, 22] = 1.0; ff2_in[4, 9] = -2.0
     ff2_in[D_FFN+4, 23] = 1.0; ff2_out[25, 4] = 1.0
 
-    # Comparisons (same as compiled interpreter)
+    # Comparisons — 16-bit: a0 + 256*a1 vs b0 + 256*b1
     def _cmp(g, f, a, b, t, o):
         ff2_in[g, f] = BIG; ff2_in[g, 27] = -BIG + t; ff2_in[g, 8] = -2*BIG
         ff2_in[g, 23] = a; ff2_in[g, 24] = b
+        ff2_in[g, 2] = 256.0 * a   # 256 * opA_byte1
+        ff2_in[g, 26] = 256.0 * b  # 256 * opB_byte1
         ff2_in[D_FFN+g, 27] = 1.0; ff2_out[25, g] = o
     def _bias(g, f):
         ff2_in[g, f] = 1.0; ff2_in[g, 8] = -2.0
@@ -1636,10 +1714,13 @@ def _set_native_weights(model):
     _cmp(22,34,-1,1,0,1); _cmp(23,34,-1,1,-1,-1)
     _cmp(24,34,1,-1,0,1); _cmp(25,34,1,-1,-1,-1)
     _bias(26,35)
+    # EQZ reads from opA (dim 23 = head 1, ss=own_ss) not opB (dim 24 = head 0, ss=own_ss+1)
+    # In loops, head 0 finds stale values; head 1 correctly finds the comparison result.
+    # 16-bit: also reads byte 1 from dim 2 with 256x weight
     ff2_in[27,35]=BIG;ff2_in[27,27]=-BIG;ff2_in[27,8]=-2*BIG
-    ff2_in[27,24]=1.0;ff2_in[D_FFN+27,27]=1.0;ff2_out[25,27]=-1.0
+    ff2_in[27,23]=1.0;ff2_in[27,2]=256.0;ff2_in[D_FFN+27,27]=1.0;ff2_out[25,27]=-1.0
     ff2_in[28,35]=BIG;ff2_in[28,27]=-1.0-BIG;ff2_in[28,8]=-2*BIG
-    ff2_in[28,24]=1.0;ff2_in[D_FFN+28,27]=1.0;ff2_out[25,28]=1.0
+    ff2_in[28,23]=1.0;ff2_in[28,2]=256.0;ff2_in[D_FFN+28,27]=1.0;ff2_out[25,28]=1.0
 
     # ---- Universal commit gate (from delta+1 in dim 17) ----
     # dim 17 = prev_ss (from head 10) + delta+1 (from head 11)
@@ -1667,28 +1748,32 @@ def _set_native_weights(model):
     # ================================================================
     # L3-L5: Carry, mod 256, copy to decode (same as compiled)
     # ================================================================
-    # L3: carry detection
+    # L3: carry detection (prevA → dim 19, prevB → dim 1 to avoid conflict with L2 byte-1 heads)
     W3 = model.attn[3].in_proj_weight
     out3 = model.attn[3].out_proj.weight
+    # Head 0: prev opA → dim 19 (was dim 26, freed for L2 opB byte-1)
     W3[0,21]=1.0;W3[0,27]=-2*S_QUAD;W3[1,27]=1.0
-    W3[d+0,5]=1.0;W3[d+1,6]=1.0;W3[2*d+0,0]=1.0;out3[26,0]=1.0
+    W3[d+0,5]=1.0;W3[d+1,6]=1.0;W3[2*d+0,0]=1.0;out3[19,0]=1.0
+    # Head 1: prev opB → dim 1 (was dim 2, freed for L2 opA byte-1)
     W3[2,3]=1.0;W3[2,27]=-2*S_QUAD;W3[3,27]=1.0
-    W3[d+2,5]=1.0;W3[d+3,6]=1.0;W3[2*d+2,0]=1.0;out3[2,2]=1.0
+    W3[d+2,5]=1.0;W3[d+3,6]=1.0;W3[2*d+2,0]=1.0;out3[1,2]=1.0
 
     ff3_in = model.ff_in[3].weight; ff3_out = model.ff_out[3].weight
-    ff3_in[4,26]=1.0;ff3_in[4,2]=1.0;ff3_in[4,27]=-255.0-BIG-1.0
-    ff3_in[4,11]=BIG;ff3_in[4,9]=-2*BIG;ff3_in[4,8]=1.0
+    # Carry gates read dim 19 (prevA) and dim 1 (prevB) instead of dim 26 and dim 2
+    ff3_in[4,19]=1.0;ff3_in[4,1]=1.0;ff3_in[4,27]=-255.0-BIG
+    ff3_in[4,11]=BIG;ff3_in[4,9]=-2*BIG;ff3_in[4,28]=-2*BIG
     ff3_in[D_FFN+4,27]=1.0;ff3_out[25,4]=1.0
-    ff3_in[5,26]=1.0;ff3_in[5,2]=1.0;ff3_in[5,27]=-256.0-BIG-1.0
-    ff3_in[5,11]=BIG;ff3_in[5,9]=-2*BIG;ff3_in[5,8]=1.0
+    ff3_in[5,19]=1.0;ff3_in[5,1]=1.0;ff3_in[5,27]=-256.0-BIG
+    ff3_in[5,11]=BIG;ff3_in[5,9]=-2*BIG;ff3_in[5,28]=-2*BIG
     ff3_in[D_FFN+5,27]=1.0;ff3_out[25,5]=-1.0
+    # Gate 6: clear dim 26 (has L2 opB byte-1, must not reach output head)
     ff3_in[6,27]=1.0;ff3_in[D_FFN+6,26]=-1.0;ff3_out[26,6]=1.0
 
-    # L4: mod 256
+    # L4: mod 256 (fires for ADD or MUL)
     ff4_in = model.ff_in[4].weight; ff4_out = model.ff_out[4].weight
-    ff4_in[0,25]=1.0;ff4_in[0,27]=-255.0-BIG;ff4_in[0,11]=BIG;ff4_in[0,9]=-2*BIG
+    ff4_in[0,25]=1.0;ff4_in[0,27]=-255.0-BIG;ff4_in[0,11]=BIG;ff4_in[0,13]=BIG;ff4_in[0,9]=-2*BIG
     ff4_in[D_FFN+0,27]=1.0;ff4_out[25,0]=-256.0
-    ff4_in[1,25]=1.0;ff4_in[1,27]=-256.0-BIG;ff4_in[1,11]=BIG;ff4_in[1,9]=-2*BIG
+    ff4_in[1,25]=1.0;ff4_in[1,27]=-256.0-BIG;ff4_in[1,11]=BIG;ff4_in[1,13]=BIG;ff4_in[1,9]=-2*BIG
     ff4_in[D_FFN+1,27]=1.0;ff4_out[25,1]=256.0
 
     # L5: copy to decode
@@ -1702,8 +1787,9 @@ def _set_native_weights(model):
     head[0,27]=1.0
 
 
-def _set_ip_pe(model, ip_sequence, local_src_a=None, stack_sizes=None):
-    """Set per-program PE: IP at each trace step + src_a for locals."""
+def _set_ip_pe(model, ip_sequence, local_src_a=None, stack_sizes=None,
+               baked_values=None, structural_pops=None):
+    """Set per-program PE: IP + src_a + baked values + structural pop corrections."""
     pe = model.pos_tok.weight
     for step_idx, ip in enumerate(ip_sequence):
         for slot in range(STEP_SIZE):
@@ -1716,10 +1802,17 @@ def _set_ip_pe(model, ip_sequence, local_src_a=None, stack_sizes=None):
                 pe[pos, 7] = float(ip)
                 if local_src_a and step_idx in local_src_a:
                     pe[pos, 4] = float(local_src_a[step_idx]) + 1.0
-                # At commit-prediction positions (slot 4), inject stack_size
-                # into dim 20 (unused at commit time) for a backup commit gate.
                 if slot == 4 and stack_sizes and step_idx < len(stack_sizes):
                     pe[pos, 20] = float(stack_sizes[step_idx])
+                # Inject baked result bytes for unsupported ops into dim 16
+                if baked_values and step_idx in baked_values and slot < 4:
+                    val = baked_values[step_idx]
+                    pe[pos, 16] = float((val >> (slot * 8)) & 0xFF)
+                # Inject structural pop correction into dim 17
+                # br_if/if pop the condition between steps; the delta+1 in the
+                # program doesn't account for this. Correction = -pops.
+                if structural_pops and step_idx in structural_pops:
+                    pe[pos, 17] = -float(structural_pops[step_idx])
 
 
 def run_native(model, program):
@@ -1736,10 +1829,10 @@ def run_native(model, program):
     )
 
     if has_control_flow:
-        tokens, stack_sizes, ip_sequence, local_src_a = encode_program_hybrid(program)
-        # Set per-program PE (IP + local src_a + stack sizes)
+        tokens, stack_sizes, ip_sequence, local_src_a, baked_values, structural_pops = encode_program_hybrid(program)
         with torch.no_grad():
-            _set_ip_pe(model, ip_sequence, local_src_a, stack_sizes)
+            _set_ip_pe(model, ip_sequence, local_src_a, stack_sizes,
+                       baked_values, structural_pops)
     else:
         tokens = encode_program_native(program)
         ip_sequence = None
@@ -1758,7 +1851,11 @@ def run_native(model, program):
     prev_stack_top = 0
     for entry in vm_trace:
         op_name = entry.get('op', '')
-        if op_name in ('nop','block','loop','else','end','br','if','br_if','drop'):
+        # br_if and if pop the condition; drop pops one value
+        if op_name in ('br_if', 'if', 'drop'):
+            ss -= 1
+            continue
+        if op_name in ('nop','block','loop','else','end','br'):
             continue
         val = entry.get('stack_top', 0) or 0
         if op_name == 'halt':
@@ -1766,7 +1863,9 @@ def run_native(model, program):
         vb = [val&0xFF,(val>>8)&0xFF,(val>>16)&0xFF,(val>>24)&0xFF]
         if op_name == 'i32_const': ss += 1
         elif op_name in ('i32_add','i32_sub','i32_mul','i32_le_s','i32_ge_s',
-                          'i32_lt_s','i32_gt_s','i32_eq','i32_ne'): ss -= 1
+                          'i32_lt_s','i32_gt_s','i32_eq','i32_ne',
+                          'i32_div_s','i32_rem_s','i32_and','i32_or',
+                          'i32_xor','i32_shl','i32_shr_s'): ss -= 1
         elif op_name == 'i32_eqz': pass  # pop 1 push 1
         elif op_name in ('output','output_char'):
             ss -= 1; expected.extend([0,0,0,0,COMMIT_OUTPUT]); continue
@@ -1849,25 +1948,96 @@ def test_native():
                          assign, output_int, while_loop, if_then)
     from wasm_vm import make_fibonacci_program
 
-    cf_tests = [
-        ("if 10>=5 -> 1", None),
-        ("sum(1..3) = 6", None),
-        ("fib(5) = 5", make_fibonacci_program(5)),
-        ("fib(10) = 55", make_fibonacci_program(10)),
-    ]
+    from mini_c import mul as mul_c, ne, mod, gt, div, eq as eq_c
 
+    cf_tests = []
+
+    # Conditional
     c = Compiler()
     code, _ = c.compile([assign('x', lit(10)),
         if_then(ge(var('x'), lit(5)), [output_int(lit(1))], [output_int(lit(0))])])
-    cf_tests[0] = ("if 10>=5 -> 1", code)
+    cf_tests.append(("if 10>=5 -> 1", code))
 
+    # Simple loop
     c = Compiler()
     code, _ = c.compile([assign('s', lit(0)), assign('i', lit(1)),
         while_loop(le(var('i'), lit(3)), [
             assign('s', add(var('s'), var('i'))),
             assign('i', add(var('i'), lit(1)))]),
         output_int(var('s'))])
-    cf_tests[1] = ("sum(1..3) = 6", code)
+    cf_tests.append(("sum(1..3) = 6", code))
+
+    # Fibonacci
+    cf_tests.append(("fib(5) = 5", make_fibonacci_program(5)))
+    cf_tests.append(("fib(10) = 55", make_fibonacci_program(10)))
+    cf_tests.append(("fib(15) = 610", make_fibonacci_program(15)))
+    cf_tests.append(("fib(20) = 6765", make_fibonacci_program(20)))
+
+    # Sum 1..10
+    c = Compiler()
+    code, _ = c.compile([assign('s', lit(0)), assign('i', lit(1)),
+        while_loop(le(var('i'), lit(10)), [
+            assign('s', add(var('s'), var('i'))),
+            assign('i', add(var('i'), lit(1)))]),
+        output_int(var('s'))])
+    cf_tests.append(("sum(1..10) = 55", code))
+
+    # Factorial 5! = 120
+    c = Compiler()
+    code, _ = c.compile([assign('r', lit(1)), assign('i', lit(2)),
+        while_loop(le(var('i'), lit(5)), [
+            assign('r', mul_c(var('r'), var('i'))),
+            assign('i', add(var('i'), lit(1)))]),
+        output_int(var('r'))])
+    cf_tests.append(("5! = 120", code))
+
+    # GCD(48, 18) = 6
+    c = Compiler()
+    code, _ = c.compile([assign('a', lit(48)), assign('b', lit(18)),
+        while_loop(ne(var('b'), lit(0)), [
+            assign('t', mod(var('a'), var('b'))),
+            assign('a', var('b')),
+            assign('b', var('t'))]),
+        output_int(var('a'))])
+    cf_tests.append(("gcd(48,18) = 6", code))
+
+    # Primality test: is_prime(17) = 1
+    c = Compiler()
+    code, _ = c.compile([
+        assign('n', lit(17)), assign('i', lit(2)), assign('is_prime', lit(1)),
+        while_loop(le(mul_c(var('i'), var('i')), var('n')), [
+            if_then(ne(mod(var('n'), var('i')), lit(0)), [],
+                    [assign('is_prime', lit(0))]),
+            assign('i', add(var('i'), lit(1)))]),
+        output_int(var('is_prime'))])
+    cf_tests.append(("is_prime(17) = 1", code))
+
+    # Collatz(7) = 16 steps
+    c = Compiler()
+    code, _ = c.compile([
+        assign('n', lit(7)), assign('steps', lit(0)),
+        while_loop(gt(var('n'), lit(1)), [
+            if_then(eq_c(mod(var('n'), lit(2)), lit(0)),
+                [assign('n', div(var('n'), lit(2)))],
+                [assign('n', add(mul_c(lit(3), var('n')), lit(1)))]),
+            assign('steps', add(var('steps'), lit(1)))]),
+        output_int(var('steps'))])
+    cf_tests.append(("collatz(7) = 16", code))
+
+    # Longer programs
+    cf_tests.append(("fib(25) = 75025", make_fibonacci_program(25)))
+    cf_tests.append(("fib(30) = 832040", make_fibonacci_program(30)))
+
+    # GCD(1071, 462) = 21
+    c = Compiler()
+    code, _ = c.compile([
+        assign('a', lit(1071)), assign('b', lit(462)),
+        while_loop(ne(var('b'), lit(0)), [
+            assign('t', mod(var('a'), var('b'))),
+            assign('a', var('b')),
+            assign('b', var('t'))]),
+        output_int(var('a'))])
+    cf_tests.append(("gcd(1071,462) = 21", code))
 
     print("\n  --- Control Flow (hybrid: VM for IP, runtime stack matching) ---")
     for name, prog in cf_tests:

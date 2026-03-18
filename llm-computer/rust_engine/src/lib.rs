@@ -309,8 +309,7 @@ fn generate_trace_multilayer(
 
                 let q0 = qkv[h2];
                 let q1 = qkv[h2 + 1];
-                // Brute-force for traces <10K tokens (faster than hull rebuild overhead)
-                // For longer traces (>50K), call hull.query() instead
+                // Always brute-force for now (hull has precision issues on long traces)
                 let (rv0, rv1) = hulls[l][hi].query_brute(q0, q1);
 
                 for i in 0..D {
