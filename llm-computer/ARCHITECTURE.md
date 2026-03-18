@@ -293,3 +293,64 @@ Arithmetic, comparisons, conditionals, loops, fib(30)=832040, GCD, primality, Co
 - 10! = 3,628,800 (intermediate MUL > 65535)
 - collatz(871) = 178 (sequence reaches 190996)
 - pow(2,17+) (products > 65535)
+
+## Path Forward: MUL Byte 2+ and Full 32-bit MUL
+
+### The Problem
+MUL byte 2 at slot 2 requires:
+1. **k-2 fetch heads**: operand bytes from 2 slots back (a0, b0)
+2. **Carry chain**: carry_1 depends on carry_0, each needing floor(x/256)
+3. **Correct cross terms**: a0*b2 + a1*b1 + a2*b0 (not what L3 gates 8-9 produce)
+4. **Slot-2-only gating**: byte-2 correction gates must NOT fire at slot 1 or 3
+
+### The Blocker: Slot-Specific Gating at d_model=36
+All 36 dims are allocated. The FFN gate input is a linear combination of dims.
+To gate on "slot == 2", we need a dim that's non-zero at slot 2 and zero elsewhere.
+No such dim exists:
+- dim 8 (slot) = 0,1,2,3,4 — continuous, can't threshold exactly
+- dim 9 (is_commit_slot) — used by commit gates, setting at slot 2 breaks ADD
+- dim 28 (is_commit_input) — used for slot-0 suppression
+- Using BIG/2*dim8 for "slot >= 2" works at slot 2 but LEAKS at slot 3 with
+  0.5*BIG = 100000 added to gate, overwhelming operand values
+
+### Solution: Increase d_model to 38 (or 40)
+Adding 2 dims provides:
+- **dim 36**: `is_slot_2` PE indicator (1.0 at slot 2 positions, 0 elsewhere)
+- **dim 37**: `is_slot_3` PE indicator (for byte 3 support)
+
+With these dims, slot-specific gating is trivial:
+```
+gate = BIG * dim36 + BIG * is_mul - 2*BIG  → fires at slot 2 for MUL only
+```
+
+This also gives 1 more attention head per layer (19 heads at d_model=38, 20 at 40),
+providing room for k-2 and k-3 fetch heads.
+
+### Required Changes for d_model=38
+1. **Constants**: D_MODEL=38, N_HEADS=19, d_model in model.py
+2. **All dimension references**: shift any dims > 35 as needed
+3. **Rust engine**: update D, N_HEADS constants
+4. **Layer count**: N_LAYERS=10 for carry chain depth
+5. **PE**: add is_slot_2 and is_slot_3 indicators
+6. **L3**: k-2 fetch heads (2 new) + slot-specific cross term gates
+7. **L4-L6**: carry chain (carry_0 → carry_1 → carry_2) with 1/256 scaling
+8. **L7-L9**: two-stage mod reduction for all bytes
+
+### The dim 0 Carry Trick (Already Implemented for Byte 1)
+The key insight enabling carry propagation: **dim 0 (byte_value) is NEVER modified by
+any attention head or FFN.** At slot k, the input token is byte k-1 of the current step.
+So dim 0 = byte_{k-1}_result. The carry formula:
+```
+carry_k = (byte_{k-1}_raw - dim0) / 256
+```
+uses 1/256 output weight scaling. This is exact in float64. The raw total is recomputed
+from operand bytes fetched via k-1 and k-2 attention heads.
+
+### DIV/REM: Keep Baked
+Division is not expressible as bilinear products. The alternatives:
+- **Repeated subtraction**: O(quotient) steps — too slow for large dividends
+- **Binary long division**: needs SHR (shift right) which is also unsupported
+- **Newton-Raphson**: needs MUL in a convergence loop — too complex
+
+The baked approach (PE dim 16 injection) costs zero extra trace tokens and works for
+all operand ranges. This is the right tradeoff.
