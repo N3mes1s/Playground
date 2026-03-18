@@ -1241,9 +1241,16 @@ def test():
 def encode_program_native(program: list[Instruction]) -> list[int]:
     """
     Encode program as raw WASM instructions — NO unrolling, NO explicit addresses.
-    Format: [opcode, imm_b0, imm_b1, 0, 0, 0] × N_instructions + padding + SEP.
-    The model must figure out operands at runtime from the trace.
+    Format: [opcode, imm_b0, imm_b1, src_a, 0, delta+1] × N + padding + SEP.
+    delta+1: 0=pop(-1), 1=neutral(0), 2=push(+1). Model computes commit from this.
+    src_a: for local.get/set only (step index of source).
     """
+    PUSH_OPS = {Op.I32_CONST, Op.LOCAL_GET}
+    POP_OPS = {Op.I32_ADD, Op.I32_SUB, Op.I32_MUL,
+               Op.I32_LE_S, Op.I32_GE_S, Op.I32_LT_S, Op.I32_GT_S,
+               Op.I32_EQ, Op.I32_NE, Op.OUTPUT, Op.LOCAL_SET}
+    # EQZ, LOCAL_TEE, HALT = neutral (delta=0)
+
     op_to_token = {}
     for op in Op:
         op_to_token[op] = TraceVocab.OPCODE_OFFSET + op
@@ -1254,7 +1261,13 @@ def encode_program_native(program: list[Instruction]) -> list[int]:
             continue
         tok = op_to_token.get(inst.op, TraceVocab.NOP)
         imm = inst.operand or 0
-        tokens.extend([tok, imm & 0xFF, (imm >> 8) & 0xFF, 0, 0, 0])
+        if inst.op in PUSH_OPS:
+            delta_enc = 2  # push: delta+1 = 2
+        elif inst.op in POP_OPS:
+            delta_enc = 0  # pop: delta+1 = 0
+        else:
+            delta_enc = 1  # neutral: delta+1 = 1
+        tokens.extend([tok, imm & 0xFF, (imm >> 8) & 0xFF, 0, 0, delta_enc])
 
     while len(tokens) < PROG_LEN:
         tokens.extend([TraceVocab.NOP, 0, 0, 0, 0, 0])
@@ -1291,50 +1304,76 @@ def encode_program_hybrid(program: list[Instruction]) -> tuple[list[int], list[i
     inst_src_a = {}    # instruction_index -> src_a for local ops
 
     step = 0
-    for i_idx, entry in enumerate(vm_trace):
+    for entry in vm_trace:
         op_name = entry.get('op', '')
+        raw_ip = entry.get('ip', step)
         if op_name in ('nop','block','loop','else','end','br','if','br_if','drop'):
             continue
-        if op_name == 'halt': break
+        if op_name == 'halt':
+            ip_sequence.append(raw_ip)
+            stack_sizes.append(ss)
+            break
+        ip_sequence.append(raw_ip)
         if op_name == 'local_set':
             src = stack_track.pop() if stack_track else 0
             local_idx = entry.get('operand', 0)
             locals_track[local_idx] = step
             inst_src_a[step] = src
+            ss -= 1
         elif op_name == 'local_get':
             local_idx = entry.get('operand', 0)
             src = locals_track.get(local_idx, 0)
             inst_src_a[step] = src
             stack_track.append(step)
+            ss += 1
         elif op_name == 'i32_const':
             stack_track.append(step)
+            ss += 1
         elif op_name in ('i32_add','i32_sub','i32_mul','i32_le_s','i32_ge_s',
                           'i32_lt_s','i32_gt_s','i32_eq','i32_ne'):
             if len(stack_track) >= 2: stack_track.pop(); stack_track.pop()
             stack_track.append(step)
+            ss -= 1
         elif op_name == 'i32_eqz':
             if stack_track: stack_track.pop()
             stack_track.append(step)
         elif op_name in ('output','output_char'):
             if stack_track: stack_track.pop()
+            ss -= 1
+        stack_sizes.append(ss)
         step += 1
 
-    # Now encode program tokens (using original instruction list)
+    # Build raw_ip → executable_index mapping
+    STRUCTURAL_OPS = {'nop', 'block', 'loop', 'if', 'else', 'end', 'br', 'br_if'}
+    STRUCTURAL_INST = {Op.NOP, Op.BLOCK, Op.LOOP, Op.IF, Op.ELSE, Op.END, Op.BR, Op.BR_IF}
+    PUSH_OPS = {Op.I32_CONST, Op.LOCAL_GET}
+    POP_OPS = {Op.I32_ADD, Op.I32_SUB, Op.I32_MUL,
+               Op.I32_LE_S, Op.I32_GE_S, Op.I32_LT_S, Op.I32_GT_S,
+               Op.I32_EQ, Op.I32_NE, Op.OUTPUT, Op.LOCAL_SET}
+
+    # Encode only executable instructions
+    raw_to_exec = {}
+    exec_idx = 0
     tokens = []
-    inst_idx = 0
-    for inst in program:
-        if inst.op == Op.NOP:
-            tokens.extend([TraceVocab.NOP, 0, 0, 0, 0, 0])
-            inst_idx += 1
+    for raw_idx, inst in enumerate(program):
+        if inst.op in STRUCTURAL_INST:
             continue
+        raw_to_exec[raw_idx] = exec_idx
         tok = op_to_token.get(inst.op, TraceVocab.NOP)
         imm = inst.operand or 0
-        # For local ops: encode src_a at position 3
-        src_a = 0
-        # We need to map instruction index to trace step for src_a lookup
-        # This is complex for loops. For now, leave src_a=0 (will be set per-step in PE)
-        tokens.extend([tok, imm & 0xFF, (imm >> 8) & 0xFF, src_a, 0, 0])
-        inst_idx += 1
+        if inst.op in PUSH_OPS: delta_enc = 2
+        elif inst.op in POP_OPS: delta_enc = 0
+        else: delta_enc = 1
+        tokens.extend([tok, imm & 0xFF, (imm >> 8) & 0xFF, 0, 0, delta_enc])
+        exec_idx += 1
+
+    # Use VM trace's actual ip field and remap to executable indices
+    ip_sequence_remapped = []
+    for step_idx in range(len(ip_sequence)):
+        raw_ip = ip_sequence[step_idx]
+        exec_ip = raw_to_exec.get(raw_ip, raw_ip)
+        ip_sequence_remapped.append(exec_ip)
+    ip_sequence = ip_sequence_remapped
 
     n_instructions = len(tokens) // INST_SIZE
 
@@ -1447,6 +1486,7 @@ def _set_native_weights(model):
         (8, 0, (33, 34), (33, 34)),
         (9, 0, (22, 35), (22, 35)),
         (4, 3, (0, -1), (4, -1)),    # src_a for locals → dim 4
+        (11, 5, (0, -1), (17, -1)),  # delta+1 from position 5 → dim 17 (ADDS to prev_ss)
     ]
     for head, offset, v_dims, out_dims in fetch_heads:
         h2 = head * 2
@@ -1601,31 +1641,28 @@ def _set_native_weights(model):
     ff2_in[28,35]=BIG;ff2_in[28,27]=-1.0-BIG;ff2_in[28,8]=-2*BIG
     ff2_in[28,24]=1.0;ff2_in[D_FFN+28,27]=1.0;ff2_out[25,28]=1.0
 
-    # ---- Computed commit gates (from opcode + prev_ss) ----
-    # Gate 29: CONST push → prev_ss + 1
-    ff2_in[29,17]=1.0;ff2_in[29,27]=1.0-2*BIG;ff2_in[29,10]=BIG;ff2_in[29,9]=BIG
-    ff2_in[D_FFN+29,27]=1.0;ff2_out[25,29]=1.0
-    # Gate 30: binary pop → prev_ss - 1 (ADD/SUB/MUL)
-    ff2_in[30,17]=1.0;ff2_in[30,27]=-1.0-2*BIG
-    for fd in (11,12,13): ff2_in[30,fd]=BIG
-    ff2_in[30,9]=BIG;ff2_in[D_FFN+30,27]=1.0;ff2_out[25,30]=1.0
-    # Gate 31: comparison pop → prev_ss - 1
-    ff2_in[31,17]=1.0;ff2_in[31,27]=-1.0-2*BIG
-    for fd in (29,30,31,32,33,34): ff2_in[31,fd]=BIG
-    ff2_in[31,9]=BIG;ff2_in[D_FFN+31,27]=1.0;ff2_out[25,31]=1.0
-    # Gate 32: EQZ → prev_ss
-    ff2_in[32,17]=1.0;ff2_in[32,27]=-2*BIG;ff2_in[32,35]=BIG;ff2_in[32,9]=BIG
-    ff2_in[D_FFN+32,27]=1.0;ff2_out[25,32]=1.0
-    # Gate 33: OUTPUT → COMMIT_OUTPUT
-    ff2_in[33,27]=float(COMMIT_OUTPUT)-2*BIG;ff2_in[33,14]=BIG;ff2_in[33,9]=BIG
-    ff2_in[D_FFN+33,27]=1.0;ff2_out[25,33]=1.0
-    # Gate 34: HALT → COMMIT_HALT
-    ff2_in[34,27]=float(COMMIT_HALT)-2*BIG;ff2_in[34,15]=BIG;ff2_in[34,9]=BIG
-    ff2_in[D_FFN+34,27]=1.0;ff2_out[25,34]=1.0
+    # ---- Universal commit gate (from delta+1 in dim 17) ----
+    # dim 17 = prev_ss (from head 10) + delta+1 (from head 11)
+    # commit = dim17 - 1 = prev_ss + delta
+    # Gate 29: generic commit (fires for all non-OUTPUT/HALT ops)
+    # gate = relu(dim17 - 1 + BIG*is_commit - BIG*bias - BIG*is_output - BIG*is_halt)
+    ff2_in[29, 17] = 1.0      # prev_ss + delta+1
+    ff2_in[29, 27] = -1.0 - BIG  # -1 (to get delta from delta+1) - BIG*bias
+    ff2_in[29, 9] = BIG       # + BIG*is_commit
+    ff2_in[29, 14] = -BIG     # - BIG*is_output (suppress)
+    ff2_in[29, 15] = -BIG     # - BIG*is_halt (suppress)
+    ff2_in[D_FFN+29, 27] = 1.0
+    ff2_out[25, 29] = 1.0
 
-    # Local ops commit: deferred — needs clean dim allocation.
-    # Currently the CONST commit gate (29) handles local.get push
-    # if the instruction also has is_const flag set.
+    # Gate 33: OUTPUT → COMMIT_OUTPUT (254)
+    ff2_in[33, 27] = float(COMMIT_OUTPUT) - 2*BIG
+    ff2_in[33, 14] = BIG; ff2_in[33, 9] = BIG
+    ff2_in[D_FFN+33, 27] = 1.0; ff2_out[25, 33] = 1.0
+
+    # Gate 34: HALT → COMMIT_HALT (255)
+    ff2_in[34, 27] = float(COMMIT_HALT) - 2*BIG
+    ff2_in[34, 15] = BIG; ff2_in[34, 9] = BIG
+    ff2_in[D_FFN+34, 27] = 1.0; ff2_out[25, 34] = 1.0
 
     # ================================================================
     # L3-L5: Carry, mod 256, copy to decode (same as compiled)
