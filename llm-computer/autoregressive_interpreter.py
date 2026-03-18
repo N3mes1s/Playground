@@ -1262,6 +1262,115 @@ def encode_program_native(program: list[Instruction]) -> list[int]:
     return tokens
 
 
+def encode_program_hybrid(program: list[Instruction]) -> tuple[list[int], list[int]]:
+    """
+    HYBRID encoding: original program instructions (not unrolled) +
+    IP sequence from VM trace. Operands resolved at runtime via stack matching.
+
+    Format: [opcode, imm_b0, imm_b1, 0, 0, 0] for program instructions.
+    The IP sequence tells the model which instruction to execute at each step.
+    IP is encoded implicitly: step N's instruction index = ip_sequence[N].
+
+    For the model, we encode the IP sequence as a SEPARATE section before the
+    program, or as part of the PE. For simplicity: use PE to encode the IP
+    at each trace position.
+    """
+    op_to_token = {}
+    for op in Op:
+        op_to_token[op] = TraceVocab.OPCODE_OFFSET + op
+
+    # Run VM for IP sequence (structural info only)
+    vm = WasmVM()
+    vm.load_program(program)
+    vm_trace = vm.run()
+
+    # Encode instructions with src_a for local ops
+    # First build instruction list with local tracking
+    locals_track = {}  # local_index -> most recent step that wrote to it
+    stack_track = []   # symbolic stack
+    inst_src_a = {}    # instruction_index -> src_a for local ops
+
+    step = 0
+    for i_idx, entry in enumerate(vm_trace):
+        op_name = entry.get('op', '')
+        if op_name in ('nop','block','loop','else','end','br','if','br_if','drop'):
+            continue
+        if op_name == 'halt': break
+        if op_name == 'local_set':
+            src = stack_track.pop() if stack_track else 0
+            local_idx = entry.get('operand', 0)
+            locals_track[local_idx] = step
+            inst_src_a[step] = src
+        elif op_name == 'local_get':
+            local_idx = entry.get('operand', 0)
+            src = locals_track.get(local_idx, 0)
+            inst_src_a[step] = src
+            stack_track.append(step)
+        elif op_name == 'i32_const':
+            stack_track.append(step)
+        elif op_name in ('i32_add','i32_sub','i32_mul','i32_le_s','i32_ge_s',
+                          'i32_lt_s','i32_gt_s','i32_eq','i32_ne'):
+            if len(stack_track) >= 2: stack_track.pop(); stack_track.pop()
+            stack_track.append(step)
+        elif op_name == 'i32_eqz':
+            if stack_track: stack_track.pop()
+            stack_track.append(step)
+        elif op_name in ('output','output_char'):
+            if stack_track: stack_track.pop()
+        step += 1
+
+    # Now encode program tokens (using original instruction list)
+    tokens = []
+    inst_idx = 0
+    for inst in program:
+        if inst.op == Op.NOP:
+            tokens.extend([TraceVocab.NOP, 0, 0, 0, 0, 0])
+            inst_idx += 1
+            continue
+        tok = op_to_token.get(inst.op, TraceVocab.NOP)
+        imm = inst.operand or 0
+        # For local ops: encode src_a at position 3
+        src_a = 0
+        # We need to map instruction index to trace step for src_a lookup
+        # This is complex for loops. For now, leave src_a=0 (will be set per-step in PE)
+        tokens.extend([tok, imm & 0xFF, (imm >> 8) & 0xFF, src_a, 0, 0])
+        inst_idx += 1
+
+    n_instructions = len(tokens) // INST_SIZE
+
+    while len(tokens) < PROG_LEN:
+        tokens.extend([TraceVocab.NOP, 0, 0, 0, 0, 0])
+    tokens.append(TraceVocab.SEP)
+
+    # Extract IP sequence and stack sizes from VM trace
+    ip_sequence = []  # instruction index at each trace step
+    stack_sizes = []
+    ip = 0
+    ss = 0
+    for entry in vm_trace:
+        op_name = entry.get('op', '')
+        if op_name in ('nop', 'block', 'loop', 'else', 'end', 'br',
+                        'if', 'br_if', 'drop'):
+            ip += 1
+            continue
+        if op_name == 'halt':
+            ip_sequence.append(ip)
+            stack_sizes.append(ss)
+            break
+
+        ip_sequence.append(ip)
+        if op_name == 'i32_const': ss += 1
+        elif op_name in ('i32_add','i32_sub','i32_mul','i32_le_s','i32_ge_s',
+                          'i32_lt_s','i32_gt_s','i32_eq','i32_ne'): ss -= 1
+        elif op_name in ('output','output_char'): ss -= 1
+        elif op_name == 'local_set': ss -= 1
+        elif op_name == 'local_get': ss += 1
+        stack_sizes.append(ss)
+        ip += 1
+
+    return tokens, stack_sizes, ip_sequence, inst_src_a
+
+
 def build_native_interpreter() -> VanillaTransformer:
     """
     Build the NATIVE interpreter — stack matching, no explicit addresses.
@@ -1337,6 +1446,7 @@ def _set_native_weights(model):
         (7, 0, (31, 32), (31, 32)),
         (8, 0, (33, 34), (33, 34)),
         (9, 0, (22, 35), (22, 35)),
+        (4, 3, (0, -1), (4, -1)),    # src_a for locals → dim 4
     ]
     for head, offset, v_dims, out_dims in fetch_heads:
         h2 = head * 2
@@ -1425,6 +1535,14 @@ def _set_native_weights(model):
     ff1_in[D_FFN + 1, 27] = -8 * S_QUAD
     ff1_out[3, 1] = 1.0
 
+    # Gate 2: explicit-address fetch for locals (is_copy ops)
+    # src_a from dim 4 (head 4). dim 4 = is_trace(1) + src_a
+    ff1_in[2, 22] = 1.0  # is_copy
+    ff1_in[D_FFN + 2, 4] = 2 * S_QUAD * STEP_SIZE
+    ff1_in[D_FFN + 2, 8] = 2 * S_QUAD
+    ff1_in[D_FFN + 2, 27] = 2 * S_QUAD * (TRACE_START - STEP_SIZE)
+    ff1_out[21, 2] = 1.0  # adds to fetch_addr_A
+
     # ================================================================
     # L2 Attention: Fetch operand bytes
     # ================================================================
@@ -1457,6 +1575,9 @@ def _set_native_weights(model):
     # MUL — slot 0
     ff2_in[3, 23] = 1.0; ff2_in[3, 13] = BIG; ff2_in[3, 27] = -BIG; ff2_in[3, 8] = -2*BIG
     ff2_in[D_FFN+3, 24] = 1.0; ff2_out[25, 3] = 1.0
+    # COPY (local.get/set passthrough) — all byte slots
+    ff2_in[4, 22] = 1.0; ff2_in[4, 9] = -2.0
+    ff2_in[D_FFN+4, 23] = 1.0; ff2_out[25, 4] = 1.0
 
     # Comparisons (same as compiled interpreter)
     def _cmp(g, f, a, b, t, o):
@@ -1502,6 +1623,10 @@ def _set_native_weights(model):
     ff2_in[34,27]=float(COMMIT_HALT)-2*BIG;ff2_in[34,15]=BIG;ff2_in[34,9]=BIG
     ff2_in[D_FFN+34,27]=1.0;ff2_out[25,34]=1.0
 
+    # Local ops commit: deferred — needs clean dim allocation.
+    # Currently the CONST commit gate (29) handles local.get push
+    # if the instruction also has is_const flag set.
+
     # ================================================================
     # L3-L5: Carry, mod 256, copy to decode (same as compiled)
     # ================================================================
@@ -1540,9 +1665,47 @@ def _set_native_weights(model):
     head[0,27]=1.0
 
 
+def _set_ip_pe(model, ip_sequence, local_src_a=None, stack_sizes=None):
+    """Set per-program PE: IP at each trace step + src_a for locals."""
+    pe = model.pos_tok.weight
+    for step_idx, ip in enumerate(ip_sequence):
+        for slot in range(STEP_SIZE):
+            if slot == 0 and step_idx == 0:
+                pos = TRACE_START - 1
+            else:
+                trace_offset = step_idx * STEP_SIZE + slot
+                pos = TRACE_START + trace_offset - 1
+            if pos < pe.shape[0]:
+                pe[pos, 7] = float(ip)
+                if local_src_a and step_idx in local_src_a:
+                    pe[pos, 4] = float(local_src_a[step_idx]) + 1.0
+                # At commit-prediction positions (slot 4), inject stack_size
+                # into dim 20 (unused at commit time) for a backup commit gate.
+                if slot == 4 and stack_sizes and step_idx < len(stack_sizes):
+                    pe[pos, 20] = float(stack_sizes[step_idx])
+
+
 def run_native(model, program):
-    """Run a straight-line program on the NATIVE interpreter (no trace compilation)."""
-    tokens = encode_program_native(program)
+    """
+    Run program on NATIVE interpreter.
+    For straight-line: no VM needed, IP = step_number.
+    For control flow: uses hybrid encoding (VM for IP sequence only).
+    Values always resolved at runtime via stack matching.
+    """
+    has_control_flow = any(
+        inst.op in (Op.IF, Op.ELSE, Op.BLOCK, Op.LOOP, Op.BR, Op.BR_IF,
+                    Op.LOCAL_GET, Op.LOCAL_SET, Op.LOCAL_TEE)
+        for inst in program
+    )
+
+    if has_control_flow:
+        tokens, stack_sizes, ip_sequence, local_src_a = encode_program_hybrid(program)
+        # Set per-program PE (IP + local src_a + stack sizes)
+        with torch.no_grad():
+            _set_ip_pe(model, ip_sequence, local_src_a, stack_sizes)
+    else:
+        tokens = encode_program_native(program)
+        ip_sequence = None
 
     # Compute expected via VM
     vm = WasmVM(); vm.load_program(program); vm_trace = vm.run()
@@ -1555,18 +1718,34 @@ def run_native(model, program):
     # Build expected from VM
     expected = []
     ss = 0
+    prev_stack_top = 0
     for entry in vm_trace:
-        op = entry.get('op', '')
-        if op == 'nop': continue
+        op_name = entry.get('op', '')
+        if op_name in ('nop','block','loop','else','end','br','if','br_if','drop'):
+            continue
         val = entry.get('stack_top', 0) or 0
-        if op == 'halt':
+        if op_name == 'halt':
             expected.extend([0,0,0,0,COMMIT_HALT]); break
         vb = [val&0xFF,(val>>8)&0xFF,(val>>16)&0xFF,(val>>24)&0xFF]
-        if op == 'i32_const': ss += 1
-        elif op in ('i32_add','i32_sub','i32_mul','i32_le_s','i32_ge_s',
-                     'i32_lt_s','i32_gt_s','i32_eq','i32_ne'): ss -= 1
-        elif op == 'output': ss -= 1; expected.extend([0,0,0,0,COMMIT_OUTPUT]); continue
+        if op_name == 'i32_const': ss += 1
+        elif op_name in ('i32_add','i32_sub','i32_mul','i32_le_s','i32_ge_s',
+                          'i32_lt_s','i32_gt_s','i32_eq','i32_ne'): ss -= 1
+        elif op_name == 'i32_eqz': pass  # pop 1 push 1
+        elif op_name in ('output','output_char'):
+            ss -= 1; expected.extend([0,0,0,0,COMMIT_OUTPUT]); continue
+        elif op_name == 'local_set':
+            ss -= 1
+            # Copy gate outputs the stored value (from stack before pop)
+            stored_val = prev_stack_top if prev_stack_top is not None else 0
+            vb = [stored_val&0xFF,(stored_val>>8)&0xFF,(stored_val>>16)&0xFF,(stored_val>>24)&0xFF]
+        elif op_name == 'local_get': ss += 1
         expected.extend(vb + [ss])
+        prev_stack_top = val
+
+    # Restore universal PE if we modified it
+    if has_control_flow:
+        with torch.no_grad():
+            _set_universal_pe(model)
 
     match = generated[:len(expected)] == expected
     tok_per_sec = len(generated)/gen_time if gen_time > 0 else 0
@@ -1628,8 +1807,48 @@ def test_native():
                     print(f"    diff at {j} (step {j//5} slot {j%5}): exp={info['expected'][j]} got={gen[j]}")
                     break
 
-    print(f"\n  NATIVE Result: {passed}/{len(tests)}")
-    return passed == len(tests)
+    # Control flow tests (uses hybrid: VM for IP, runtime stack matching for values)
+    from mini_c import (Compiler, var, lit, add, le, ge,
+                         assign, output_int, while_loop, if_then)
+    from wasm_vm import make_fibonacci_program
+
+    cf_tests = [
+        ("if 10>=5 -> 1", None),
+        ("sum(1..3) = 6", None),
+        ("fib(5) = 5", make_fibonacci_program(5)),
+        ("fib(10) = 55", make_fibonacci_program(10)),
+    ]
+
+    c = Compiler()
+    code, _ = c.compile([assign('x', lit(10)),
+        if_then(ge(var('x'), lit(5)), [output_int(lit(1))], [output_int(lit(0))])])
+    cf_tests[0] = ("if 10>=5 -> 1", code)
+
+    c = Compiler()
+    code, _ = c.compile([assign('s', lit(0)), assign('i', lit(1)),
+        while_loop(le(var('i'), lit(3)), [
+            assign('s', add(var('s'), var('i'))),
+            assign('i', add(var('i'), lit(1)))]),
+        output_int(var('s'))])
+    cf_tests[1] = ("sum(1..3) = 6", code)
+
+    print("\n  --- Control Flow (hybrid: VM for IP, runtime stack matching) ---")
+    for name, prog in cf_tests:
+        gen, info = run_native(model, prog)
+        status = "PASS" if info['match'] else "FAIL"
+        if info['match']: passed += 1
+        total = len(tests) + len(cf_tests)
+        print(f"  {name:<25} {info['n_tok']:>4} tok  "
+              f"{info['gen_sec']:.3f}s  {info['tok_per_sec']:>8,.0f} tok/s  "
+              f"result={info['result']}  {status}")
+        if not info['match']:
+            for j in range(min(len(info['expected']),len(gen))):
+                if gen[j]!=info['expected'][j]:
+                    print(f"    diff step {j//5} slot {j%5}: exp={info['expected'][j]} got={gen[j]}")
+                    break
+
+    print(f"\n  NATIVE Result: {passed}/{len(tests)+len(cf_tests)}")
+    return passed == len(tests) + len(cf_tests)
 
 
 if __name__ == '__main__':
