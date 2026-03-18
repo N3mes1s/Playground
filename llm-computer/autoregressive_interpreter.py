@@ -85,7 +85,8 @@ COMMIT_OFFSET = 256.0
 #   23: operand_A_byte (from L2 attn)
 #   24: operand_B_byte (from L2 attn)
 #   25: ALU result (from L2 FFN)
-#   26: decode result (from L4 FFN)
+#   26: decode result (from L6 FFN)
+#   29: MUL scratch (a0*b0 for carry, from L3 FFN; safe since is_le_s=0 for MUL)
 
 
 # ============================================================
@@ -538,38 +539,135 @@ def _set_universal_weights(model):
     ff3_in[D_FFN+6, 26] = -1.0
     ff3_out[26, 6] = 1.0
 
+    # Gate 7: a0*b0 for MUL carry at slot > 0 → dim 29 (safe scratch: is_le_s=0 for MUL)
+    ff3_in[7, 19] = 1.0      # gate = a0 (prevA from dim 19)
+    ff3_in[7, 13] = BIG      # +BIG*is_mul
+    ff3_in[7, 27] = -BIG     # -BIG threshold
+    ff3_in[7, 9] = -2*BIG    # suppress commit
+    ff3_in[7, 28] = -2*BIG   # suppress slot 0 (is_commit_input=1 there)
+    ff3_in[D_FFN+7, 1] = 1.0   # value = b0 (prevB from dim 1)
+    ff3_out[29, 7] = 1.0       # → dim 29 (is_le_s=0 for MUL, safe scratch)
+
+    # Gate 8: a1*b0 for MUL byte 1 → dim 25
+    ff3_in[8, 23] = 1.0      # gate = a1 (opA byte at current slot)
+    ff3_in[8, 13] = BIG
+    ff3_in[8, 27] = -BIG
+    ff3_in[8, 9] = -2*BIG
+    ff3_in[8, 28] = -2*BIG
+    ff3_in[D_FFN+8, 1] = 1.0   # value = b0 (prevB)
+    ff3_out[25, 8] = 1.0
+
+    # Gate 9: a0*b1 for MUL byte 1 → dim 25
+    ff3_in[9, 19] = 1.0      # gate = a0 (prevA from dim 19)
+    ff3_in[9, 13] = BIG
+    ff3_in[9, 27] = -BIG
+    ff3_in[9, 9] = -2*BIG
+    ff3_in[9, 28] = -2*BIG
+    ff3_in[D_FFN+9, 24] = 1.0  # value = b1 (opB byte at current slot)
+    ff3_out[25, 9] = 1.0
+
     # ================================================================
-    # Layer 4 FFN: Mod 256 correction for ADD or MUL
+    # Layer 4 FFN: Mod 256 for ADD + mod 4096 for MUL byte 0 + MUL carry
     # ================================================================
     ff4_in = model.ff_in[4].weight
     ff4_out = model.ff_out[4].weight
 
-    # Gate 0: -256 * relu(result - 255) for ADD/MUL at non-commit slots
+    # Gates 0-1: single -256 for ADD only (NOT MUL — MUL uses two-stage mod)
     ff4_in[0, 25] = 1.0; ff4_in[0, 27] = -255.0 - BIG; ff4_in[0, 11] = BIG
-    ff4_in[0, 13] = BIG; ff4_in[0, 9] = -2*BIG
+    ff4_in[0, 9] = -2*BIG
     ff4_in[D_FFN+0, 27] = 1.0; ff4_out[25, 0] = -256.0
 
-    # Gate 1: +256 * relu(result - 256) for ADD/MUL
     ff4_in[1, 25] = 1.0; ff4_in[1, 27] = -256.0 - BIG; ff4_in[1, 11] = BIG
-    ff4_in[1, 13] = BIG; ff4_in[1, 9] = -2*BIG
+    ff4_in[1, 9] = -2*BIG
     ff4_in[D_FFN+1, 27] = 1.0; ff4_out[25, 1] = 256.0
 
+    # Gates 2-33: mod 4096 step functions for MUL at SLOT 0 ONLY (16 pairs)
+    # Step function: -4096 * step(x >= k*4096) = -4096 * (relu(x - k*4096 + 1) - relu(x - k*4096))
+    # Gate g: relu(x - (k*4096 - 1)), output -4096
+    # Gate g+1: relu(x - k*4096), output +4096
+    for k in range(1, 17):
+        g = 2 + (k-1)*2
+        ff4_in[g, 25] = 1.0
+        ff4_in[g, 13] = BIG
+        ff4_in[g, 28] = BIG
+        ff4_in[g, 27] = -float(k * 4096 - 1) - 2*BIG
+        ff4_in[g, 9] = -2*BIG
+        ff4_in[D_FFN+g, 27] = 1.0
+        ff4_out[25, g] = -4096.0
+        g2 = g + 1
+        ff4_in[g2, 25] = 1.0
+        ff4_in[g2, 13] = BIG
+        ff4_in[g2, 28] = BIG
+        ff4_in[g2, 27] = -float(k * 4096) - 2*BIG
+        ff4_in[g2, 9] = -2*BIG
+        ff4_in[D_FFN+g2, 27] = 1.0
+        ff4_out[25, g2] = 4096.0
+
+    # Gate 34: MUL carry at slot > 0
+    ff4_in[34, 29] = 1.0       # +a0*b0 (from dim 29, scratch)
+    ff4_in[34, 0] = -1.0
+    ff4_in[34, 13] = BIG
+    ff4_in[34, 27] = -BIG
+    ff4_in[34, 9] = -2*BIG
+    ff4_in[34, 28] = -2*BIG
+    ff4_in[D_FFN+34, 27] = 1.0
+    ff4_out[25, 34] = 1.0/256.0
+
     # ================================================================
-    # Layer 5 FFN: Copy result to decode dim
+    # Layer 5 FFN: Mod 4096 for MUL at all non-commit slots
     # ================================================================
     ff5_in = model.ff_in[5].weight
     ff5_out = model.ff_out[5].weight
-    ff5_in[0, 27] = 1.0; ff5_in[D_FFN+0, 25] = 1.0
-    ff5_out[26, 0] = 1.0
+    for k in range(1, 17):
+        g = (k-1)*2
+        ff5_in[g, 25] = 1.0
+        ff5_in[g, 13] = BIG
+        ff5_in[g, 27] = -float(k * 4096 - 1) - BIG
+        ff5_in[g, 9] = -2*BIG
+        ff5_in[D_FFN+g, 27] = 1.0
+        ff5_out[25, g] = -4096.0
+        g2 = g + 1
+        ff5_in[g2, 25] = 1.0
+        ff5_in[g2, 13] = BIG
+        ff5_in[g2, 27] = -float(k * 4096) - BIG
+        ff5_in[g2, 9] = -2*BIG
+        ff5_in[D_FFN+g2, 27] = 1.0
+        ff5_out[25, g2] = 4096.0
+
+    # ================================================================
+    # Layer 6 FFN: Mod 256 for MUL + copy result to decode dim
+    # ================================================================
+    ff6_in = model.ff_in[6].weight
+    ff6_out = model.ff_out[6].weight
+    for k in range(1, 16):
+        g = (k-1)*2
+        ff6_in[g, 25] = 1.0
+        ff6_in[g, 13] = BIG
+        ff6_in[g, 27] = -float(k * 256 - 1) - BIG
+        ff6_in[g, 9] = -2*BIG
+        ff6_in[D_FFN+g, 27] = 1.0
+        ff6_out[25, g] = -256.0
+        g2 = g + 1
+        ff6_in[g2, 25] = 1.0
+        ff6_in[g2, 13] = BIG
+        ff6_in[g2, 27] = -float(k * 256) - BIG
+        ff6_in[g2, 9] = -2*BIG
+        ff6_in[D_FFN+g2, 27] = 1.0
+        ff6_out[25, g2] = 256.0
+    # Gate 30: copy result to decode dim (for ALL ops)
+    ff6_in[30, 27] = 1.0
+    ff6_in[D_FFN+30, 25] = 1.0
+    ff6_out[26, 30] = 1.0
 
     # ================================================================
     # Output Head: Quadratic byte decoding + commit token decoding
     # ================================================================
     head = model.head.weight
 
-    # Byte tokens 0-255: quadratic score = S*b*result - S*b²/2
+    # Byte tokens 0-255: decode directly from dim 25 (result accumulator)
+    # No copy-to-decode needed — dim 25 has the final value after all layer corrections
     for b in range(256):
-        head[b, 26] = S_HEAD * b
+        head[b, 25] = S_HEAD * b
         head[b, 27] = -S_HEAD * b * b / 2.0
 
     head[0, 27] = 1.0  # bias for byte 0 to win ties
@@ -1323,10 +1421,10 @@ def encode_program_hybrid(program: list[Instruction]) -> tuple[list[int], list[i
                Op.I32_LE_S, Op.I32_GE_S, Op.I32_LT_S, Op.I32_GT_S,
                Op.I32_EQ, Op.I32_NE, Op.OUTPUT, Op.LOCAL_SET}
     # Ops baked per-step: only ops the model cannot compute natively
-    # MUL baked: multi-byte carry is non-binary (0-254), can't compute natively
-    BAKED_BINARY = {Op.I32_MUL, Op.I32_DIV_S, Op.I32_REM_S, Op.I32_AND,
+    # MUL is now computed natively via two-stage mod + carry in weights
+    BAKED_BINARY = {Op.I32_DIV_S, Op.I32_REM_S, Op.I32_AND,
                     Op.I32_OR, Op.I32_XOR, Op.I32_SHL, Op.I32_SHR_S}
-    BAKED_BINARY_NAMES = {'i32_mul', 'i32_div_s', 'i32_rem_s', 'i32_and',
+    BAKED_BINARY_NAMES = {'i32_div_s', 'i32_rem_s', 'i32_and',
                           'i32_or', 'i32_xor', 'i32_shl', 'i32_shr_s'}
 
     op_to_token = {op: TraceVocab.OPCODE_OFFSET + op for op in Op}
@@ -1416,7 +1514,7 @@ def encode_program_hybrid(program: list[Instruction]) -> tuple[list[int], list[i
         if op_name == 'i32_const':
             stack_track.append(step)
             ss += 1
-        elif op_name in ('i32_add', 'i32_sub',
+        elif op_name in ('i32_add', 'i32_sub', 'i32_mul',
                           'i32_le_s', 'i32_ge_s', 'i32_lt_s', 'i32_gt_s',
                           'i32_eq', 'i32_ne'):
             if len(stack_track) >= 2:
@@ -1746,7 +1844,7 @@ def _set_native_weights(model):
     ff2_in[D_FFN+34, 27] = 1.0; ff2_out[25, 34] = 1.0
 
     # ================================================================
-    # L3-L5: Carry, mod 256, copy to decode (same as compiled)
+    # L3-L6: Carry, MUL bilinear products, two-stage mod, copy to decode
     # ================================================================
     # L3: carry detection (prevA → dim 19, prevB → dim 1 to avoid conflict with L2 byte-1 heads)
     W3 = model.attn[3].in_proj_weight
@@ -1769,21 +1867,130 @@ def _set_native_weights(model):
     # Gate 6: clear dim 26 (has L2 opB byte-1, must not reach output head)
     ff3_in[6,27]=1.0;ff3_in[D_FFN+6,26]=-1.0;ff3_out[26,6]=1.0
 
-    # L4: mod 256 (fires for ADD or MUL)
+    # Gate 7: a0*b0 for MUL carry at slot > 0 → dim 29 (safe scratch: is_le_s=0 for MUL)
+    # Bilinear: gate = relu(a0 + BIG*is_mul - BIG - 2*BIG*is_commit - 2*BIG*is_commit_input)
+    # At slot 1+ for MUL: gate = a0 (fires when a0 > 0). Value = b0. Output = a0*b0.
+    ff3_in[7, 19] = 1.0      # gate = a0 (prevA from dim 19)
+    ff3_in[7, 13] = BIG      # +BIG*is_mul
+    ff3_in[7, 27] = -BIG     # -BIG threshold
+    ff3_in[7, 9] = -2*BIG    # suppress commit
+    ff3_in[7, 28] = -2*BIG   # suppress slot 0 (is_commit_input=1 there)
+    ff3_in[D_FFN+7, 1] = 1.0   # value = b0 (prevB from dim 1)
+    ff3_out[29, 7] = 1.0       # → dim 29 (is_le_s=0 for MUL, safe scratch)
+
+    # Gate 8: a1*b0 for MUL byte 1 → dim 25
+    # At slot 1+ for MUL: gate = a1. Value = b0. Output = a1*b0 added to dim 25.
+    ff3_in[8, 23] = 1.0      # gate = a1 (opA byte at current slot = byte 1 at slot 1)
+    ff3_in[8, 13] = BIG
+    ff3_in[8, 27] = -BIG
+    ff3_in[8, 9] = -2*BIG
+    ff3_in[8, 28] = -2*BIG
+    ff3_in[D_FFN+8, 1] = 1.0   # value = b0 (prevB)
+    ff3_out[25, 8] = 1.0
+
+    # Gate 9: a0*b1 for MUL byte 1 → dim 25
+    # At slot 1+ for MUL: gate = a0. Value = b1. Output = a0*b1 added to dim 25.
+    ff3_in[9, 19] = 1.0      # gate = a0 (prevA from dim 19)
+    ff3_in[9, 13] = BIG
+    ff3_in[9, 27] = -BIG
+    ff3_in[9, 9] = -2*BIG
+    ff3_in[9, 28] = -2*BIG
+    ff3_in[D_FFN+9, 24] = 1.0  # value = b1 (opB byte at current slot = byte 1 at slot 1)
+    ff3_out[25, 9] = 1.0
+
+    # L4: mod 256 for ADD + mod 4096 for MUL byte 0 (slot 0 only) + MUL carry (slot 1+)
     ff4_in = model.ff_in[4].weight; ff4_out = model.ff_out[4].weight
-    ff4_in[0,25]=1.0;ff4_in[0,27]=-255.0-BIG;ff4_in[0,11]=BIG;ff4_in[0,13]=BIG;ff4_in[0,9]=-2*BIG
+
+    # Gates 0-1: single -256 for ADD only (NOT MUL — MUL uses two-stage mod)
+    ff4_in[0,25]=1.0;ff4_in[0,27]=-255.0-BIG;ff4_in[0,11]=BIG;ff4_in[0,9]=-2*BIG
     ff4_in[D_FFN+0,27]=1.0;ff4_out[25,0]=-256.0
-    ff4_in[1,25]=1.0;ff4_in[1,27]=-256.0-BIG;ff4_in[1,11]=BIG;ff4_in[1,13]=BIG;ff4_in[1,9]=-2*BIG
+    ff4_in[1,25]=1.0;ff4_in[1,27]=-256.0-BIG;ff4_in[1,11]=BIG;ff4_in[1,9]=-2*BIG
     ff4_in[D_FFN+1,27]=1.0;ff4_out[25,1]=256.0
 
-    # L5: copy to decode
+    # Gates 2-33: mod 4096 step functions for MUL at SLOT 0 ONLY (16 pairs = 32 gates)
+    # At slot 0: is_commit_input=1, so +BIG*is_commit_input + BIG*is_mul - 2*BIG = 0 → fires on result
+    # At slot 1+: is_commit_input=0, so +0 + BIG - 2*BIG = -BIG → never fires
+    # Step function: -4096 * step(x >= k*4096) = -4096 * (relu(x - k*4096 + 1) - relu(x - k*4096))
+    for k in range(1, 17):  # k=1..16, covers products up to 16*4096=65536 > 65025
+        g = 2 + (k-1)*2
+        # Gate g: relu(result - (k*4096 - 1)), output -4096
+        ff4_in[g, 25] = 1.0
+        ff4_in[g, 13] = BIG          # is_mul
+        ff4_in[g, 28] = BIG          # is_commit_input (=1 at slot 0)
+        ff4_in[g, 27] = -float(k * 4096 - 1) - 2*BIG  # threshold
+        ff4_in[g, 9] = -2*BIG        # suppress commit
+        ff4_in[D_FFN+g, 27] = 1.0
+        ff4_out[25, g] = -4096.0
+        # Gate g+1: relu(result - k*4096), output +4096
+        g2 = g + 1
+        ff4_in[g2, 25] = 1.0
+        ff4_in[g2, 13] = BIG
+        ff4_in[g2, 28] = BIG
+        ff4_in[g2, 27] = -float(k * 4096) - 2*BIG
+        ff4_in[g2, 9] = -2*BIG
+        ff4_in[D_FFN+g2, 27] = 1.0
+        ff4_out[25, g2] = 4096.0
+
+    # Gate 34: MUL carry at slot > 0: floor(a0*b0/256) = (a0*b0 - byte0_result) / 256
+    # dim 29 = a0*b0 (from L3 FFN gate 7, safe scratch: is_le_s=0 for MUL)
+    # dim 0 = byte_value of input token (= byte 0 result at slot 1), preserved through all layers
+    # At slot 1 for MUL: gate = a0*b0 - byte0 + BIG - BIG - 0 = a0*b0 - byte0 >= 0, always
+    # Output scaled by 1/256 → floor(a0*b0/256) added to dim 25 (cross terms)
+    ff4_in[34, 29] = 1.0       # +a0*b0 (from dim 29, scratch)
+    ff4_in[34, 0] = -1.0       # -byte0_result (input token byte value)
+    ff4_in[34, 13] = BIG       # is_mul
+    ff4_in[34, 27] = -BIG      # threshold
+    ff4_in[34, 9] = -2*BIG     # suppress commit
+    ff4_in[34, 28] = -2*BIG    # suppress slot 0
+    ff4_in[D_FFN+34, 27] = 1.0
+    ff4_out[25, 34] = 1.0/256.0  # scale: carry = (product - byte0) / 256
+
+    # L5: mod 4096 for MUL at all non-commit slots
+    # At slot 0: value already < 4096 from L4 mod-4096 gates, these are no-ops
+    # At slot 1: dim 25 = cross terms + carry, may exceed 4096, needs reduction
     ff5_in = model.ff_in[5].weight; ff5_out = model.ff_out[5].weight
-    ff5_in[0,27]=1.0;ff5_in[D_FFN+0,25]=1.0;ff5_out[26,0]=1.0
+    for k in range(1, 17):  # k=1..16
+        g = (k-1)*2
+        ff5_in[g, 25] = 1.0
+        ff5_in[g, 13] = BIG
+        ff5_in[g, 27] = -float(k * 4096 - 1) - BIG
+        ff5_in[g, 9] = -2*BIG
+        ff5_in[D_FFN+g, 27] = 1.0
+        ff5_out[25, g] = -4096.0
+        g2 = g + 1
+        ff5_in[g2, 25] = 1.0
+        ff5_in[g2, 13] = BIG
+        ff5_in[g2, 27] = -float(k * 4096) - BIG
+        ff5_in[g2, 9] = -2*BIG
+        ff5_in[D_FFN+g2, 27] = 1.0
+        ff5_out[25, g2] = 4096.0
+
+    # L6: mod 256 for MUL at all non-commit slots + copy result to decode dim
+    ff6_in = model.ff_in[6].weight; ff6_out = model.ff_out[6].weight
+    for k in range(1, 16):  # k=1..15, reduces [0,4095] → [0,255]
+        g = (k-1)*2
+        ff6_in[g, 25] = 1.0
+        ff6_in[g, 13] = BIG
+        ff6_in[g, 27] = -float(k * 256 - 1) - BIG
+        ff6_in[g, 9] = -2*BIG
+        ff6_in[D_FFN+g, 27] = 1.0
+        ff6_out[25, g] = -256.0
+        g2 = g + 1
+        ff6_in[g2, 25] = 1.0
+        ff6_in[g2, 13] = BIG
+        ff6_in[g2, 27] = -float(k * 256) - BIG
+        ff6_in[g2, 9] = -2*BIG
+        ff6_in[D_FFN+g2, 27] = 1.0
+        ff6_out[25, g2] = 256.0
+    # Gate 30: copy result to decode dim (for ALL ops)
+    ff6_in[30, 27] = 1.0
+    ff6_in[D_FFN+30, 25] = 1.0
+    ff6_out[26, 30] = 1.0
 
     # Output head
     head = model.head.weight
     for b in range(256):
-        head[b,26]=S_HEAD*b;head[b,27]=-S_HEAD*b*b/2.0
+        head[b,25]=S_HEAD*b;head[b,27]=-S_HEAD*b*b/2.0
     head[0,27]=1.0
 
 
