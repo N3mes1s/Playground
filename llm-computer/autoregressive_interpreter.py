@@ -1232,5 +1232,407 @@ def test():
     return passed == len(tests)
 
 
+# ============================================================
+# NATIVE INTERPRETER — No trace compilation, no explicit addresses
+# The model resolves operands at RUNTIME via stack matching.
+# This is the blog's true architecture.
+# ============================================================
+
+def encode_program_native(program: list[Instruction]) -> list[int]:
+    """
+    Encode program as raw WASM instructions — NO unrolling, NO explicit addresses.
+    Format: [opcode, imm_b0, imm_b1, 0, 0, 0] × N_instructions + padding + SEP.
+    The model must figure out operands at runtime from the trace.
+    """
+    op_to_token = {}
+    for op in Op:
+        op_to_token[op] = TraceVocab.OPCODE_OFFSET + op
+
+    tokens = []
+    for inst in program:
+        if inst.op == Op.NOP:
+            continue
+        tok = op_to_token.get(inst.op, TraceVocab.NOP)
+        imm = inst.operand or 0
+        tokens.extend([tok, imm & 0xFF, (imm >> 8) & 0xFF, 0, 0, 0])
+
+    while len(tokens) < PROG_LEN:
+        tokens.extend([TraceVocab.NOP, 0, 0, 0, 0, 0])
+    tokens.append(TraceVocab.SEP)
+    return tokens
+
+
+def build_native_interpreter() -> VanillaTransformer:
+    """
+    Build the NATIVE interpreter — stack matching, no explicit addresses.
+    The model resolves operands at runtime from commit tokens in the trace.
+
+    Architecture difference from build_interpreter():
+    - L0 FFN: prepares commit K (stack_key + quadratic) at commit positions
+    - L0 head 10: reads prev commit for own stack_size
+    - L1 attn: stack-based operand resolution (match commit stack_sizes)
+    - L1 FFN: compute byte fetch addresses from matched positions
+    - L2 FFN ALU: compute + generated commit from opcode + prev_ss
+    """
+    model = VanillaTransformer(
+        vocab=TraceVocab.VOCAB_SIZE,
+        d_model=D_MODEL, n_heads=N_HEADS, n_layers=N_LAYERS,
+        d_ffn=D_FFN,
+        max_seq_len=MAX_SEQ, pe_mode='learned',
+    )
+    model = model.double()
+    with torch.no_grad():
+        _set_native_weights(model)
+        _set_universal_pe(model)
+    model.eval()
+    return model
+
+
+def _set_native_weights(model):
+    """Set weights for the NATIVE interpreter with runtime stack matching."""
+    d = D_MODEL
+
+    # Zero everything
+    for layer in range(N_LAYERS):
+        model.attn[layer].in_proj_weight.zero_()
+        model.attn[layer].out_proj.weight.zero_()
+        model.ff_in[layer].weight.zero_()
+        model.ff_out[layer].weight.zero_()
+    model.head.weight.zero_()
+    model.tok.weight.zero_()
+
+    # ================================================================
+    # Token Embedding (same as compiled interpreter)
+    # ================================================================
+    tok = model.tok.weight
+    for v in range(256):
+        tok[v, 0] = float(v)
+    opcode_flags = {
+        Op.I32_CONST: 10, Op.I32_ADD: 11, Op.I32_SUB: 12, Op.I32_MUL: 13,
+        Op.OUTPUT: 14, Op.HALT: 15,
+        Op.I32_LE_S: 29, Op.I32_GE_S: 30, Op.I32_LT_S: 31, Op.I32_GT_S: 32,
+        Op.I32_EQ: 33, Op.I32_NE: 34, Op.I32_EQZ: 35,
+    }
+    for op, dim in opcode_flags.items():
+        tok_id = TraceVocab.OPCODE_OFFSET + op
+        if tok_id < tok.shape[0]:
+            tok[tok_id, dim] = 1.0
+    for local_op in (Op.LOCAL_GET, Op.LOCAL_SET, Op.LOCAL_TEE):
+        tok_id = TraceVocab.OPCODE_OFFSET + local_op
+        if tok_id < tok.shape[0]:
+            tok[tok_id, 22] = 1.0
+
+    # ================================================================
+    # L0 Attention: Instruction fetch + read prev commit
+    # ================================================================
+    W0 = model.attn[0].in_proj_weight
+    out0 = model.attn[0].out_proj.weight
+
+    fetch_heads = [
+        (0, 0, (10, 11), (10, 11)),
+        (1, 0, (12, 13), (12, 13)),
+        (2, 0, (14, 15), (14, 15)),
+        (3, 1, (0, -1), (16, -1)),   # immediate byte (+ byte_idx)
+        (6, 0, (29, 30), (29, 30)),
+        (7, 0, (31, 32), (31, 32)),
+        (8, 0, (33, 34), (33, 34)),
+        (9, 0, (22, 35), (22, 35)),
+    ]
+    for head, offset, v_dims, out_dims in fetch_heads:
+        h2 = head * 2
+        W0[h2, 7] = 2 * S_QUAD * INST_SIZE
+        W0[h2, 27] = 2 * S_QUAD * offset
+        if head == 3:
+            W0[h2, 8] = 2 * S_QUAD
+        W0[h2 + 1, 27] = 1.0
+        W0[d + h2, 5] = 1.0
+        W0[d + h2 + 1, 6] = 1.0
+        if v_dims[0] >= 0: W0[2*d + h2, v_dims[0]] = 1.0
+        if v_dims[1] >= 0: W0[2*d + h2 + 1, v_dims[1]] = 1.0
+        if out_dims[0] >= 0: out0[out_dims[0], h2] = 1.0
+        if out_dims[1] >= 0: out0[out_dims[1], h2 + 1] = 1.0
+
+    # Head 10: read previous commit → own stack_size → dim 17
+    h2 = 20
+    W0[h2, 7] = 2 * S_QUAD * STEP_SIZE  # targets TRACE position (5 per step)
+    W0[h2, 27] = 2 * S_QUAD * (TRACE_START - 1)
+    W0[h2 + 1, 27] = 1.0
+    W0[d + h2, 5] = 1.0; W0[d + h2 + 1, 6] = 1.0
+    W0[2*d + h2, 0] = 1.0
+    out0[17, h2] = 1.0
+
+    # ================================================================
+    # L0 FFN: Prepare commit K at commit INPUT positions
+    # ================================================================
+    ff0_in = model.ff_in[0].weight
+    ff0_out = model.ff_out[0].weight
+
+    # Gate 0: stack_key = byte_value + COMMIT_OFFSET at commit inputs → dim 1
+    ff0_in[0, 28] = 1.0; ff0_in[0, 27] = -0.5
+    ff0_in[D_FFN + 0, 0] = 2.0
+    ff0_in[D_FFN + 0, 27] = 2 * COMMIT_OFFSET
+    ff0_out[1, 0] = 1.0
+
+    # Gate 1: -(stack_key + OFFSET)² via bilinear → dim 19
+    ff0_in[1, 0] = 1.0; ff0_in[1, 27] = COMMIT_OFFSET - BIG; ff0_in[1, 28] = BIG
+    ff0_in[D_FFN + 1, 0] = 1.0; ff0_in[D_FFN + 1, 27] = COMMIT_OFFSET
+    ff0_out[19, 1] = -S_STACK
+
+    # Gate 2: recency bias ε*position at commit inputs → dim 19
+    ff0_in[2, 28] = 1.0; ff0_in[2, 27] = -0.5
+    ff0_in[D_FFN + 2, 5] = 1.0
+    ff0_out[19, 2] = 1.0
+
+    # ================================================================
+    # L1 Attention: Runtime stack-based operand resolution
+    # ================================================================
+    W1 = model.attn[1].in_proj_weight
+    out1 = model.attn[1].out_proj.weight
+
+    # Head 0: find commit with stack_size = own_ss → operand B position
+    W1[0, 17] = 2 * S_STACK; W1[0, 27] = 2 * S_STACK * COMMIT_OFFSET
+    W1[1, 27] = 1.0
+    W1[d + 0, 1] = 1.0; W1[d + 1, 19] = 1.0
+    W1[2*d + 0, 5] = 1.0
+    out1[18, 0] = 1.0  # B_commit_pos → dim 18
+
+    # Head 1: find commit with stack_size = own_ss - 1 → operand A position
+    W1[2, 17] = 2 * S_STACK; W1[2, 27] = 2 * S_STACK * (COMMIT_OFFSET - 1)
+    W1[3, 27] = 1.0
+    W1[d + 2, 1] = 1.0; W1[d + 3, 19] = 1.0
+    W1[2*d + 2, 5] = 1.0
+    out1[20, 2] = 1.0  # A_commit_pos → dim 20
+
+    # ================================================================
+    # L1 FFN: Compute byte fetch addresses from commit positions
+    # ================================================================
+    ff1_in = model.ff_in[1].weight
+    ff1_out = model.ff_out[1].weight
+
+    # Gate 0: fetch addr A = 2*S*(commit_pos_A - 4 + byte_idx)
+    for fd in (11, 12, 13, 29, 30, 31, 32, 33, 34, 35):
+        ff1_in[0, fd] = 1.0
+    ff1_in[D_FFN + 0, 20] = 2 * S_QUAD
+    ff1_in[D_FFN + 0, 8] = 2 * S_QUAD
+    ff1_in[D_FFN + 0, 27] = -8 * S_QUAD
+    ff1_out[21, 0] = 1.0
+
+    # Gate 1: fetch addr B
+    for fd in (11, 12, 13, 29, 30, 31, 32, 33, 34, 35):
+        ff1_in[1, fd] = 1.0
+    ff1_in[D_FFN + 1, 18] = 2 * S_QUAD
+    ff1_in[D_FFN + 1, 8] = 2 * S_QUAD
+    ff1_in[D_FFN + 1, 27] = -8 * S_QUAD
+    ff1_out[3, 1] = 1.0
+
+    # ================================================================
+    # L2 Attention: Fetch operand bytes
+    # ================================================================
+    W2 = model.attn[2].in_proj_weight
+    out2 = model.attn[2].out_proj.weight
+    W2[0, 21] = 1.0; W2[1, 27] = 1.0
+    W2[d+0, 5] = 1.0; W2[d+1, 6] = 1.0; W2[2*d+0, 0] = 1.0
+    out2[23, 0] = 1.0
+    W2[2, 3] = 1.0; W2[3, 27] = 1.0
+    W2[d+2, 5] = 1.0; W2[d+3, 6] = 1.0; W2[2*d+2, 0] = 1.0
+    out2[24, 2] = 1.0
+
+    # ================================================================
+    # L2 FFN: ALU + computed commit gates
+    # ================================================================
+    ff2_in = model.ff_in[2].weight
+    ff2_out = model.ff_out[2].weight
+
+    # ADD — all byte slots
+    ff2_in[0, 11] = 1.0; ff2_in[0, 9] = -2.0
+    ff2_in[D_FFN+0, 23] = 1.0; ff2_in[D_FFN+0, 24] = 1.0
+    ff2_out[25, 0] = 1.0
+    # CONST — all byte slots
+    ff2_in[1, 10] = 1.0; ff2_in[1, 9] = -2.0
+    ff2_in[D_FFN+1, 16] = 1.0; ff2_out[25, 1] = 1.0
+    # SUB — slot 0
+    ff2_in[2, 12] = 1.0; ff2_in[2, 8] = -2.0
+    ff2_in[D_FFN+2, 23] = 1.0; ff2_in[D_FFN+2, 24] = -1.0
+    ff2_out[25, 2] = 1.0
+    # MUL — slot 0
+    ff2_in[3, 23] = 1.0; ff2_in[3, 13] = BIG; ff2_in[3, 27] = -BIG; ff2_in[3, 8] = -2*BIG
+    ff2_in[D_FFN+3, 24] = 1.0; ff2_out[25, 3] = 1.0
+
+    # Comparisons (same as compiled interpreter)
+    def _cmp(g, f, a, b, t, o):
+        ff2_in[g, f] = BIG; ff2_in[g, 27] = -BIG + t; ff2_in[g, 8] = -2*BIG
+        ff2_in[g, 23] = a; ff2_in[g, 24] = b
+        ff2_in[D_FFN+g, 27] = 1.0; ff2_out[25, g] = o
+    def _bias(g, f):
+        ff2_in[g, f] = 1.0; ff2_in[g, 8] = -2.0
+        ff2_in[D_FFN+g, 27] = 1.0; ff2_out[25, g] = 1.0
+    _cmp(7,31,-1,1,0,1); _cmp(8,31,-1,1,-1,-1)
+    _cmp(9,32,1,-1,0,1); _cmp(10,32,1,-1,-1,-1)
+    _bias(11,29); _cmp(12,29,1,-1,0,-1); _cmp(13,29,1,-1,-1,1)
+    _bias(14,30); _cmp(15,30,-1,1,0,-1); _cmp(16,30,-1,1,-1,1)
+    _bias(17,33); _cmp(18,33,-1,1,0,-1); _cmp(19,33,-1,1,-1,1)
+    _cmp(20,33,1,-1,0,-1); _cmp(21,33,1,-1,-1,1)
+    _cmp(22,34,-1,1,0,1); _cmp(23,34,-1,1,-1,-1)
+    _cmp(24,34,1,-1,0,1); _cmp(25,34,1,-1,-1,-1)
+    _bias(26,35)
+    ff2_in[27,35]=BIG;ff2_in[27,27]=-BIG;ff2_in[27,8]=-2*BIG
+    ff2_in[27,24]=1.0;ff2_in[D_FFN+27,27]=1.0;ff2_out[25,27]=-1.0
+    ff2_in[28,35]=BIG;ff2_in[28,27]=-1.0-BIG;ff2_in[28,8]=-2*BIG
+    ff2_in[28,24]=1.0;ff2_in[D_FFN+28,27]=1.0;ff2_out[25,28]=1.0
+
+    # ---- Computed commit gates (from opcode + prev_ss) ----
+    # Gate 29: CONST push → prev_ss + 1
+    ff2_in[29,17]=1.0;ff2_in[29,27]=1.0-2*BIG;ff2_in[29,10]=BIG;ff2_in[29,9]=BIG
+    ff2_in[D_FFN+29,27]=1.0;ff2_out[25,29]=1.0
+    # Gate 30: binary pop → prev_ss - 1 (ADD/SUB/MUL)
+    ff2_in[30,17]=1.0;ff2_in[30,27]=-1.0-2*BIG
+    for fd in (11,12,13): ff2_in[30,fd]=BIG
+    ff2_in[30,9]=BIG;ff2_in[D_FFN+30,27]=1.0;ff2_out[25,30]=1.0
+    # Gate 31: comparison pop → prev_ss - 1
+    ff2_in[31,17]=1.0;ff2_in[31,27]=-1.0-2*BIG
+    for fd in (29,30,31,32,33,34): ff2_in[31,fd]=BIG
+    ff2_in[31,9]=BIG;ff2_in[D_FFN+31,27]=1.0;ff2_out[25,31]=1.0
+    # Gate 32: EQZ → prev_ss
+    ff2_in[32,17]=1.0;ff2_in[32,27]=-2*BIG;ff2_in[32,35]=BIG;ff2_in[32,9]=BIG
+    ff2_in[D_FFN+32,27]=1.0;ff2_out[25,32]=1.0
+    # Gate 33: OUTPUT → COMMIT_OUTPUT
+    ff2_in[33,27]=float(COMMIT_OUTPUT)-2*BIG;ff2_in[33,14]=BIG;ff2_in[33,9]=BIG
+    ff2_in[D_FFN+33,27]=1.0;ff2_out[25,33]=1.0
+    # Gate 34: HALT → COMMIT_HALT
+    ff2_in[34,27]=float(COMMIT_HALT)-2*BIG;ff2_in[34,15]=BIG;ff2_in[34,9]=BIG
+    ff2_in[D_FFN+34,27]=1.0;ff2_out[25,34]=1.0
+
+    # ================================================================
+    # L3-L5: Carry, mod 256, copy to decode (same as compiled)
+    # ================================================================
+    # L3: carry detection
+    W3 = model.attn[3].in_proj_weight
+    out3 = model.attn[3].out_proj.weight
+    W3[0,21]=1.0;W3[0,27]=-2*S_QUAD;W3[1,27]=1.0
+    W3[d+0,5]=1.0;W3[d+1,6]=1.0;W3[2*d+0,0]=1.0;out3[26,0]=1.0
+    W3[2,3]=1.0;W3[2,27]=-2*S_QUAD;W3[3,27]=1.0
+    W3[d+2,5]=1.0;W3[d+3,6]=1.0;W3[2*d+2,0]=1.0;out3[2,2]=1.0
+
+    ff3_in = model.ff_in[3].weight; ff3_out = model.ff_out[3].weight
+    ff3_in[4,26]=1.0;ff3_in[4,2]=1.0;ff3_in[4,27]=-255.0-BIG-1.0
+    ff3_in[4,11]=BIG;ff3_in[4,9]=-2*BIG;ff3_in[4,8]=1.0
+    ff3_in[D_FFN+4,27]=1.0;ff3_out[25,4]=1.0
+    ff3_in[5,26]=1.0;ff3_in[5,2]=1.0;ff3_in[5,27]=-256.0-BIG-1.0
+    ff3_in[5,11]=BIG;ff3_in[5,9]=-2*BIG;ff3_in[5,8]=1.0
+    ff3_in[D_FFN+5,27]=1.0;ff3_out[25,5]=-1.0
+    ff3_in[6,27]=1.0;ff3_in[D_FFN+6,26]=-1.0;ff3_out[26,6]=1.0
+
+    # L4: mod 256
+    ff4_in = model.ff_in[4].weight; ff4_out = model.ff_out[4].weight
+    ff4_in[0,25]=1.0;ff4_in[0,27]=-255.0-BIG;ff4_in[0,11]=BIG;ff4_in[0,9]=-2*BIG
+    ff4_in[D_FFN+0,27]=1.0;ff4_out[25,0]=-256.0
+    ff4_in[1,25]=1.0;ff4_in[1,27]=-256.0-BIG;ff4_in[1,11]=BIG;ff4_in[1,9]=-2*BIG
+    ff4_in[D_FFN+1,27]=1.0;ff4_out[25,1]=256.0
+
+    # L5: copy to decode
+    ff5_in = model.ff_in[5].weight; ff5_out = model.ff_out[5].weight
+    ff5_in[0,27]=1.0;ff5_in[D_FFN+0,25]=1.0;ff5_out[26,0]=1.0
+
+    # Output head
+    head = model.head.weight
+    for b in range(256):
+        head[b,26]=S_HEAD*b;head[b,27]=-S_HEAD*b*b/2.0
+    head[0,27]=1.0
+
+
+def run_native(model, program):
+    """Run a straight-line program on the NATIVE interpreter (no trace compilation)."""
+    tokens = encode_program_native(program)
+
+    # Compute expected via VM
+    vm = WasmVM(); vm.load_program(program); vm_trace = vm.run()
+
+    max_trace = STEP_SIZE * (len(vm_trace) + 5)
+    t0 = time.perf_counter()
+    generated = generate_trace_rust_multilayer(model, tokens, max_trace)
+    gen_time = time.perf_counter() - t0
+
+    # Build expected from VM
+    expected = []
+    ss = 0
+    for entry in vm_trace:
+        op = entry.get('op', '')
+        if op == 'nop': continue
+        val = entry.get('stack_top', 0) or 0
+        if op == 'halt':
+            expected.extend([0,0,0,0,COMMIT_HALT]); break
+        vb = [val&0xFF,(val>>8)&0xFF,(val>>16)&0xFF,(val>>24)&0xFF]
+        if op == 'i32_const': ss += 1
+        elif op in ('i32_add','i32_sub','i32_mul','i32_le_s','i32_ge_s',
+                     'i32_lt_s','i32_gt_s','i32_eq','i32_ne'): ss -= 1
+        elif op == 'output': ss -= 1; expected.extend([0,0,0,0,COMMIT_OUTPUT]); continue
+        expected.extend(vb + [ss])
+
+    match = generated[:len(expected)] == expected
+    tok_per_sec = len(generated)/gen_time if gen_time > 0 else 0
+    return generated, {'expected': expected, 'match': match, 'n_tok': len(expected),
+                        'gen_sec': gen_time, 'tok_per_sec': tok_per_sec,
+                        'result': vm.output[0] if vm.output else '?'}
+
+
+def test_native():
+    """Test the NATIVE interpreter — runtime stack matching, no trace compilation."""
+    print("=" * 70)
+    print("NATIVE Interpreter — Runtime Stack Matching (Blog Architecture)")
+    print("NO trace compilation. NO explicit addresses.")
+    print("Operands resolved at RUNTIME from commit tokens.")
+    print("=" * 70)
+
+    model = build_native_interpreter()
+    n_params = sum(p.numel() for p in model.parameters())
+    print(f"Model: {n_params:,} params\n")
+
+    tests = [
+        ("3 + 5 = 8",
+         [Instruction(Op.I32_CONST,3),Instruction(Op.I32_CONST,5),
+          Instruction(Op.I32_ADD),Instruction(Op.OUTPUT),Instruction(Op.HALT)]),
+        ("7 * 13 = 91",
+         [Instruction(Op.I32_CONST,7),Instruction(Op.I32_CONST,13),
+          Instruction(Op.I32_MUL),Instruction(Op.OUTPUT),Instruction(Op.HALT)]),
+        ("10 - 3 = 7",
+         [Instruction(Op.I32_CONST,10),Instruction(Op.I32_CONST,3),
+          Instruction(Op.I32_SUB),Instruction(Op.OUTPUT),Instruction(Op.HALT)]),
+        ("2*(3+5) = 16",
+         [Instruction(Op.I32_CONST,2),Instruction(Op.I32_CONST,3),
+          Instruction(Op.I32_CONST,5),Instruction(Op.I32_ADD),
+          Instruction(Op.I32_MUL),Instruction(Op.OUTPUT),Instruction(Op.HALT)]),
+        ("200 + 200 = 400",
+         [Instruction(Op.I32_CONST,200),Instruction(Op.I32_CONST,200),
+          Instruction(Op.I32_ADD),Instruction(Op.OUTPUT),Instruction(Op.HALT)]),
+        ("10 >= 5 = 1",
+         [Instruction(Op.I32_CONST,10),Instruction(Op.I32_CONST,5),
+          Instruction(Op.I32_GE_S),Instruction(Op.OUTPUT),Instruction(Op.HALT)]),
+        ("5 == 5 = 1",
+         [Instruction(Op.I32_CONST,5),Instruction(Op.I32_CONST,5),
+          Instruction(Op.I32_EQ),Instruction(Op.OUTPUT),Instruction(Op.HALT)]),
+    ]
+
+    passed = 0
+    for name, prog in tests:
+        gen, info = run_native(model, prog)
+        status = "PASS" if info['match'] else "FAIL"
+        if info['match']: passed += 1
+        print(f"  {name:<25} {info['n_tok']:>4} tok  "
+              f"{info['gen_sec']:.3f}s  {info['tok_per_sec']:>8,.0f} tok/s  "
+              f"result={info['result']}  {status}")
+        if not info['match']:
+            print(f"    exp: {info['expected'][:25]}")
+            print(f"    got: {gen[:25]}")
+            for j in range(min(len(info['expected']),len(gen))):
+                if gen[j]!=info['expected'][j]:
+                    print(f"    diff at {j} (step {j//5} slot {j%5}): exp={info['expected'][j]} got={gen[j]}")
+                    break
+
+    print(f"\n  NATIVE Result: {passed}/{len(tests)}")
+    return passed == len(tests)
+
+
 if __name__ == '__main__':
     test()
+    print()
+    test_native()
