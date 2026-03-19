@@ -579,6 +579,16 @@ def _set_universal_weights(model):
     ff3_in[D_FFN+6, 26] = -1.0
     ff3_out[26, 6] = 1.0
 
+    # Gate 10: clear dim 18 (has L1 opB_commit_pos, would corrupt L4 k-3 trace fetch)
+    ff3_in[10, 27] = 1.0
+    ff3_in[D_FFN+10, 18] = -1.0
+    ff3_out[18, 10] = 1.0
+
+    # Gate 11: clear dim 20 (has L1 opA_commit_pos, would corrupt L4 k-3 opB fetch)
+    ff3_in[11, 27] = 1.0
+    ff3_in[D_FFN+11, 20] = -1.0
+    ff3_out[20, 11] = 1.0
+
     # Gate 7: a0*b0 for MUL carry at slot > 0 → dim 29 (safe scratch: is_le_s=0 for MUL)
     ff3_in[7, 19] = 1.0      # gate = a0 (prevA from dim 19)
     ff3_in[7, 13] = BIG      # +BIG*is_mul
@@ -619,6 +629,21 @@ def _set_universal_weights(model):
     W4[d+0, 5] = 1.0; W4[d+1, 6] = 1.0
     W4[2*d+0, 0] = 1.0
     out4[33, 0] = 1.0  # byte_{k-2}_result → dim 33
+
+    # Head 1: fetch opA[k-3] → dim 26 (cleared by L3 gate 6, safe)
+    # At slot 3: a0 (byte 0 of opA). At slot 2: a_{-1} (garbage, but slot-3 gating prevents use)
+    W4[2, 21] = 1.0; W4[2, 27] = -6.0 * S_QUAD  # fetch_addr_A - 6S
+    W4[3, 27] = 1.0
+    W4[d+2, 5] = 1.0; W4[d+3, 6] = 1.0
+    W4[2*d+2, 0] = 1.0
+    out4[26, 2] = 1.0  # opA[k-3] → dim 26
+
+    # Head 2: fetch opB[k-3] → dim 20 (unused after L1)
+    W4[4, 3] = 1.0; W4[4, 27] = -6.0 * S_QUAD  # fetch_addr_B - 6S
+    W4[5, 27] = 1.0
+    W4[d+4, 5] = 1.0; W4[d+5, 6] = 1.0
+    W4[2*d+4, 0] = 1.0
+    out4[20, 4] = 1.0  # opB[k-3] → dim 20
 
     ff4_in = model.ff_in[4].weight; ff4_out = model.ff_out[4].weight
 
@@ -692,6 +717,162 @@ def _set_universal_weights(model):
     ff4_in[D_FFN+7, 24] = 1.0  # value = b2
     ff4_out[25, 7] = -1.0     # SUBTRACT
 
+    # ---- Byte 3 cross terms at SLOT 3 ONLY (gated by dim 37 = is_slot_3) ----
+    # Correct terms: a0*b3 + a1*b2 + a2*b1 + a3*b0
+    # L3 gates 8-9 produce a3*b2 + a2*b3 at slot 3 (wrong). Subtract those + add correct.
+    # k-3 fetch: a0 in dim 26, b0 in dim 20. k-2: a1 in dim 30, b1 in dim 31.
+    # k-1: a2 in dim 19, b2 in dim 1. Current: a3 in dim 23, b3 in dim 24.
+
+    # Gate 8: a0*b3 at slot 3 → dim 25
+    ff4_in[8, 26] = 1.0       # gate = a0 (k-3 fetch, dim 26)
+    ff4_in[8, 37] = BIG       # is_slot_3
+    ff4_in[8, 13] = BIG
+    ff4_in[8, 27] = -2.0*BIG
+    ff4_in[8, 9] = -2*BIG
+    ff4_in[D_FFN+8, 24] = 1.0  # value = b3 (opB at slot 3)
+    ff4_out[25, 8] = 1.0
+
+    # Gate 9: a3*b0 at slot 3 → dim 25
+    ff4_in[9, 23] = 1.0       # gate = a3 (opA at slot 3)
+    ff4_in[9, 37] = BIG
+    ff4_in[9, 13] = BIG
+    ff4_in[9, 27] = -2.0*BIG
+    ff4_in[9, 9] = -2*BIG
+    ff4_in[D_FFN+9, 20] = 1.0  # value = b0 (k-3 fetch, dim 20)
+    ff4_out[25, 9] = 1.0
+
+    # Gate 10: a1*b2 at slot 3 → dim 25
+    ff4_in[10, 30] = 1.0      # gate = a1 (k-2 fetch, dim 30)
+    ff4_in[10, 37] = BIG
+    ff4_in[10, 13] = BIG
+    ff4_in[10, 27] = -2.0*BIG
+    ff4_in[10, 9] = -2*BIG
+    ff4_in[D_FFN+10, 1] = 1.0  # value = b2 (k-1 fetch, dim 1)
+    ff4_out[25, 10] = 1.0
+
+    # Gate 11: a2*b1 at slot 3 → dim 25
+    ff4_in[11, 19] = 1.0      # gate = a2 (k-1 fetch, dim 19)
+    ff4_in[11, 37] = BIG
+    ff4_in[11, 13] = BIG
+    ff4_in[11, 27] = -2.0*BIG
+    ff4_in[11, 9] = -2*BIG
+    ff4_in[D_FFN+11, 31] = 1.0  # value = b1 (k-2 fetch, dim 31)
+    ff4_out[25, 11] = 1.0
+
+    # Gates 12-13: subtract wrong L3 terms (a3*b2 + a2*b3) at slot 3
+    ff4_in[12, 23] = 1.0      # gate = a3
+    ff4_in[12, 37] = BIG
+    ff4_in[12, 13] = BIG
+    ff4_in[12, 27] = -2.0*BIG
+    ff4_in[12, 9] = -2*BIG
+    ff4_in[D_FFN+12, 1] = 1.0  # value = b2
+    ff4_out[25, 12] = -1.0    # SUBTRACT
+
+    ff4_in[13, 19] = 1.0      # gate = a2
+    ff4_in[13, 37] = BIG
+    ff4_in[13, 13] = BIG
+    ff4_in[13, 27] = -2.0*BIG
+    ff4_in[13, 9] = -2*BIG
+    ff4_in[D_FFN+13, 24] = 1.0  # value = b3
+    ff4_out[25, 13] = -1.0    # SUBTRACT
+
+    # Gate 14: a2*b2 (from L3 gate 7 → dim 29 at slot 3) → dim 25 at slot 3
+    ff4_in[14, 37] = BIG
+    ff4_in[14, 13] = BIG
+    ff4_in[14, 27] = -2.0*BIG + 1.0
+    ff4_in[14, 9] = -2*BIG
+    ff4_in[D_FFN+14, 29] = 1.0  # value = a2*b2 from L3 gate 7
+    ff4_out[25, 14] = 0.0     # DON'T add — a2*b2 is a byte-4 term, not byte-3!
+
+    # Actually: byte 3 = a0*b3 + a1*b2 + a2*b1 + a3*b0 + carry_2.
+    # a2*b2 contributes to byte 4, not byte 3. So gate 14 output = 0. Skip it.
+
+    # ---- Carry_2 recomputation at slot 3 ----
+    # Need byte2_raw = carry_1 + a0*b2 + a1*b1 + a2*b0
+    # carry_1 = (byte1_raw - byte1_result) / 256
+    # byte1_raw = carry_0 + a0*b1 + a1*b0
+    # carry_0 = (a0*b0 - byte0_result) / 256
+    # At slot 3: dim 0 = byte2_result. dim 33 = byte1_result (from L4 head 0, pos-2).
+    # We need byte0_result — but that's 3 positions back! No direct fetch.
+    # TRICK: use the k-3 fetch of the TRACE (not operands).
+    # L4 head 0 fetches from pos-2 → byte1 at slot 3.
+    # We need a head fetching from pos-3 → byte0 at slot 3.
+    # Can we add head 3 for this? Yes, L4 has 20 heads.
+
+    # Head 3: fetch byte from 3 trace positions back → dim 18 (unused after L1)
+    # At slot 3: gives byte 0 result (for carry_2 recomputation)
+    W4[6, 5] = 2.0 * S_QUAD; W4[6, 27] = -6.0 * S_QUAD  # pos - 3
+    W4[7, 27] = 1.0
+    W4[d+6, 5] = 1.0; W4[d+7, 6] = 1.0
+    W4[2*d+6, 0] = 1.0
+    out4[18, 6] = 1.0  # byte_{k-3}_result → dim 18
+
+    # ---- L4 FFN gates 15-21: carry recomputation products for byte 3 at slot 3 ----
+    # Need: a0*b0 → dim 34 (already from gate 0 at slot 2+, but at slot 3 it gives a1*b1)
+    # PROBLEM: gate 0 computes dim30*dim31 = (k-2 at slot 3 = a1) * (k-2 = b1) = a1*b1
+    # For byte 3 carry we need a0*b0 from k-3 dims (26, 20).
+    # Add separate gates for slot-3 carry recomputation:
+
+    # Gate 15: a0*b0 at slot 3 → dim 34 (overrides gate 0's a1*b1 — both add to dim 34)
+    # Actually gate 0 writes a1*b1 to dim 34 at slot 3. We need a0*b0 SEPARATELY.
+    # Use a DIFFERENT scratch dim. dim 38 is free at L4 FFN time (L2 byte-2 fetch was consumed by L2 FFN).
+    # Wait, L3 k-2 heads DON'T write to dim 38 anymore (they use dim 30-31). So dim 38 is clean!
+    ff4_in[15, 26] = 1.0      # gate = a0 (k-3 fetch, dim 26)
+    ff4_in[15, 37] = BIG      # slot 3 only
+    ff4_in[15, 13] = BIG
+    ff4_in[15, 27] = -2.0*BIG
+    ff4_in[15, 9] = -2*BIG
+    ff4_in[D_FFN+15, 20] = 1.0  # value = b0 (k-3 fetch, dim 20)
+    ff4_out[38, 15] = 1.0     # a0*b0 at slot 3 → dim 38
+
+    # Gate 16: a0*b1 at slot 3 → dim 39
+    ff4_in[16, 26] = 1.0      # gate = a0 (k-3, dim 26)
+    ff4_in[16, 37] = BIG
+    ff4_in[16, 13] = BIG
+    ff4_in[16, 27] = -2.0*BIG
+    ff4_in[16, 9] = -2*BIG
+    ff4_in[D_FFN+16, 31] = 1.0  # value = b1 (k-2, dim 31)
+    ff4_out[39, 16] = 1.0
+
+    # Gate 17: a1*b0 at slot 3 → dim 39
+    ff4_in[17, 30] = 1.0      # gate = a1 (k-2, dim 30)
+    ff4_in[17, 37] = BIG
+    ff4_in[17, 13] = BIG
+    ff4_in[17, 27] = -2.0*BIG
+    ff4_in[17, 9] = -2*BIG
+    ff4_in[D_FFN+17, 20] = 1.0  # value = b0 (k-3, dim 20)
+    ff4_out[39, 17] = 1.0
+
+    # Gate 18: a0*b2 at slot 3 → dim 35 (for byte2_raw recomputation)
+    ff4_in[18, 26] = 1.0      # gate = a0 (k-3, dim 26)
+    ff4_in[18, 37] = BIG
+    ff4_in[18, 13] = BIG
+    ff4_in[18, 27] = -2.0*BIG
+    ff4_in[18, 9] = -2*BIG
+    ff4_in[D_FFN+18, 1] = 1.0  # value = b2 (k-1, dim 1)
+    ff4_out[35, 18] = 1.0     # → dim 35 (will hold byte2 cross terms at slot 3)
+
+    # Gate 19: a1*b1 at slot 3 → dim 35
+    ff4_in[19, 30] = 1.0      # gate = a1 (k-2, dim 30)
+    ff4_in[19, 37] = BIG
+    ff4_in[19, 13] = BIG
+    ff4_in[19, 27] = -2.0*BIG
+    ff4_in[19, 9] = -2*BIG
+    ff4_in[D_FFN+19, 31] = 1.0  # value = b1 (k-2, dim 31)
+    ff4_out[35, 19] = 1.0
+
+    # Gate 20: a2*b0 at slot 3 → dim 35
+    ff4_in[20, 19] = 1.0      # gate = a2 (k-1, dim 19)
+    ff4_in[20, 37] = BIG
+    ff4_in[20, 13] = BIG
+    ff4_in[20, 27] = -2.0*BIG
+    ff4_in[20, 9] = -2*BIG
+    ff4_in[D_FFN+20, 20] = 1.0  # value = b0 (k-3, dim 20)
+    ff4_out[35, 20] = 1.0
+
+    # At slot 3 after L4: dim 38 = a0*b0, dim 39 = a0*b1+a1*b0,
+    # dim 35 = a0*b2+a1*b1+a2*b0, dim 33 = byte1 (from trace), dim 18 = byte0 (from trace)
+
     # ================================================================
     # L5 FFN: carry_0 + byte1_raw
     # ================================================================
@@ -709,15 +890,35 @@ def _set_universal_weights(model):
     ff5_in[D_FFN+0, 27] = 1.0
     ff5_out[35, 0] = 1.0/256.0  # carry_0 added to dim 35
 
-    # dim 35 now = carry_0 + a0*b1 + a1*b0 = byte1_raw (at slot 2+)
+    # dim 35 at slot 2 = carry_0 + a0*b1 + a1*b0 = byte1_raw
+
+    # ---- Slot-3 carry chain: carry_0 for byte 3 computation ----
+    # At slot 3: dim 38 = a0*b0 (from L4 gate 15), dim 18 = byte0 (from L4 head 3)
+    # Gate 1: carry_0 at slot 3 = (a0*b0 - byte0) / 256 → dim 39 (add to a0*b1+a1*b0)
+    ff5_in[1, 38] = 1.0       # +a0*b0 (slot-3 specific, dim 38)
+    ff5_in[1, 18] = -1.0      # -byte0_result (from L4 head 3, dim 18)
+    ff5_in[1, 37] = BIG       # slot 3 only
+    ff5_in[1, 13] = BIG
+    ff5_in[1, 27] = -2.0*BIG
+    ff5_in[1, 9] = -2*BIG
+    ff5_in[D_FFN+1, 27] = 1.0
+    ff5_out[39, 1] = 1.0/256.0  # carry_0 → dim 39 (at slot 3: adds to a0*b1+a1*b0)
+    # dim 39 at slot 3 = a0*b1 + a1*b0 + carry_0 = byte1_raw
+
+    # Gate 2: carry_1 at slot 3 = (byte1_raw - byte1_result) / 256 → dim 35
+    # byte1_raw is in dim 39 (at slot 3). BUT gate 2 reads PRE-L5 dim 39.
+    # Pre-L5 dim 39 = a0*b1 + a1*b0 (from L4 gates 16-17). Missing carry_0.
+    # Can't add carry_0 and then read the sum in the SAME layer (simultaneous FFN).
+    # SOLUTION: compute carry_1 in L6 instead. For slot 3, L6 reads L5 outputs.
+    # This means the carry chain for slot 3 spans: L5 (carry_0 → dim 39) → L6 (carry_1 → dim 35).
 
     # ================================================================
-    # L6 FFN: carry_1 + byte-2 correction
+    # L6 FFN: carry_1 + byte-2/3 correction
     # ================================================================
     ff6_in = model.ff_in[6].weight; ff6_out = model.ff_out[6].weight
 
-    # Gate 0: carry_1 = (byte1_raw - byte1_result) / 256 → dim 25 at SLOT 2 ONLY
-    # dim 35 = byte1_raw (from L5). dim 0 = byte1_result (input token at slot 2).
+    # Gate 0: carry_1 at SLOT 2 = (byte1_raw - byte1_result) / 256 → dim 25
+    # dim 35 = byte1_raw (from L5 at slot 2). dim 0 = byte1_result (input token).
     ff6_in[0, 35] = 1.0
     ff6_in[0, 0] = -1.0       # -byte1_result
     ff6_in[0, 36] = BIG       # is_slot_2
@@ -726,6 +927,19 @@ def _set_universal_weights(model):
     ff6_in[0, 9] = -2*BIG
     ff6_in[D_FFN+0, 27] = 1.0
     ff6_out[25, 0] = 1.0/256.0
+
+    # Gate 1: carry_1 at SLOT 3 = (byte1_raw - byte1_result) / 256 → dim 35
+    # At slot 3: dim 39 = byte1_raw (carry_0 + a0*b1 + a1*b0, from L5).
+    # byte1_result = dim 33 (from L4 head 0 = byte at pos-2 = byte1 at slot 3).
+    ff6_in[1, 39] = 1.0       # byte1_raw at slot 3
+    ff6_in[1, 33] = -1.0      # -byte1_result (from L4 trace fetch)
+    ff6_in[1, 37] = BIG       # slot 3 only
+    ff6_in[1, 13] = BIG
+    ff6_in[1, 27] = -2.0*BIG
+    ff6_in[1, 9] = -2*BIG
+    ff6_in[D_FFN+1, 27] = 1.0
+    ff6_out[35, 1] = 1.0/256.0  # carry_1 → dim 35 (adds to byte2 cross terms)
+    # dim 35 at slot 3 after L6 = a0*b2+a1*b1+a2*b0 (from L4) + carry_1 = byte2_raw
 
     # ================================================================
     # Layer 7 FFN: Mod 256 for ADD + mod 4096 for MUL byte 0 + MUL carry
@@ -773,6 +987,17 @@ def _set_universal_weights(model):
     ff7_in[34, 28] = -2*BIG
     ff7_in[D_FFN+34, 27] = 1.0
     ff7_out[25, 34] = 1.0/256.0
+
+    # Gate 35: carry_2 at SLOT 3 = (byte2_raw - byte2_result) / 256 → dim 25
+    # dim 35 = byte2_raw (from L6 at slot 3). dim 0 = byte2_result (input token at slot 3).
+    ff7_in[35, 35] = 1.0      # byte2_raw
+    ff7_in[35, 0] = -1.0      # -byte2_result
+    ff7_in[35, 37] = BIG      # slot 3 only
+    ff7_in[35, 13] = BIG
+    ff7_in[35, 27] = -2.0*BIG
+    ff7_in[35, 9] = -2*BIG
+    ff7_in[D_FFN+35, 27] = 1.0
+    ff7_out[25, 35] = 1.0/256.0
 
     # ================================================================
     # Layer 8 FFN: Mod 4096 for MUL at all non-commit slots
@@ -2063,6 +2288,10 @@ def _set_native_weights(model):
     ff3_in[D_FFN+5,27]=1.0;ff3_out[25,5]=-1.0
     # Gate 6: clear dim 26 (has L2 opB byte-1, must not reach output head)
     ff3_in[6,27]=1.0;ff3_in[D_FFN+6,26]=-1.0;ff3_out[26,6]=1.0
+    # Gate 10: clear dim 18 (L1 opB_commit_pos, would corrupt L4 k-3 trace fetch)
+    ff3_in[10,27]=1.0;ff3_in[D_FFN+10,18]=-1.0;ff3_out[18,10]=1.0
+    # Gate 11: clear dim 20 (L1 opA_commit_pos, would corrupt L4 k-3 opB fetch)
+    ff3_in[11,27]=1.0;ff3_in[D_FFN+11,20]=-1.0;ff3_out[20,11]=1.0
 
     # Gate 7: a0*b0 for MUL carry at slot > 0 → dim 29 (safe scratch: is_le_s=0 for MUL)
     # Bilinear: gate = relu(a0 + BIG*is_mul - BIG - 2*BIG*is_commit - 2*BIG*is_commit_input)
@@ -2108,6 +2337,21 @@ def _set_native_weights(model):
     W4[d+0, 5] = 1.0; W4[d+1, 6] = 1.0
     W4[2*d+0, 0] = 1.0
     out4[33, 0] = 1.0  # byte_{k-2}_result → dim 33
+
+    # Head 1: fetch opA[k-3] → dim 26 (cleared by L3 gate 6, safe)
+    # At slot 3: a0 (byte 0 of opA). At slot 2: a_{-1} (garbage, but slot-3 gating prevents use)
+    W4[2, 21] = 1.0; W4[2, 27] = -6.0 * S_QUAD  # fetch_addr_A - 6S
+    W4[3, 27] = 1.0
+    W4[d+2, 5] = 1.0; W4[d+3, 6] = 1.0
+    W4[2*d+2, 0] = 1.0
+    out4[26, 2] = 1.0  # opA[k-3] → dim 26
+
+    # Head 2: fetch opB[k-3] → dim 20 (unused after L1)
+    W4[4, 3] = 1.0; W4[4, 27] = -6.0 * S_QUAD  # fetch_addr_B - 6S
+    W4[5, 27] = 1.0
+    W4[d+4, 5] = 1.0; W4[d+5, 6] = 1.0
+    W4[2*d+4, 0] = 1.0
+    out4[20, 4] = 1.0  # opB[k-3] → dim 20
 
     ff4_in = model.ff_in[4].weight; ff4_out = model.ff_out[4].weight
 
@@ -2181,6 +2425,162 @@ def _set_native_weights(model):
     ff4_in[D_FFN+7, 24] = 1.0  # value = b2
     ff4_out[25, 7] = -1.0     # SUBTRACT
 
+    # ---- Byte 3 cross terms at SLOT 3 ONLY (gated by dim 37 = is_slot_3) ----
+    # Correct terms: a0*b3 + a1*b2 + a2*b1 + a3*b0
+    # L3 gates 8-9 produce a3*b2 + a2*b3 at slot 3 (wrong). Subtract those + add correct.
+    # k-3 fetch: a0 in dim 26, b0 in dim 20. k-2: a1 in dim 30, b1 in dim 31.
+    # k-1: a2 in dim 19, b2 in dim 1. Current: a3 in dim 23, b3 in dim 24.
+
+    # Gate 8: a0*b3 at slot 3 → dim 25
+    ff4_in[8, 26] = 1.0       # gate = a0 (k-3 fetch, dim 26)
+    ff4_in[8, 37] = BIG       # is_slot_3
+    ff4_in[8, 13] = BIG
+    ff4_in[8, 27] = -2.0*BIG
+    ff4_in[8, 9] = -2*BIG
+    ff4_in[D_FFN+8, 24] = 1.0  # value = b3 (opB at slot 3)
+    ff4_out[25, 8] = 1.0
+
+    # Gate 9: a3*b0 at slot 3 → dim 25
+    ff4_in[9, 23] = 1.0       # gate = a3 (opA at slot 3)
+    ff4_in[9, 37] = BIG
+    ff4_in[9, 13] = BIG
+    ff4_in[9, 27] = -2.0*BIG
+    ff4_in[9, 9] = -2*BIG
+    ff4_in[D_FFN+9, 20] = 1.0  # value = b0 (k-3 fetch, dim 20)
+    ff4_out[25, 9] = 1.0
+
+    # Gate 10: a1*b2 at slot 3 → dim 25
+    ff4_in[10, 30] = 1.0      # gate = a1 (k-2 fetch, dim 30)
+    ff4_in[10, 37] = BIG
+    ff4_in[10, 13] = BIG
+    ff4_in[10, 27] = -2.0*BIG
+    ff4_in[10, 9] = -2*BIG
+    ff4_in[D_FFN+10, 1] = 1.0  # value = b2 (k-1 fetch, dim 1)
+    ff4_out[25, 10] = 1.0
+
+    # Gate 11: a2*b1 at slot 3 → dim 25
+    ff4_in[11, 19] = 1.0      # gate = a2 (k-1 fetch, dim 19)
+    ff4_in[11, 37] = BIG
+    ff4_in[11, 13] = BIG
+    ff4_in[11, 27] = -2.0*BIG
+    ff4_in[11, 9] = -2*BIG
+    ff4_in[D_FFN+11, 31] = 1.0  # value = b1 (k-2 fetch, dim 31)
+    ff4_out[25, 11] = 1.0
+
+    # Gates 12-13: subtract wrong L3 terms (a3*b2 + a2*b3) at slot 3
+    ff4_in[12, 23] = 1.0      # gate = a3
+    ff4_in[12, 37] = BIG
+    ff4_in[12, 13] = BIG
+    ff4_in[12, 27] = -2.0*BIG
+    ff4_in[12, 9] = -2*BIG
+    ff4_in[D_FFN+12, 1] = 1.0  # value = b2
+    ff4_out[25, 12] = -1.0    # SUBTRACT
+
+    ff4_in[13, 19] = 1.0      # gate = a2
+    ff4_in[13, 37] = BIG
+    ff4_in[13, 13] = BIG
+    ff4_in[13, 27] = -2.0*BIG
+    ff4_in[13, 9] = -2*BIG
+    ff4_in[D_FFN+13, 24] = 1.0  # value = b3
+    ff4_out[25, 13] = -1.0    # SUBTRACT
+
+    # Gate 14: a2*b2 (from L3 gate 7 → dim 29 at slot 3) → dim 25 at slot 3
+    ff4_in[14, 37] = BIG
+    ff4_in[14, 13] = BIG
+    ff4_in[14, 27] = -2.0*BIG + 1.0
+    ff4_in[14, 9] = -2*BIG
+    ff4_in[D_FFN+14, 29] = 1.0  # value = a2*b2 from L3 gate 7
+    ff4_out[25, 14] = 0.0     # DON'T add — a2*b2 is a byte-4 term, not byte-3!
+
+    # Actually: byte 3 = a0*b3 + a1*b2 + a2*b1 + a3*b0 + carry_2.
+    # a2*b2 contributes to byte 4, not byte 3. So gate 14 output = 0. Skip it.
+
+    # ---- Carry_2 recomputation at slot 3 ----
+    # Need byte2_raw = carry_1 + a0*b2 + a1*b1 + a2*b0
+    # carry_1 = (byte1_raw - byte1_result) / 256
+    # byte1_raw = carry_0 + a0*b1 + a1*b0
+    # carry_0 = (a0*b0 - byte0_result) / 256
+    # At slot 3: dim 0 = byte2_result. dim 33 = byte1_result (from L4 head 0, pos-2).
+    # We need byte0_result — but that's 3 positions back! No direct fetch.
+    # TRICK: use the k-3 fetch of the TRACE (not operands).
+    # L4 head 0 fetches from pos-2 → byte1 at slot 3.
+    # We need a head fetching from pos-3 → byte0 at slot 3.
+    # Can we add head 3 for this? Yes, L4 has 20 heads.
+
+    # Head 3: fetch byte from 3 trace positions back → dim 18 (unused after L1)
+    # At slot 3: gives byte 0 result (for carry_2 recomputation)
+    W4[6, 5] = 2.0 * S_QUAD; W4[6, 27] = -6.0 * S_QUAD  # pos - 3
+    W4[7, 27] = 1.0
+    W4[d+6, 5] = 1.0; W4[d+7, 6] = 1.0
+    W4[2*d+6, 0] = 1.0
+    out4[18, 6] = 1.0  # byte_{k-3}_result → dim 18
+
+    # ---- L4 FFN gates 15-21: carry recomputation products for byte 3 at slot 3 ----
+    # Need: a0*b0 → dim 34 (already from gate 0 at slot 2+, but at slot 3 it gives a1*b1)
+    # PROBLEM: gate 0 computes dim30*dim31 = (k-2 at slot 3 = a1) * (k-2 = b1) = a1*b1
+    # For byte 3 carry we need a0*b0 from k-3 dims (26, 20).
+    # Add separate gates for slot-3 carry recomputation:
+
+    # Gate 15: a0*b0 at slot 3 → dim 34 (overrides gate 0's a1*b1 — both add to dim 34)
+    # Actually gate 0 writes a1*b1 to dim 34 at slot 3. We need a0*b0 SEPARATELY.
+    # Use a DIFFERENT scratch dim. dim 38 is free at L4 FFN time (L2 byte-2 fetch was consumed by L2 FFN).
+    # Wait, L3 k-2 heads DON'T write to dim 38 anymore (they use dim 30-31). So dim 38 is clean!
+    ff4_in[15, 26] = 1.0      # gate = a0 (k-3 fetch, dim 26)
+    ff4_in[15, 37] = BIG      # slot 3 only
+    ff4_in[15, 13] = BIG
+    ff4_in[15, 27] = -2.0*BIG
+    ff4_in[15, 9] = -2*BIG
+    ff4_in[D_FFN+15, 20] = 1.0  # value = b0 (k-3 fetch, dim 20)
+    ff4_out[38, 15] = 1.0     # a0*b0 at slot 3 → dim 38
+
+    # Gate 16: a0*b1 at slot 3 → dim 39
+    ff4_in[16, 26] = 1.0      # gate = a0 (k-3, dim 26)
+    ff4_in[16, 37] = BIG
+    ff4_in[16, 13] = BIG
+    ff4_in[16, 27] = -2.0*BIG
+    ff4_in[16, 9] = -2*BIG
+    ff4_in[D_FFN+16, 31] = 1.0  # value = b1 (k-2, dim 31)
+    ff4_out[39, 16] = 1.0
+
+    # Gate 17: a1*b0 at slot 3 → dim 39
+    ff4_in[17, 30] = 1.0      # gate = a1 (k-2, dim 30)
+    ff4_in[17, 37] = BIG
+    ff4_in[17, 13] = BIG
+    ff4_in[17, 27] = -2.0*BIG
+    ff4_in[17, 9] = -2*BIG
+    ff4_in[D_FFN+17, 20] = 1.0  # value = b0 (k-3, dim 20)
+    ff4_out[39, 17] = 1.0
+
+    # Gate 18: a0*b2 at slot 3 → dim 35 (for byte2_raw recomputation)
+    ff4_in[18, 26] = 1.0      # gate = a0 (k-3, dim 26)
+    ff4_in[18, 37] = BIG
+    ff4_in[18, 13] = BIG
+    ff4_in[18, 27] = -2.0*BIG
+    ff4_in[18, 9] = -2*BIG
+    ff4_in[D_FFN+18, 1] = 1.0  # value = b2 (k-1, dim 1)
+    ff4_out[35, 18] = 1.0     # → dim 35 (will hold byte2 cross terms at slot 3)
+
+    # Gate 19: a1*b1 at slot 3 → dim 35
+    ff4_in[19, 30] = 1.0      # gate = a1 (k-2, dim 30)
+    ff4_in[19, 37] = BIG
+    ff4_in[19, 13] = BIG
+    ff4_in[19, 27] = -2.0*BIG
+    ff4_in[19, 9] = -2*BIG
+    ff4_in[D_FFN+19, 31] = 1.0  # value = b1 (k-2, dim 31)
+    ff4_out[35, 19] = 1.0
+
+    # Gate 20: a2*b0 at slot 3 → dim 35
+    ff4_in[20, 19] = 1.0      # gate = a2 (k-1, dim 19)
+    ff4_in[20, 37] = BIG
+    ff4_in[20, 13] = BIG
+    ff4_in[20, 27] = -2.0*BIG
+    ff4_in[20, 9] = -2*BIG
+    ff4_in[D_FFN+20, 20] = 1.0  # value = b0 (k-3, dim 20)
+    ff4_out[35, 20] = 1.0
+
+    # At slot 3 after L4: dim 38 = a0*b0, dim 39 = a0*b1+a1*b0,
+    # dim 35 = a0*b2+a1*b1+a2*b0, dim 33 = byte1 (from trace), dim 18 = byte0 (from trace)
+
     # ================================================================
     # L5 FFN: carry_0 + byte1_raw
     # ================================================================
@@ -2198,15 +2598,35 @@ def _set_native_weights(model):
     ff5_in[D_FFN+0, 27] = 1.0
     ff5_out[35, 0] = 1.0/256.0  # carry_0 added to dim 35
 
-    # dim 35 now = carry_0 + a0*b1 + a1*b0 = byte1_raw (at slot 2+)
+    # dim 35 at slot 2 = carry_0 + a0*b1 + a1*b0 = byte1_raw
+
+    # ---- Slot-3 carry chain: carry_0 for byte 3 computation ----
+    # At slot 3: dim 38 = a0*b0 (from L4 gate 15), dim 18 = byte0 (from L4 head 3)
+    # Gate 1: carry_0 at slot 3 = (a0*b0 - byte0) / 256 → dim 39 (add to a0*b1+a1*b0)
+    ff5_in[1, 38] = 1.0       # +a0*b0 (slot-3 specific, dim 38)
+    ff5_in[1, 18] = -1.0      # -byte0_result (from L4 head 3, dim 18)
+    ff5_in[1, 37] = BIG       # slot 3 only
+    ff5_in[1, 13] = BIG
+    ff5_in[1, 27] = -2.0*BIG
+    ff5_in[1, 9] = -2*BIG
+    ff5_in[D_FFN+1, 27] = 1.0
+    ff5_out[39, 1] = 1.0/256.0  # carry_0 → dim 39 (at slot 3: adds to a0*b1+a1*b0)
+    # dim 39 at slot 3 = a0*b1 + a1*b0 + carry_0 = byte1_raw
+
+    # Gate 2: carry_1 at slot 3 = (byte1_raw - byte1_result) / 256 → dim 35
+    # byte1_raw is in dim 39 (at slot 3). BUT gate 2 reads PRE-L5 dim 39.
+    # Pre-L5 dim 39 = a0*b1 + a1*b0 (from L4 gates 16-17). Missing carry_0.
+    # Can't add carry_0 and then read the sum in the SAME layer (simultaneous FFN).
+    # SOLUTION: compute carry_1 in L6 instead. For slot 3, L6 reads L5 outputs.
+    # This means the carry chain for slot 3 spans: L5 (carry_0 → dim 39) → L6 (carry_1 → dim 35).
 
     # ================================================================
-    # L6 FFN: carry_1 + byte-2 correction
+    # L6 FFN: carry_1 + byte-2/3 correction
     # ================================================================
     ff6_in = model.ff_in[6].weight; ff6_out = model.ff_out[6].weight
 
-    # Gate 0: carry_1 = (byte1_raw - byte1_result) / 256 → dim 25 at SLOT 2 ONLY
-    # dim 35 = byte1_raw (from L5). dim 0 = byte1_result (input token at slot 2).
+    # Gate 0: carry_1 at SLOT 2 = (byte1_raw - byte1_result) / 256 → dim 25
+    # dim 35 = byte1_raw (from L5 at slot 2). dim 0 = byte1_result (input token).
     ff6_in[0, 35] = 1.0
     ff6_in[0, 0] = -1.0       # -byte1_result
     ff6_in[0, 36] = BIG       # is_slot_2
@@ -2215,6 +2635,19 @@ def _set_native_weights(model):
     ff6_in[0, 9] = -2*BIG
     ff6_in[D_FFN+0, 27] = 1.0
     ff6_out[25, 0] = 1.0/256.0
+
+    # Gate 1: carry_1 at SLOT 3 = (byte1_raw - byte1_result) / 256 → dim 35
+    # At slot 3: dim 39 = byte1_raw (carry_0 + a0*b1 + a1*b0, from L5).
+    # byte1_result = dim 33 (from L4 head 0 = byte at pos-2 = byte1 at slot 3).
+    ff6_in[1, 39] = 1.0       # byte1_raw at slot 3
+    ff6_in[1, 33] = -1.0      # -byte1_result (from L4 trace fetch)
+    ff6_in[1, 37] = BIG       # slot 3 only
+    ff6_in[1, 13] = BIG
+    ff6_in[1, 27] = -2.0*BIG
+    ff6_in[1, 9] = -2*BIG
+    ff6_in[D_FFN+1, 27] = 1.0
+    ff6_out[35, 1] = 1.0/256.0  # carry_1 → dim 35 (adds to byte2 cross terms)
+    # dim 35 at slot 3 after L6 = a0*b2+a1*b1+a2*b0 (from L4) + carry_1 = byte2_raw
 
     # ================================================================
     # L7: mod 256 for ADD + mod 4096 for MUL byte 0 (slot 0 only) + MUL carry (slot 1+)
@@ -2264,6 +2697,16 @@ def _set_native_weights(model):
     ff7_in[34, 28] = -2*BIG    # suppress slot 0
     ff7_in[D_FFN+34, 27] = 1.0
     ff7_out[25, 34] = 1.0/256.0  # scale: carry = (product - byte0) / 256
+
+    # Gate 35: carry_2 at SLOT 3 = (byte2_raw - byte2_result) / 256 → dim 25
+    ff7_in[35, 35] = 1.0      # byte2_raw (from L6)
+    ff7_in[35, 0] = -1.0      # -byte2_result (dim 0 at slot 3)
+    ff7_in[35, 37] = BIG      # slot 3 only
+    ff7_in[35, 13] = BIG
+    ff7_in[35, 27] = -2.0*BIG
+    ff7_in[35, 9] = -2*BIG
+    ff7_in[D_FFN+35, 27] = 1.0
+    ff7_out[25, 35] = 1.0/256.0
 
     # ================================================================
     # L8: mod 4096 for MUL at all non-commit slots
