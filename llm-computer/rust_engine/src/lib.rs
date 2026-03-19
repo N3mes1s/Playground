@@ -12,7 +12,7 @@ const N_HEADS: usize = 20;
 const N_LAYERS: usize = 10;
 const HD: usize = 2;
 const VOCAB: usize = 520;
-const D_FFN: usize = 40;
+const D_FFN: usize = 256;
 const SCALE: f64 = 0.7071067811865476; // 1/sqrt(2)
 
 // ============================================================

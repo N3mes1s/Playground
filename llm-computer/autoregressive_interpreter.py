@@ -29,7 +29,7 @@ from compiler import TraceVocab
 D_MODEL = 40
 N_HEADS = 20
 N_LAYERS = 10
-D_FFN = 40
+D_FFN = 256  # 256 gates per layer for byte-level step functions (mod, div, bitwise)
 MAX_SEQ = 200000
 
 # Program layout
