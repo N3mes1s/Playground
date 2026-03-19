@@ -575,7 +575,7 @@ def evaluate(model, val_set, device):
             input_ids = input_ids[:, :max_len]
             target_ids = target_ids[:, :max_len]
 
-            logits = model(input_ids)  # (1, T, vocab)
+            logits = model(input_ids) / 1000.0  # temperature scaling
 
             # Only compute loss on trace positions
             trace_mask = target_ids[0] != -100
@@ -621,10 +621,15 @@ def train(config: TrainingConfig = None):
     # Use smaller max_seq for training (programs are short, traces < 500 tokens)
     print("Building model with compiled weights...")
     import autoregressive_interpreter as ai
-    _orig_max_seq = ai.MAX_SEQ
-    ai.MAX_SEQ = 5000  # enough for program (3601) + trace (~500)
+    # Shrink program region + max_seq for training (programs are tiny, 5-20 instructions)
+    ai.MAX_INST = 50    # 50 instructions max (was 600)
+    ai.PROG_LEN = ai.MAX_INST * ai.INST_SIZE  # 300 tokens (was 3600)
+    ai.SEP_POS = ai.PROG_LEN
+    ai.TRACE_START = ai.PROG_LEN + 1  # 301
+    ai.MAX_SEQ = 1000   # 301 program + ~500 trace
     model = build_native_interpreter()
-    ai.MAX_SEQ = _orig_max_seq  # restore
+    # Restore for any other usage
+    ai.MAX_INST = 600; ai.PROG_LEN = 3600; ai.SEP_POS = 3600; ai.TRACE_START = 3601; ai.MAX_SEQ = 200000
     model = model.float()  # float32 for faster training (float64 not needed)
     model.train()
     model.to(device)
@@ -677,6 +682,7 @@ def train(config: TrainingConfig = None):
 
         # Forward pass
         logits = model(input_ids)  # (1, T, vocab)
+        logits = logits / 1000.0  # temperature scaling: compiled weights produce logits ~1M
 
         # Loss on trace positions only
         trace_mask = target_ids[0] != -100
@@ -824,6 +830,23 @@ def eval_test_suite(model):
 # ============================================================
 
 if __name__ == '__main__':
+    # Override to shrink program region for training (programs are 5-20 instructions)
+    import autoregressive_interpreter as _ai
+    _ai.MAX_INST = 50
+    _ai.PROG_LEN = 50 * 6  # 300
+    _ai.SEP_POS = 300
+    _ai.TRACE_START = 301
+    _ai.MAX_SEQ = 1000
+    # Re-import after override
+    from autoregressive_interpreter import PROG_LEN, SEP_POS, TRACE_START
+    # Patch module-level vars in this module too
+    import sys
+    _this = sys.modules[__name__]
+    _this.PROG_LEN = 300
+    _this.SEP_POS = 300
+    _this.TRACE_START = 301
+    _this.MAX_SEQ = 1000
+
     print("=" * 70)
     print("WASM-in-Transformer Training Pipeline")
     print("=" * 70)
