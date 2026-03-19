@@ -483,13 +483,13 @@ def generate_training_sample(program: list[Instruction]):
         if len(trace_tokens) == 0:
             return None
 
+        # Standard autoregressive: input[t] predicts target[t] = input[t+1]
         # Input: program_tokens + trace_tokens[:-1] (teacher forcing)
-        # The model sees the program, then predicts each trace token
-        # given all previous trace tokens.
+        # Target: shifted by 1 — at each position, predict the NEXT token
+        # Program positions masked with -100 (ignored by cross-entropy)
+        # The LAST program token (SEP) predicts trace[0], so target starts there.
         input_tokens = prog_tokens + trace_tokens[:-1]
-        # Target: we only care about predicting trace tokens.
-        # Pad program positions with -100 (ignored by cross-entropy)
-        target_tokens = [-100] * len(prog_tokens) + trace_tokens
+        target_tokens = [-100] * (len(prog_tokens) - 1) + trace_tokens
 
         return {
             'input': input_tokens,
