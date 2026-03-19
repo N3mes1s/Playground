@@ -345,6 +345,151 @@ fn generate_trace_multilayer(
     trace
 }
 
+/// Fast WASM VM for training data generation.
+/// Executes a simple WASM program and returns the expected trace.
+#[pyfunction]
+fn fast_vm_trace(opcodes: Vec<u32>, operands: Vec<i32>) -> Vec<i32> {
+    // Simple stack-based VM for i32 operations
+    let mut stack: Vec<i32> = Vec::new();
+    let mut locals: Vec<i32> = vec![0; 16];
+    let mut trace: Vec<i32> = Vec::new(); // flat: [b0,b1,b2,b3,commit]*
+    let mut ss: i32 = 0;
+
+    for i in 0..opcodes.len() {
+        let op = opcodes[i];
+        let imm = operands[i];
+
+        match op {
+            0x41 => { // i32.const
+                let v = imm;
+                stack.push(v);
+                ss += 1;
+                let vb = (v as u32).to_le_bytes();
+                trace.extend_from_slice(&[vb[0] as i32, vb[1] as i32, vb[2] as i32, vb[3] as i32, ss]);
+            }
+            0x6A => { // i32.add
+                let b = stack.pop().unwrap_or(0);
+                let a = stack.pop().unwrap_or(0);
+                let r = a.wrapping_add(b);
+                stack.push(r);
+                ss -= 1;
+                let vb = (r as u32).to_le_bytes();
+                trace.extend_from_slice(&[vb[0] as i32, vb[1] as i32, vb[2] as i32, vb[3] as i32, ss]);
+            }
+            0x6B => { // i32.sub
+                let b = stack.pop().unwrap_or(0);
+                let a = stack.pop().unwrap_or(0);
+                let r = a.wrapping_sub(b);
+                stack.push(r);
+                ss -= 1;
+                let vb = (r as u32).to_le_bytes();
+                trace.extend_from_slice(&[vb[0] as i32, vb[1] as i32, vb[2] as i32, vb[3] as i32, ss]);
+            }
+            0x6C => { // i32.mul
+                let b = stack.pop().unwrap_or(0);
+                let a = stack.pop().unwrap_or(0);
+                let r = a.wrapping_mul(b);
+                stack.push(r);
+                ss -= 1;
+                let vb = (r as u32).to_le_bytes();
+                trace.extend_from_slice(&[vb[0] as i32, vb[1] as i32, vb[2] as i32, vb[3] as i32, ss]);
+            }
+            0x6D => { // i32.div_s
+                let b = stack.pop().unwrap_or(1);
+                let a = stack.pop().unwrap_or(0);
+                let r = if b != 0 { a.wrapping_div(b) } else { 0 };
+                stack.push(r);
+                ss -= 1;
+                let vb = (r as u32).to_le_bytes();
+                trace.extend_from_slice(&[vb[0] as i32, vb[1] as i32, vb[2] as i32, vb[3] as i32, ss]);
+            }
+            0x6F => { // i32.rem_s
+                let b = stack.pop().unwrap_or(1);
+                let a = stack.pop().unwrap_or(0);
+                let r = if b != 0 { a.wrapping_rem(b) } else { 0 };
+                stack.push(r);
+                ss -= 1;
+                let vb = (r as u32).to_le_bytes();
+                trace.extend_from_slice(&[vb[0] as i32, vb[1] as i32, vb[2] as i32, vb[3] as i32, ss]);
+            }
+            0x71 => { // i32.and
+                let b = stack.pop().unwrap_or(0);
+                let a = stack.pop().unwrap_or(0);
+                let r = a & b;
+                stack.push(r); ss -= 1;
+                let vb = (r as u32).to_le_bytes();
+                trace.extend_from_slice(&[vb[0] as i32, vb[1] as i32, vb[2] as i32, vb[3] as i32, ss]);
+            }
+            0x72 => { // i32.or
+                let b = stack.pop().unwrap_or(0);
+                let a = stack.pop().unwrap_or(0);
+                let r = a | b;
+                stack.push(r); ss -= 1;
+                let vb = (r as u32).to_le_bytes();
+                trace.extend_from_slice(&[vb[0] as i32, vb[1] as i32, vb[2] as i32, vb[3] as i32, ss]);
+            }
+            0x73 => { // i32.xor
+                let b = stack.pop().unwrap_or(0);
+                let a = stack.pop().unwrap_or(0);
+                let r = a ^ b;
+                stack.push(r); ss -= 1;
+                let vb = (r as u32).to_le_bytes();
+                trace.extend_from_slice(&[vb[0] as i32, vb[1] as i32, vb[2] as i32, vb[3] as i32, ss]);
+            }
+            0x74 => { // i32.shl
+                let b = stack.pop().unwrap_or(0);
+                let a = stack.pop().unwrap_or(0);
+                let r = a.wrapping_shl(b as u32);
+                stack.push(r); ss -= 1;
+                let vb = (r as u32).to_le_bytes();
+                trace.extend_from_slice(&[vb[0] as i32, vb[1] as i32, vb[2] as i32, vb[3] as i32, ss]);
+            }
+            0x75 => { // i32.shr_s
+                let b = stack.pop().unwrap_or(0);
+                let a = stack.pop().unwrap_or(0);
+                let r = a.wrapping_shr(b as u32);
+                stack.push(r); ss -= 1;
+                let vb = (r as u32).to_le_bytes();
+                trace.extend_from_slice(&[vb[0] as i32, vb[1] as i32, vb[2] as i32, vb[3] as i32, ss]);
+            }
+            0x21 => { // local.set
+                let v = stack.pop().unwrap_or(0);
+                let idx = imm as usize;
+                if idx < locals.len() { locals[idx] = v; }
+                ss -= 1;
+                let vb = (v as u32).to_le_bytes();
+                trace.extend_from_slice(&[vb[0] as i32, vb[1] as i32, vb[2] as i32, vb[3] as i32, ss]);
+            }
+            0x20 => { // local.get
+                let idx = imm as usize;
+                let v = if idx < locals.len() { locals[idx] } else { 0 };
+                stack.push(v);
+                ss += 1;
+                let vb = (v as u32).to_le_bytes();
+                trace.extend_from_slice(&[vb[0] as i32, vb[1] as i32, vb[2] as i32, vb[3] as i32, ss]);
+            }
+            0xFF => { // output
+                ss -= 1;
+                trace.extend_from_slice(&[0, 0, 0, 0, 254]); // COMMIT_OUTPUT
+            }
+            0x00 => { // halt
+                trace.extend_from_slice(&[0, 0, 0, 0, 255]); // COMMIT_HALT
+                break;
+            }
+            // Comparisons
+            0x46 => { let b=stack.pop().unwrap_or(0); let a=stack.pop().unwrap_or(0); let r=if a==b{1}else{0}; stack.push(r); ss-=1; let vb=(r as u32).to_le_bytes(); trace.extend_from_slice(&[vb[0] as i32,vb[1] as i32,vb[2] as i32,vb[3] as i32,ss]); }
+            0x47 => { let b=stack.pop().unwrap_or(0); let a=stack.pop().unwrap_or(0); let r=if a!=b{1}else{0}; stack.push(r); ss-=1; let vb=(r as u32).to_le_bytes(); trace.extend_from_slice(&[vb[0] as i32,vb[1] as i32,vb[2] as i32,vb[3] as i32,ss]); }
+            0x48 => { let b=stack.pop().unwrap_or(0); let a=stack.pop().unwrap_or(0); let r=if a<b{1}else{0}; stack.push(r); ss-=1; let vb=(r as u32).to_le_bytes(); trace.extend_from_slice(&[vb[0] as i32,vb[1] as i32,vb[2] as i32,vb[3] as i32,ss]); }
+            0x4A => { let b=stack.pop().unwrap_or(0); let a=stack.pop().unwrap_or(0); let r=if a>b{1}else{0}; stack.push(r); ss-=1; let vb=(r as u32).to_le_bytes(); trace.extend_from_slice(&[vb[0] as i32,vb[1] as i32,vb[2] as i32,vb[3] as i32,ss]); }
+            0x4C => { let b=stack.pop().unwrap_or(0); let a=stack.pop().unwrap_or(0); let r=if a<=b{1}else{0}; stack.push(r); ss-=1; let vb=(r as u32).to_le_bytes(); trace.extend_from_slice(&[vb[0] as i32,vb[1] as i32,vb[2] as i32,vb[3] as i32,ss]); }
+            0x4E => { let b=stack.pop().unwrap_or(0); let a=stack.pop().unwrap_or(0); let r=if a>=b{1}else{0}; stack.push(r); ss-=1; let vb=(r as u32).to_le_bytes(); trace.extend_from_slice(&[vb[0] as i32,vb[1] as i32,vb[2] as i32,vb[3] as i32,ss]); }
+            0x45 => { let a=stack.pop().unwrap_or(0); let r=if a==0{1}else{0}; stack.push(r); let vb=(r as u32).to_le_bytes(); trace.extend_from_slice(&[vb[0] as i32,vb[1] as i32,vb[2] as i32,vb[3] as i32,ss]); }
+            _ => {} // skip unknown ops
+        }
+    }
+    trace
+}
+
 #[pyfunction]
 fn generate_trace_rust(
     _a: Vec<f64>, _b: Vec<f64>, _c: usize, _d: Vec<f64>, _e: Vec<f64>,
@@ -356,5 +501,6 @@ fn generate_trace_rust(
 fn llm_compute_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(generate_trace_rust, m)?)?;
     m.add_function(wrap_pyfunction!(generate_trace_multilayer, m)?)?;
+    m.add_function(wrap_pyfunction!(fast_vm_trace, m)?)?;
     Ok(())
 }
