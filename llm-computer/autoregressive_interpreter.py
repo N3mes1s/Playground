@@ -437,8 +437,8 @@ def _set_universal_weights(model):
     ff2_in[D_FFN+1, 16] = 1.0
     ff2_out[25, 1] = 1.0
 
-    # Gate 2 (SUB) — slot 0 only
-    ff2_in[2, 12] = 1.0; ff2_in[2, 8] = -2.0
+    # Gate 2 (SUB) — all byte slots (suppress at commit only, like ADD)
+    ff2_in[2, 12] = 1.0; ff2_in[2, 9] = -2.0  # suppress at commit slot
     ff2_in[D_FFN+2, 23] = 1.0; ff2_in[D_FFN+2, 24] = -1.0
     ff2_out[25, 2] = 1.0
 
@@ -583,6 +583,26 @@ def _set_universal_weights(model):
     ff3_in[10, 27] = 1.0
     ff3_in[D_FFN+10, 18] = -1.0
     ff3_out[18, 10] = 1.0
+
+    # Gates 12-13: SUB borrow — subtract 1 when prev opB > prev opA
+    # borrow = step(prevB > prevA) = relu(prevB - prevA) - relu(prevB - prevA - 1)
+    ff3_in[12, 1] = 1.0     # +prevB (dim 1)
+    ff3_in[12, 19] = -1.0   # -prevA (dim 19)
+    ff3_in[12, 12] = BIG    # is_sub
+    ff3_in[12, 27] = -BIG
+    ff3_in[12, 9] = -2*BIG
+    ff3_in[12, 28] = -2*BIG   # suppress slot 0
+    ff3_in[D_FFN+12, 27] = 1.0
+    ff3_out[25, 12] = -1.0  # SUBTRACT borrow
+
+    ff3_in[13, 1] = 1.0
+    ff3_in[13, 19] = -1.0
+    ff3_in[13, 27] = -1.0 - BIG  # threshold shifted by -1
+    ff3_in[13, 12] = BIG
+    ff3_in[13, 9] = -2*BIG
+    ff3_in[13, 28] = -2*BIG
+    ff3_in[D_FFN+13, 27] = 1.0
+    ff3_out[25, 13] = 1.0   # cancel the extra from gate 12 when diff > 1
 
     # Gate 11: clear dim 20 (has L1 opA_commit_pos, would corrupt L4 k-3 opB fetch)
     ff3_in[11, 27] = 1.0
@@ -998,6 +1018,22 @@ def _set_universal_weights(model):
     ff7_in[35, 9] = -2*BIG
     ff7_in[D_FFN+35, 27] = 1.0
     ff7_out[25, 35] = 1.0/256.0
+
+    # Gates 36-37: SUB mod 256 — add 256 when result < 0
+    # step(result < 0) = relu(-result) - relu(-result - 1)
+    ff7_in[36, 25] = -1.0    # -result
+    ff7_in[36, 12] = BIG     # is_sub
+    ff7_in[36, 27] = -BIG
+    ff7_in[36, 9] = -2*BIG
+    ff7_in[D_FFN+36, 27] = 1.0
+    ff7_out[25, 36] = 256.0  # +256
+
+    ff7_in[37, 25] = -1.0
+    ff7_in[37, 27] = -1.0 - BIG
+    ff7_in[37, 12] = BIG
+    ff7_in[37, 9] = -2*BIG
+    ff7_in[D_FFN+37, 27] = 1.0
+    ff7_out[25, 37] = -256.0  # cancel for diff > 1
 
     # ================================================================
     # Layer 8 FFN: Mod 4096 for MUL at all non-commit slots
@@ -2186,8 +2222,8 @@ def _set_native_weights(model):
     # CONST — all byte slots
     ff2_in[1, 10] = 1.0; ff2_in[1, 9] = -2.0
     ff2_in[D_FFN+1, 16] = 1.0; ff2_out[25, 1] = 1.0
-    # SUB — slot 0
-    ff2_in[2, 12] = 1.0; ff2_in[2, 8] = -2.0
+    # SUB — all byte slots (suppress at commit only, like ADD)
+    ff2_in[2, 12] = 1.0; ff2_in[2, 9] = -2.0
     ff2_in[D_FFN+2, 23] = 1.0; ff2_in[D_FFN+2, 24] = -1.0
     ff2_out[25, 2] = 1.0
     # MUL — slot 0
@@ -2292,6 +2328,13 @@ def _set_native_weights(model):
     ff3_in[10,27]=1.0;ff3_in[D_FFN+10,18]=-1.0;ff3_out[18,10]=1.0
     # Gate 11: clear dim 20 (L1 opA_commit_pos, would corrupt L4 k-3 opB fetch)
     ff3_in[11,27]=1.0;ff3_in[D_FFN+11,20]=-1.0;ff3_out[20,11]=1.0
+    # Gates 12-13: SUB borrow — subtract 1 when prev opB > prev opA
+    ff3_in[12,1]=1.0;ff3_in[12,19]=-1.0;ff3_in[12,12]=BIG;ff3_in[12,27]=-BIG
+    ff3_in[12,9]=-2*BIG;ff3_in[12,28]=-2*BIG
+    ff3_in[D_FFN+12,27]=1.0;ff3_out[25,12]=-1.0
+    ff3_in[13,1]=1.0;ff3_in[13,19]=-1.0;ff3_in[13,27]=-1.0-BIG;ff3_in[13,12]=BIG
+    ff3_in[13,9]=-2*BIG;ff3_in[13,28]=-2*BIG
+    ff3_in[D_FFN+13,27]=1.0;ff3_out[25,13]=1.0
 
     # Gate 7: a0*b0 for MUL carry at slot > 0 → dim 29 (safe scratch: is_le_s=0 for MUL)
     # Bilinear: gate = relu(a0 + BIG*is_mul - BIG - 2*BIG*is_commit - 2*BIG*is_commit_input)
@@ -2707,6 +2750,12 @@ def _set_native_weights(model):
     ff7_in[35, 9] = -2*BIG
     ff7_in[D_FFN+35, 27] = 1.0
     ff7_out[25, 35] = 1.0/256.0
+
+    # Gates 36-37: SUB mod 256 — add 256 when result < 0
+    ff7_in[36,25]=-1.0;ff7_in[36,12]=BIG;ff7_in[36,27]=-BIG;ff7_in[36,9]=-2*BIG
+    ff7_in[D_FFN+36,27]=1.0;ff7_out[25,36]=256.0
+    ff7_in[37,25]=-1.0;ff7_in[37,27]=-1.0-BIG;ff7_in[37,12]=BIG;ff7_in[37,9]=-2*BIG
+    ff7_in[D_FFN+37,27]=1.0;ff7_out[25,37]=-256.0
 
     # ================================================================
     # L8: mod 4096 for MUL at all non-commit slots
