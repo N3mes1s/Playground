@@ -269,20 +269,63 @@ class Compiler:
             self.code.append(Instruction(Op.LOCAL_GET, idx))
 
         elif isinstance(expr, BinOp):
-            self._compile_expr(expr.left)
-            self._compile_expr(expr.right)
-            op_map = {
-                '+': Op.I32_ADD, '-': Op.I32_SUB,
-                '*': Op.I32_MUL, '/': Op.I32_DIV_S, '%': Op.I32_REM_S,
-                '==': Op.I32_EQ, '!=': Op.I32_NE,
-                '<': Op.I32_LT_S, '>': Op.I32_GT_S,
-                '<=': Op.I32_LE_S, '>=': Op.I32_GE_S,
-                '&': Op.I32_AND, '|': Op.I32_OR, '^': Op.I32_XOR,
-                '<<': Op.I32_SHL, '>>': Op.I32_SHR_S,
-            }
-            if expr.op not in op_map:
-                raise ValueError(f"Unknown binary op: {expr.op}")
-            self.code.append(Instruction(op_map[expr.op]))
+            if expr.op in ('/', '%'):
+                # Decompose DIV/REM into repeated subtraction loop
+                # This avoids i32.div_s and i32.rem_s which can't be computed natively
+                # Result: a / b (quotient) or a % b (remainder) using only SUB/ADD/GE_S
+                self._compile_expr(expr.left)   # push a
+                self._compile_expr(expr.right)  # push b
+                # Store in temp locals
+                div_b = self._get_local('__div_b')
+                div_a = self._get_local('__div_a')
+                div_q = self._get_local('__div_q')
+                self.code.append(Instruction(Op.LOCAL_SET, div_b))  # b
+                self.code.append(Instruction(Op.LOCAL_SET, div_a))  # a
+                self.code.append(Instruction(Op.I32_CONST, 0))
+                self.code.append(Instruction(Op.LOCAL_SET, div_q))  # q = 0
+                # while a >= b: a -= b; q += 1
+                self.code.append(Instruction(Op.BLOCK))
+                self.code.append(Instruction(Op.LOOP))
+                # condition: a >= b
+                self.code.append(Instruction(Op.LOCAL_GET, div_a))
+                self.code.append(Instruction(Op.LOCAL_GET, div_b))
+                self.code.append(Instruction(Op.I32_GE_S))
+                self.code.append(Instruction(Op.I32_EQZ))
+                self.code.append(Instruction(Op.BR_IF, 1))  # break if NOT (a >= b)
+                # a -= b
+                self.code.append(Instruction(Op.LOCAL_GET, div_a))
+                self.code.append(Instruction(Op.LOCAL_GET, div_b))
+                self.code.append(Instruction(Op.I32_SUB))
+                self.code.append(Instruction(Op.LOCAL_SET, div_a))
+                # q += 1
+                self.code.append(Instruction(Op.LOCAL_GET, div_q))
+                self.code.append(Instruction(Op.I32_CONST, 1))
+                self.code.append(Instruction(Op.I32_ADD))
+                self.code.append(Instruction(Op.LOCAL_SET, div_q))
+                # continue loop
+                self.code.append(Instruction(Op.BR, 0))
+                self.code.append(Instruction(Op.END))  # end loop
+                self.code.append(Instruction(Op.END))  # end block
+                # Push result: quotient for /, remainder for %
+                if expr.op == '/':
+                    self.code.append(Instruction(Op.LOCAL_GET, div_q))
+                else:
+                    self.code.append(Instruction(Op.LOCAL_GET, div_a))
+            else:
+                self._compile_expr(expr.left)
+                self._compile_expr(expr.right)
+                op_map = {
+                    '+': Op.I32_ADD, '-': Op.I32_SUB,
+                    '*': Op.I32_MUL,
+                    '==': Op.I32_EQ, '!=': Op.I32_NE,
+                    '<': Op.I32_LT_S, '>': Op.I32_GT_S,
+                    '<=': Op.I32_LE_S, '>=': Op.I32_GE_S,
+                    '&': Op.I32_AND, '|': Op.I32_OR, '^': Op.I32_XOR,
+                    '<<': Op.I32_SHL, '>>': Op.I32_SHR_S,
+                }
+                if expr.op not in op_map:
+                    raise ValueError(f"Unknown binary op: {expr.op}")
+                self.code.append(Instruction(op_map[expr.op]))
 
         elif isinstance(expr, UnaryOp):
             if expr.op == '-':
