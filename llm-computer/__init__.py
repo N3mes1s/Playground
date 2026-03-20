@@ -1,29 +1,23 @@
 """
-LLM Computer: Executing programs inside a transformer.
+LLM Computer: A WebAssembly interpreter compiled into transformer weights.
 
 Based on Percepta's "Can LLMs Be Computers?" (March 2026).
 https://www.percepta.ai/blog/can-llms-be-computers
 
-Architecture:
-    - VanillaTransformer with 2D attention heads (d_model=36, n_heads=18)
-    - WASM interpreter compiled into transformer weights (no training)
-    - HullKVCache for O(log n) attention via 2D convex hull queries
-    - Execution trace generation at 30k+ tok/s on CPU
+The transformer IS the computer. Programs are encoded as input tokens.
+The model generates execution traces step by step — every value computed
+in the forward pass.
 
-Components:
-    model.py            - VanillaTransformer architecture
-    weight_compiler.py  - Compiles WASM programs into transformer weights
-    hull_kv_cache.py    - HullKVCache with 2D convex hull
-    wasm_vm.py          - WebAssembly virtual machine
-    compiler.py         - Trace tokenization (VM trace ↔ token sequences)
-    executor.py         - Execution engine (VM and transformer modes)
-    sandbox.py          - Transformer's internal compute substrate (pywasm)
-    demo.py             - Interactive demos
+Core components:
+    autoregressive_interpreter.py  - Hand-crafted weight setup + inference
+    model.py                       - VanillaTransformer architecture
+    wasm_vm.py                     - Reference WASM VM
+    mini_c.py                      - C-to-WASM compiler (DIV/REM decomposition)
+    compiler.py                    - Trace tokenization (TraceVocab)
+    train.py                       - Training pipeline (research)
+    rust_engine/                   - Rust inference engine (O(log n) attention)
 """
 
 from .model import VanillaTransformer
-from .hull_kv_cache import HullKVCache, StandardKVCache, ConvexHull2D
 from .wasm_vm import WasmVM, Op, Instruction
 from .compiler import TraceCompiler, TraceVocab
-from .weight_compiler import compile_program
-from .executor import Executor, StreamingExecutor, ExecutionResult

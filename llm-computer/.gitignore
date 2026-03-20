@@ -2,3 +2,6 @@ checkpoints/
 data/
 __pycache__/
 *.pyc
+.venv/
+uv.lock
+rust_engine/target/
