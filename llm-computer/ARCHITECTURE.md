@@ -36,24 +36,28 @@ These operations cannot be natively computed in a single forward step because th
 - **SHL**: `a << b` becomes `repeat b times: a = a + a` — repeated doubling via ADD.
 - **SHR**: `a >> b` becomes `compute 2^b via SHL, then divide a by 2^b via DIV decomposition`.
 
-### Baked Fallback Operations
+### Bitwise Operations (native via bit extraction)
 
-These operations are encoded as CONST instructions with per-step baked values injected via position embeddings. The hybrid encoder pre-computes their results and writes them into PE dim 16:
+AND, OR, and XOR are computed natively in the weights using a two-layer circuit:
 
-- **AND**, **OR**, **XOR**: Bitwise operations. The model treats them as constants whose values happen to be correct.
+- **Layer 10 (Bit Extraction)**: Extracts all 8 bits from each operand byte using 127 shared step-function pairs at thresholds 2, 4, ..., 254. Each step function `step(x >= T)` contributes to `bit_k` with coefficient `+1` if `bit_k(T) = 1`, `-1` if `bit_k(T) = 0` (and T is a multiple of `2^k`). Uses 510 FFN gates total.
+- **Layer 11 (Combination)**: Uses the bilinear gate structure to compute:
+  - **AND**: `relu(bit_k_a) * bit_k_b * 2^k` — 8 gates
+  - **OR**: `bit_k_a * 2^k + (1 - bit_k_a) * bit_k_b * 2^k` — 16 gates
+  - **XOR**: `bit_k_a * 2^k + bit_k_b * 2^k - 2 * bit_k_a * bit_k_b * 2^k` — 24 gates
 
 ## 3. Architecture Specs
 
 ```
-d_model   = 40          # embedding dimension
-n_heads   = 20          # attention heads per layer
-n_layers  = 10          # transformer layers
-d_ffn     = 256         # feed-forward network width (256 gates for byte-level step functions)
+d_model   = 48          # embedding dimension
+n_heads   = 24          # attention heads per layer
+n_layers  = 12          # transformer layers
+d_ffn     = 512         # feed-forward network width (512 gates for step functions + bit extraction)
 head_dim  = 2           # dims per head (enables O(log n) convex hull attention)
 vocab     = 520         # token vocabulary size
 BIG       = 50,000,000  # gate suppression scale (must exceed max 24-bit operand contribution ~33.4M)
 MAX_SEQ   = 200,000     # maximum sequence length
-Parameters: 8,412,800
+Parameters: 10,645,248
 Precision: float64      # exact computation, no f32 rounding errors
 ```
 

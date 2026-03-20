@@ -1,18 +1,18 @@
 //! Multi-layer Rust engine for the WASM-in-transformer interpreter.
 //!
-//! d_model=40, n_heads=20, head_dim=2, n_layers=10.
+//! d_model=48, n_heads=24, head_dim=2, n_layers=12.
 //! Each active attention head uses an incremental 2D convex hull for
 //! O(log n) max-dot-product queries — the blog's core innovation.
 
 use pyo3::prelude::*;
 use std::f64;
 
-const D: usize = 40;
-const N_HEADS: usize = 20;
-const N_LAYERS: usize = 10;
+const D: usize = 48;
+const N_HEADS: usize = 24;
+const N_LAYERS: usize = 12;
 const HD: usize = 2;
 const VOCAB: usize = 520;
-const D_FFN: usize = 256;
+const D_FFN: usize = 512;
 const SCALE: f64 = 0.7071067811865476; // 1/sqrt(2)
 
 // ============================================================

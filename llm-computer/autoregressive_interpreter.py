@@ -13,7 +13,7 @@ Operand resolution at RUNTIME:
   - Finds operands by matching on stack_size values
   - No pre-compiled explicit addresses
 
-Architecture: d_model=40, n_heads=20, head_dim=2, n_layers=10, d_ffn=40, vocab=520
+Architecture: d_model=48, n_heads=24, head_dim=2, n_layers=12, d_ffn=512, vocab=520
 """
 
 import time
@@ -26,10 +26,10 @@ from wasm_vm import Instruction, Op, WasmVM
 from compiler import TraceVocab
 
 # Architecture constants
-D_MODEL = 40
-N_HEADS = 20
-N_LAYERS = 10
-D_FFN = 256  # 256 gates per layer for byte-level step functions (mod, div, bitwise)
+D_MODEL = 48
+N_HEADS = 24
+N_LAYERS = 12
+D_FFN = 512  # 512 gates per layer for byte-level step functions (mod, div, bitwise)
 MAX_SEQ = 200000
 
 # Program layout
@@ -57,13 +57,14 @@ COMMIT_OFFSET = 256.0
 
 
 # ============================================================
-# Dimension Allocation (d_model = 40)
+# Dimension Allocation (d_model = 48)
 # ============================================================
 # Token embedding:
 #   0: byte_value
 #   10: is_const, 11: is_add, 12: is_sub, 13: is_mul
 #   14: is_output, 15: is_halt
 #   29: is_le_s, 30: is_ge_s, 31: is_lt_s, 32: is_gt_s, 33: is_eq, 34: is_ne, 35: is_eqz
+#   40: is_and, 41: is_or, 42: is_xor
 #
 # PE:
 #   1: is_program, 2: is_opcode_pos, 3: is_sep, 4: is_trace
@@ -87,6 +88,10 @@ COMMIT_OFFSET = 256.0
 #   25: ALU result (from L2 FFN)
 #   26: decode result (from L6 FFN)
 #   29: MUL scratch (a0*b0 for carry, from L3 FFN; safe since is_le_s=0 for MUL)
+#   40: is_and (token embed opcode flag, L0 fetch)
+#   41: is_or
+#   42: is_xor
+#   43-47: bit storage scratch (L10-L11)
 
 
 # ============================================================
@@ -102,7 +107,8 @@ def compute_stack_sizes(program: list[Instruction]) -> list[int]:
             ss += 1
         elif inst.op in (Op.I32_ADD, Op.I32_SUB, Op.I32_MUL,
                           Op.I32_LE_S, Op.I32_GE_S, Op.I32_LT_S,
-                          Op.I32_GT_S, Op.I32_EQ, Op.I32_NE):
+                          Op.I32_GT_S, Op.I32_EQ, Op.I32_NE,
+                          Op.I32_AND, Op.I32_OR, Op.I32_XOR):
             ss -= 1  # pop 2, push 1
         elif inst.op == Op.I32_EQZ:
             pass  # pop 1, push 1
@@ -153,7 +159,8 @@ def encode_program(program: list[Instruction]) -> tuple[list[int], list[int]]:
             stack.append(step)
         elif inst.op in (Op.I32_ADD, Op.I32_SUB, Op.I32_MUL,
                           Op.I32_LE_S, Op.I32_GE_S, Op.I32_LT_S,
-                          Op.I32_GT_S, Op.I32_EQ, Op.I32_NE):
+                          Op.I32_GT_S, Op.I32_EQ, Op.I32_NE,
+                          Op.I32_AND, Op.I32_OR, Op.I32_XOR):
             b_step = stack.pop() if stack else 0
             a_step = stack.pop() if stack else 0
             src_a = a_step
@@ -282,6 +289,7 @@ def _set_universal_weights(model):
         Op.OUTPUT: 14, Op.HALT: 15,
         Op.I32_LE_S: 29, Op.I32_GE_S: 30, Op.I32_LT_S: 31, Op.I32_GT_S: 32,
         Op.I32_EQ: 33, Op.I32_NE: 34, Op.I32_EQZ: 35,
+        Op.I32_AND: 40, Op.I32_OR: 41, Op.I32_XOR: 42,
     }
     for op, dim in opcode_flags.items():
         tok_id = TraceVocab.OPCODE_OFFSET + op
@@ -315,6 +323,8 @@ def _set_universal_weights(model):
         (7, 0, (31, 32), (31, 32)),  # is_lt_s, is_gt_s
         (8, 0, (33, 34), (33, 34)),  # is_eq, is_ne
         (9, 0, (22, 35), (22, 35)),  # is_copy, is_eqz
+        (20, 0, (40, 41), (40, 41)), # is_and, is_or
+        (21, 0, (42, -1), (42, -1)), # is_xor
     ]
     for head, offset, v_dims, out_dims in fetch_heads:
         h2 = head * 2
@@ -360,6 +370,8 @@ def _set_universal_weights(model):
     # Fires for: copy ops + ALL binary ops + EQZ (anything with explicit src_a)
     for fd in (11, 12, 13, 22, 29, 30, 31, 32, 33, 34, 35):
         ff1_in[2, fd] = 1.0
+    for fd in (40, 41, 42):  # AND, OR, XOR also need operand A fetch
+        ff1_in[2, fd] = 1.0
     ff1_in[D_FFN + 2, 4] = 2 * S_QUAD * STEP_SIZE
     ff1_in[D_FFN + 2, 8] = 2 * S_QUAD
     ff1_in[D_FFN + 2, 27] = 2 * S_QUAD * (TRACE_START - STEP_SIZE)
@@ -369,6 +381,8 @@ def _set_universal_weights(model):
     # src_b from dim 2 (head 5 at position +4)
     # dim 2 = push_flag/src_b. For binary ops: src_b. For local.get: 1 (push flag).
     for fd in (11, 12, 13, 29, 30, 31, 32, 33, 34, 35):
+        ff1_in[3, fd] = 1.0
+    for fd in (40, 41, 42):  # AND, OR, XOR also need operand B fetch
         ff1_in[3, fd] = 1.0
     ff1_in[D_FFN + 3, 18] = 2 * S_QUAD * STEP_SIZE  # src_b (from dim 18, head 5)
     ff1_in[D_FFN + 3, 8] = 2 * S_QUAD
@@ -1082,6 +1096,203 @@ def _set_universal_weights(model):
     ff9_out[26, 30] = 1.0
 
     # ================================================================
+    # Layer 10 FFN: Bit extraction for AND/OR/XOR
+    # ================================================================
+    ff10_in = model.ff_in[10].weight
+    ff10_out = model.ff_out[10].weight
+
+    bit_a_dims = [10, 11, 12, 13, 14, 15, 16, 29]  # opA bits 0-7
+    bit_b_dims = [22, 34, 35, 43, 44, 45, 46, 47]   # opB bits 0-7
+
+    # Step functions for opA (dim 23) at thresholds 2, 4, ..., 254
+    # 127 thresholds x 2 gates = 254 gates (gates 0-253)
+    for i, T in enumerate(range(2, 256, 2)):  # i = 0..126, T = 2,4,...,254
+        g = i * 2
+
+        # Gate g: relu(opA_byte - T + 1 + BIG*(bitwise) - BIG)
+        ff10_in[g, 23] = 1.0              # opA_byte
+        ff10_in[g, 40] = BIG              # is_and
+        ff10_in[g, 41] = BIG              # is_or
+        ff10_in[g, 42] = BIG              # is_xor
+        ff10_in[g, 27] = -BIG + float(-T + 1)  # threshold
+        ff10_in[g, 9] = -2*BIG            # suppress commit slot
+
+        ff10_in[D_FFN + g, 27] = 1.0      # value = 1
+
+        # Gate g+1: relu(opA_byte - T + BIG*(bitwise) - BIG)
+        ff10_in[g+1, 23] = 1.0
+        ff10_in[g+1, 40] = BIG
+        ff10_in[g+1, 41] = BIG
+        ff10_in[g+1, 42] = BIG
+        ff10_in[g+1, 27] = -BIG + float(-T)
+        ff10_in[g+1, 9] = -2*BIG
+
+        ff10_in[D_FFN + g+1, 27] = 1.0
+
+        # Wire to bit dims: step(x >= T) contributes to bit_k based on bit pattern of T
+        for k in range(8):
+            if T % (1 << k) != 0:
+                continue  # T not a multiple of 2^k, no contribution to bit_k
+            if k == 0:
+                # bit_0 = x - 2*floor(x/2)
+                # Each step(x >= 2m) contributes -2 to bit_0
+                ff10_out[bit_a_dims[0], g] += -2.0
+                ff10_out[bit_a_dims[0], g+1] += 2.0
+            else:
+                # bit_k = floor(x/2^k) - 2*floor(x/2^(k+1))
+                # step(x>=T) contributes +1 to floor(x/2^k)
+                # and if also multiple of 2^(k+1), -2 to floor(x/2^(k+1))
+                # Net: +1 if (T >> k) is odd, -1 if (T >> k) is even
+                if (T >> k) % 2 == 1:
+                    ff10_out[bit_a_dims[k], g] += 1.0
+                    ff10_out[bit_a_dims[k], g+1] += -1.0
+                else:
+                    ff10_out[bit_a_dims[k], g] += -1.0
+                    ff10_out[bit_a_dims[k], g+1] += 1.0
+
+    # Gate 254: pass-through for bit_0 (raw opA byte value)
+    ff10_in[254, 40] = BIG; ff10_in[254, 41] = BIG; ff10_in[254, 42] = BIG
+    ff10_in[254, 27] = -BIG + 1.0  # fires for any bitwise op
+    ff10_in[254, 9] = -2*BIG  # suppress commit
+    ff10_in[D_FFN + 254, 23] = 1.0  # value = opA_byte
+    ff10_out[bit_a_dims[0], 254] = 1.0
+
+    # Step functions for opB (dim 24) at thresholds 2, 4, ..., 254
+    # Gates 255-508
+    for i, T in enumerate(range(2, 256, 2)):
+        g = 255 + i * 2
+
+        ff10_in[g, 24] = 1.0              # opB_byte
+        ff10_in[g, 40] = BIG
+        ff10_in[g, 41] = BIG
+        ff10_in[g, 42] = BIG
+        ff10_in[g, 27] = -BIG + float(-T + 1)
+        ff10_in[g, 9] = -2*BIG
+        ff10_in[D_FFN + g, 27] = 1.0
+
+        ff10_in[g+1, 24] = 1.0
+        ff10_in[g+1, 40] = BIG
+        ff10_in[g+1, 41] = BIG
+        ff10_in[g+1, 42] = BIG
+        ff10_in[g+1, 27] = -BIG + float(-T)
+        ff10_in[g+1, 9] = -2*BIG
+        ff10_in[D_FFN + g+1, 27] = 1.0
+
+        for k in range(8):
+            if T % (1 << k) != 0:
+                continue
+            if k == 0:
+                ff10_out[bit_b_dims[0], g] += -2.0
+                ff10_out[bit_b_dims[0], g+1] += 2.0
+            else:
+                if (T >> k) % 2 == 1:
+                    ff10_out[bit_b_dims[k], g] += 1.0
+                    ff10_out[bit_b_dims[k], g+1] += -1.0
+                else:
+                    ff10_out[bit_b_dims[k], g] += -1.0
+                    ff10_out[bit_b_dims[k], g+1] += 1.0
+
+    # Gate 509: pass-through for bit_0 (raw opB byte value)
+    ff10_in[509, 40] = BIG; ff10_in[509, 41] = BIG; ff10_in[509, 42] = BIG
+    ff10_in[509, 27] = -BIG + 1.0
+    ff10_in[509, 9] = -2*BIG
+    ff10_in[D_FFN + 509, 24] = 1.0
+    ff10_out[bit_b_dims[0], 509] = 1.0
+
+    # ================================================================
+    # Layer 11 FFN: AND/OR/XOR combination from extracted bits
+    # ================================================================
+    ff11_in = model.ff_in[11].weight
+    ff11_out = model.ff_out[11].weight
+
+    # AND: result = sum_k bit_k(a) * bit_k(b) * 2^k
+    # gate = relu(bit_k_a + is_and * BIG - BIG) -> fires when is_and AND bit_k_a > 0
+    # value = bit_k_b * 2^k
+    # Slot 0 only: -BIG*byte_idx suppresses at slots 1-3
+    for k in range(8):
+        g = k
+        ff11_in[g, bit_a_dims[k]] = 1.0   # gate: bit_k of opA
+        ff11_in[g, 40] = BIG              # is_and
+        ff11_in[g, 27] = -BIG             # threshold
+        ff11_in[g, 9] = -2*BIG            # suppress commit
+        ff11_in[g, 8] = -BIG              # suppress at slot > 0
+
+        ff11_in[D_FFN + g, bit_b_dims[k]] = float(1 << k)  # value: bit_k(b) * 2^k
+        ff11_out[25, g] = 1.0
+
+    # OR: result = sum_k (bit_k(a) + bit_k(b) - bit_k(a)*bit_k(b)) * 2^k
+    # = sum_k (bit_k(a) * 2^k) + sum_k ((1-bit_k(a))*bit_k(b)) * 2^k
+
+    # First: unconditional bit_k(a) * 2^k for OR
+    for k in range(8):
+        g = 8 + k
+        ff11_in[g, 41] = BIG              # is_or
+        ff11_in[g, 27] = -BIG + 1.0       # fires when is_or
+        ff11_in[g, 9] = -2*BIG
+        ff11_in[g, 8] = -BIG              # suppress at slot > 0
+
+        ff11_in[D_FFN + g, bit_a_dims[k]] = float(1 << k)
+        ff11_out[25, g] = 1.0
+
+    # Second: (1 - bit_k(a)) * bit_k(b) * 2^k for OR
+    # gate = relu(1 - bit_k(a) + is_or * BIG - BIG)
+    # When is_or=1: relu(1 - bit_k_a). When bit_k_a=0: relu(1)=1. When bit_k_a=1: relu(0)=0.
+    for k in range(8):
+        g = 16 + k
+        ff11_in[g, bit_a_dims[k]] = -1.0  # gate: 1 - bit_k(a)
+        ff11_in[g, 41] = BIG              # is_or
+        ff11_in[g, 27] = -BIG + 1.0       # +1 bias
+        ff11_in[g, 9] = -2*BIG
+        ff11_in[g, 8] = -BIG              # suppress at slot > 0
+
+        ff11_in[D_FFN + g, bit_b_dims[k]] = float(1 << k)
+        ff11_out[25, g] = 1.0
+
+    # XOR: result = sum_k (bit_k(a) + bit_k(b) - 2*bit_k(a)*bit_k(b)) * 2^k
+    # = sum_k bit_k(a)*2^k + sum_k bit_k(b)*2^k - 2*AND(a,b)
+
+    # First: unconditional bit_k(a) * 2^k for XOR
+    for k in range(8):
+        g = 24 + k
+        ff11_in[g, 42] = BIG              # is_xor
+        ff11_in[g, 27] = -BIG + 1.0
+        ff11_in[g, 9] = -2*BIG
+        ff11_in[g, 8] = -BIG              # suppress at slot > 0
+
+        ff11_in[D_FFN + g, bit_a_dims[k]] = float(1 << k)
+        ff11_out[25, g] = 1.0
+
+    # Second: unconditional bit_k(b) * 2^k for XOR
+    for k in range(8):
+        g = 32 + k
+        ff11_in[g, 42] = BIG              # is_xor
+        ff11_in[g, 27] = -BIG + 1.0
+        ff11_in[g, 9] = -2*BIG
+        ff11_in[g, 8] = -BIG              # suppress at slot > 0
+
+        ff11_in[D_FFN + g, bit_b_dims[k]] = float(1 << k)
+        ff11_out[25, g] = 1.0
+
+    # Third: -2 * bit_k(a) * bit_k(b) * 2^k for XOR (subtract 2*AND)
+    for k in range(8):
+        g = 40 + k
+        ff11_in[g, bit_a_dims[k]] = 1.0   # gate: bit_k(a)
+        ff11_in[g, 42] = BIG              # is_xor
+        ff11_in[g, 27] = -BIG
+        ff11_in[g, 9] = -2*BIG
+        ff11_in[g, 8] = -BIG              # suppress at slot > 0
+
+        ff11_in[D_FFN + g, bit_b_dims[k]] = float(1 << k)
+        ff11_out[25, g] = -2.0             # subtract 2*AND
+
+    # Gate 48: copy final result to decode dim 26 (for bitwise ops, slot 0 only)
+    ff11_in[48, 40] = BIG; ff11_in[48, 41] = BIG; ff11_in[48, 42] = BIG
+    ff11_in[48, 27] = -BIG + 1.0
+    ff11_in[48, 8] = -BIG                  # suppress at slot > 0
+    ff11_in[D_FFN + 48, 25] = 1.0
+    ff11_out[26, 48] = 1.0
+
+    # ================================================================
     # Output Head: Quadratic byte decoding + commit token decoding
     # ================================================================
     head = model.head.weight
@@ -1291,7 +1502,8 @@ def trace_compile_program(program: list[Instruction]) -> tuple[list[int], list[i
     _BINARY = {'i32_add': Op.I32_ADD, 'i32_sub': Op.I32_SUB, 'i32_mul': Op.I32_MUL,
                'i32_le_s': Op.I32_LE_S, 'i32_ge_s': Op.I32_GE_S,
                'i32_lt_s': Op.I32_LT_S, 'i32_gt_s': Op.I32_GT_S,
-               'i32_eq': Op.I32_EQ, 'i32_ne': Op.I32_NE}
+               'i32_eq': Op.I32_EQ, 'i32_ne': Op.I32_NE,
+               'i32_and': Op.I32_AND, 'i32_or': Op.I32_OR, 'i32_xor': Op.I32_XOR}
 
     stack = []
     locals_ = {}
@@ -1355,8 +1567,8 @@ def trace_compile_program(program: list[Instruction]) -> tuple[list[int], list[i
             tok_id = op_to_token[Op.I32_CONST]
             imm = val & 0xFFFF
             # Track stack effects
-            if op_name in ('i32_div_s', 'i32_rem_s', 'i32_and', 'i32_or',
-                           'i32_xor', 'i32_shl', 'i32_shr_s'):
+            if op_name in ('i32_div_s', 'i32_rem_s',
+                           'i32_shl', 'i32_shr_s'):
                 if len(stack) >= 2: stack.pop(); stack.pop()
                 stack.append(step)
             elif op_name in ('i32_load', 'i32_load8_u', 'i32_load8_s'):
@@ -1491,14 +1703,18 @@ def _build_expected_trace(prog_tokens: list[int], stack_sizes: list[int]) -> lis
             step_values[step] = imm
             vb = [imm & 0xFF, (imm >> 8) & 0xFF, (imm >> 16) & 0xFF, (imm >> 24) & 0xFF]
             expected.extend(vb + [stack_sizes[step]])
-        elif op in (Op.I32_ADD, Op.I32_SUB, Op.I32_MUL):
+        elif op in (Op.I32_ADD, Op.I32_SUB, Op.I32_MUL,
+                    Op.I32_AND, Op.I32_OR, Op.I32_XOR):
             # Use explicit addresses from program tokens
             a_val = step_values.get(src_a, 0)
             b_step = prog_tokens[base + 4]
             b_val = step_values.get(b_step, 0)
             if op == Op.I32_ADD: val = (a_val + b_val) & 0xFFFFFFFF
             elif op == Op.I32_SUB: val = (a_val - b_val) & 0xFFFFFFFF
-            else: val = (a_val * b_val) & 0xFFFFFFFF
+            elif op == Op.I32_MUL: val = (a_val * b_val) & 0xFFFFFFFF
+            elif op == Op.I32_AND: val = (a_val & b_val) & 0xFFFFFFFF
+            elif op == Op.I32_OR: val = (a_val | b_val) & 0xFFFFFFFF
+            elif op == Op.I32_XOR: val = (a_val ^ b_val) & 0xFFFFFFFF
             step_values[step] = val
             vb = [val & 0xFF, (val >> 8) & 0xFF, (val >> 16) & 0xFF, (val >> 24) & 0xFF]
             expected.extend(vb + [stack_sizes[step]])
@@ -1549,7 +1765,8 @@ def _get_step_value_from_sim(step, step_values, prog_tokens, stack_sizes):
     ss = stack_sizes[step]
     target_b = ss + 1 if op in (Op.I32_ADD, Op.I32_SUB, Op.I32_MUL,
                                   Op.I32_LE_S, Op.I32_GE_S, Op.I32_LT_S,
-                                  Op.I32_GT_S, Op.I32_EQ, Op.I32_NE) else ss
+                                  Op.I32_GT_S, Op.I32_EQ, Op.I32_NE,
+                                  Op.I32_AND, Op.I32_OR, Op.I32_XOR) else ss
     target_a = target_b - 1 if op != Op.I32_EQZ else ss
 
     # Find most recent step with matching stack_size for operands
@@ -1570,6 +1787,9 @@ def _get_step_value_from_sim(step, step_values, prog_tokens, stack_sizes):
     if op == Op.I32_ADD: return (op_a_val + op_b_val) & 0xFFFFFFFF
     if op == Op.I32_SUB: return (op_a_val - op_b_val) & 0xFFFFFFFF
     if op == Op.I32_MUL: return (op_a_val * op_b_val) & 0xFFFFFFFF
+    if op == Op.I32_AND: return (op_a_val & op_b_val) & 0xFFFFFFFF
+    if op == Op.I32_OR: return (op_a_val | op_b_val) & 0xFFFFFFFF
+    if op == Op.I32_XOR: return (op_a_val ^ op_b_val) & 0xFFFFFFFF
     a, b = op_a_val, op_b_val
     if a >= 0x80000000: a -= 0x100000000
     if b >= 0x80000000: b -= 0x100000000
@@ -1672,6 +1892,28 @@ def test():
     tests.append(("5 != 3 = 1",
          [Instruction(Op.I32_CONST, 5), Instruction(Op.I32_CONST, 3),
           Instruction(Op.I32_NE), Instruction(Op.OUTPUT), Instruction(Op.HALT)]))
+
+    # Bitwise operations
+    # AND
+    tests.append(("12 & 10 = 8",
+         [Instruction(Op.I32_CONST, 12), Instruction(Op.I32_CONST, 10),
+          Instruction(Op.I32_AND), Instruction(Op.OUTPUT), Instruction(Op.HALT)]))
+    # OR
+    tests.append(("12 | 10 = 14",
+         [Instruction(Op.I32_CONST, 12), Instruction(Op.I32_CONST, 10),
+          Instruction(Op.I32_OR), Instruction(Op.OUTPUT), Instruction(Op.HALT)]))
+    # XOR
+    tests.append(("12 ^ 10 = 6",
+         [Instruction(Op.I32_CONST, 12), Instruction(Op.I32_CONST, 10),
+          Instruction(Op.I32_XOR), Instruction(Op.OUTPUT), Instruction(Op.HALT)]))
+    # Multi-byte AND
+    tests.append(("255 & 170 = 170",
+         [Instruction(Op.I32_CONST, 255), Instruction(Op.I32_CONST, 170),
+          Instruction(Op.I32_AND), Instruction(Op.OUTPUT), Instruction(Op.HALT)]))
+    # XOR identity
+    tests.append(("42 ^ 42 = 0",
+         [Instruction(Op.I32_CONST, 42), Instruction(Op.I32_CONST, 42),
+          Instruction(Op.I32_XOR), Instruction(Op.OUTPUT), Instruction(Op.HALT)]))
 
     # Factorial 5! = 120
     c = Compiler()
@@ -1798,7 +2040,8 @@ def encode_program_native(program: list[Instruction]) -> list[int]:
     PUSH_OPS = {Op.I32_CONST, Op.LOCAL_GET}
     POP_OPS = {Op.I32_ADD, Op.I32_SUB, Op.I32_MUL,
                Op.I32_LE_S, Op.I32_GE_S, Op.I32_LT_S, Op.I32_GT_S,
-               Op.I32_EQ, Op.I32_NE, Op.OUTPUT, Op.LOCAL_SET}
+               Op.I32_EQ, Op.I32_NE, Op.OUTPUT, Op.LOCAL_SET,
+               Op.I32_AND, Op.I32_OR, Op.I32_XOR}
     # EQZ, LOCAL_TEE, HALT = neutral (delta=0)
 
     op_to_token = {}
@@ -1845,13 +2088,15 @@ def encode_program_hybrid(program: list[Instruction]) -> tuple[list[int], list[i
     PUSH_OPS = {Op.I32_CONST, Op.LOCAL_GET}
     POP_OPS = {Op.I32_ADD, Op.I32_SUB, Op.I32_MUL,
                Op.I32_LE_S, Op.I32_GE_S, Op.I32_LT_S, Op.I32_GT_S,
-               Op.I32_EQ, Op.I32_NE, Op.OUTPUT, Op.LOCAL_SET}
+               Op.I32_EQ, Op.I32_NE, Op.OUTPUT, Op.LOCAL_SET,
+               Op.I32_AND, Op.I32_OR, Op.I32_XOR}
     # Ops baked per-step: only ops the model cannot compute natively
     # MUL is now computed natively via two-stage mod + carry in weights
-    BAKED_BINARY = {Op.I32_DIV_S, Op.I32_REM_S, Op.I32_AND,
-                    Op.I32_OR, Op.I32_XOR, Op.I32_SHL, Op.I32_SHR_S}
-    BAKED_BINARY_NAMES = {'i32_div_s', 'i32_rem_s', 'i32_and',
-                          'i32_or', 'i32_xor', 'i32_shl', 'i32_shr_s'}
+    # AND/OR/XOR are now computed natively via bit extraction in L10-L11
+    BAKED_BINARY = {Op.I32_DIV_S, Op.I32_REM_S,
+                    Op.I32_SHL, Op.I32_SHR_S}
+    BAKED_BINARY_NAMES = {'i32_div_s', 'i32_rem_s',
+                          'i32_shl', 'i32_shr_s'}
 
     op_to_token = {op: TraceVocab.OPCODE_OFFSET + op for op in Op}
 
@@ -1942,7 +2187,8 @@ def encode_program_hybrid(program: list[Instruction]) -> tuple[list[int], list[i
             ss += 1
         elif op_name in ('i32_add', 'i32_sub', 'i32_mul',
                           'i32_le_s', 'i32_ge_s', 'i32_lt_s', 'i32_gt_s',
-                          'i32_eq', 'i32_ne'):
+                          'i32_eq', 'i32_ne',
+                          'i32_and', 'i32_or', 'i32_xor'):
             if len(stack_track) >= 2:
                 stack_track.pop()
                 stack_track.pop()
@@ -1954,7 +2200,7 @@ def encode_program_hybrid(program: list[Instruction]) -> tuple[list[int], list[i
             stack_track.append(step)
             # ss unchanged (pop 1, push 1)
         elif op_name in BAKED_BINARY_NAMES:
-            # Binary ops baked per-step (DIV, REM, bitwise, shifts)
+            # Binary ops baked per-step (DIV, REM, shifts)
             if len(stack_track) >= 2:
                 stack_track.pop()
                 stack_track.pop()
@@ -2043,6 +2289,7 @@ def _set_native_weights(model):
         Op.OUTPUT: 14, Op.HALT: 15,
         Op.I32_LE_S: 29, Op.I32_GE_S: 30, Op.I32_LT_S: 31, Op.I32_GT_S: 32,
         Op.I32_EQ: 33, Op.I32_NE: 34, Op.I32_EQZ: 35,
+        Op.I32_AND: 40, Op.I32_OR: 41, Op.I32_XOR: 42,
     }
     for op, dim in opcode_flags.items():
         tok_id = TraceVocab.OPCODE_OFFSET + op
@@ -2070,6 +2317,8 @@ def _set_native_weights(model):
         (9, 0, (22, 35), (22, 35)),
         (4, 3, (0, -1), (4, -1)),    # src_a for locals → dim 4
         (11, 5, (0, -1), (17, -1)),  # delta+1 from position 5 → dim 17 (ADDS to prev_ss)
+        (20, 0, (40, 41), (40, 41)), # is_and, is_or
+        (21, 0, (42, -1), (42, -1)), # is_xor
     ]
     for head, offset, v_dims, out_dims in fetch_heads:
         h2 = head * 2
@@ -2148,6 +2397,8 @@ def _set_native_weights(model):
     # Gate 0: fetch addr A = 2*S*(commit_pos_A - 4 + byte_idx)
     for fd in (11, 12, 13, 29, 30, 31, 32, 33, 34, 35):
         ff1_in[0, fd] = 1.0
+    for fd in (40, 41, 42):  # AND, OR, XOR also need operand A fetch
+        ff1_in[0, fd] = 1.0
     ff1_in[D_FFN + 0, 20] = 2 * S_QUAD
     ff1_in[D_FFN + 0, 8] = 2 * S_QUAD
     ff1_in[D_FFN + 0, 27] = -8 * S_QUAD
@@ -2155,6 +2406,8 @@ def _set_native_weights(model):
 
     # Gate 1: fetch addr B
     for fd in (11, 12, 13, 29, 30, 31, 32, 33, 34, 35):
+        ff1_in[1, fd] = 1.0
+    for fd in (40, 41, 42):  # AND, OR, XOR also need operand B fetch
         ff1_in[1, fd] = 1.0
     ff1_in[D_FFN + 1, 18] = 2 * S_QUAD
     ff1_in[D_FFN + 1, 8] = 2 * S_QUAD
@@ -2803,6 +3056,137 @@ def _set_native_weights(model):
     ff9_in[D_FFN+30, 25] = 1.0
     ff9_out[26, 30] = 1.0
 
+    # ================================================================
+    # Layer 10 FFN: Bit extraction for AND/OR/XOR (native)
+    # ================================================================
+    ff10_in = model.ff_in[10].weight
+    ff10_out = model.ff_out[10].weight
+
+    bit_a_dims = [10, 11, 12, 13, 14, 15, 16, 29]  # opA bits 0-7
+    bit_b_dims = [22, 34, 35, 43, 44, 45, 46, 47]   # opB bits 0-7
+
+    # Step functions for opA (dim 23) at thresholds 2, 4, ..., 254
+    for i, T in enumerate(range(2, 256, 2)):
+        g = i * 2
+        ff10_in[g, 23] = 1.0
+        ff10_in[g, 40] = BIG; ff10_in[g, 41] = BIG; ff10_in[g, 42] = BIG
+        ff10_in[g, 27] = -BIG + float(-T + 1)
+        ff10_in[g, 9] = -2*BIG
+        ff10_in[D_FFN + g, 27] = 1.0
+        ff10_in[g+1, 23] = 1.0
+        ff10_in[g+1, 40] = BIG; ff10_in[g+1, 41] = BIG; ff10_in[g+1, 42] = BIG
+        ff10_in[g+1, 27] = -BIG + float(-T)
+        ff10_in[g+1, 9] = -2*BIG
+        ff10_in[D_FFN + g+1, 27] = 1.0
+        for k in range(8):
+            if T % (1 << k) != 0:
+                continue
+            if k == 0:
+                ff10_out[bit_a_dims[0], g] += -2.0
+                ff10_out[bit_a_dims[0], g+1] += 2.0
+            else:
+                if (T >> k) % 2 == 1:
+                    ff10_out[bit_a_dims[k], g] += 1.0
+                    ff10_out[bit_a_dims[k], g+1] += -1.0
+                else:
+                    ff10_out[bit_a_dims[k], g] += -1.0
+                    ff10_out[bit_a_dims[k], g+1] += 1.0
+
+    ff10_in[254, 40] = BIG; ff10_in[254, 41] = BIG; ff10_in[254, 42] = BIG
+    ff10_in[254, 27] = -BIG + 1.0; ff10_in[254, 9] = -2*BIG
+    ff10_in[D_FFN + 254, 23] = 1.0
+    ff10_out[bit_a_dims[0], 254] = 1.0
+
+    # Step functions for opB (dim 24)
+    for i, T in enumerate(range(2, 256, 2)):
+        g = 255 + i * 2
+        ff10_in[g, 24] = 1.0
+        ff10_in[g, 40] = BIG; ff10_in[g, 41] = BIG; ff10_in[g, 42] = BIG
+        ff10_in[g, 27] = -BIG + float(-T + 1)
+        ff10_in[g, 9] = -2*BIG
+        ff10_in[D_FFN + g, 27] = 1.0
+        ff10_in[g+1, 24] = 1.0
+        ff10_in[g+1, 40] = BIG; ff10_in[g+1, 41] = BIG; ff10_in[g+1, 42] = BIG
+        ff10_in[g+1, 27] = -BIG + float(-T)
+        ff10_in[g+1, 9] = -2*BIG
+        ff10_in[D_FFN + g+1, 27] = 1.0
+        for k in range(8):
+            if T % (1 << k) != 0:
+                continue
+            if k == 0:
+                ff10_out[bit_b_dims[0], g] += -2.0
+                ff10_out[bit_b_dims[0], g+1] += 2.0
+            else:
+                if (T >> k) % 2 == 1:
+                    ff10_out[bit_b_dims[k], g] += 1.0
+                    ff10_out[bit_b_dims[k], g+1] += -1.0
+                else:
+                    ff10_out[bit_b_dims[k], g] += -1.0
+                    ff10_out[bit_b_dims[k], g+1] += 1.0
+
+    ff10_in[509, 40] = BIG; ff10_in[509, 41] = BIG; ff10_in[509, 42] = BIG
+    ff10_in[509, 27] = -BIG + 1.0; ff10_in[509, 9] = -2*BIG
+    ff10_in[D_FFN + 509, 24] = 1.0
+    ff10_out[bit_b_dims[0], 509] = 1.0
+
+    # ================================================================
+    # Layer 11 FFN: AND/OR/XOR combination from extracted bits (native)
+    # ================================================================
+    ff11_in = model.ff_in[11].weight
+    ff11_out = model.ff_out[11].weight
+
+    # AND (slot 0 only: -BIG*byte_idx suppresses at slots 1-3)
+    for k in range(8):
+        g = k
+        ff11_in[g, bit_a_dims[k]] = 1.0
+        ff11_in[g, 40] = BIG; ff11_in[g, 27] = -BIG; ff11_in[g, 9] = -2*BIG
+        ff11_in[g, 8] = -BIG  # suppress at slot > 0
+        ff11_in[D_FFN + g, bit_b_dims[k]] = float(1 << k)
+        ff11_out[25, g] = 1.0
+
+    # OR: bit_k(a)*2^k + (1-bit_k(a))*bit_k(b)*2^k (slot 0 only)
+    for k in range(8):
+        g = 8 + k
+        ff11_in[g, 41] = BIG; ff11_in[g, 27] = -BIG + 1.0; ff11_in[g, 9] = -2*BIG
+        ff11_in[g, 8] = -BIG  # suppress at slot > 0
+        ff11_in[D_FFN + g, bit_a_dims[k]] = float(1 << k)
+        ff11_out[25, g] = 1.0
+    for k in range(8):
+        g = 16 + k
+        ff11_in[g, bit_a_dims[k]] = -1.0
+        ff11_in[g, 41] = BIG; ff11_in[g, 27] = -BIG + 1.0; ff11_in[g, 9] = -2*BIG
+        ff11_in[g, 8] = -BIG  # suppress at slot > 0
+        ff11_in[D_FFN + g, bit_b_dims[k]] = float(1 << k)
+        ff11_out[25, g] = 1.0
+
+    # XOR: bit_k(a)*2^k + bit_k(b)*2^k - 2*bit_k(a)*bit_k(b)*2^k (slot 0 only)
+    for k in range(8):
+        g = 24 + k
+        ff11_in[g, 42] = BIG; ff11_in[g, 27] = -BIG + 1.0; ff11_in[g, 9] = -2*BIG
+        ff11_in[g, 8] = -BIG  # suppress at slot > 0
+        ff11_in[D_FFN + g, bit_a_dims[k]] = float(1 << k)
+        ff11_out[25, g] = 1.0
+    for k in range(8):
+        g = 32 + k
+        ff11_in[g, 42] = BIG; ff11_in[g, 27] = -BIG + 1.0; ff11_in[g, 9] = -2*BIG
+        ff11_in[g, 8] = -BIG  # suppress at slot > 0
+        ff11_in[D_FFN + g, bit_b_dims[k]] = float(1 << k)
+        ff11_out[25, g] = 1.0
+    for k in range(8):
+        g = 40 + k
+        ff11_in[g, bit_a_dims[k]] = 1.0
+        ff11_in[g, 42] = BIG; ff11_in[g, 27] = -BIG; ff11_in[g, 9] = -2*BIG
+        ff11_in[g, 8] = -BIG  # suppress at slot > 0
+        ff11_in[D_FFN + g, bit_b_dims[k]] = float(1 << k)
+        ff11_out[25, g] = -2.0
+
+    # Gate 48: copy final result to decode dim 26 (for bitwise ops, slot 0 only)
+    ff11_in[48, 40] = BIG; ff11_in[48, 41] = BIG; ff11_in[48, 42] = BIG
+    ff11_in[48, 27] = -BIG + 1.0
+    ff11_in[48, 8] = -BIG  # suppress at slot > 0
+    ff11_in[D_FFN + 48, 25] = 1.0
+    ff11_out[26, 48] = 1.0
+
     # Output head
     head = model.head.weight
     for b in range(256):
@@ -2948,6 +3332,26 @@ def test_native():
         ("5 == 5 = 1",
          [Instruction(Op.I32_CONST,5),Instruction(Op.I32_CONST,5),
           Instruction(Op.I32_EQ),Instruction(Op.OUTPUT),Instruction(Op.HALT)]),
+        # AND
+        ("12 & 10 = 8",
+         [Instruction(Op.I32_CONST,12),Instruction(Op.I32_CONST,10),
+          Instruction(Op.I32_AND),Instruction(Op.OUTPUT),Instruction(Op.HALT)]),
+        # OR
+        ("12 | 10 = 14",
+         [Instruction(Op.I32_CONST,12),Instruction(Op.I32_CONST,10),
+          Instruction(Op.I32_OR),Instruction(Op.OUTPUT),Instruction(Op.HALT)]),
+        # XOR
+        ("12 ^ 10 = 6",
+         [Instruction(Op.I32_CONST,12),Instruction(Op.I32_CONST,10),
+          Instruction(Op.I32_XOR),Instruction(Op.OUTPUT),Instruction(Op.HALT)]),
+        # Multi-byte AND
+        ("255 & 170 = 170",
+         [Instruction(Op.I32_CONST,255),Instruction(Op.I32_CONST,170),
+          Instruction(Op.I32_AND),Instruction(Op.OUTPUT),Instruction(Op.HALT)]),
+        # XOR identity
+        ("42 ^ 42 = 0",
+         [Instruction(Op.I32_CONST,42),Instruction(Op.I32_CONST,42),
+          Instruction(Op.I32_XOR),Instruction(Op.OUTPUT),Instruction(Op.HALT)]),
     ]
 
     passed = 0

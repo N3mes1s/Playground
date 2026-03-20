@@ -6,9 +6,9 @@ Based on [Percepta's "Can LLMs Be Computers?"](https://percepta.ai/blog/can-llms
 
 ## How It Works
 
-Programs are encoded as input tokens. The model generates an execution trace autoregressively — 5 tokens per step (`[byte0, byte1, byte2, byte3, commit]`). Each step's value is computed by the transformer's 10-layer forward pass: instruction fetch → operand resolution → ALU → carry propagation → modular reduction.
+Programs are encoded as input tokens. The model generates an execution trace autoregressively — 5 tokens per step (`[byte0, byte1, byte2, byte3, commit]`). Each step's value is computed by the transformer's 12-layer forward pass: instruction fetch → operand resolution → ALU → carry propagation → modular reduction → bit extraction → bitwise combination.
 
-Every weight is hand-crafted. The 40-dimensional embedding space is allocated like CPU registers: dim 0 holds byte values (never modified — the carry trick), dims 5-6 encode quadratic position addresses, dims 10-15 flag opcodes, dims 23-25 hold ALU operands and results.
+Every weight is hand-crafted. The 48-dimensional embedding space is allocated like CPU registers: dim 0 holds byte values (never modified — the carry trick), dims 5-6 encode quadratic position addresses, dims 10-15 flag opcodes, dims 23-25 hold ALU operands and results, dims 40-42 flag bitwise ops.
 
 ## Quick Start
 
@@ -19,13 +19,13 @@ pip install torch numpy
 # Build the Rust inference engine (optional, ~50x faster)
 cd rust_engine && maturin develop --release && cd ..
 
-# Run all tests (21/21)
+# Run all tests (26/26)
 python -c "from autoregressive_interpreter import test_native; test_native()"
 ```
 
 ## What It Computes
 
-**Native ops** (computed in weights): ADD, SUB, MUL (32-bit with carry chains), comparisons (24-bit), EQZ, CONST, locals, control flow.
+**Native ops** (computed in weights): ADD, SUB, MUL (32-bit with carry chains), AND, OR, XOR (8-bit via bit extraction), comparisons (24-bit), EQZ, CONST, locals, control flow.
 
 **Compiler-decomposed ops**: DIV, REM, SHL, SHR — the `mini_c.py` compiler emits loops of native ops, like CPU microcode. `a / b` becomes `while (a >= b) { a -= b; q++ }`.
 
@@ -48,22 +48,27 @@ code, _ = c.compile([
 ## Test Results (2026-03-20)
 
 ```
-Model: 8,412,800 params (d_model=40, 20 heads, 10 layers)
+Model: 10,645,248 params (d_model=48, 24 heads, 12 layers)
 Hardware: RTX 3060, Rust inference engine
 
-  3 + 5 = 8                   PASS    17 tok/s
-  7 * 13 = 91                 PASS    18 tok/s
-  200 + 200 = 400             PASS    17 tok/s
-  fib(10) = 55                PASS   483 tok/s
-  fib(20) = 6765              PASS   865 tok/s
-  fib(30) = 832040            PASS  1124 tok/s
-  5! = 120                    PASS   204 tok/s
-  gcd(48,18) = 6              PASS   412 tok/s
-  gcd(1071,462) = 21          PASS   645 tok/s
-  is_prime(17) = 1            PASS   798 tok/s
-  collatz(7) = 16             PASS   800 tok/s
+  3 + 5 = 8                   PASS     8 tok/s
+  7 * 13 = 91                 PASS     8 tok/s
+  200 + 200 = 400             PASS     8 tok/s
+  12 & 10 = 8                 PASS     8 tok/s   (native AND)
+  12 | 10 = 14                PASS     9 tok/s   (native OR)
+  12 ^ 10 = 6                 PASS     8 tok/s   (native XOR)
+  255 & 170 = 170             PASS     8 tok/s
+  42 ^ 42 = 0                 PASS     8 tok/s
+  fib(10) = 55                PASS   238 tok/s
+  fib(20) = 6765              PASS   408 tok/s
+  fib(30) = 832040            PASS   528 tok/s
+  5! = 120                    PASS    99 tok/s
+  gcd(48,18) = 6              PASS   206 tok/s
+  gcd(1071,462) = 21          PASS   306 tok/s
+  is_prime(17) = 1            PASS   380 tok/s
+  collatz(7) = 16             PASS   876 tok/s
   ...
-  Result: 21/21
+  Result: 26/26
 ```
 
 ## Architecture
@@ -71,7 +76,7 @@ Hardware: RTX 3060, Rust inference engine
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the complete technical breakdown including dimension allocation, layer-by-layer descriptions, and the carry trick.
 
 Key specs:
-- **Model**: d_model=40, n_heads=20, n_layers=10, head_dim=2, d_ffn=256
+- **Model**: d_model=48, n_heads=24, n_layers=12, head_dim=2, d_ffn=512
 - **Vocab**: 520 tokens (256 bytes + opcodes + control)
 - **Precision**: float64 (required for exact carry arithmetic)
 - **Max sequence**: 200,000 positions (600 instructions + trace)
