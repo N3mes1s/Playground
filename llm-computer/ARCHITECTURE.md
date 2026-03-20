@@ -95,7 +95,7 @@ Programs are padded to `MAX_INST = 600` instructions (3,600 tokens), followed by
 
 Structural WASM ops (BLOCK, LOOP, IF, ELSE, END, BR, BR_IF) are stripped from the program encoding. They don't produce trace steps. The hybrid encoder handles control flow by injecting the VM-computed IP sequence into position embeddings.
 
-## 6. Dimension Allocation (d_model = 40)
+## 6. Dimension Allocation (d_model = 48)
 
 Every dimension has a specific purpose. The table below is the complete allocation:
 
@@ -140,8 +140,12 @@ Every dimension has a specific purpose. The table below is the complete allocati
 | 37 | is_slot_3 | PE | 1.0 at slot 3 only. Exact slot gating for byte-3 operations. |
 | 38 | opA_byte2 | L2 attn head 4 | Operand A byte at slot k-2. |
 | 39 | opB_byte2 | L2 attn head 5 | Operand B byte at slot k-2. |
+| 40 | is_and | Token embed / L0 attn | AND opcode flag. Also triggers L10 bit extraction. |
+| 41 | is_or | Token embed / L0 attn | OR opcode flag. Also triggers L10 bit extraction. |
+| 42 | is_xor | Token embed / L0 attn | XOR opcode flag. Also triggers L10 bit extraction. |
+| 43-47 | bit_b[3-7] | L10 FFN | Extracted bits 3-7 of operand B (for bitwise ops). |
 
-## 7. Layer Architecture (10 Layers)
+## 7. Layer Architecture (12 Layers)
 
 Each layer has a specific function. Together they form a pipeline that fetches instructions, resolves operands, computes results, and propagates carries.
 
@@ -207,6 +211,21 @@ Heads 10-11 read the previous commit token to determine `own_stack_size`. Uses p
 
 **FFN**: Second stage of MUL modular reduction: mod 256 from the mod 4096 intermediate. Uses 15 step-function pairs. Copies final result to dim 26 for the output head to read.
 
+### L10: Bit Extraction (AND/OR/XOR)
+
+**FFN (510 gates)**: Extracts all 8 bits from operand A (dim 23) and operand B (dim 24) using 127 shared step-function pairs per operand. Each pair `step(x >= T) = relu(x-T+1) - relu(x-T)` contributes to `bit_k(x)` based on the bit pattern of threshold T. Pass-through gates provide the raw byte value for bit_0 computation. Only fires for bitwise ops (gated on dims 40/41/42).
+
+Bit storage: opA bits → dims [10,11,12,13,14,15,16,29], opB bits → dims [22,34,35,43,44,45,46,47].
+
+### L11: Bitwise Combination (AND/OR/XOR)
+
+**FFN (~49 gates)**: Combines extracted bits into final results:
+- **AND** (8 gates): `relu(bit_k_a) * bit_k_b * 2^k`
+- **OR** (16 gates): `bit_k_a * 2^k + (1-bit_k_a) * bit_k_b * 2^k`
+- **XOR** (24 gates): `bit_k_a * 2^k + bit_k_b * 2^k - 2 * bit_k_a * bit_k_b * 2^k`
+
+Each gate set is gated on its specific opcode flag (dim 40/41/42) and suppressed at commit slot and slots 1-3 (byte 0 only for 8-bit operations).
+
 ### Output Head
 
 Quadratic byte decoding maps dim 25/26 values to token logits. For byte tokens (0-255): `logit(v) = -(dim25 - v)² * S_HEAD`, producing a sharp peak at the correct byte value. For commit tokens: maps dim 17 (stack_size) through a similar quadratic to token 0-253, or emits 254/255 for OUTPUT/HALT.
@@ -228,7 +247,7 @@ MUL can produce byte products up to 255*255 = 65,025. A single mod 256 pass with
 1. **mod 4096**: 16 step-function pairs reduce to range [0, 4095]. Layer 8.
 2. **mod 256**: 15 step-function pairs reduce [0, 4095] to [0, 255]. Layer 9.
 
-Total: 31 gate pairs instead of 254. This is why `d_ffn = 256` — it provides enough gates for both stages plus other ALU operations.
+Total: 31 gate pairs instead of 254. With `d_ffn = 512`, there are enough gates for both stages, ALU operations, and the L10/L11 bit extraction circuit.
 
 ### Exact Slot Gating (PE dims 36-37)
 
@@ -289,9 +308,9 @@ The `rust_engine/` directory contains a PyO3-based Rust extension that accelerat
 
 Full multi-layer inference reimplemented in Rust. Mirrors the Python transformer forward pass exactly (same weight layout, same layer structure, same FFN gating), but runs at native speed with no Python overhead.
 
-Each of the 20 attention heads per layer maintains an incremental **Hull2D** — a 2D convex hull of all past key-value pairs. For head_dim=2, finding the max-dot-product key reduces to a "supporting point on the convex hull" query, solvable in O(log n) via binary search on the hull boundary.
+Each of the 24 attention heads per layer maintains an incremental **Hull2D** — a 2D convex hull of all past key-value pairs. For head_dim=2, finding the max-dot-product key reduces to a "supporting point on the convex hull" query, solvable in O(log n) via binary search on the hull boundary.
 
-Active head detection: at initialization, the engine scans each head's in_proj and out_proj weights. If all weights are zero, the head is skipped entirely. Most heads in most layers are inactive (only ~12 of 200 total head-slots carry non-zero weights), so this cuts computation significantly.
+Active head detection: at initialization, the engine scans each head's in_proj and out_proj weights. If all weights are zero, the head is skipped entirely. Most heads in most layers are inactive (only ~14 of 288 total head-slots carry non-zero weights), so this cuts computation significantly.
 
 Performance: ~1,124 tok/s on fib(30) (2,320 tokens). Simple programs run slower (~17 tok/s) due to Python startup overhead; the Rust engine amortizes this over longer traces.
 
@@ -303,40 +322,49 @@ A stripped-down WASM VM implemented in Rust for generating training data. Takes 
 
 Verified on 2026-03-20. Hardware: RTX 3060 (Vast.ai), Rust inference engine.
 
-### Native Interpreter: 21/21 PASS
+### Native Interpreter: 26/26 PASS
 
-| Test | Tokens | Time | Tok/s | Result |
-|------|--------|------|-------|--------|
-| 3 + 5 | 25 | 1.46s | 17 | 8 |
-| 7 * 13 | 25 | 1.40s | 18 | 91 |
-| 10 - 3 | 25 | 1.44s | 17 | 7 |
-| 2*(3+5) | 35 | 2.19s | 16 | 16 |
-| 200 + 200 | 25 | 1.51s | 17 | 400 |
-| 10 >= 5 | 25 | 1.45s | 17 | 1 |
-| 5 == 5 | 25 | 1.52s | 16 | 1 |
-| if 10>=5 | 40 | 1.48s | 27 | 1 |
-| sum(1..3) | 235 | 2.21s | 106 | 6 |
-| fib(5) | 445 | 1.60s | 278 | 5 |
-| fib(10) | 820 | 1.70s | 483 | 55 |
-| fib(15) | 1,195 | 1.79s | 669 | 610 |
-| fib(20) | 1,570 | 1.82s | 865 | 6,765 |
-| sum(1..10) | 655 | 1.58s | 414 | 55 |
-| 5! | 295 | 1.45s | 204 | 120 |
-| gcd(48,18) | 655 | 1.59s | 412 | 6 |
-| is_prime(17) | 1,440 | 1.81s | 798 | 1 |
-| collatz(7) | 18,025 | 22.53s | 800 | 16 |
-| fib(25) | 1,945 | 2.06s | 944 | 75,025 |
-| fib(30) | 2,320 | 2.06s | 1,124 | 832,040 |
-| gcd(1071,462) | 1,075 | 1.67s | 645 | 21 |
+Architecture: d_model=48, 24 heads, 12 layers, 10,645,248 params.
+
+| Test | Tokens | Tok/s | Result |
+|------|--------|-------|--------|
+| 3 + 5 | 25 | 8 | 8 |
+| 7 * 13 | 25 | 8 | 91 |
+| 10 - 3 | 25 | 8 | 7 |
+| 2*(3+5) | 35 | 12 | 16 |
+| 200 + 200 | 25 | 8 | 400 |
+| 10 >= 5 | 25 | 8 | 1 |
+| 5 == 5 | 25 | 8 | 1 |
+| 12 & 10 | 25 | 8 | 8 |
+| 12 \| 10 | 25 | 9 | 14 |
+| 12 ^ 10 | 25 | 8 | 6 |
+| 255 & 170 | 25 | 8 | 170 |
+| 42 ^ 42 | 25 | 8 | 0 |
+| if 10>=5 | 40 | 13 | 1 |
+| sum(1..3) | 235 | 76 | 6 |
+| fib(5) | 445 | 139 | 5 |
+| fib(10) | 820 | 238 | 55 |
+| fib(15) | 1,195 | 319 | 610 |
+| fib(20) | 1,570 | 408 | 6,765 |
+| sum(1..10) | 655 | 203 | 55 |
+| 5! | 295 | 99 | 120 |
+| gcd(48,18) | 655 | 206 | 6 |
+| is_prime(17) | 1,440 | 380 | 1 |
+| collatz(7) | 18,025 | 876 | 16 |
+| fib(25) | 1,945 | 469 | 75,025 |
+| fib(30) | 2,320 | 528 | 832,040 |
+| gcd(1071,462) | 1,075 | 306 | 21 |
 
 Notes:
+- AND/OR/XOR computed natively via bit extraction (layer 10) + bilinear combination (layer 11).
 - GCD and primality use compiler-decomposed DIV/REM (repeated subtraction loops).
+- SHL/SHR decomposed by compiler into loops (repeated doubling/halving).
 - `collatz(7)` produces 18,025 tokens because each division is decomposed into O(n) subtractions.
 - `fib(30) = 832040` — correct via 32-bit carry chains. All arithmetic generalizes perfectly.
 
-### Explicit-Address Interpreter: 27/28
+### Explicit-Address Interpreter: 32/33
 
-Same weights, trace-compiled program encoding. One timeout on collatz(7) due to encoding overhead on 18,025-token trace.
+Same weights, trace-compiled program encoding. All bitwise tests pass. One timeout on collatz(7) due to encoding overhead on 18,025-token trace.
 
 ## 12. Training Pipeline (Research Direction)
 
@@ -379,33 +407,20 @@ The compiled interpreter is the primary product. The trained model is shipped as
 
 ```
 llm-computer/
-├── autoregressive_interpreter.py  # Core: weight compilation, encoding, generation (d_model=40)
+├── autoregressive_interpreter.py  # Core: weight compilation, encoding, generation (d_model=48)
 ├── model.py                       # VanillaTransformer (standard PyTorch, no custom ops)
 ├── wasm_vm.py                     # Reference WASM VM (full instruction set)
 ├── mini_c.py                      # C-like DSL → WASM compiler (decomposes DIV/REM/SHL/SHR)
 ├── compiler.py                    # TraceVocab (token vocabulary) + TraceCompiler
-├── weight_compiler.py             # Original d_model=36 per-program weight compiler (Phase 1)
-├── general_interpreter.py         # Universal d_model=36 interpreter (predecessor)
-├── hull_kv_cache.py               # Python ConvexHull2D + HullKVCache (O(log n) attention)
-├── executor.py                    # Execution engine (VM and transformer modes)
-├── demo.py                        # Demo: addition, fibonacci, sudoku
-├── demo_sandbox.py                # Sandbox demo
-├── sandbox.py                     # Sandbox execution substrate
-├── wasm_runtime.py                # Full WASM binary runtime (pywasm backend)
-├── train.py                       # Training pipeline (random programs + teacher forcing)
-├── train_hybrid.py                # Hybrid training (freeze compiled layers, train FFN gates)
-├── train_v2.py                    # Training v2 experiments
-├── train_modal.py                 # Modal.com GPU wrapper for cloud training
-├── run_modal.py                   # Modal.com runner
+├── train.py                       # Training pipeline (research reference)
+├── train_hybrid.py                # Hybrid training (research reference)
+├── wasm_model_big.pt              # Trained model checkpoint (3.4M params, research)
 ├── test_results.txt               # Verified test results (2026-03-20)
-├── wasm_model_big.pt              # Trained model checkpoint (3.4M params)
-├── wasm_model_trained.pt          # Trained model checkpoint
-├── wasm_model_final.pt            # Trained model checkpoint
-├── wasm_model_small.pt            # Small trained model checkpoint
-├── requirements.txt               # Python dependencies
 ├── ARCHITECTURE.md                # This file
-└── rust_engine/
-    └── src/lib.rs                 # Rust inference engine (Hull2D + fast VM, PyO3 bindings)
+├── README.md                      # Project overview and quick start
+├── rust_engine/
+│   └── src/lib.rs                 # Rust inference engine (Hull2D + fast VM, PyO3 bindings)
+└── archive/                       # Superseded experimental files
 ```
 
 ## 14. Known Limitations
@@ -415,6 +430,8 @@ These are honest limitations of the current system:
 - **Control flow requires VM for IP sequence.** The model cannot determine which instruction to execute next when branches or loops are involved. The hybrid encoder runs the reference VM to extract the instruction pointer sequence, then injects it into position embeddings. Values are still computed at runtime.
 
 - **DIV/REM not natively computed.** Division and remainder are decomposed by the compiler into O(a/b) subtraction loops. This means `collatz(7)` takes 18,025 tokens instead of ~160 if DIV were native. The fundamental issue: implementing `a / b` in a single forward step requires a threshold function that depends on both operands — impossible with fixed weights.
+
+- **SHL/SHR not natively computed.** Shifts are decomposed by the compiler into loops (SHL = repeated doubling, SHR = compute power then divide). Native implementation was attempted using incremental step functions (`result = f(0) + Σ step(shift≥s) × [f(s)-f(s-1)]`) but the flag multiplexing with L10 bit extraction caused BIG-scaling overflow in the Rust engine. Requires dedicated opcode flag dims or a pre-L10 clamping layer.
 
 - **Comparisons limited to 24-bit (3 bytes).** The weight encoding uses 256x and 65536x scaling for byte-1 and byte-2 contributions. Byte 3 would require 16,777,216x scaling, which exceeds precision limits. Values above 16,777,215 may compare incorrectly.
 
