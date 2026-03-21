@@ -107,21 +107,26 @@ def evaluate_bpb(predict_fn):
 # ---------------------------------------------------------------------------
 
 # Hyperparameters
-ORDER = 3           # context length for prediction (n-gram order)
-SMOOTHING = 0.001     # Laplace smoothing parameter
-BACKOFF_WEIGHT = 0.4  # weight for lower-order model in backoff
+ORDER = 20          # context length for prediction (n-gram order)
+DISCOUNT = 0.1      # Kneser-Ney discount parameter
+FALLBACK_SMOOTH = 0.001  # smoothing for lower-order fallback
 
 
 class ByteModel:
-    """N-gram byte-level language model with backoff."""
+    """N-gram byte-level language model with Kneser-Ney smoothing.
 
-    def __init__(self, order=ORDER, smoothing=SMOOTHING, backoff_weight=BACKOFF_WEIGHT):
+    Uses absolute discounting with backoff to lower-order models.
+    Tracks continuation counts for proper probability redistribution.
+    """
+
+    def __init__(self, order=ORDER, discount=DISCOUNT, fallback_smooth=FALLBACK_SMOOTH):
         self.order = order
-        self.smoothing = smoothing
-        self.backoff_weight = backoff_weight
+        self.discount = discount
+        self.fallback_smooth = fallback_smooth
         # counts[context_len][context] = {byte: count}
         self.counts = [defaultdict(lambda: defaultdict(int)) for _ in range(order + 1)]
         self.totals = [defaultdict(int) for _ in range(order + 1)]
+        self.unique_following = [defaultdict(int) for _ in range(order + 1)]
 
     def train(self, data):
         """Train on byte sequence."""
@@ -130,27 +135,43 @@ class ByteModel:
                 if i >= o:
                     ctx = bytes(data[i - o:i])
                     b = data[i]
+                    if self.counts[o][ctx][b] == 0:
+                        self.unique_following[o][ctx] += 1
                     self.counts[o][ctx][b] += 1
                     self.totals[o][ctx] += 1
 
     def predict(self, context, next_byte):
-        """Predict probability of next_byte given context."""
-        prob = self.smoothing / 256  # uniform base
-
+        """Predict probability of next_byte given context using KN smoothing."""
         for o in range(self.order, -1, -1):
             if len(context) >= o:
                 ctx = bytes(context[-o:]) if o > 0 else b""
                 if ctx in self.counts[o]:
                     total = self.totals[o][ctx]
                     count = self.counts[o][ctx].get(next_byte, 0)
-                    ngram_prob = (count + self.smoothing) / (total + self.smoothing * 256)
-                    if o == self.order:
-                        prob = ngram_prob
+                    unique = self.unique_following[o][ctx]
+                    if count > 0:
+                        p = max(count - self.discount, 0) / total
+                        backoff_weight = (self.discount * unique) / total
+                        if o > 0:
+                            lower_ctx = context[-(o-1):] if o > 1 else b""
+                            lower_p = self._lower_predict(lower_ctx, next_byte, o - 1)
+                        else:
+                            lower_p = 1.0 / 256
+                        return p + backoff_weight * lower_p
                     else:
-                        prob = (1 - self.backoff_weight) * prob + self.backoff_weight * ngram_prob
-                    break
+                        continue
+        return 1.0 / 256
 
-        return prob
+    def _lower_predict(self, context, next_byte, max_order):
+        """Fallback prediction for unseen contexts."""
+        for o in range(max_order, -1, -1):
+            if len(context) >= o:
+                ctx = bytes(context[-o:]) if o > 0 else b""
+                if ctx in self.counts[o]:
+                    total = self.totals[o][ctx]
+                    count = self.counts[o][ctx].get(next_byte, 0)
+                    return (count + self.fallback_smooth) / (total + self.fallback_smooth * 256)
+        return 1.0 / 256
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +181,7 @@ class ByteModel:
 if __name__ == "__main__":
     t_start = time.time()
 
-    print(f"Training byte model (order={ORDER}, smoothing={SMOOTHING}, backoff={BACKOFF_WEIGHT})...")
+    print(f"Training byte model (order={ORDER}, discount={DISCOUNT}, fallback_smooth={FALLBACK_SMOOTH})...")
     model = ByteModel()
     model.train(TRAIN_DATA)
 
@@ -180,7 +201,7 @@ if __name__ == "__main__":
     print(f"training_seconds: {train_time:.1f}")
     print(f"total_seconds:    {total_time:.1f}")
     print(f"order:            {ORDER}")
-    print(f"smoothing:        {SMOOTHING}")
-    print(f"backoff_weight:   {BACKOFF_WEIGHT}")
+    print(f"discount:         {DISCOUNT}")
+    print(f"fallback_smooth:  {FALLBACK_SMOOTH}")
     print(f"train_bytes:      {len(TRAIN_DATA)}")
     print(f"eval_bytes:       {len(EVAL_DATA)}")

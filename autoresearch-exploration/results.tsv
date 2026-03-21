@@ -17,3 +17,9 @@ o7_s001	2.800273	0.0	discard	order=7 + smoothing=0.001
 o8_s001	3.239156	0.0	discard	order=8 + smoothing=0.001
 o5_s000	2.120837	0.0	discard	order=5 + smoothing=0.0001
 o6_s000	2.567138	0.0	discard	order=6 + smoothing=0.0001 + backoff=0.8
+grid_hp	1.536182	0.0	keep	grid search: order=3 smoothing=0.0016 backoff=1.0 (Laplace)
+kn_o5	1.337275	0.0	keep	Kneser-Ney: order=5 discount=0.3
+kn_o8	1.196159	0.0	keep	Kneser-Ney: order=8 discount=0.1
+kn_o12	1.153941	0.0	keep	Kneser-Ney: order=12 discount=0.1
+kn_o15	1.150133	0.0	keep	Kneser-Ney: order=15 discount=0.1
+kn_o20	1.146690	0.0	keep	Kneser-Ney: order=20 discount=0.1 (6.5s, current best)
