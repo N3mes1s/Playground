@@ -107,26 +107,25 @@ def evaluate_bpb(predict_fn):
 # ---------------------------------------------------------------------------
 
 # Hyperparameters
-ORDER = 20          # context length for prediction (n-gram order)
-DISCOUNT = 0.1      # Kneser-Ney discount parameter
-FALLBACK_SMOOTH = 0.001  # smoothing for lower-order fallback
+ORDER = 22          # context length for prediction (n-gram order)
+DISCOUNT = 0.001    # KN discount parameter (very low = trust observed counts)
+ONLINE = True       # adapt model during evaluation
 
 
 class ByteModel:
-    """N-gram byte-level language model with Kneser-Ney smoothing.
+    """N-gram byte-level language model with recursive KN smoothing + online adaptation.
 
-    Uses absolute discounting with backoff to lower-order models.
-    Tracks continuation counts for proper probability redistribution.
+    Combines Kneser-Ney discounting with PPM-style recursive backoff at every
+    order level, plus online adaptation that updates counts during evaluation.
     """
 
-    def __init__(self, order=ORDER, discount=DISCOUNT, fallback_smooth=FALLBACK_SMOOTH):
+    def __init__(self, order=ORDER, discount=DISCOUNT):
         self.order = order
         self.discount = discount
-        self.fallback_smooth = fallback_smooth
         # counts[context_len][context] = {byte: count}
         self.counts = [defaultdict(lambda: defaultdict(int)) for _ in range(order + 1)]
         self.totals = [defaultdict(int) for _ in range(order + 1)]
-        self.unique_following = [defaultdict(int) for _ in range(order + 1)]
+        self.unique = [defaultdict(int) for _ in range(order + 1)]
 
     def train(self, data):
         """Train on byte sequence."""
@@ -136,41 +135,46 @@ class ByteModel:
                     ctx = bytes(data[i - o:i])
                     b = data[i]
                     if self.counts[o][ctx][b] == 0:
-                        self.unique_following[o][ctx] += 1
+                        self.unique[o][ctx] += 1
                     self.counts[o][ctx][b] += 1
                     self.totals[o][ctx] += 1
 
     def predict(self, context, next_byte):
-        """Predict probability of next_byte given context using KN smoothing."""
-        for o in range(self.order, -1, -1):
-            if len(context) >= o:
-                ctx = bytes(context[-o:]) if o > 0 else b""
-                if ctx in self.counts[o]:
-                    total = self.totals[o][ctx]
-                    count = self.counts[o][ctx].get(next_byte, 0)
-                    unique = self.unique_following[o][ctx]
-                    if count > 0:
-                        p = max(count - self.discount, 0) / total
-                        backoff_weight = (self.discount * unique) / total
-                        if o > 0:
-                            lower_ctx = context[-(o-1):] if o > 1 else b""
-                            lower_p = self._lower_predict(lower_ctx, next_byte, o - 1)
-                        else:
-                            lower_p = 1.0 / 256
-                        return p + backoff_weight * lower_p
-                    else:
-                        continue
-        return 1.0 / 256
+        """Predict probability using recursive KN backoff + online update."""
+        prob = self._predict_recursive(context, next_byte, self.order)
 
-    def _lower_predict(self, context, next_byte, max_order):
-        """Fallback prediction for unseen contexts."""
-        for o in range(max_order, -1, -1):
-            if len(context) >= o:
+        # Online adaptation: update model with this observation
+        if ONLINE:
+            for o in range(min(self.order, len(context)) + 1):
                 ctx = bytes(context[-o:]) if o > 0 else b""
-                if ctx in self.counts[o]:
-                    total = self.totals[o][ctx]
-                    count = self.counts[o][ctx].get(next_byte, 0)
-                    return (count + self.fallback_smooth) / (total + self.fallback_smooth * 256)
+                if self.counts[o][ctx][next_byte] == 0:
+                    self.unique[o][ctx] += 1
+                self.counts[o][ctx][next_byte] += 1
+                self.totals[o][ctx] += 1
+
+        return prob
+
+    def _predict_recursive(self, context, next_byte, max_order):
+        """Recursive KN: discount at each level and backoff to all lower orders."""
+        for o in range(max_order, -1, -1):
+            if len(context) < o:
+                continue
+            ctx = bytes(context[-o:]) if o > 0 else b""
+            if ctx not in self.counts[o]:
+                continue
+            total = self.totals[o][ctx]
+            count = self.counts[o][ctx].get(next_byte, 0)
+            uniq = self.unique[o][ctx]
+            if count > 0:
+                p = max(count - self.discount, 0) / total
+                backoff_mass = (self.discount * uniq) / total
+                if o > 0:
+                    lower_p = self._predict_recursive(context, next_byte, o - 1)
+                else:
+                    lower_p = 1.0 / 256
+                return p + backoff_mass * lower_p
+            else:
+                continue
         return 1.0 / 256
 
 
@@ -181,7 +185,7 @@ class ByteModel:
 if __name__ == "__main__":
     t_start = time.time()
 
-    print(f"Training byte model (order={ORDER}, discount={DISCOUNT}, fallback_smooth={FALLBACK_SMOOTH})...")
+    print(f"Training byte model (order={ORDER}, discount={DISCOUNT}, online={ONLINE})...")
     model = ByteModel()
     model.train(TRAIN_DATA)
 
@@ -202,6 +206,6 @@ if __name__ == "__main__":
     print(f"total_seconds:    {total_time:.1f}")
     print(f"order:            {ORDER}")
     print(f"discount:         {DISCOUNT}")
-    print(f"fallback_smooth:  {FALLBACK_SMOOTH}")
+    print(f"online:           {ONLINE}")
     print(f"train_bytes:      {len(TRAIN_DATA)}")
     print(f"eval_bytes:       {len(EVAL_DATA)}")

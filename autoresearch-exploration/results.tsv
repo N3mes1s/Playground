@@ -22,4 +22,6 @@ kn_o5	1.337275	0.0	keep	Kneser-Ney: order=5 discount=0.3
 kn_o8	1.196159	0.0	keep	Kneser-Ney: order=8 discount=0.1
 kn_o12	1.153941	0.0	keep	Kneser-Ney: order=12 discount=0.1
 kn_o15	1.150133	0.0	keep	Kneser-Ney: order=15 discount=0.1
-kn_o20	1.146690	0.0	keep	Kneser-Ney: order=20 discount=0.1 (6.5s, current best)
+kn_o20	1.146690	0.0	keep	Kneser-Ney: order=20 discount=0.1 (6.5s)
+ppmkn	1.133329	0.0	keep	PPM-KN hybrid: order=20 discount=0.05 +online (7.6s)
+ppmkn2	1.128778	0.0	keep	PPM-KN hybrid: order=22 discount=0.001 +online (7.6s, current best)
