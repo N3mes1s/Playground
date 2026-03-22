@@ -24,4 +24,9 @@ kn_o12	1.153941	0.0	keep	Kneser-Ney: order=12 discount=0.1
 kn_o15	1.150133	0.0	keep	Kneser-Ney: order=15 discount=0.1
 kn_o20	1.146690	0.0	keep	Kneser-Ney: order=20 discount=0.1 (6.5s)
 ppmkn	1.133329	0.0	keep	PPM-KN hybrid: order=20 discount=0.05 +online (7.6s)
-ppmkn2	1.128778	0.0	keep	PPM-KN hybrid: order=22 discount=0.001 +online (7.6s, current best)
+ppmkn2	1.128778	0.0	keep	PPM-KN hybrid: order=22 discount=0.001 +online (7.6s)
+neural	1.115410	0.0	keep	MLP+KN rank-agreement: ContextMLP(ctx=16,h=128)+KN boost=0.1 (new best)
+neural2	1.036543	0.0	keep	MLP+KN rank-agreement: ContextMLP(ctx=16,h=128)+KN boost=1.0 (best)
+neural_tf	1.520902	0.0	keep	GPU Transformer: 64embed 4head 2layer 60s training
+neural_lstm	1.627953	0.0	discard	GPU LSTM: 64embed 256hidden 2layer 60s training
+ensemble_03	0.460185	0.0	keep	Ensemble: Transformer+KN geometric mean w=0.3 (BEST)
