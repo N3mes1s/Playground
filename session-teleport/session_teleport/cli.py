@@ -175,11 +175,13 @@ def export(session_id: str, provider: str | None, output: str | None,
 @click.argument("bundle_path", type=click.Path(exists=True))
 @click.option("--target-dir", "-t", type=click.Path(), default=None,
               help="Override working directory on this machine")
+@click.option("--target-provider", "-tp", type=click.Choice(["claude", "codex"]),
+              default=None, help="Convert to a different provider format")
 @click.option("--apply-git/--no-apply-git", default=None,
               help="Apply git patches (default: prompt)")
 @click.option("--dry-run", is_flag=True, help="Show what would be imported without writing")
 @click.option("--passphrase", type=str, default=None, help="Decryption passphrase")
-def import_session(bundle_path: str, target_dir: str | None,
+def import_session(bundle_path: str, target_dir: str | None, target_provider: str | None,
                    apply_git: bool | None, dry_run: bool, passphrase: str | None):
     """Import a session from a .stp bundle file."""
     data = load_bundle(Path(bundle_path))
@@ -191,6 +193,19 @@ def import_session(bundle_path: str, target_dir: str | None,
         raise SystemExit(1) from e
 
     manifest = reader.manifest
+
+    # Cross-provider conversion
+    if target_provider:
+        target_key = {"claude": "claude_code", "codex": "codex_cli"}[target_provider]
+        if target_key != manifest.provider:
+            from .converters import get_converter
+            converter = get_converter(manifest.provider, target_key)
+            if not converter:
+                error(f"No converter available from {manifest.provider} to {target_key}")
+                raise SystemExit(1)
+            reader = converter.convert(reader, target_dir)
+            manifest = reader.manifest
+
     print_bundle_info(manifest.__dict__)
 
     # Platform warnings
@@ -300,9 +315,12 @@ def send(session_id: str, provider: str | None, method: str,
 @click.option("--code", type=str, default=None, help="Pickup code for relay")
 @click.option("--output", "-o", type=click.Path(), default=None, help="Save bundle to file")
 @click.option("--auto-import", is_flag=True, help="Automatically import after receiving")
+@click.option("--target-provider", "-tp", type=click.Choice(["claude", "codex"]),
+              default=None, help="Convert to a different provider format")
 @click.option("--passphrase", type=str, default=None)
 def receive(method: str, port: int, relay_url: str | None, code: str | None,
-            output: str | None, auto_import: bool, passphrase: str | None):
+            output: str | None, auto_import: bool, target_provider: str | None,
+            passphrase: str | None):
     """Receive a session from another machine."""
     if method == "peer":
         data = asyncio.run(receive_from_peer(port))
@@ -323,9 +341,24 @@ def receive(method: str, port: int, relay_url: str | None, code: str | None,
         except ValueError as e:
             error(str(e))
             raise SystemExit(1) from e
-        print_bundle_info(reader.manifest.__dict__)
 
-        provider_cls = PROVIDER_MAP.get(reader.manifest.provider)
+        manifest = reader.manifest
+
+        # Cross-provider conversion
+        if target_provider:
+            target_key = {"claude": "claude_code", "codex": "codex_cli"}[target_provider]
+            if target_key != manifest.provider:
+                from .converters import get_converter
+                converter = get_converter(manifest.provider, target_key)
+                if not converter:
+                    error(f"No converter available from {manifest.provider} to {target_key}")
+                    raise SystemExit(1)
+                reader = converter.convert(reader)
+                manifest = reader.manifest
+
+        print_bundle_info(manifest.__dict__)
+
+        provider_cls = PROVIDER_MAP.get(manifest.provider)
         if provider_cls:
             provider_cls().import_session(reader)
             success("Session imported!")

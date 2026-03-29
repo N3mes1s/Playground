@@ -19,6 +19,7 @@ class Manifest:
     bundle_checksum: str = ""
     encrypted: bool = False
     components: list[str] = field(default_factory=list)
+    converted_from: str | None = None
 
     def __post_init__(self):
         if not self.created_at:
