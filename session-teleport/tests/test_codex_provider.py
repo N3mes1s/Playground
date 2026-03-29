@@ -97,3 +97,30 @@ def test_find_rollout_by_prefix(tmp_codex_dir):
     # Should not find garbage
     path = provider._find_rollout_by_id("nonexistent-id")
     assert path is None
+
+
+def test_date_partitioned_sessions(tmp_path):
+    """Test that sessions in YYYY/MM/DD/ subdirectories are discovered."""
+    import json
+    codex_dir = tmp_path / ".codex"
+    nested_dir = codex_dir / "sessions" / "2025" / "05" / "07"
+    nested_dir.mkdir(parents=True)
+
+    session_uuid = "aaaa1111-2222-3333-4444-555566667777"
+    rollout_name = f"rollout-2025-05-07T17-24-21-{session_uuid}.jsonl"
+
+    meta = {
+        "meta": {
+            "id": session_uuid,
+            "timestamp": "2025-05-07T17:24:21Z",
+            "source": "cli",
+            "cwd": "/home/user/project",
+        },
+    }
+    (nested_dir / rollout_name).write_text(json.dumps(meta) + "\n")
+
+    provider = CodexCliProvider(base_dir=codex_dir)
+    sessions = provider.list_sessions()
+    assert len(sessions) == 1
+    assert sessions[0].session_id == session_uuid
+    assert sessions[0].cwd == "/home/user/project"

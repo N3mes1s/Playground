@@ -8,8 +8,9 @@ Codex CLI data layout (from source: codex-rs/rollout/):
     history.jsonl                                   - cross-session command history (text-only)
     session_index.jsonl                             - thread name <-> ID index (append-only JSONL)
     sessions/                                       - active session rollout files
-      rollout-{YYYY-MM-DDTHH-MM-SS}-{uuid}.jsonl   - per-session JSONL rollout
-    archived_sessions/                              - older archived sessions
+      [YYYY/MM/DD/]rollout-{YYYY-MM-DDTHH-MM-SS}-{uuid}.jsonl
+      (may be flat or in date-partitioned subdirectories)
+    archived_sessions/                              - older archived sessions (flat)
       rollout-{YYYY-MM-DDTHH-MM-SS}-{uuid}.jsonl
     memories/                                       - extracted memories
       raw_memories.md
@@ -80,12 +81,16 @@ class CodexCliProvider(SessionProvider):
         return self.base_dir / ARCHIVED_SESSIONS_SUBDIR
 
     def _find_all_rollouts(self) -> list[Path]:
-        """Find all rollout files in sessions/ and archived_sessions/."""
+        """Find all rollout files in sessions/ and archived_sessions/.
+
+        Sessions may be stored flat or in YYYY/MM/DD/ subdirectories,
+        so we use rglob to search recursively.
+        """
         rollouts = []
         for subdir in [self._sessions_dir(), self._archived_dir()]:
             if subdir.exists():
-                for f in subdir.iterdir():
-                    if f.is_file() and f.name.startswith(ROLLOUT_PREFIX) and f.name.endswith(ROLLOUT_SUFFIX):
+                for f in subdir.rglob(f"{ROLLOUT_PREFIX}*{ROLLOUT_SUFFIX}"):
+                    if f.is_file():
                         rollouts.append(f)
         return rollouts
 
