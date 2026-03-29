@@ -15,8 +15,8 @@ import json
 import tarfile
 from pathlib import Path
 
+from .crypto import decrypt_bundle, encrypt_bundle
 from .manifest import Manifest
-from .crypto import encrypt_bundle, decrypt_bundle
 
 
 class BundleBuilder:
@@ -101,8 +101,8 @@ class BundleReader:
     def read_file(self, path: str) -> bytes:
         try:
             f = self._tar.extractfile(path)
-        except KeyError:
-            raise FileNotFoundError(f"File not found in bundle: {path}")
+        except KeyError as e:
+            raise FileNotFoundError(f"File not found in bundle: {path}") from e
         if f is None:
             raise FileNotFoundError(f"File not found in bundle: {path}")
         return f.read()

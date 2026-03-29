@@ -1,8 +1,8 @@
 """Tests for Codex CLI provider."""
 
-from session_teleport.providers.codex_cli import CodexCliProvider
 from session_teleport.core.bundle import BundleBuilder, BundleReader
 from session_teleport.core.manifest import Manifest
+from session_teleport.providers.codex_cli import CodexCliProvider
 
 
 def test_list_sessions(tmp_codex_dir):
@@ -14,6 +14,7 @@ def test_list_sessions(tmp_codex_dir):
     assert sessions[0].session_id == session_uuid
     assert sessions[0].cwd == cwd
     assert sessions[0].provider == "codex_cli"
+    assert sessions[0].extra is not None
     assert sessions[0].extra["rollout_file"].startswith("rollout-")
     assert sessions[0].extra["archived"] is False
 

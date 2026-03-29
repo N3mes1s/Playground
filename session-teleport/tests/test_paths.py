@@ -1,8 +1,12 @@
 """Tests for path utilities."""
 
 from session_teleport.utils.paths import (
-    encode_cwd, decode_cwd, get_claude_dir, get_codex_dir,
-    get_hostname, get_platform,
+    decode_cwd,
+    encode_cwd,
+    get_claude_dir,
+    get_codex_dir,
+    get_hostname,
+    get_platform,
 )
 
 

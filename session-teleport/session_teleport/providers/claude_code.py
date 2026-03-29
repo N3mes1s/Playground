@@ -17,10 +17,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .base import SessionProvider, SessionInfo
 from ..core.bundle import BundleBuilder, BundleReader
-from ..utils.paths import get_claude_dir, encode_cwd
 from ..utils.display import info, warning
+from ..utils.paths import encode_cwd, get_claude_dir
+from .base import SessionInfo, SessionProvider
 
 
 class ClaudeCodeProvider(SessionProvider):

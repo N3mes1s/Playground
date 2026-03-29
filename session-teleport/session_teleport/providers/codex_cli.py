@@ -4,7 +4,7 @@ Handles discovery, export, and import of Codex CLI sessions stored in ~/.codex/.
 
 Codex CLI data layout (from source: codex-rs/rollout/):
   ~/.codex/
-    config.toml                                     - global configuration (MCP servers, model, etc.)
+    config.toml                          - global config (MCP servers, model)
     history.jsonl                                   - cross-session command history (text-only)
     session_index.jsonl                             - thread name <-> ID index (append-only JSONL)
     sessions/                                       - active session rollout files
@@ -18,7 +18,7 @@ Codex CLI data layout (from source: codex-rs/rollout/):
       codex-tui.log
 
 Each rollout .jsonl file:
-  Line 1: SessionMetaLine with {meta: {id, timestamp, source, cwd, cli_version, model_provider, ...},
+  Line 1: SessionMetaLine {meta: {id, timestamp, source, cwd},
            git: {commit_hash, branch, origin_url}}
   Subsequent lines: RolloutItem entries (conversation turns, tool calls, results)
 
@@ -31,10 +31,10 @@ import json
 import re
 from pathlib import Path
 
-from .base import SessionProvider, SessionInfo
 from ..core.bundle import BundleBuilder, BundleReader
+from ..utils.display import info
 from ..utils.paths import get_codex_dir
-from ..utils.display import info, warning
+from .base import SessionInfo, SessionProvider
 
 ROLLOUT_PREFIX = "rollout-"
 ROLLOUT_SUFFIX = ".jsonl"
@@ -59,7 +59,7 @@ def _parse_rollout_filename(name: str) -> tuple[str, str] | None:
 def _read_session_meta(path: Path) -> dict | None:
     """Read the first line of a rollout JSONL to extract SessionMetaLine."""
     try:
-        with open(path, "r") as f:
+        with open(path) as f:
             first_line = f.readline().strip()
             if first_line:
                 return json.loads(first_line)
@@ -209,7 +209,8 @@ class CodexCliProvider(SessionProvider):
             target.parent.mkdir(parents=True, exist_ok=True)
 
             # For rollout files, optionally rewrite the cwd in session meta
-            if rel.startswith(SESSIONS_SUBDIR + "/") and rel.endswith(ROLLOUT_SUFFIX) and target_dir:
+            is_rollout = rel.startswith(SESSIONS_SUBDIR + "/") and rel.endswith(ROLLOUT_SUFFIX)
+            if is_rollout and target_dir:
                 content = self._rewrite_rollout_cwd(content, manifest.source_cwd, target_dir)
 
             target.write_bytes(content)

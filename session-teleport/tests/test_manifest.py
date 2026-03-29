@@ -1,6 +1,5 @@
 """Tests for manifest creation and serialization."""
 
-import json
 
 from session_teleport.core.manifest import Manifest
 
@@ -50,7 +49,7 @@ def test_manifest_from_dict_missing_fields():
 
 def test_manifest_created_at_auto():
     m1 = Manifest()
-    m2 = Manifest()
+    Manifest()
     assert m1.created_at  # not empty
     # Both should have timestamps (though potentially identical)
     assert "T" in m1.created_at  # ISO format

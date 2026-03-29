@@ -1,9 +1,9 @@
 """Terminal display utilities using Rich."""
 
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
+from rich.table import Table
 
 console = Console()
 
@@ -30,7 +30,8 @@ def print_bundle_info(manifest: dict) -> None:
     panel = Panel.fit(
         f"[bold]Provider:[/] {manifest.get('provider', '?')}\n"
         f"[bold]Session:[/] {manifest.get('session_id', '?')}\n"
-        f"[bold]Source:[/] {manifest.get('source_hostname', '?')} ({manifest.get('source_platform', '?')})\n"
+        f"[bold]Source:[/] {manifest.get('source_hostname', '?')}"
+        f" ({manifest.get('source_platform', '?')})\n"
         f"[bold]CWD:[/] {manifest.get('source_cwd', '?')}\n"
         f"[bold]Created:[/] {manifest.get('created_at', '?')}\n"
         f"[bold]Encrypted:[/] {manifest.get('encrypted', False)}\n"

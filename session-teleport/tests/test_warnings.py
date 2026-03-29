@@ -1,12 +1,11 @@
 """Tests for security warnings module."""
 
 from unittest.mock import patch
-from io import StringIO
 
 from session_teleport.security.warnings import (
-    warn_secrets_in_content,
-    warn_platform_mismatch,
     warn_cwd_mismatch,
+    warn_platform_mismatch,
+    warn_secrets_in_content,
 )
 
 

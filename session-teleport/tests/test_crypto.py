@@ -1,7 +1,8 @@
 """Tests for encryption/decryption."""
 
 import pytest
-from session_teleport.core.crypto import encrypt_bundle, decrypt_bundle
+
+from session_teleport.core.crypto import decrypt_bundle, encrypt_bundle
 
 
 def test_encrypt_decrypt_roundtrip():

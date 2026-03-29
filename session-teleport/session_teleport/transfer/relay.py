@@ -6,15 +6,13 @@ This enables transfer even when machines can't connect directly (NAT, firewalls)
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import os
 import time
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from threading import Thread
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from ..utils.display import info, success, error, console
+from ..utils.display import console, info, success
 
 DEFAULT_TTL_MINUTES = 30
 
@@ -97,8 +95,8 @@ def start_relay_server(port: int = 8765, ttl_minutes: int = DEFAULT_TTL_MINUTES)
 
 async def upload_to_relay(data: bytes, relay_url: str) -> str:
     """Upload a bundle to the relay server. Returns the pickup code."""
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     req = urllib.request.Request(
         f"{relay_url.rstrip('/')}/bundle",
@@ -112,21 +110,24 @@ async def upload_to_relay(data: bytes, relay_url: str) -> str:
             success(f"Bundle uploaded to relay. Pickup code: {code}")
             return code
     except urllib.error.URLError as e:
-        raise ConnectionError(f"Failed to upload to relay: {e}")
+        raise ConnectionError(f"Failed to upload to relay: {e}") from e
 
 
 async def download_from_relay(relay_url: str, code: str) -> bytes:
     """Download a bundle from the relay server using the pickup code."""
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     url = f"{relay_url.rstrip('/')}/bundle/{code}"
     try:
         with urllib.request.urlopen(url) as resp:
             data = resp.read()
-            success(f"Bundle downloaded from relay ({len(data) / (1024*1024):.2f} MB)")
+            size_mb = len(data) / (1024 * 1024)
+            success(f"Bundle downloaded from relay ({size_mb:.2f} MB)")
             return data
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            raise ValueError("Bundle not found - code may be invalid or already used")
-        raise ConnectionError(f"Failed to download from relay: {e}")
+            raise ValueError(
+                "Bundle not found - code may be invalid or already used"
+            ) from e
+        raise ConnectionError(f"Failed to download from relay: {e}") from e

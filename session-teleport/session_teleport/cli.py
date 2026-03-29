@@ -7,21 +7,26 @@ from pathlib import Path
 
 import click
 
+from .collectors.env_snapshot import capture_env
+from .collectors.git_state import apply_git_state, capture_git_state
+from .collectors.tool_versions import capture_tool_versions
 from .core.bundle import BundleBuilder, BundleReader
 from .core.manifest import Manifest
 from .providers.base import SessionProvider
 from .providers.claude_code import ClaudeCodeProvider
 from .providers.codex_cli import CodexCliProvider
-from .collectors.git_state import capture_git_state, apply_git_state
-from .collectors.env_snapshot import capture_env
-from .collectors.tool_versions import capture_tool_versions
-from .security.warnings import warn_secrets_in_content, warn_platform_mismatch, warn_cwd_mismatch
-from .transfer.file_transfer import save_bundle, load_bundle
-from .utils.paths import get_hostname, get_platform
+from .security.warnings import warn_cwd_mismatch, warn_platform_mismatch, warn_secrets_in_content
+from .transfer.file_transfer import load_bundle, save_bundle
 from .utils.display import (
-    print_sessions_table, print_bundle_info,
-    success, warning, error, info, console,
+    console,
+    error,
+    info,
+    print_bundle_info,
+    print_sessions_table,
+    success,
+    warning,
 )
+from .utils.paths import get_hostname, get_platform
 
 
 def _get_providers() -> list[SessionProvider]:
@@ -58,10 +63,7 @@ def main():
 @click.option("--provider", "-p", type=click.Choice(["claude", "codex", "all"]), default="all")
 def list_sessions(provider: str):
     """List available sessions."""
-    if provider == "all":
-        providers = _get_providers()
-    else:
-        providers = [_get_provider(provider)]
+    providers = _get_providers() if provider == "all" else [_get_provider(provider)]
 
     all_sessions = []
     for p in providers:
@@ -142,7 +144,11 @@ def export(session_id: str, provider: str | None, output: str | None,
     # Encrypt
     passphrase = None
     if encrypt:
-        passphrase = click.prompt("Passphrase for encryption", hide_input=True, confirmation_prompt=True)
+        passphrase = click.prompt(
+            "Passphrase for encryption",
+            hide_input=True,
+            confirmation_prompt=True,
+        )
 
     # Build and save
     bundle_data = builder.build(passphrase)
@@ -166,7 +172,7 @@ def import_session(bundle_path: str, target_dir: str | None,
     data = load_bundle(Path(bundle_path))
 
     # Try to detect if encrypted (Fernet encrypted data won't be valid tar.gz)
-    is_encrypted = not data[:2] == b"\x1f\x8b"  # gzip magic bytes
+    is_encrypted = data[:2] != b"\x1f\x8b"  # gzip magic bytes
     if is_encrypted and not passphrase:
         passphrase = click.prompt("Passphrase for decryption", hide_input=True)
 
@@ -174,7 +180,7 @@ def import_session(bundle_path: str, target_dir: str | None,
         reader = BundleReader(data, passphrase if is_encrypted else None)
     except ValueError as e:
         error(str(e))
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
     manifest = reader.manifest
     print_bundle_info(manifest.__dict__)
@@ -315,7 +321,7 @@ def receive(method: str, port: int, relay_url: str | None, code: str | None,
     if output:
         save_bundle(data, Path(output))
     elif auto_import:
-        is_encrypted = not data[:2] == b"\x1f\x8b"
+        is_encrypted = data[:2] != b"\x1f\x8b"
         if is_encrypted and not passphrase:
             passphrase = click.prompt("Passphrase", hide_input=True)
         reader = BundleReader(data, passphrase if is_encrypted else None)
@@ -347,7 +353,7 @@ def relay_server(port: int, ttl: int):
 def inspect(bundle_path: str, passphrase: str | None):
     """Inspect a .stp bundle without importing."""
     data = load_bundle(Path(bundle_path))
-    is_encrypted = not data[:2] == b"\x1f\x8b"
+    is_encrypted = data[:2] != b"\x1f\x8b"
     if is_encrypted and not passphrase:
         passphrase = click.prompt("Passphrase", hide_input=True)
 
@@ -373,7 +379,7 @@ def inspect(bundle_path: str, passphrase: str | None):
 
     try:
         versions = reader.read_json("env/tool_versions.json")
-        console.print(f"\n[bold]Tool versions:[/]")
+        console.print("\n[bold]Tool versions:[/]")
         for tool, ver in versions.items():
             console.print(f"  {tool}: {ver}")
     except FileNotFoundError:

@@ -7,7 +7,7 @@ import hashlib
 import os
 import struct
 
-from ..utils.display import console, info, success, error, create_progress
+from ..utils.display import console, create_progress, error, info, success
 
 DEFAULT_PORT = 9876
 AUTH_CODE_LENGTH = 6
@@ -18,7 +18,9 @@ def generate_auth_code() -> str:
     return str(int.from_bytes(os.urandom(4), "big") % 1_000_000).zfill(AUTH_CODE_LENGTH)
 
 
-async def send_to_peer(data: bytes, host: str, port: int = DEFAULT_PORT, auth_code: str = "") -> None:
+async def send_to_peer(
+    data: bytes, host: str, port: int = DEFAULT_PORT, auth_code: str = ""
+) -> None:
     """Connect to a receiving peer and send a bundle."""
     reader, writer = await asyncio.open_connection(host, port)
     info(f"Connected to {host}:{port}")

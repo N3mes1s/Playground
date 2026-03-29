@@ -1,12 +1,10 @@
 """Tests for transfer modules: file_transfer, peer, relay."""
 
 import asyncio
-import json
 
-from session_teleport.transfer.file_transfer import save_bundle, load_bundle
-from session_teleport.transfer.peer import generate_auth_code, send_to_peer, receive_from_peer
-from session_teleport.transfer.relay import RelayHandler, _generate_code
-
+from session_teleport.transfer.file_transfer import load_bundle, save_bundle
+from session_teleport.transfer.peer import generate_auth_code, receive_from_peer, send_to_peer
+from session_teleport.transfer.relay import _generate_code
 
 # --- file_transfer ---
 
@@ -60,11 +58,10 @@ def test_generate_auth_code_uniqueness():
 
 def test_peer_transfer_roundtrip():
     """Test that send/receive works over loopback."""
-    test_data = b"session bundle payload for peer test"
 
     async def run_transfer():
         # Start receiver
-        receiver_task = asyncio.create_task(_receive_with_timeout(9877))
+        asyncio.create_task(_receive_with_timeout(9877))
         await asyncio.sleep(0.1)  # Let server start
 
         # We need to know the auth code, so we'll do a manual version
@@ -89,8 +86,8 @@ def test_peer_end_to_end():
     test_data = b"hello from machine A to machine B"
 
     async def run():
-        import struct
         import hashlib
+        import struct
 
         # Start receiver on a high port
         port = 19876
@@ -99,7 +96,7 @@ def test_peer_end_to_end():
         # Patch generate_auth_code to return our known code
         import session_teleport.transfer.peer as peer_mod
         original_gen = peer_mod.generate_auth_code
-        peer_mod.generate_auth_code = lambda: auth_code
+        peer_mod.generate_auth_code = lambda: auth_code  # ty: ignore[invalid-assignment]
 
         received = None
 

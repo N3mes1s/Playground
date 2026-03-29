@@ -1,11 +1,9 @@
 """Tests for CLI commands using Click's test runner."""
 
-import json
 
 from click.testing import CliRunner
 
 from session_teleport.cli import main
-
 
 runner = CliRunner()
 

@@ -38,5 +38,5 @@ def decrypt_bundle(encrypted: bytes, passphrase: str) -> bytes:
     f = Fernet(key)
     try:
         return f.decrypt(ciphertext)
-    except InvalidToken:
-        raise ValueError("Decryption failed: wrong passphrase or corrupted bundle")
+    except InvalidToken as e:
+        raise ValueError("Decryption failed: wrong passphrase or corrupted bundle") from e

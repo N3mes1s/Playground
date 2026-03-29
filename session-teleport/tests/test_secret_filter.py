@@ -1,8 +1,11 @@
 """Tests for secret filtering."""
 
 from session_teleport.security.secret_filter import (
-    filter_env, shannon_entropy, looks_like_secret_value,
-    is_secret_env_name, scan_text_for_secrets,
+    filter_env,
+    is_secret_env_name,
+    looks_like_secret_value,
+    scan_text_for_secrets,
+    shannon_entropy,
 )
 
 

@@ -2,8 +2,8 @@
 
 import click
 
+from ..utils.display import console, warning
 from .secret_filter import scan_text_for_secrets
-from ..utils.display import warning, console
 
 
 def warn_secrets_in_content(content: str) -> bool:

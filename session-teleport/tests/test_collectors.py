@@ -5,10 +5,9 @@ import os
 import subprocess
 from unittest.mock import patch
 
-from session_teleport.collectors.git_state import capture_git_state, apply_git_state
 from session_teleport.collectors.env_snapshot import capture_env, restore_env_info
+from session_teleport.collectors.git_state import apply_git_state, capture_git_state
 from session_teleport.collectors.tool_versions import capture_tool_versions
-
 
 # --- git_state ---
 

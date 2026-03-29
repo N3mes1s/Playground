@@ -1,8 +1,8 @@
 """Test fixtures for session-teleport."""
 
 import json
+
 import pytest
-from pathlib import Path
 
 
 @pytest.fixture
@@ -32,8 +32,10 @@ def tmp_claude_dir(tmp_path):
     project_dir.mkdir(parents=True)
 
     conv_lines = [
-        json.dumps({"type": "user", "content": "Hello", "timestamp": "2025-01-15T10:30:01Z"}),
-        json.dumps({"type": "assistant", "content": "Hi there!", "timestamp": "2025-01-15T10:30:02Z"}),
+        json.dumps({"type": "user", "content": "Hello",
+                     "timestamp": "2025-01-15T10:30:01Z"}),
+        json.dumps({"type": "assistant", "content": "Hi there!",
+                     "timestamp": "2025-01-15T10:30:02Z"}),
     ]
     (project_dir / f"{session_id}.jsonl").write_text("\n".join(conv_lines) + "\n")
 
@@ -96,7 +98,11 @@ def tmp_codex_dir(tmp_path):
     (codex_dir / "config.toml").write_text('[model]\nprovider = "openai"\n')
 
     # Session index
-    index_entry = {"id": session_uuid, "thread_name": "test thread", "updated_at": "2025-05-07T17:24:21Z"}
+    index_entry = {
+        "id": session_uuid,
+        "thread_name": "test thread",
+        "updated_at": "2025-05-07T17:24:21Z",
+    }
     (codex_dir / "session_index.jsonl").write_text(json.dumps(index_entry) + "\n")
 
     # Create project dir

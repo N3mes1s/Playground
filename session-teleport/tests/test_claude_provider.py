@@ -1,8 +1,8 @@
 """Tests for Claude Code provider."""
 
-from session_teleport.providers.claude_code import ClaudeCodeProvider
 from session_teleport.core.bundle import BundleBuilder, BundleReader
 from session_teleport.core.manifest import Manifest
+from session_teleport.providers.claude_code import ClaudeCodeProvider
 
 
 def test_list_sessions(tmp_claude_dir):
