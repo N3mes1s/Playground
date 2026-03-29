@@ -58,15 +58,49 @@ def tmp_claude_dir(tmp_path):
 
 @pytest.fixture
 def tmp_codex_dir(tmp_path):
-    """Create a fake ~/.codex directory with test session data."""
+    """Create a fake ~/.codex directory with test session data matching real Codex CLI format."""
     codex_dir = tmp_path / ".codex"
-    codex_dir.mkdir(parents=True)
+    sessions_dir = codex_dir / "sessions"
+    sessions_dir.mkdir(parents=True)
 
-    session_id = "codex-session-abcd-1234"
-    (codex_dir / f"{session_id}.json").write_text(json.dumps({
-        "session_id": session_id,
-        "cwd": str(tmp_path / "codex-project"),
-        "created_at": "2025-01-20T14:00:00Z",
-    }))
+    session_uuid = "5973b6c0-94b8-487b-a530-2aeb6098ae0e"
+    cwd = str(tmp_path / "codex-project")
+    rollout_name = f"rollout-2025-05-07T17-24-21-{session_uuid}.jsonl"
 
-    return codex_dir, session_id
+    # First line: SessionMetaLine
+    session_meta = {
+        "meta": {
+            "id": session_uuid,
+            "timestamp": "2025-05-07T17:24:21Z",
+            "source": "cli",
+            "cwd": cwd,
+            "cli_version": "0.1.0",
+            "model_provider": "openai",
+        },
+        "git": {
+            "commit_hash": "abc123",
+            "branch": "main",
+            "origin_url": "https://github.com/example/repo.git",
+        },
+    }
+    # Subsequent lines: RolloutItem entries
+    rollout_items = [
+        {"type": "user_message", "content": "Hello codex"},
+        {"type": "assistant_message", "content": "Hi! How can I help?"},
+    ]
+    lines = [json.dumps(session_meta)]
+    lines.extend(json.dumps(item) for item in rollout_items)
+    (sessions_dir / rollout_name).write_text("\n".join(lines) + "\n")
+
+    # Config
+    (codex_dir / "config.toml").write_text('[model]\nprovider = "openai"\n')
+
+    # Session index
+    index_entry = {"id": session_uuid, "thread_name": "test thread", "updated_at": "2025-05-07T17:24:21Z"}
+    (codex_dir / "session_index.jsonl").write_text(json.dumps(index_entry) + "\n")
+
+    # Create project dir
+    project = tmp_path / "codex-project"
+    project.mkdir(parents=True)
+
+    return codex_dir, session_uuid, cwd
