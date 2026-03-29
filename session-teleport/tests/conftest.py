@@ -4,6 +4,8 @@ import json
 
 import pytest
 
+from tests.helpers import make_claude_bundle, make_codex_bundle  # noqa: F401
+
 
 @pytest.fixture
 def tmp_claude_dir(tmp_path):

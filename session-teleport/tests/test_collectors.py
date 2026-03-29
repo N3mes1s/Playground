@@ -6,8 +6,10 @@ import subprocess
 from unittest.mock import patch
 
 from session_teleport.collectors.env_snapshot import capture_env, restore_env_info
-from session_teleport.collectors.git_state import apply_git_state, capture_git_state
+from session_teleport.collectors.git_state import _run_git, apply_git_state, capture_git_state
 from session_teleport.collectors.tool_versions import capture_tool_versions
+from session_teleport.core.bundle import BundleBuilder, BundleReader
+from session_teleport.core.manifest import Manifest
 
 # --- git_state ---
 
@@ -172,3 +174,117 @@ def test_capture_tool_versions():
     assert "python" in versions
     assert "Python" in versions["python"]
     assert "git" in versions
+
+
+def test_capture_git_full_state(tmp_path):
+    """Capture git state with remote, staged changes, log."""
+    env = {**os.environ, "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@t"}
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo, capture_output=True, env=env)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=repo, capture_output=True)
+    subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=repo, capture_output=True)
+
+    # Add remote
+    subprocess.run(
+        ["git", "remote", "add", "origin", "https://github.com/test/repo.git"],
+        cwd=repo, capture_output=True, env=env,
+    )
+
+    (repo / "file.txt").write_text("content\n")
+    subprocess.run(["git", "add", "file.txt"], cwd=repo, capture_output=True, env=env)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True, env=env)
+
+    # Create staged changes
+    (repo / "file.txt").write_text("modified\n")
+    subprocess.run(["git", "add", "file.txt"], cwd=repo, capture_output=True, env=env)
+
+    # Also an unstaged file
+    (repo / "new.txt").write_text("new\n")
+
+    result = capture_git_state(str(repo))
+    assert "git/branch.txt" in result
+    assert "git/commit.txt" in result
+    assert "git/remote.txt" in result
+    assert "git/log.txt" in result
+    assert "git/staged.patch" in result
+    assert b"https://github.com/test/repo.git" in result["git/remote.txt"]
+
+
+def test_apply_git_patch_fail(tmp_path):
+    """apply_git_state with a patch that can't be applied."""
+    env = {**os.environ, "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@t"}
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo, capture_output=True, env=env)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=repo, capture_output=True)
+    subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=repo, capture_output=True)
+    (repo / "file.txt").write_text("original\n")
+    subprocess.run(["git", "add", "file.txt"], cwd=repo, capture_output=True, env=env)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True, env=env)
+
+    # Make a bad patch that references a nonexistent file
+    bad_patch = """diff --git a/nonexistent.txt b/nonexistent.txt
+--- a/nonexistent.txt
++++ b/nonexistent.txt
+@@ -1 +1 @@
+-old
++new
+"""
+    manifest = Manifest(provider="test", session_id="x")
+    builder = BundleBuilder(manifest)
+    builder.add_file("git/branch.txt", b"main")
+    builder.add_file("git/commit.txt", b"abc123")
+    builder.add_file("git/uncommitted.patch", bad_patch.encode())
+    data = builder.build()
+    reader = BundleReader(data)
+
+    actions = apply_git_state(str(repo), reader, dry_run=False)
+    assert any("failed" in a.lower() or "Patch" in a for a in actions)
+    reader.close()
+
+
+def test_apply_git_remote_and_commit():
+    """apply_git_state reads commit and remote from bundle."""
+    manifest = Manifest(provider="test", session_id="x")
+    builder = BundleBuilder(manifest)
+    builder.add_file("git/branch.txt", b"feature-branch")
+    builder.add_file("git/commit.txt", b"deadbeef123456")
+    builder.add_file("git/remote.txt", b"https://github.com/test/repo.git")
+    data = builder.build()
+    reader = BundleReader(data)
+
+    actions = apply_git_state("/tmp", reader, dry_run=True)
+    assert any("feature-branch" in a for a in actions)
+    assert any("deadbeef" in a for a in actions)
+    assert any("github.com" in a for a in actions)
+    reader.close()
+
+
+def test_capture_git_not_repo(tmp_path):
+    """capture_git_state on non-git directory."""
+    result = capture_git_state(str(tmp_path))
+    assert result == {}
+
+
+def test_run_git_non_git_dir(tmp_path):
+    """_run_git returns empty string for non-git directory commands."""
+    result = _run_git(str(tmp_path), "log", "--oneline")
+    assert result == ""
+
+
+def test_apply_git_no_commit_no_remote():
+    """apply_git_state bundle with branch but no commit or remote."""
+    manifest = Manifest(provider="test", session_id="x")
+    builder = BundleBuilder(manifest)
+    builder.add_file("git/branch.txt", b"main")
+    # No commit.txt, no remote.txt
+    data = builder.build()
+    reader = BundleReader(data)
+
+    actions = apply_git_state("/tmp", reader, dry_run=True)
+    assert any("main" in a for a in actions)
+    # commit and remote FileNotFoundError branches are hit
+    reader.close()

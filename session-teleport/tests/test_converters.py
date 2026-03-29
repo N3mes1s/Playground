@@ -14,131 +14,7 @@ from session_teleport.converters.claude_to_codex import ClaudeToCodexConverter
 from session_teleport.converters.codex_to_claude import CodexToClaudeConverter
 from session_teleport.core.bundle import BundleBuilder, BundleReader
 from session_teleport.core.manifest import Manifest
-
-# ── Helpers ──────────────────────────────────────────────────────────────
-
-
-def _make_claude_bundle(
-    session_id: str = "test-session-123",
-    cwd: str = "/home/user/project",
-    messages: list[dict] | None = None,
-    subagents: dict[str, dict] | None = None,
-    include_git: bool = False,
-) -> bytes:
-    """Build a minimal Claude Code bundle for testing."""
-    from session_teleport.utils.paths import encode_cwd
-
-    manifest = Manifest(
-        provider="claude_code",
-        session_id=session_id,
-        source_hostname="test-host",
-        source_platform="linux",
-        source_cwd=cwd,
-        components=["session"] + (["git"] if include_git else []),
-    )
-    builder = BundleBuilder(manifest)
-
-    if messages is None:
-        messages = [
-            {
-                "type": "user",
-                "message": {"role": "user", "content": "Hello"},
-                "uuid": "uuid-1",
-                "parentUuid": None,
-                "timestamp": "2024-01-01T00:00:00Z",
-                "sessionId": session_id,
-                "cwd": cwd,
-            },
-            {
-                "type": "assistant",
-                "message": {"role": "assistant", "content": "Hi there!"},
-                "uuid": "uuid-2",
-                "parentUuid": "uuid-1",
-                "timestamp": "2024-01-01T00:00:01Z",
-                "sessionId": session_id,
-                "cwd": cwd,
-            },
-        ]
-
-    encoded_cwd = encode_cwd(cwd)
-    jsonl = "\n".join(json.dumps(m) for m in messages) + "\n"
-    builder.add_file(f"session/projects/{encoded_cwd}/{session_id}.jsonl", jsonl.encode())
-
-    # Session metadata
-    meta = {"pid": 12345, "sessionId": session_id, "cwd": cwd}
-    builder.add_file("session/sessions/0.json", json.dumps(meta).encode())
-
-    # Subagents
-    if subagents:
-        for agent_id, agent_data in subagents.items():
-            if "meta" in agent_data:
-                builder.add_file(
-                    f"session/projects/{encoded_cwd}/{session_id}/subagents/{agent_id}.meta.json",
-                    json.dumps(agent_data["meta"]).encode(),
-                )
-            if "messages" in agent_data:
-                agent_jsonl = "\n".join(json.dumps(m) for m in agent_data["messages"]) + "\n"
-                builder.add_file(
-                    f"session/projects/{encoded_cwd}/{session_id}/subagents/{agent_id}.jsonl",
-                    agent_jsonl.encode(),
-                )
-
-    # Git files
-    if include_git:
-        builder.add_file("git/branch.txt", b"main")
-        builder.add_file("git/commit.txt", b"abc123")
-        builder.add_file("git/remote.txt", b"https://github.com/test/repo.git")
-
-    return builder.build()
-
-
-def _make_codex_bundle(
-    session_id: str = "codex-session-456",
-    cwd: str = "/home/user/project",
-    messages: list[dict] | None = None,
-    include_git: bool = False,
-) -> bytes:
-    """Build a minimal Codex CLI bundle for testing."""
-    manifest = Manifest(
-        provider="codex_cli",
-        session_id=session_id,
-        source_hostname="test-host",
-        source_platform="linux",
-        source_cwd=cwd,
-        components=["session"] + (["git"] if include_git else []),
-    )
-    builder = BundleBuilder(manifest)
-
-    meta_line = {
-        "meta": {
-            "id": session_id,
-            "timestamp": "2024-01-01T00:00:00Z",
-            "cwd": cwd,
-            "source": "codex",
-        },
-        "git": {},
-    }
-    if messages is None:
-        messages = [
-            {"type": "user_message", "content": "Hello", "timestamp": "2024-01-01T00:00:00Z"},
-            {
-                "type": "assistant_message",
-                "content": "Hi there!",
-                "timestamp": "2024-01-01T00:00:01Z",
-            },
-        ]
-
-    rollout_lines = [meta_line, *messages]
-    rollout_data = "\n".join(json.dumps(line) for line in rollout_lines) + "\n"
-    rollout_name = f"rollout-2024-01-01T00-00-00-{session_id}.jsonl"
-    builder.add_file(f"session/sessions/{rollout_name}", rollout_data.encode())
-
-    if include_git:
-        builder.add_file("git/branch.txt", b"main")
-        builder.add_file("git/commit.txt", b"abc123")
-
-    return builder.build()
-
+from tests.helpers import make_claude_bundle, make_codex_bundle
 
 # ── flatten_content tests ────────────────────────────────────────────────
 
@@ -412,7 +288,7 @@ def test_get_converter_same_provider():
 
 
 def test_claude_to_codex_basic():
-    bundle_data = _make_claude_bundle()
+    bundle_data = make_claude_bundle()
     reader = BundleReader(bundle_data)
 
     converter = ClaudeToCodexConverter()
@@ -441,7 +317,7 @@ def test_claude_to_codex_basic():
 
 
 def test_claude_to_codex_preserves_content():
-    bundle_data = _make_claude_bundle()
+    bundle_data = make_claude_bundle()
     reader = BundleReader(bundle_data)
 
     converter = ClaudeToCodexConverter()
@@ -459,7 +335,7 @@ def test_claude_to_codex_preserves_content():
 
 
 def test_claude_to_codex_with_git():
-    bundle_data = _make_claude_bundle(include_git=True)
+    bundle_data = make_claude_bundle(include_git=True)
     reader = BundleReader(bundle_data)
 
     converter = ClaudeToCodexConverter()
@@ -529,7 +405,7 @@ def test_claude_to_codex_with_subagents():
         },
     ]
 
-    bundle_data = _make_claude_bundle(messages=messages, subagents=subagents)
+    bundle_data = make_claude_bundle(messages=messages, subagents=subagents)
     reader = BundleReader(bundle_data)
 
     converter = ClaudeToCodexConverter()
@@ -565,7 +441,7 @@ def test_claude_to_codex_with_tool_use_content():
             "cwd": "/home/user/project",
         },
     ]
-    bundle_data = _make_claude_bundle(messages=messages)
+    bundle_data = make_claude_bundle(messages=messages)
     reader = BundleReader(bundle_data)
 
     converter = ClaudeToCodexConverter()
@@ -604,7 +480,7 @@ def test_claude_to_codex_no_jsonl_raises():
 
 def test_claude_to_codex_target_cwd():
     """target_cwd should override the source CWD."""
-    bundle_data = _make_claude_bundle()
+    bundle_data = make_claude_bundle()
     reader = BundleReader(bundle_data)
 
     converter = ClaudeToCodexConverter()
@@ -624,7 +500,7 @@ def test_claude_to_codex_target_cwd():
 
 
 def test_codex_to_claude_basic():
-    bundle_data = _make_codex_bundle()
+    bundle_data = make_codex_bundle()
     reader = BundleReader(bundle_data)
 
     converter = CodexToClaudeConverter()
@@ -650,7 +526,7 @@ def test_codex_to_claude_basic():
 
 
 def test_codex_to_claude_preserves_content():
-    bundle_data = _make_codex_bundle()
+    bundle_data = make_codex_bundle()
     reader = BundleReader(bundle_data)
 
     converter = CodexToClaudeConverter()
@@ -675,7 +551,7 @@ def test_codex_to_claude_uuid_chain():
         {"type": "assistant_message", "content": "Second", "timestamp": ""},
         {"type": "user_message", "content": "Third", "timestamp": ""},
     ]
-    bundle_data = _make_codex_bundle(messages=messages)
+    bundle_data = make_codex_bundle(messages=messages)
     reader = BundleReader(bundle_data)
 
     converter = CodexToClaudeConverter()
@@ -701,7 +577,7 @@ def test_codex_to_claude_uuid_chain():
 
 def test_codex_to_claude_deterministic_uuids():
     """UUIDs should be deterministic for the same session."""
-    bundle_data = _make_codex_bundle()
+    bundle_data = make_codex_bundle()
 
     reader1 = BundleReader(bundle_data)
     result1 = converter_result(reader1)
@@ -742,7 +618,7 @@ def test_codex_to_claude_no_rollout_raises():
 
 
 def test_codex_to_claude_target_cwd():
-    bundle_data = _make_codex_bundle()
+    bundle_data = make_codex_bundle()
     reader = BundleReader(bundle_data)
 
     converter = CodexToClaudeConverter()
@@ -762,7 +638,7 @@ def test_codex_to_claude_skips_empty_content():
         {"type": "assistant_message", "content": "", "timestamp": ""},
         {"type": "user_message", "content": "Goodbye", "timestamp": ""},
     ]
-    bundle_data = _make_codex_bundle(messages=messages)
+    bundle_data = make_codex_bundle(messages=messages)
     reader = BundleReader(bundle_data)
 
     converter = CodexToClaudeConverter()
@@ -813,7 +689,7 @@ def test_codex_to_claude_timestamp_parsing():
     messages = [
         {"type": "user_message", "content": "hi", "timestamp": "2024-06-15T10:30:00Z"},
     ]
-    bundle_data = _make_codex_bundle(messages=messages)
+    bundle_data = make_codex_bundle(messages=messages)
     reader = BundleReader(bundle_data)
 
     converter = CodexToClaudeConverter()
@@ -852,7 +728,7 @@ def test_roundtrip_claude_codex_claude():
     ]
 
     # Claude → Codex
-    bundle1 = _make_claude_bundle(
+    bundle1 = make_claude_bundle(
         session_id="roundtrip-test", cwd="/tmp", messages=original_messages
     )
     reader1 = BundleReader(bundle1)
@@ -889,7 +765,7 @@ def test_roundtrip_codex_claude_codex():
     ]
 
     # Codex → Claude
-    bundle1 = _make_codex_bundle(messages=messages)
+    bundle1 = make_codex_bundle(messages=messages)
     reader1 = BundleReader(bundle1)
     claude_result = CodexToClaudeConverter().convert(reader1)
 
@@ -917,7 +793,7 @@ def test_cli_import_target_provider_flag(tmp_path):
     from session_teleport.cli import main
     from session_teleport.transfer.file_transfer import save_bundle
 
-    bundle_data = _make_claude_bundle()
+    bundle_data = make_claude_bundle()
     bundle_path = tmp_path / "test.stp"
     save_bundle(bundle_data, bundle_path)
 
@@ -942,7 +818,7 @@ def test_cli_import_no_converter_available(tmp_path):
     from session_teleport.cli import main
     from session_teleport.transfer.file_transfer import save_bundle
 
-    bundle_data = _make_claude_bundle()
+    bundle_data = make_claude_bundle()
     bundle_path = tmp_path / "test.stp"
     save_bundle(bundle_data, bundle_path)
 
@@ -965,7 +841,7 @@ def test_cli_import_same_provider_no_conversion(tmp_path):
     from session_teleport.cli import main
     from session_teleport.transfer.file_transfer import save_bundle
 
-    bundle_data = _make_claude_bundle()
+    bundle_data = make_claude_bundle()
     bundle_path = tmp_path / "test.stp"
     save_bundle(bundle_data, bundle_path)
 
@@ -1057,7 +933,7 @@ def test_claude_to_codex_agent_tool_no_result():
             # No toolUseResult key
         },
     ]
-    bundle_data = _make_claude_bundle(messages=messages)
+    bundle_data = make_claude_bundle(messages=messages)
     reader = BundleReader(bundle_data)
     converter = ClaudeToCodexConverter()
     result = converter.convert(reader)
@@ -1095,7 +971,7 @@ def test_claude_to_codex_empty_content_skipped():
             "cwd": "/tmp",
         },
     ]
-    bundle_data = _make_claude_bundle(messages=messages)
+    bundle_data = make_claude_bundle(messages=messages)
     reader = BundleReader(bundle_data)
     converter = ClaudeToCodexConverter()
     result = converter.convert(reader)
@@ -1198,7 +1074,7 @@ def test_codex_to_claude_unknown_message_type():
     messages = [
         {"type": "system_message", "content": "System init", "timestamp": ""},
     ]
-    bundle_data = _make_codex_bundle(messages=messages)
+    bundle_data = make_codex_bundle(messages=messages)
     reader = BundleReader(bundle_data)
     converter = CodexToClaudeConverter()
     result = converter.convert(reader)

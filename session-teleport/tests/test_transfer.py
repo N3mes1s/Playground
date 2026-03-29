@@ -2,6 +2,8 @@
 
 import asyncio
 
+import pytest
+
 from session_teleport.transfer.file_transfer import load_bundle, save_bundle
 from session_teleport.transfer.peer import generate_auth_code, receive_from_peer, send_to_peer
 from session_teleport.transfer.relay import _generate_code
@@ -151,3 +153,85 @@ def test_relay_generate_code():
 def test_relay_generate_code_uniqueness():
     codes = {_generate_code() for _ in range(100)}
     assert len(codes) > 90  # 8 hex chars = high uniqueness
+
+
+def test_send_to_peer_full_flow():
+    """Test send_to_peer connecting to a real receiver."""
+    from session_teleport.transfer.peer import receive_from_peer, send_to_peer
+
+    test_data = b"send_to_peer_test_payload"
+
+    async def run():
+        import session_teleport.transfer.peer as peer_mod
+
+        original_gen = peer_mod.generate_auth_code
+        auth_code = "999888"
+        peer_mod.generate_auth_code = lambda: auth_code  # ty: ignore[invalid-assignment]
+
+        try:
+            port = 19877
+            received_data = None
+
+            async def do_receive():
+                nonlocal received_data
+                received_data = await receive_from_peer(port)
+
+            async def do_send():
+                await asyncio.sleep(0.3)
+                await send_to_peer(test_data, "127.0.0.1", port, auth_code)
+
+            recv_task = asyncio.create_task(do_receive())
+            send_task = asyncio.create_task(do_send())
+            await asyncio.wait_for(asyncio.gather(recv_task, send_task), timeout=5.0)
+            assert received_data == test_data
+        finally:
+            peer_mod.generate_auth_code = original_gen
+
+    asyncio.run(run())
+
+
+def test_send_to_peer_auth_fail():
+    """Test send_to_peer with wrong auth code."""
+    from session_teleport.transfer.peer import receive_from_peer, send_to_peer
+
+    async def run():
+        import session_teleport.transfer.peer as peer_mod
+
+        original_gen = peer_mod.generate_auth_code
+        peer_mod.generate_auth_code = lambda: "111111"  # ty: ignore[invalid-assignment]
+
+        try:
+            port = 19878
+
+            async def do_receive():
+                import contextlib
+
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(receive_from_peer(port), timeout=2.0)
+
+            async def do_send():
+                await asyncio.sleep(0.3)
+                with pytest.raises(ConnectionError, match="Authentication failed"):
+                    await send_to_peer(b"data", "127.0.0.1", port, "000000")
+
+            recv_task = asyncio.create_task(do_receive())
+            send_task = asyncio.create_task(do_send())
+            await asyncio.wait_for(asyncio.gather(recv_task, send_task), timeout=5.0)
+        finally:
+            peer_mod.generate_auth_code = original_gen
+
+    asyncio.run(run())
+
+
+def test_receive_timeout():
+    """receive_from_peer times out when no connection arrives."""
+    import session_teleport.transfer.peer as peer_mod
+
+    original_timeout = peer_mod.RECEIVE_TIMEOUT
+    peer_mod.RECEIVE_TIMEOUT = 0.3  # ty: ignore[invalid-assignment]
+
+    try:
+        with pytest.raises(ConnectionError, match="No connection received"):
+            asyncio.run(peer_mod.receive_from_peer(port=19879))
+    finally:
+        peer_mod.RECEIVE_TIMEOUT = original_timeout
