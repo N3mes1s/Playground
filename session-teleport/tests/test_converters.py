@@ -979,3 +979,333 @@ def test_cli_import_same_provider_no_conversion(tmp_path):
 
     # Should succeed without conversion (claude_code == claude)
     assert result.exit_code == 0
+
+
+# ── Additional coverage: converter edge cases ────────────────────────────
+
+
+def test_claude_to_codex_subagent_bad_meta_json():
+    """Bad JSON in subagent .meta.json should be skipped, not crash."""
+    from session_teleport.utils.paths import encode_cwd
+
+    manifest = Manifest(
+        provider="claude_code",
+        session_id="bad-sub-test",
+        source_hostname="test",
+        source_platform="linux",
+        source_cwd="/tmp",
+        components=["session"],
+    )
+    builder = BundleBuilder(manifest)
+
+    # Main conversation
+    msg = {
+        "type": "user",
+        "message": {"role": "user", "content": "hi"},
+        "uuid": "u1",
+        "parentUuid": None,
+        "timestamp": "",
+        "sessionId": "bad-sub-test",
+        "cwd": "/tmp",
+    }
+    encoded = encode_cwd("/tmp")
+    builder.add_file(
+        f"session/projects/{encoded}/bad-sub-test.jsonl",
+        (json.dumps(msg) + "\n").encode(),
+    )
+
+    # Bad subagent meta
+    builder.add_file(
+        f"session/projects/{encoded}/bad-sub-test/subagents/x1.meta.json",
+        b"NOT JSON",
+    )
+    # Good subagent meta with bad JSONL
+    builder.add_file(
+        f"session/projects/{encoded}/bad-sub-test/subagents/x2.meta.json",
+        json.dumps({"agentType": "Explore"}).encode(),
+    )
+    builder.add_file(
+        f"session/projects/{encoded}/bad-sub-test/subagents/x2.jsonl",
+        b"\xff\xfe invalid bytes",
+    )
+
+    data = builder.build()
+    reader = BundleReader(data)
+    converter = ClaudeToCodexConverter()
+    # Should not raise, just skip bad subagents
+    result = converter.convert(reader)
+    assert result.manifest.provider == "codex_cli"
+    result.close()
+
+
+def test_claude_to_codex_agent_tool_no_result():
+    """Agent tool_use without toolUseResult should not crash."""
+    messages = [
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "name": "Agent", "input": {"prompt": "x"}},
+                ],
+            },
+            "uuid": "u1",
+            "parentUuid": None,
+            "timestamp": "",
+            "sessionId": "test-session-123",
+            "cwd": "/tmp",
+            # No toolUseResult key
+        },
+    ]
+    bundle_data = _make_claude_bundle(messages=messages)
+    reader = BundleReader(bundle_data)
+    converter = ClaudeToCodexConverter()
+    result = converter.convert(reader)
+
+    rollout_files = [f for f in result.list_files() if f.endswith(".jsonl")]
+    rollout_data = result.read_file(rollout_files[0]).decode()
+    lines = [json.loads(ln) for ln in rollout_data.strip().split("\n")]
+    # Should have meta + at least 1 message
+    assert len(lines) >= 2
+    result.close()
+
+
+def test_claude_to_codex_empty_content_skipped():
+    """Messages with empty content after flattening should be skipped."""
+    messages = [
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "thinking", "text": "hmm..."}],
+            },
+            "uuid": "u1",
+            "parentUuid": None,
+            "timestamp": "",
+            "sessionId": "test-session-123",
+            "cwd": "/tmp",
+        },
+        {
+            "type": "user",
+            "message": {"role": "user", "content": "hello"},
+            "uuid": "u2",
+            "parentUuid": "u1",
+            "timestamp": "",
+            "sessionId": "test-session-123",
+            "cwd": "/tmp",
+        },
+    ]
+    bundle_data = _make_claude_bundle(messages=messages)
+    reader = BundleReader(bundle_data)
+    converter = ClaudeToCodexConverter()
+    result = converter.convert(reader)
+
+    rollout_files = [f for f in result.list_files() if f.endswith(".jsonl")]
+    rollout_data = result.read_file(rollout_files[0]).decode()
+    lines = [json.loads(ln) for ln in rollout_data.strip().split("\n")]
+    # Meta line + only the user message (thinking-only message skipped)
+    msg_lines = [ln for ln in lines[1:] if ln.get("type")]
+    assert len(msg_lines) == 1
+    assert msg_lines[0]["content"] == "hello"
+    result.close()
+
+
+def test_claude_to_codex_inline_subagent_messages():
+    """Subagent with matching agent_id in toolUseResult should be inlined."""
+    from session_teleport.utils.paths import encode_cwd
+
+    session_id = "inline-test"
+    manifest = Manifest(
+        provider="claude_code",
+        session_id=session_id,
+        source_hostname="test",
+        source_platform="linux",
+        source_cwd="/tmp",
+        components=["session"],
+    )
+    builder = BundleBuilder(manifest)
+    encoded = encode_cwd("/tmp")
+
+    # Main conversation with Agent tool_use that has toolUseResult
+    main_msgs = [
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "Searching..."},
+                    {
+                        "type": "tool_use",
+                        "name": "Agent",
+                        "input": {"prompt": "find files"},
+                    },
+                ],
+            },
+            "uuid": "u1",
+            "parentUuid": None,
+            "timestamp": "",
+            "sessionId": session_id,
+            "cwd": "/tmp",
+            "toolUseResult": {"agentId": "sub1"},
+        },
+    ]
+    main_jsonl = "\n".join(json.dumps(m) for m in main_msgs) + "\n"
+    builder.add_file(
+        f"session/projects/{encoded}/{session_id}.jsonl",
+        main_jsonl.encode(),
+    )
+
+    # Subagent files
+    builder.add_file(
+        f"session/projects/{encoded}/{session_id}/subagents/sub1.meta.json",
+        json.dumps({"agentType": "Explore", "description": "search"}).encode(),
+    )
+    sub_msgs = [
+        {
+            "type": "user",
+            "message": {"role": "user", "content": "find files"},
+            "uuid": "s1",
+        },
+        {
+            "type": "assistant",
+            "message": {"role": "assistant", "content": "Found 3 files"},
+            "uuid": "s2",
+        },
+    ]
+    sub_jsonl = "\n".join(json.dumps(m) for m in sub_msgs) + "\n"
+    builder.add_file(
+        f"session/projects/{encoded}/{session_id}/subagents/sub1.jsonl",
+        sub_jsonl.encode(),
+    )
+
+    data = builder.build()
+    reader = BundleReader(data)
+    converter = ClaudeToCodexConverter()
+    result = converter.convert(reader)
+
+    rollout_files = [f for f in result.list_files() if f.endswith(".jsonl")]
+    rollout_data = result.read_file(rollout_files[0]).decode()
+    lines = [json.loads(ln) for ln in rollout_data.strip().split("\n")]
+
+    all_content = " ".join(ln.get("content", "") for ln in lines[1:])
+    assert "[Subagent: Explore]" in all_content
+    assert "[Explore] Found 3 files" in all_content
+    result.close()
+
+
+def test_codex_to_claude_unknown_message_type():
+    """Unknown message types should be treated as assistant."""
+    messages = [
+        {"type": "system_message", "content": "System init", "timestamp": ""},
+    ]
+    bundle_data = _make_codex_bundle(messages=messages)
+    reader = BundleReader(bundle_data)
+    converter = CodexToClaudeConverter()
+    result = converter.convert(reader)
+
+    jsonl_files = [f for f in result.list_files() if f.endswith(".jsonl")]
+    jsonl_data = result.read_file(jsonl_files[0]).decode()
+    lines = [json.loads(ln) for ln in jsonl_data.strip().split("\n")]
+
+    assert len(lines) == 1
+    assert lines[0]["message"]["role"] == "assistant"
+    assert lines[0]["message"]["content"] == "System init"
+    result.close()
+
+
+def test_codex_to_claude_timestamp_fallback_to_manifest():
+    """When meta has no timestamp, should fall back to manifest created_at."""
+    messages = [
+        {"type": "user_message", "content": "hi", "timestamp": ""},
+    ]
+    manifest = Manifest(
+        provider="codex_cli",
+        session_id="ts-fallback",
+        source_hostname="test",
+        source_platform="linux",
+        source_cwd="/tmp",
+        components=["session"],
+    )
+    builder = BundleBuilder(manifest)
+    # Meta line with no timestamp
+    meta_line = {"meta": {"id": "ts-fallback", "cwd": "/tmp"}}
+    rollout = (
+        json.dumps(meta_line)
+        + "\n"
+        + json.dumps(messages[0])
+        + "\n"
+    )
+    builder.add_file("session/sessions/rollout.jsonl", rollout.encode())
+    data = builder.build()
+    reader = BundleReader(data)
+
+    converter = CodexToClaudeConverter()
+    result = converter.convert(reader)
+    meta = result.read_json("session/sessions/0.json")
+    assert meta["startedAt"] > 0
+    result.close()
+
+
+def test_codex_to_claude_timestamp_fallback_to_now():
+    """When both meta and manifest have bad timestamps, fall back to now()."""
+    messages = [
+        {"type": "user_message", "content": "hi", "timestamp": ""},
+    ]
+    manifest = Manifest(
+        provider="codex_cli",
+        session_id="ts-now",
+        source_hostname="test",
+        source_platform="linux",
+        source_cwd="/tmp",
+        components=["session"],
+    )
+    # Corrupt the created_at so parsing fails
+    manifest.created_at = "not-a-date"
+    builder = BundleBuilder(manifest)
+    meta_line = {"meta": {"id": "ts-now", "cwd": "/tmp", "timestamp": "bad"}}
+    rollout = (
+        json.dumps(meta_line)
+        + "\n"
+        + json.dumps(messages[0])
+        + "\n"
+    )
+    builder.add_file("session/sessions/rollout.jsonl", rollout.encode())
+    data = builder.build()
+    reader = BundleReader(data)
+
+    converter = CodexToClaudeConverter()
+    result = converter.convert(reader)
+    meta = result.read_json("session/sessions/0.json")
+    # Should still have a valid timestamp (current time)
+    assert meta["startedAt"] > 0
+    result.close()
+
+
+def test_codex_to_claude_no_meta_line():
+    """Rollout with no meta line should still convert."""
+    manifest = Manifest(
+        provider="codex_cli",
+        session_id="no-meta",
+        source_hostname="test",
+        source_platform="linux",
+        source_cwd="/tmp",
+        components=["session"],
+    )
+    builder = BundleBuilder(manifest)
+    # Rollout with only messages, no meta line
+    msgs = [
+        {"type": "user_message", "content": "hello", "timestamp": ""},
+        {"type": "assistant_message", "content": "hi", "timestamp": ""},
+    ]
+    rollout = "\n".join(json.dumps(m) for m in msgs) + "\n"
+    builder.add_file("session/sessions/rollout.jsonl", rollout.encode())
+    data = builder.build()
+    reader = BundleReader(data)
+
+    converter = CodexToClaudeConverter()
+    result = converter.convert(reader)
+    jsonl_files = [f for f in result.list_files() if f.endswith(".jsonl")]
+    jsonl_data = result.read_file(jsonl_files[0]).decode()
+    lines = [json.loads(ln) for ln in jsonl_data.strip().split("\n")]
+    assert len(lines) == 2
+    result.close()

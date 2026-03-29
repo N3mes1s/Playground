@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import json
 import os
+from typing import TYPE_CHECKING
 
 from ..security.secret_filter import filter_env
 from ..utils.display import info, warning
+
+if TYPE_CHECKING:
+    from ..core.bundle import BundleReader
 
 
 def capture_env() -> dict[str, bytes]:
@@ -27,7 +31,7 @@ def capture_env() -> dict[str, bytes]:
     return files
 
 
-def restore_env_info(reader) -> dict:
+def restore_env_info(reader: BundleReader) -> dict:
     """Read environment snapshot from a bundle. Returns the env dict for display."""
     try:
         data = reader.read_file("env/filtered_env.json")

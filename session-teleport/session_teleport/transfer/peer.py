@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import os
 import struct
 
@@ -65,7 +66,7 @@ async def receive_from_peer(port: int = DEFAULT_PORT) -> bytes:
         try:
             # Verify auth code
             code = (await reader.readexactly(AUTH_CODE_LENGTH)).decode().strip()
-            if code != auth_code:
+            if not hmac.compare_digest(code, auth_code):
                 writer.write(b"NO")
                 await writer.drain()
                 error("Authentication failed")

@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..utils.display import info, warning
+
+if TYPE_CHECKING:
+    from ..core.bundle import BundleReader
 
 
 def _run_git(cwd: str, *args: str) -> str:
@@ -76,7 +80,7 @@ def capture_git_state(cwd: str) -> dict[str, bytes]:
     return files
 
 
-def apply_git_state(cwd: str, reader, dry_run: bool = False) -> list[str]:
+def apply_git_state(cwd: str, reader: BundleReader, dry_run: bool = False) -> list[str]:
     """Apply git state from a bundle to a working directory. Returns list of actions taken."""
     actions = []
 
