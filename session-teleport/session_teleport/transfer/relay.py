@@ -131,3 +131,5 @@ async def download_from_relay(relay_url: str, code: str) -> bytes:
                 "Bundle not found - code may be invalid or already used"
             ) from e
         raise ConnectionError(f"Failed to download from relay: {e}") from e
+    except urllib.error.URLError as e:
+        raise ConnectionError(f"Failed to download from relay: {e}") from e

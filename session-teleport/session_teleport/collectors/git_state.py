@@ -106,7 +106,7 @@ def apply_git_state(cwd: str, reader, dry_run: bool = False) -> list[str]:
             actions.append(f"Uncommitted changes patch: {len(patch):,} bytes")
             if not dry_run:
                 result = subprocess.run(
-                    ["git", "apply", "--stat", "-"],
+                    ["git", "apply", "--check", "-"],
                     input=patch,
                     cwd=cwd,
                     capture_output=True,
