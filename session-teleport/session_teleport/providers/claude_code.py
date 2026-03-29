@@ -38,11 +38,21 @@ class ClaudeCodeProvider(SessionProvider):
         for session_file in sessions_dir.glob("*.json"):
             try:
                 data = json.loads(session_file.read_text())
+                # startedAt is epoch milliseconds
+                started_raw = data.get("startedAt", "")
+                if isinstance(started_raw, (int, float)):
+                    from datetime import datetime, timezone
+                    started_at = datetime.fromtimestamp(
+                        started_raw / 1000, tz=timezone.utc
+                    ).strftime("%Y-%m-%d %H:%M:%S UTC")
+                else:
+                    started_at = str(started_raw)
+
                 sessions.append(SessionInfo(
                     provider=self.name,
                     session_id=data.get("sessionId", ""),
                     cwd=data.get("cwd", ""),
-                    started_at=data.get("startedAt", ""),
+                    started_at=started_at,
                     pid=data.get("pid"),
                 ))
             except (json.JSONDecodeError, KeyError):
@@ -103,13 +113,19 @@ class ClaudeCodeProvider(SessionProvider):
             )
             info(f"  Session data files: {count}")
 
-        # 4. Session environment
-        env_file = self.base_dir / "session-env" / session_id
-        if env_file.exists():
-            builder.add_file(
-                f"session/session-env/{session_id}",
-                env_file.read_bytes(),
-            )
+        # 4. Session environment (can be a file or directory)
+        env_path = self.base_dir / "session-env" / session_id
+        if env_path.exists():
+            if env_path.is_file():
+                builder.add_file(
+                    f"session/session-env/{session_id}",
+                    env_path.read_bytes(),
+                )
+            elif env_path.is_dir():
+                builder.add_directory_tree(
+                    f"session/session-env/{session_id}",
+                    env_path,
+                )
 
         # 5. Settings (global, but useful for reproducing the environment)
         settings_file = self.base_dir / "settings.json"
