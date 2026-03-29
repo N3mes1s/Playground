@@ -99,7 +99,10 @@ class BundleReader:
         return [m.name for m in self._tar.getmembers() if m.isfile()]
 
     def read_file(self, path: str) -> bytes:
-        f = self._tar.extractfile(path)
+        try:
+            f = self._tar.extractfile(path)
+        except KeyError:
+            raise FileNotFoundError(f"File not found in bundle: {path}")
         if f is None:
             raise FileNotFoundError(f"File not found in bundle: {path}")
         return f.read()
