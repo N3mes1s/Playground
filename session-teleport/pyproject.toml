@@ -1,0 +1,22 @@
+[project]
+name = "session-teleport"
+version = "0.1.0"
+description = "Teleport Claude Code and Codex CLI sessions between machines"
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.0",
+    "cryptography>=41.0",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+relay = ["aiohttp>=3.9"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+session-teleport = "session_teleport.cli:main"
+stp = "session_teleport.cli:main"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
