@@ -11,6 +11,8 @@ from ..utils.display import console, create_progress, error, info, success
 
 DEFAULT_PORT = 9876
 AUTH_CODE_LENGTH = 6
+CHUNK_SIZE = 64 * 1024  # 64 KB
+RECEIVE_TIMEOUT = 300  # 5 minutes
 
 
 def generate_auth_code() -> str:
@@ -56,6 +58,7 @@ async def receive_from_peer(port: int = DEFAULT_PORT) -> bytes:
     """Listen for an incoming bundle transfer. Returns the received data."""
     auth_code = generate_auth_code()
     received_data: bytes = b""
+    done_event = asyncio.Event()
 
     async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         nonlocal received_data
@@ -82,7 +85,7 @@ async def receive_from_peer(port: int = DEFAULT_PORT) -> bytes:
             with create_progress() as progress:
                 task = progress.add_task("Receiving", total=length)
                 while remaining > 0:
-                    chunk_size = min(remaining, 64 * 1024)
+                    chunk_size = min(remaining, CHUNK_SIZE)
                     chunk = await reader.read(chunk_size)
                     if not chunk:
                         break
@@ -101,6 +104,7 @@ async def receive_from_peer(port: int = DEFAULT_PORT) -> bytes:
         finally:
             writer.close()
             await writer.wait_closed()
+            done_event.set()
 
     server = await asyncio.start_server(handle_client, "0.0.0.0", port)
     console.print(f"\n[bold cyan]Waiting for connection on port {port}[/]")
@@ -108,9 +112,12 @@ async def receive_from_peer(port: int = DEFAULT_PORT) -> bytes:
     console.print("Share this code with the sender.\n")
 
     async with server:
-        # Accept one connection then stop
         await server.start_serving()
-        while not received_data:
-            await asyncio.sleep(0.1)
+        try:
+            await asyncio.wait_for(done_event.wait(), timeout=RECEIVE_TIMEOUT)
+        except asyncio.TimeoutError:
+            raise ConnectionError(
+                f"No connection received within {RECEIVE_TIMEOUT} seconds"
+            ) from None
 
     return received_data

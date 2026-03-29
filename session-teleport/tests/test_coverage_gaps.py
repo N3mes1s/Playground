@@ -992,7 +992,7 @@ def test_cli_send_peer_method(tmp_claude_dir, tmp_path, monkeypatch):
     async def mock_send(data, host, port, auth_code):
         pass
 
-    monkeypatch.setattr("session_teleport.transfer.peer.send_to_peer", mock_send)
+    monkeypatch.setattr("session_teleport.cli.send_to_peer", mock_send)
 
     result = runner.invoke(main, [
         "send", session_id[:8], "--method", "peer", "--no-encrypt",
@@ -1011,7 +1011,7 @@ def test_cli_receive_peer_method(tmp_path, monkeypatch):
     async def mock_receive(port):
         return bundle_data
 
-    monkeypatch.setattr("session_teleport.transfer.peer.receive_from_peer", mock_receive)
+    monkeypatch.setattr("session_teleport.cli.receive_from_peer", mock_receive)
     monkeypatch.chdir(tmp_path)
 
     result = runner.invoke(main, [
@@ -1093,3 +1093,104 @@ def test_start_relay_server_keyboard_interrupt():
             assert resp.read() == b"OK"
     except Exception:
         pass  # Server may not have started in time, that's OK
+
+
+# --- bundle.py: path traversal guard (lines 114, 126, 129) ---
+
+
+def test_extract_prefix_path_traversal(tmp_path):
+    """extract_prefix rejects path traversal attempts."""
+    import io
+    import tarfile
+
+    # Build a malicious tarball with a traversal path
+    manifest = Manifest(provider="test", session_id="x")
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        manifest_data = manifest.to_json().encode()
+        info = tarfile.TarInfo(name="manifest.json")
+        info.size = len(manifest_data)
+        tar.addfile(info, io.BytesIO(manifest_data))
+
+        # Legitimate file
+        legit = b"legit content"
+        info = tarfile.TarInfo(name="session/ok.txt")
+        info.size = len(legit)
+        tar.addfile(info, io.BytesIO(legit))
+
+        # Traversal attempt
+        evil = b"evil content"
+        info = tarfile.TarInfo(name="session/../../../etc/passwd")
+        info.size = len(evil)
+        tar.addfile(info, io.BytesIO(evil))
+
+        # Absolute path attempt
+        abs_evil = b"abs evil"
+        info = tarfile.TarInfo(name="session//etc/shadow")
+        info.size = len(abs_evil)
+        tar.addfile(info, io.BytesIO(abs_evil))
+
+    reader = BundleReader(buf.getvalue())
+    target = tmp_path / "extract"
+    target.mkdir()
+
+    count = reader.extract_prefix("session", target)
+    # Only the legit file should be extracted
+    assert count == 1
+    assert (target / "ok.txt").read_text() == "legit content"
+    assert not (tmp_path / "etc").exists()
+    reader.close()
+
+
+# --- relay.py: POST with oversized payload (lines 38-41) ---
+
+
+def test_relay_rejects_oversized_payload():
+    """Relay server rejects payloads exceeding MAX_BUNDLE_SIZE."""
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.server import HTTPServer
+
+    from session_teleport.transfer import relay as relay_mod
+    from session_teleport.transfer.relay import RelayHandler, _bundles
+
+    original_max = relay_mod.MAX_BUNDLE_SIZE
+    relay_mod.MAX_BUNDLE_SIZE = 10  # ty: ignore[invalid-assignment]
+
+    server = HTTPServer(("127.0.0.1", 0), RelayHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/bundle",
+            data=b"x" * 20,  # 20 bytes > 10 limit
+            method="POST",
+            headers={"Content-Length": "20"},
+        )
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            urllib.request.urlopen(req)
+        assert exc_info.value.code == 413
+    finally:
+        relay_mod.MAX_BUNDLE_SIZE = original_max
+        server.shutdown()
+        _bundles.clear()
+
+
+# --- peer.py: receive timeout (lines 118-119) ---
+
+
+def test_receive_timeout():
+    """receive_from_peer times out when no connection arrives."""
+    import session_teleport.transfer.peer as peer_mod
+
+    original_timeout = peer_mod.RECEIVE_TIMEOUT
+    peer_mod.RECEIVE_TIMEOUT = 0.3  # ty: ignore[invalid-assignment]
+
+    try:
+        with pytest.raises(ConnectionError, match="No connection received"):
+            asyncio.run(peer_mod.receive_from_peer(port=19879))
+    finally:
+        peer_mod.RECEIVE_TIMEOUT = original_timeout

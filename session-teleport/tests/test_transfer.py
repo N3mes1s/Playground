@@ -144,7 +144,7 @@ def test_peer_end_to_end():
 
 def test_relay_generate_code():
     code = _generate_code()
-    assert len(code) == 8
+    assert len(code) == 16
     assert all(c in "0123456789abcdef" for c in code)
 
 

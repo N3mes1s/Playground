@@ -46,7 +46,7 @@ def test_relay_post_and_get_bundle(relay_server):
     with urllib.request.urlopen(req) as resp:
         result = json.loads(resp.read())
         code = result["code"]
-    assert len(code) == 8
+    assert len(code) == 16
 
     # GET (single-use)
     with urllib.request.urlopen(f"{url}/bundle/{code}") as resp:
@@ -91,7 +91,7 @@ def test_relay_log_message(relay_server):
 def test_upload_to_relay(relay_server):
     url, _ = relay_server
     code = asyncio.run(upload_to_relay(b"upload-test-data", url))
-    assert len(code) == 8
+    assert len(code) == 16
 
     # Verify we can fetch it
     with urllib.request.urlopen(f"{url}/bundle/{code}") as resp:

@@ -18,6 +18,13 @@ from pathlib import Path
 from .crypto import decrypt_bundle, encrypt_bundle
 from .manifest import Manifest
 
+GZIP_MAGIC = b"\x1f\x8b"
+
+
+def is_bundle_encrypted(data: bytes) -> bool:
+    """Check if bundle data is encrypted (not a raw gzip archive)."""
+    return data[:2] != GZIP_MAGIC
+
 
 class BundleBuilder:
     """Incrementally build a session teleport bundle."""
@@ -110,10 +117,16 @@ class BundleReader:
     def extract_prefix(self, prefix: str, target_dir: Path) -> int:
         """Extract all files under a prefix to a target directory. Returns count."""
         count = 0
+        resolved_target = target_dir.resolve()
         for member in self._tar.getmembers():
             if member.isfile() and member.name.startswith(prefix + "/"):
                 rel_path = member.name[len(prefix) + 1:]
+                # Guard against path traversal attacks
+                if ".." in rel_path.split("/") or rel_path.startswith("/"):
+                    continue
                 target = target_dir / rel_path
+                if not target.resolve().is_relative_to(resolved_target):
+                    continue
                 target.parent.mkdir(parents=True, exist_ok=True)
                 f = self._tar.extractfile(member)
                 if f:

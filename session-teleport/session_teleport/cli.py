@@ -10,13 +10,15 @@ import click
 from .collectors.env_snapshot import capture_env
 from .collectors.git_state import apply_git_state, capture_git_state
 from .collectors.tool_versions import capture_tool_versions
-from .core.bundle import BundleBuilder, BundleReader
+from .core.bundle import BundleBuilder, BundleReader, is_bundle_encrypted
 from .core.manifest import Manifest
 from .providers.base import SessionProvider
 from .providers.claude_code import ClaudeCodeProvider
 from .providers.codex_cli import CodexCliProvider
 from .security.warnings import warn_cwd_mismatch, warn_platform_mismatch, warn_secrets_in_content
 from .transfer.file_transfer import load_bundle, save_bundle
+from .transfer.peer import receive_from_peer, send_to_peer
+from .transfer.relay import download_from_relay, upload_to_relay
 from .utils.display import (
     console,
     error,
@@ -27,6 +29,11 @@ from .utils.display import (
     warning,
 )
 from .utils.paths import get_hostname, get_platform
+
+PROVIDER_MAP: dict[str, type[SessionProvider]] = {
+    "claude_code": ClaudeCodeProvider,
+    "codex_cli": CodexCliProvider,
+}
 
 
 def _get_providers() -> list[SessionProvider]:
@@ -52,11 +59,23 @@ def _find_session(session_id: str, provider_name: str | None = None):
     return None, None
 
 
+def _prompt_passphrase(confirm: bool = False) -> str:
+    """Prompt user for a passphrase."""
+    return click.prompt("Passphrase", hide_input=True, confirmation_prompt=confirm)
+
+
+def _open_bundle(data: bytes, passphrase: str | None = None) -> BundleReader:
+    """Open a bundle, prompting for passphrase if encrypted."""
+    encrypted = is_bundle_encrypted(data)
+    if encrypted and not passphrase:
+        passphrase = _prompt_passphrase()
+    return BundleReader(data, passphrase if encrypted else None)
+
+
 @click.group()
 @click.version_option()
 def main():
     """Teleport Claude Code and Codex CLI sessions between machines."""
-    pass
 
 
 @main.command("list")
@@ -142,13 +161,7 @@ def export(session_id: str, provider: str | None, output: str | None,
         pass
 
     # Encrypt
-    passphrase = None
-    if encrypt:
-        passphrase = click.prompt(
-            "Passphrase for encryption",
-            hide_input=True,
-            confirmation_prompt=True,
-        )
+    passphrase = _prompt_passphrase(confirm=True) if encrypt else None
 
     # Build and save
     bundle_data = builder.build(passphrase)
@@ -171,13 +184,8 @@ def import_session(bundle_path: str, target_dir: str | None,
     """Import a session from a .stp bundle file."""
     data = load_bundle(Path(bundle_path))
 
-    # Try to detect if encrypted (Fernet encrypted data won't be valid tar.gz)
-    is_encrypted = data[:2] != b"\x1f\x8b"  # gzip magic bytes
-    if is_encrypted and not passphrase:
-        passphrase = click.prompt("Passphrase for decryption", hide_input=True)
-
     try:
-        reader = BundleReader(data, passphrase if is_encrypted else None)
+        reader = _open_bundle(data, passphrase)
     except ValueError as e:
         error(str(e))
         raise SystemExit(1) from e
@@ -197,8 +205,7 @@ def import_session(bundle_path: str, target_dir: str | None,
         return
 
     # Import session files
-    provider_map = {"claude_code": ClaudeCodeProvider, "codex_cli": CodexCliProvider}
-    provider_cls = provider_map.get(manifest.provider)
+    provider_cls = PROVIDER_MAP.get(manifest.provider)
     if not provider_cls:
         error(f"Unknown provider in bundle: {manifest.provider}")
         raise SystemExit(1)
@@ -264,10 +271,7 @@ def send(session_id: str, provider: str | None, method: str,
     for path, content in capture_tool_versions().items():
         builder.add_file(path, content)
 
-    passphrase = None
-    if encrypt:
-        passphrase = click.prompt("Passphrase", hide_input=True, confirmation_prompt=True)
-
+    passphrase = _prompt_passphrase(confirm=True) if encrypt else None
     bundle_data = builder.build(passphrase)
 
     if method == "file":
@@ -279,19 +283,13 @@ def send(session_id: str, provider: str | None, method: str,
             error("--host required for peer transfer")
             raise SystemExit(1)
         auth_code = click.prompt("Enter the receiver's auth code")
-        asyncio.run(
-            __import__("session_teleport.transfer.peer", fromlist=["send_to_peer"])
-            .send_to_peer(bundle_data, host, port, auth_code)
-        )
+        asyncio.run(send_to_peer(bundle_data, host, port, auth_code))
 
     elif method == "relay":
         if not relay_url:
             error("--relay-url required for relay transfer")
             raise SystemExit(1)
-        code = asyncio.run(
-            __import__("session_teleport.transfer.relay", fromlist=["upload_to_relay"])
-            .upload_to_relay(bundle_data, relay_url)
-        )
+        code = asyncio.run(upload_to_relay(bundle_data, relay_url))
         console.print(f"\n[bold]Share this pickup code with the receiver: [yellow]{code}[/][/]")
 
 
@@ -307,28 +305,27 @@ def receive(method: str, port: int, relay_url: str | None, code: str | None,
             output: str | None, auto_import: bool, passphrase: str | None):
     """Receive a session from another machine."""
     if method == "peer":
-        from .transfer.peer import receive_from_peer
         data = asyncio.run(receive_from_peer(port))
     elif method == "relay":
         if not relay_url or not code:
             error("--relay-url and --code required for relay receive")
             raise SystemExit(1)
-        from .transfer.relay import download_from_relay
         data = asyncio.run(download_from_relay(relay_url, code))
     else:
+        error(f"Unknown method: {method}")
         raise SystemExit(1)
 
     if output:
         save_bundle(data, Path(output))
     elif auto_import:
-        is_encrypted = data[:2] != b"\x1f\x8b"
-        if is_encrypted and not passphrase:
-            passphrase = click.prompt("Passphrase", hide_input=True)
-        reader = BundleReader(data, passphrase if is_encrypted else None)
+        try:
+            reader = _open_bundle(data, passphrase)
+        except ValueError as e:
+            error(str(e))
+            raise SystemExit(1) from e
         print_bundle_info(reader.manifest.__dict__)
 
-        provider_map = {"claude_code": ClaudeCodeProvider, "codex_cli": CodexCliProvider}
-        provider_cls = provider_map.get(reader.manifest.provider)
+        provider_cls = PROVIDER_MAP.get(reader.manifest.provider)
         if provider_cls:
             provider_cls().import_session(reader)
             success("Session imported!")
@@ -353,11 +350,7 @@ def relay_server(port: int, ttl: int):
 def inspect(bundle_path: str, passphrase: str | None):
     """Inspect a .stp bundle without importing."""
     data = load_bundle(Path(bundle_path))
-    is_encrypted = data[:2] != b"\x1f\x8b"
-    if is_encrypted and not passphrase:
-        passphrase = click.prompt("Passphrase", hide_input=True)
-
-    reader = BundleReader(data, passphrase if is_encrypted else None)
+    reader = _open_bundle(data, passphrase)
     print_bundle_info(reader.manifest.__dict__)
 
     console.print("\n[bold]Files in bundle:[/]")
