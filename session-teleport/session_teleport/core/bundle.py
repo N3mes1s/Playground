@@ -37,6 +37,11 @@ class BundleBuilder:
         """Add a file to the bundle."""
         self._files[archive_path] = content
 
+    @property
+    def files(self) -> dict[str, bytes]:
+        """Read-only view of files added to the bundle."""
+        return self._files
+
     def add_directory_tree(self, archive_prefix: str, local_path: Path) -> int:
         """Recursively add a local directory tree. Returns number of files added."""
         count = 0

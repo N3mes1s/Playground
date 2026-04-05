@@ -11,7 +11,7 @@ from ..security.warnings import warn_cwd_mismatch, warn_platform_mismatch
 from ..transfer.file_transfer import load_bundle
 from ..utils.display import console, error, info, print_bundle_info, success
 from ..utils.paths import get_platform
-from . import PROVIDER_MAP, _open_bundle
+from . import PROVIDER_MAP, _convert_if_needed, _open_bundle
 
 
 @click.command()
@@ -47,22 +47,8 @@ def import_session(
         error(str(e))
         raise SystemExit(1) from e
 
+    reader = _convert_if_needed(reader, target_provider, target_dir)
     manifest = reader.manifest
-
-    # Cross-provider conversion
-    if target_provider:
-        target_key = {"claude": "claude_code", "codex": "codex_cli"}[target_provider]
-        if target_key != manifest.provider:
-            from ..converters import get_converter
-
-            converter = get_converter(manifest.provider, target_key)
-            if not converter:
-                error(
-                    f"No converter available from {manifest.provider} to {target_key}"
-                )
-                raise SystemExit(1)
-            reader = converter.convert(reader, target_dir)
-            manifest = reader.manifest
 
     print_bundle_info(manifest.__dict__)
 

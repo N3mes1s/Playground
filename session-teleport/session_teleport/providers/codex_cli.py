@@ -74,24 +74,16 @@ class CodexCliProvider(SessionProvider):
     def __init__(self, base_dir: Path | None = None):
         self.base_dir = base_dir or get_codex_dir()
 
-    def _sessions_dir(self) -> Path:
-        return self.base_dir / SESSIONS_SUBDIR
-
-    def _archived_dir(self) -> Path:
-        return self.base_dir / ARCHIVED_SESSIONS_SUBDIR
-
     def _find_all_rollouts(self) -> list[Path]:
-        """Find all rollout files in sessions/ and archived_sessions/.
-
-        Sessions may be stored flat or in YYYY/MM/DD/ subdirectories,
-        so we use rglob to search recursively.
-        """
+        """Find all rollout files in sessions/ and archived_sessions/."""
         rollouts = []
-        for subdir in [self._sessions_dir(), self._archived_dir()]:
+        for name in [SESSIONS_SUBDIR, ARCHIVED_SESSIONS_SUBDIR]:
+            subdir = self.base_dir / name
             if subdir.exists():
-                for f in subdir.rglob(f"{ROLLOUT_PREFIX}*{ROLLOUT_SUFFIX}"):
-                    if f.is_file():
-                        rollouts.append(f)
+                rollouts.extend(
+                    f for f in subdir.rglob(f"{ROLLOUT_PREFIX}*{ROLLOUT_SUFFIX}")
+                    if f.is_file()
+                )
         return rollouts
 
     def list_sessions(self) -> list[SessionInfo]:

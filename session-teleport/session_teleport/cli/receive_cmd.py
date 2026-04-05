@@ -11,7 +11,7 @@ from ..transfer.file_transfer import save_bundle
 from ..transfer.peer import receive_from_peer
 from ..transfer.relay import download_from_relay
 from ..utils.display import error, print_bundle_info, success
-from . import PROVIDER_MAP, _open_bundle
+from . import PROVIDER_MAP, _convert_if_needed, _open_bundle
 
 
 @click.command()
@@ -62,23 +62,8 @@ def receive(
             error(str(e))
             raise SystemExit(1) from e
 
+        reader = _convert_if_needed(reader, target_provider)
         manifest = reader.manifest
-
-        # Cross-provider conversion
-        if target_provider:
-            target_key = {"claude": "claude_code", "codex": "codex_cli"}[target_provider]
-            if target_key != manifest.provider:
-                from ..converters import get_converter
-
-                converter = get_converter(manifest.provider, target_key)
-                if not converter:
-                    error(
-                        f"No converter available from"
-                        f" {manifest.provider} to {target_key}"
-                    )
-                    raise SystemExit(1)
-                reader = converter.convert(reader)
-                manifest = reader.manifest
 
         print_bundle_info(manifest.__dict__)
 

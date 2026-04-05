@@ -5,15 +5,12 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 
 from ..core.bundle import BundleReader
+from ..core.manifest import Manifest
 from ..utils.display import info, warning
 from ..utils.paths import encode_cwd
 from .base import SessionConverter, parse_codex_jsonl
-
-if TYPE_CHECKING:
-    from ..core.manifest import Manifest
 
 # Deterministic namespace for generating UUIDs during conversion
 _CONVERSION_NAMESPACE = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
@@ -178,8 +175,6 @@ class CodexToClaudeConverter(SessionConverter):
         self, original: Manifest, cwd: str, session_id: str
     ) -> Manifest:
         """Build a new manifest for the converted bundle."""
-        from ..core.manifest import Manifest
-
         return Manifest(
             provider="claude_code",
             session_id=session_id,

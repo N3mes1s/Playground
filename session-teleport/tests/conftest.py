@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from session_teleport.utils.paths import encode_cwd
 from tests.helpers import make_claude_bundle, make_codex_bundle  # noqa: F401
 
 
@@ -29,7 +30,7 @@ def tmp_claude_dir(tmp_path):
     (sessions_dir / "12345.json").write_text(json.dumps(session_meta))
 
     # Create project directory with conversation log
-    encoded_cwd = cwd.replace("/", "-")
+    encoded_cwd = encode_cwd(cwd)
     project_dir = claude_dir / "projects" / encoded_cwd
     project_dir.mkdir(parents=True)
 

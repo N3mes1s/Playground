@@ -8,11 +8,14 @@ from ..core.bundle import BundleReader, is_bundle_encrypted
 from ..providers.base import SessionProvider
 from ..providers.claude_code import ClaudeCodeProvider
 from ..providers.codex_cli import CodexCliProvider
+from ..utils.display import error
 
 PROVIDER_MAP: dict[str, type[SessionProvider]] = {
     "claude_code": ClaudeCodeProvider,
     "codex_cli": CodexCliProvider,
 }
+
+PROVIDER_KEY_MAP: dict[str, str] = {"claude": "claude_code", "codex": "codex_cli"}
 
 
 def _get_providers() -> list[SessionProvider]:
@@ -49,6 +52,24 @@ def _open_bundle(data: bytes, passphrase: str | None = None) -> BundleReader:
     if encrypted and not passphrase:
         passphrase = _prompt_passphrase()
     return BundleReader(data, passphrase if encrypted else None)
+
+
+def _convert_if_needed(
+    reader: BundleReader, target_provider: str | None, target_dir: str | None = None,
+) -> BundleReader:
+    """Convert bundle to target provider format if needed. Returns original or converted reader."""
+    if not target_provider:
+        return reader
+    target_key = PROVIDER_KEY_MAP[target_provider]
+    if target_key == reader.manifest.provider:
+        return reader
+    from ..converters import get_converter
+
+    converter = get_converter(reader.manifest.provider, target_key)
+    if not converter:
+        error(f"No converter available from {reader.manifest.provider} to {target_key}")
+        raise SystemExit(1)
+    return converter.convert(reader, target_dir)
 
 
 @click.group()

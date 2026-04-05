@@ -4,14 +4,11 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import TYPE_CHECKING
 
 from ..core.bundle import BundleReader
+from ..core.manifest import Manifest
 from ..utils.display import info, warning
 from .base import SessionConverter, flatten_content, parse_claude_jsonl
-
-if TYPE_CHECKING:
-    from ..core.manifest import Manifest
 
 
 class ClaudeToCodexConverter(SessionConverter):
@@ -230,8 +227,6 @@ class ClaudeToCodexConverter(SessionConverter):
 
     def _build_manifest(self, original: Manifest, cwd: str) -> Manifest:
         """Build a new manifest for the converted bundle."""
-        from ..core.manifest import Manifest
-
         return Manifest(
             provider="codex_cli",
             session_id=original.session_id,

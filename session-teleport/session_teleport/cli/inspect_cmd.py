@@ -24,18 +24,13 @@ def inspect(bundle_path: str, passphrase: str | None):
     for f in reader.list_files():
         console.print(f"  {f}")
 
-    # Show git state summary
-    try:
-        branch = reader.read_file("git/branch.txt").decode().strip()
-        console.print(f"\n[bold]Git branch:[/] {branch}")
-    except FileNotFoundError:
-        pass
-
-    try:
-        status = reader.read_file("git/status.txt").decode()
-        console.print(f"\n[bold]Git status:[/]\n{status}")
-    except FileNotFoundError:
-        pass
+    for path, label in [("git/branch.txt", "Git branch"), ("git/status.txt", "Git status")]:
+        try:
+            text = reader.read_file(path).decode().strip()
+            sep = "\n" if "\n" in text else " "
+            console.print(f"\n[bold]{label}:[/]{sep}{text}")
+        except FileNotFoundError:
+            pass
 
     try:
         versions = reader.read_json("env/tool_versions.json")

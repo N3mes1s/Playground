@@ -73,15 +73,10 @@ def export(
             builder.add_file(path, content)
 
     # Scan for secrets in conversation log
-    try:
-        conv_files = [f for f in builder._files if f.endswith(".jsonl")]
-        for cf in conv_files:
-            content = builder._files[cf].decode(errors="replace")
-            if not warn_secrets_in_content(content):
-                error("Export cancelled by user")
-                raise SystemExit(1)
-    except (UnicodeDecodeError, KeyError):
-        pass
+    for path, data in builder.files.items():
+        if path.endswith(".jsonl") and not warn_secrets_in_content(data.decode(errors="replace")):
+            error("Export cancelled by user")
+            raise SystemExit(1)
 
     # Encrypt
     passphrase = _prompt_passphrase(confirm=True) if encrypt else None
