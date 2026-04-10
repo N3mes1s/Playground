@@ -1,0 +1,23 @@
+[package]
+name = "mwemu"
+version = "0.8.1"
+authors = ["sha0coder"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description.workspace = true
+documentation = "https://docs.rs/libmwemu"
+repository.workspace = true
+
+[dependencies]
+clap.workspace = true
+log.workspace = true
+#libmwemu = "0.23.3"
+libmwemu.workspace = true
+fast_log.workspace = true
+
+[dev-dependencies]
+env_logger.workspace = true
+
+[features]
+# log_file = []
