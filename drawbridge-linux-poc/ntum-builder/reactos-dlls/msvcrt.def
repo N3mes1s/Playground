@@ -1,49 +1,49 @@
 LIBRARY msvcrt.dll
 EXPORTS
-    malloc
-    calloc
-    realloc
-    free
-    strlen
-    strcpy
-    strncpy
-    strcat
-    strcmp
-    strncmp
-    strchr
-    strrchr
-    strstr
-    memset
-    memcpy
-    memmove
-    memcmp
-    puts
-    printf
-    fprintf
-    sprintf
-    fwrite
-    exit
-    _exit
-    _cexit
-    _c_exit
-    abort
-    atexit
-    rand
-    srand
-    time
-    _initterm
-    _initterm_e
-    __p__fmode
-    _errno
-    __getmainargs
-    __set_app_type
-    __p___argc
-    __p___argv
-    __p__environ
-    __iob_func
+    malloc = _malloc
+    calloc = _calloc
+    realloc = _realloc
+    free = _free
+    strlen = _strlen
+    strcpy = _strcpy
+    strncpy = _strncpy
+    strcat = _strcat
+    strcmp = _strcmp
+    strncmp = _strncmp
+    strchr = _strchr
+    strrchr = _strrchr
+    strstr = _strstr
+    memset = _memset
+    memcpy = _memcpy
+    memmove = _memmove
+    memcmp = _memcmp
+    puts = _puts
+    printf = _printf
+    fprintf = _fprintf
+    sprintf = _sprintf
+    fwrite = _fwrite
+    exit = _exit
+    _exit = __exit
+    _cexit = __cexit
+    _c_exit = __c_exit
+    abort = _abort
+    atexit = _atexit
+    rand = _rand
+    srand = _srand
+    time = _time
+    signal = _signal
+    _initterm = __initterm
+    _initterm_e = __initterm_e
+    __p__fmode = ___p__fmode
+    _errno = __errno
+    __getmainargs = ___getmainargs
+    __set_app_type = ___set_app_type
+    __p___argc = ___p___argc
+    __p___argv = ___p___argv
+    __p__environ = ___p__environ
+    __iob_func = ___iob_func
     _iob DATA
-    _fileno
-    _setmode
-    _fpreset
-    signal
-    _assert
+    _fileno = __fileno
+    _setmode = __setmode
+    _fpreset = __fpreset
+    _assert = __assert

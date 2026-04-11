@@ -11,10 +11,13 @@
  * 4. Transfer control to the PE entry point
  */
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <unistd.h>
+#include <ucontext.h>
 
 #include "pe_loader.h"
 #include "dll_registry.h"
@@ -34,7 +37,7 @@ static void print_banner(void) {
     printf("╚══════════════════════════════════════════════════╝\n\n");
 }
 
-static void sighandler(int sig) {
+static void sighandler(int sig, siginfo_t *info, void *ctx) {
     const char *name = "UNKNOWN";
     switch(sig) {
         case SIGSEGV: name = "SIGSEGV"; break;
@@ -42,8 +45,24 @@ static void sighandler(int sig) {
         case SIGFPE:  name = "SIGFPE"; break;
         case SIGILL:  name = "SIGILL"; break;
     }
-    fprintf(stderr, "\n[PAL] Signal %s (%d) caught in PE code\n", name, sig);
-    fprintf(stderr, "[PAL] The Windows binary crashed or hit an unimplemented API\n");
+    fprintf(stderr, "\n[PAL] %s at address %p\n", name, info->si_addr);
+#ifdef __i386__
+    ucontext_t *uc = (ucontext_t*)ctx;
+    fprintf(stderr, "[PAL] EIP=0x%08x (faulting instruction)\n", uc->uc_mcontext.gregs[REG_EIP]);
+    fprintf(stderr, "[PAL] ESP=0x%08x EBP=0x%08x\n",
+            uc->uc_mcontext.gregs[REG_ESP], uc->uc_mcontext.gregs[REG_EBP]);
+    fprintf(stderr, "[PAL] EAX=0x%08x ECX=0x%08x EDX=0x%08x\n",
+            uc->uc_mcontext.gregs[REG_EAX], uc->uc_mcontext.gregs[REG_ECX],
+            uc->uc_mcontext.gregs[REG_EDX]);
+#elif defined(__x86_64__)
+    ucontext_t *uc = (ucontext_t*)ctx;
+    fprintf(stderr, "[PAL] RIP=0x%016llx\n", (unsigned long long)uc->uc_mcontext.gregs[REG_RIP]);
+    fprintf(stderr, "[PAL] RSP=0x%016llx RBP=0x%016llx\n",
+            (unsigned long long)uc->uc_mcontext.gregs[REG_RSP],
+            (unsigned long long)uc->uc_mcontext.gregs[REG_RBP]);
+#else
+    (void)ctx;
+#endif
     _exit(128 + sig);
 }
 
@@ -63,11 +82,14 @@ int main(int argc, char **argv) {
 
     const char *pe_path = argv[1];
 
-    /* Install signal handlers for PE crashes */
-    signal(SIGSEGV, sighandler);
-    signal(SIGBUS, sighandler);
-    signal(SIGFPE, sighandler);
-    signal(SIGILL, sighandler);
+    /* Install signal handlers for PE crashes (with register info) */
+    struct sigaction sa = {0};
+    sa.sa_sigaction = sighandler;
+    sa.sa_flags = SA_SIGINFO;
+    sigaction(SIGSEGV, &sa, NULL);
+    sigaction(SIGBUS, &sa, NULL);
+    sigaction(SIGFPE, &sa, NULL);
+    sigaction(SIGILL, &sa, NULL);
 
     /* Step 1: Initialize PAL */
     printf("[HOST] Initializing PAL (Linux implementation)...\n");
@@ -123,6 +145,17 @@ int main(int argc, char **argv) {
     printf("[HOST] ═══════════════════════════════════════════\n");
     printf("[HOST] Transferring control to PE entry point...\n");
     printf("[HOST] ═══════════════════════════════════════════\n\n");
+
+    /* Allow overriding entry point (e.g. to skip CRT init and jump to main) */
+    const char *entry_override = getenv("DRAWBRIDGE_ENTRY");
+    if (entry_override) {
+        uint64_t new_entry = strtoull(entry_override, NULL, 0);
+        printf("[HOST] Entry point overridden: 0x%lx -> 0x%lx\n",
+               (unsigned long)image.entry_point, (unsigned long)new_entry);
+        image.entry_point = new_entry;
+    }
+
+    /* Verbose IAT dump when DRAWBRIDGE_VERBOSE is set */
 
     if (image.is_dll) {
         /* For DLLs, call DllMain(hInstance, DLL_PROCESS_ATTACH, NULL) */

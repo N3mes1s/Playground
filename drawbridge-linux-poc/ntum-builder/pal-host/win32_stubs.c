@@ -157,6 +157,12 @@ static void *make_thunk(const uint8_t *template, size_t tpl_size,
 /* Thread-local last error */
 static __thread DWORD tls_last_error = 0;
 
+/* DATA exports for msvcrt - these must be actual data, not function pointers.
+ * When malware imports _fmode or _iob as DATA, the IAT entry must point
+ * to the variable, not to a function. */
+static int msvcrt_fmode_data = 0;          /* _fmode: text/binary mode flag */
+static char msvcrt_iob_data[3 * 64] = {0}; /* _iob: stdin/stdout/stderr FILE structs */
+
 /* ---- kernel32.dll stubs ---- */
 
 HANDLE WINAPI stub_GetStdHandle(DWORD nStdHandle) {
@@ -812,8 +818,11 @@ static const stub_entry_t g_stubs[] = {
     {"msvcrt.dll", "__set_app_type", stub_IsDebuggerPresent},  /* nop */
     {"msvcrt.dll", "__getmainargs", stub_IsDebuggerPresent},   /* nop */
     {"msvcrt.dll", "__p__environ", stub_GetCurrentProcess},    /* nop */
-    {"msvcrt.dll", "_iob", stub_GetCurrentProcess},            /* nop */
-    {"msvcrt.dll", "_fmode", stub_GetCurrentProcess},          /* nop */
+
+    /* DATA imports: _iob and _fmode must point to actual data, not functions.
+     * The IAT entry gets set to the ADDRESS of the data. */
+    {"msvcrt.dll", "_iob", (void*)&msvcrt_iob_data},
+    {"msvcrt.dll", "_fmode", (void*)&msvcrt_fmode_data},
     {"msvcrt.dll", "_fileno", stub_GetCurrentProcess},         /* nop */
     {"msvcrt.dll", "_setmode", stub_IsDebuggerPresent},        /* nop */
     {"msvcrt.dll", "_assert", stub_abort},
