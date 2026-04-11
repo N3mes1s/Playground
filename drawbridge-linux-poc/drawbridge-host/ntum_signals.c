@@ -91,18 +91,27 @@ static int handle_libos_fault(void *fault_addr, int is_write, ucontext_t *uc) {
     /* Align to page boundary */
     uintptr_t page = addr & ~0xFFFULL;
 
-    /* Check if in LibOS range */
-    if (addr < LIBOS_VM_START || addr >= LIBOS_VM_END)
-        return 0;  /* Not in LibOS range - real crash */
+    /* Check if in LibOS range. Reject NULL page (real crash). */
+    if (addr < 0x1000 || addr >= LIBOS_VM_END)
+        return 0;  /* NULL or outside range - real crash */
 
     /* Try to map the faulted page.
      * This handles guard pages and demand-paged sections.
      * The NTUM's internal memory manager expects pages to
      * become available when accessed. */
+    /* Use MAP_FIXED_NOREPLACE first - if the page is already mapped
+     * (has our patches), DON'T replace it. Only map truly unmapped pages. */
     void *result = mmap((void*)page, 0x1000,
                          PROT_READ | PROT_WRITE | PROT_EXEC,
-                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
                          -1, 0);
+    if (result == MAP_FAILED) {
+        /* Page already mapped but faulted anyway (permission issue).
+         * Change permissions to RWX and return. */
+        mprotect((void*)page, 0x1000, PROT_READ | PROT_WRITE | PROT_EXEC);
+        ntum_fault_count++;
+        return 1;
+    }
     if (result != MAP_FAILED) {
         ntum_fault_count++;
 
@@ -196,13 +205,12 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
         }
     }
 
-    /* Unhandled fault - write() is async-signal-safe */
-    char msg[512];
+    /* Unhandled fault */
+    char msg[256];
     int len = snprintf(msg, sizeof(msg),
-        "\n[CRASH] sig=%d addr=%p RIP=0x%llx RCX=0x%llx faults=%d\n",
+        "\n[CRASH] sig=%d addr=%p RIP=0x%llx faults=%d\n",
         sig, fault_addr,
         (unsigned long long)uc->uc_mcontext.gregs[REG_RIP],
-        (unsigned long long)uc->uc_mcontext.gregs[REG_RCX],
         ntum_fault_count);
     write(STDERR_FILENO, msg, len);
     _exit(128 + sig);

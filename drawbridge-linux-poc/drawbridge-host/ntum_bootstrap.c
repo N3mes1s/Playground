@@ -347,8 +347,17 @@ static void *boot_thread_fn(void *arg) {
     *(volatile uint64_t*)0x180a00008ULL = (uint64_t)&DK_AbiDispatcher;
     *(volatile uint64_t*)0x180c00008ULL = (uint64_t)args->params;
     *(volatile uint64_t*)0x180c00010ULL = args->params->Size;
-    fprintf(stderr, "[BOOT] Re-applied data patches. ABI dispatcher at %p\n",
-            (void*)&DK_AbiDispatcher);
+    /* mlock params and all patched pages */
+    mlock(args->params, 0x1000);
+    mlock((void*)0x180600000ULL, 0x70000);  /* .data */
+    mlock((void*)0x180a00000ULL, 0x1000);   /* .00cfg */
+    mlock((void*)0x180c00000ULL, 0x2000);   /* .roafter */
+
+    /* Verify key values */
+    fprintf(stderr, "[BOOT] Verify: params->Size=0x%lx AbiTable=%p [0x180a00008]=0x%lx\n",
+            (unsigned long)args->params->Size,
+            args->params->HostAbiTable,
+            (unsigned long)*(volatile uint64_t*)0x180a00008ULL);
 
     drawbridge_enter_ntum(real_init, (void*)ntum_stack, args->params);
 
@@ -467,7 +476,35 @@ void ntum_patch_rcx_to_global(void) {
     /* But this needs 7 bytes and we only have 3. Skip this - use a different approach */
     /* Actually: mov rdi,rdx is fine because rdx = params from trampoline too */
 
-    fprintf(stderr, "[BOOT] Patched NTUM init: rcx→global at [0x180c00008]\n");
+    /* Also patch rdx→rdi to read from global (rdx might also be corrupted) */
+    /* 0x180204781: mov rdi, rdx (3 bytes) → mov rdi, [rip+0x9fb880] (7 bytes)
+     * RIP after = 0x180204788, target = 0x180c00008, offset = 0x180c00008-0x180204788=0x9fb880 */
+    volatile uint8_t *p6 = (uint8_t*)0x180204781ULL;
+    p6[0] = 0x48; p6[1] = 0x8b; p6[2] = 0x3d;  /* mov rdi, [rip+...] */
+    p6[3] = 0x80; p6[4] = 0xb8; p6[5] = 0x9f; p6[6] = 0x00;
+
+    /* The original 'mov [rip+...], rdx' at 0x180204784 was overwritten.
+     * Rewrite it at 0x180204788 (after our 7-byte mov rdi):
+     * We skip this store since it's just saving rdx to a global - not critical. */
+    volatile uint8_t *p7 = (uint8_t*)0x180204788ULL;
+    p7[0] = 0x90; p7[1] = 0x90; p7[2] = 0x90;  /* nop nop nop (was part of mov [rip],rdx) */
+
+    /* Also need to fix 0x1802047c9: cmp [rdx+0x10], 0 → cmp [rdi+0x10], 0
+     * Original: 48 83 7a 10 00 → 48 83 7f 10 00 */
+    volatile uint8_t *p8 = (uint8_t*)0x1802047c9ULL;
+    p8[2] = 0x7f;  /* Change 7a (rdx offset) to 7f (rdi offset) */
+
+    /* 0x1802047ce: mov rax, [rdx+0x48] → mov rax, [rdi+0x48]
+     * Original: 48 8b 42 48 → 48 8b 47 48 */
+    volatile uint8_t *p9 = (uint8_t*)0x1802047ceULL;
+    p9[2] = 0x47;
+
+    /* 0x1802047f1: mov rdx, [rdx+0x10] → mov rdx, [rdi+0x10]
+     * Original: 48 8b 52 10 → 48 8b 57 10 */
+    volatile uint8_t *p10 = (uint8_t*)0x1802047f1ULL;
+    p10[2] = 0x57;
+
+    fprintf(stderr, "[BOOT] Patched NTUM init: rcx+rdx→globals at [0x180c00008]\n");
 
     /* Patch ALL __fastfail (int 0x29 = CD 29) in .text to nop nop */
     volatile uint8_t *text = (uint8_t*)0x180200000ULL;
