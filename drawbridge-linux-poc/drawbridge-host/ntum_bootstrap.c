@@ -382,6 +382,24 @@ static void *boot_thread_fn(void *arg) {
         *(uint64_t*)(boot_pool_vtable + 0x50) = (uint64_t)&pool_allocator_fn;
         /* Set vtable pointer as first field of pool object */
         *(uint64_t*)boot_pool_obj = (uint64_t)boot_pool_vtable;
+        /* Pool object fields discovered from PE code:
+         * [+0x00] = vtable pointer
+         * [+0x40] = sub-allocator pointer (read at RVA 0x219199)
+         *           → [sub+0x00] → another object → [+0x00] = function ptr
+         *           Called via guard_dispatch for sub-allocation
+         * [+0x258] = flags (read at RVA 0x387809)
+         */
+        /* Create a sub-allocator with our pool function */
+        static uint8_t boot_sub_alloc[0x200] __attribute__((aligned(64)));
+        static uint8_t boot_sub_inner[0x200] __attribute__((aligned(64)));
+        memset(boot_sub_alloc, 0, sizeof(boot_sub_alloc));
+        memset(boot_sub_inner, 0, sizeof(boot_sub_inner));
+        /* sub_inner[0] = pool_allocator_fn (called via guard_dispatch) */
+        *(uint64_t*)boot_sub_inner = (uint64_t)&pool_allocator_fn;
+        /* sub_alloc[0] = pointer to sub_inner */
+        *(uint64_t*)boot_sub_alloc = (uint64_t)boot_sub_inner;
+        /* pool_obj[0x40] = sub_alloc */
+        *(uint64_t*)(boot_pool_obj + 0x40) = (uint64_t)boot_sub_alloc;
         *(volatile uint64_t*)0x1806456e8ULL = (uint64_t)boot_pool_obj;
     }
     /* Re-arm TEB global (might have been overwritten by demand-paging) */
