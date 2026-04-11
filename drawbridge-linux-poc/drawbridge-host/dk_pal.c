@@ -561,11 +561,9 @@ DK_API __attribute__((force_align_arg_pointer)) uint64_t DK_AbiDispatcher(uint64
 
     void *input_buf = in_buf;
 
-    /* Re-arm: write our dispatcher pointer every time we're called.
-     * The NTUM may zero this between calls during PE re-init. */
-    *(volatile uint64_t*)0x181100000ULL = (uint64_t)&DK_AbiDispatcher;
-    *(volatile uint64_t*)0x180a00008ULL = (uint64_t)&DK_AbiDispatcher;
-    *(volatile uint64_t*)0x180a00000ULL = (uint64_t)&DK_AbiDispatcher;
+    /* Re-arm: write our dispatcher pointer at the .data global.
+     * ONLY re-arm [0x18063f8c8] - the ABI dispatcher location.
+     * Do NOT touch [0x181100000] (CFG passthrough) or .00cfg. */
     *(volatile uint64_t*)0x18063f8c8ULL = (uint64_t)&DK_AbiDispatcher;
 
     /* Log first few calls for debugging (use write() not fprintf) */
@@ -864,6 +862,11 @@ void dk_pal_init(void) {
     uint32_t *header = (uint32_t*)g_pal_dispatch_table;
     header[0] = 0x10;   /* Size */
     header[1] = 0x38;   /* SubSize */
+
+    /* ABI dispatcher function pointer at offset 8.
+     * The NTUM does: mov rax, [HostAbiTable+8] then calls through
+     * CFG dispatch (jmp *%rax). Discovered from call site at RVA 0x213e75. */
+    *(uint64_t*)(g_pal_dispatch_table + 8) = (uint64_t)&DK_AbiDispatcher;
 
     /* Sentinel */
     uint64_t *sentinel = (uint64_t*)(g_pal_dispatch_table + 0x30);

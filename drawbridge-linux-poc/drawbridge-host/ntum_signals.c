@@ -116,15 +116,14 @@ static int handle_libos_fault(void *fault_addr, int is_write, ucontext_t *uc) {
         ntum_fault_count++;
 
         /* If this page is within the PE image, copy actual section data.
-         * SKIP if the page is in a section we already patched (.data, .00cfg, .roafter)
-         * because we wrote runtime values there that would be overwritten. */
+         * SKIP .data and .roafter sections because we wrote runtime values
+         * there (boot flag, dispatcher, cookie) that would be overwritten. */
         int is_patched_section = 0;
         if (addr >= g_pe_image_base) {
             uint64_t rva = page - g_pe_image_base;
-            /* .data at 0x600000, .00cfg at 0xa00000, .roafter at 0xc00000 */
             if (rva >= 0x600000 && rva < 0x670000) is_patched_section = 1;  /* .data */
-            if (rva >= 0xa00000 && rva < 0xa01000) is_patched_section = 1;  /* .00cfg */
             if (rva >= 0xc00000 && rva < 0xc02000) is_patched_section = 1;  /* .roafter */
+            /* .00cfg is NOT protected - its PE-native values are correct */
         }
         if (g_pe_raw_data && addr >= g_pe_image_base && !is_patched_section) {
             uint64_t rva = page - g_pe_image_base;  /* RVA of the faulted page */
@@ -143,39 +142,9 @@ static int handle_libos_fault(void *fault_addr, int is_write, ucontext_t *uc) {
                     size_t copy_sz = (raw_remain > 0x1000) ? 0x1000 : raw_remain;
                     if (copy_sz > 0 && raw_off + copy_sz <= g_pe_raw_size) {
                         memcpy(result, g_pe_raw_data + raw_off, copy_sz);
-                        /* Patch int3+jmp (CC EB FD) patterns in code sections */
-                        if (sec_va == 0x200000) {  /* .text section */
-                            uint8_t *p = (uint8_t*)result;
-                            for (size_t j = 0; j + 2 < copy_sz; j++) {
-                                if (p[j] == 0xCC && p[j+1] == 0xEB && p[j+2] == 0xFD) {
-                                    p[j] = 0x90; p[j+1] = 0x90; p[j+2] = 0x90;
-                                }
-                            }
-                            /* Patch standalone int3 after ret/nop */
-                            for (size_t j = 1; j < copy_sz; j++) {
-                                if (p[j] == 0xCC && (p[j-1] == 0xC3 || p[j-1] == 0x90 || p[j-1] == 0xCC))
-                                    p[j] = 0x90;
-                            }
-                            /* Patch call/jmp [rip+disp] to 0x180a00008 → 0x181100000 */
-                            uint64_t page_rva = rva;
-                            for (size_t j = 0; j + 6 <= copy_sz; j++) {
-                                if (p[j] == 0xFF && (p[j+1] == 0x15 || p[j+1] == 0x25)) {
-                                    int32_t disp = *(int32_t*)&p[j+2];
-                                    uint64_t rip_addr = g_pe_image_base + page_rva + j + 6;
-                                    uint64_t target = rip_addr + disp;
-                                    if (target == 0x180a00008ULL) {
-                                        int32_t new_disp = (int32_t)(0x181100000ULL - rip_addr);
-                                        *(int32_t*)&p[j+2] = new_disp;
-                                    }
-                                }
-                            }
-                            /* Patch __fastfail (CD 29) */
-                            for (size_t j = 0; j + 1 < copy_sz; j++) {
-                                if (p[j] == 0xCD && p[j+1] == 0x29) {
-                                    p[j] = 0x90; p[j+1] = 0x90;
-                                }
-                            }
-                        }
+                        /* No patches - use the PE's original code as-is.
+                         * The PE has built-in CFG functions, and the SIGTRAP
+                         * handler deals with int3 bytes at runtime. */
                     }
                     break;
                 }
@@ -186,10 +155,12 @@ static int handle_libos_fault(void *fault_addr, int is_write, ucontext_t *uc) {
                 memcpy(result, g_pe_raw_data + rva, 0x1000);
         }
 
-        if (ntum_fault_count <= 100) {
-            fprintf(stderr, "[FAULT] Page 0x%lx (#%d %s%s)\n",
-                    (unsigned long)page, ntum_fault_count,
+        if (ntum_fault_count <= 200) {
+            uintptr_t rip = uc ? uc->uc_mcontext.gregs[REG_RIP] : 0;
+            fprintf(stderr, "[FAULT] #%d 0x%lx %s RIP=0x%lx%s\n",
+                    ntum_fault_count, (unsigned long)page,
                     is_write ? "W" : "R",
+                    (unsigned long)rip,
                     (addr >= g_pe_image_base && addr < g_pe_image_base + g_pe_raw_size)
                         ? " +PE" : "");
         }
@@ -205,6 +176,36 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
     int is_write = (uc->uc_mcontext.gregs[REG_ERR] & 0x2) != 0;
 
     if (sig == SIGSEGV || sig == SIGBUS) {
+        /* Dump full register state and stack for first fault */
+        if (ntum_fault_count < 2) {
+            uint64_t rsp = uc->uc_mcontext.gregs[REG_RSP];
+            char msg[1024];
+            int l = snprintf(msg, sizeof(msg),
+                "[REGS] FAULT#%d addr=%p sig=%d\n"
+                "  RIP=0x%llx RSP=0x%llx RBP=0x%llx\n"
+                "  RAX=0x%llx RBX=0x%llx RCX=0x%llx\n"
+                "  RDX=0x%llx RSI=0x%llx RDI=0x%llx\n"
+                "  R8=0x%llx R9=0x%llx R14=0x%llx R15=0x%llx\n"
+                "  [RSP]=0x%llx [RSP+8]=0x%llx [RSP+16]=0x%llx\n",
+                ntum_fault_count, fault_addr, sig,
+                (unsigned long long)uc->uc_mcontext.gregs[REG_RIP],
+                (unsigned long long)rsp,
+                (unsigned long long)uc->uc_mcontext.gregs[REG_RBP],
+                (unsigned long long)uc->uc_mcontext.gregs[REG_RAX],
+                (unsigned long long)uc->uc_mcontext.gregs[REG_RBX],
+                (unsigned long long)uc->uc_mcontext.gregs[REG_RCX],
+                (unsigned long long)uc->uc_mcontext.gregs[REG_RDX],
+                (unsigned long long)uc->uc_mcontext.gregs[REG_RSI],
+                (unsigned long long)uc->uc_mcontext.gregs[REG_RDI],
+                (unsigned long long)uc->uc_mcontext.gregs[REG_R8],
+                (unsigned long long)uc->uc_mcontext.gregs[REG_R9],
+                (unsigned long long)uc->uc_mcontext.gregs[REG_R14],
+                (unsigned long long)uc->uc_mcontext.gregs[REG_R15],
+                rsp >= 0x180000000ULL ? (unsigned long long)*(uint64_t*)rsp : 0ULL,
+                rsp >= 0x180000000ULL ? (unsigned long long)*(uint64_t*)(rsp+8) : 0ULL,
+                rsp >= 0x180000000ULL ? (unsigned long long)*(uint64_t*)(rsp+16) : 0ULL);
+            write(2, msg, l);
+        }
         if (handle_libos_fault(fault_addr, is_write, uc)) {
             return;  /* Handled - resume execution */
         }
