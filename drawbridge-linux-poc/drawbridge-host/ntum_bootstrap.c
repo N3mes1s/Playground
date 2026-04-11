@@ -262,6 +262,9 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
             }
             *(uint64_t*)(boot_thread_local + 0x250) = (uint64_t)tl_exec_ctx;
+            /* exec_ctx scheduling counters: [+0x18] used as divisor at RVA 0x35868c.
+             * divl [rbx+rdi*4+0x18] where rbx=exec_ctx+0x80. Must be non-zero. */
+            *(uint32_t*)(tl_exec_ctx + 0x80 + 0x18) = 1;  /* Avoid div-by-zero */
             /* thread_local[0x208] = kernel scheduling state pointer.
              * RVA 0x35849c reads [thread_local+0x208] then [+0x9b0].
              * Needs a large sub-object (at least 0xA00 bytes). */
@@ -284,17 +287,21 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
             }
             *(uint64_t*)(tl_sched_state + 0x9b0) = (uint64_t)tl_sched_obj;
-            /* sched_obj[0x820] = atomic counter array base.
-             * RVA 0x3584ba reads [sched_obj+0x820] then does lock xadd on it.
-             * Must point to a valid memory region for atomic operations. */
-            static uint8_t *sched_counters = NULL;
-            if (!sched_counters) {
-                sched_counters = (uint8_t*)mmap(
-                    (void*)(LIBOS_KERNEL_HEAP + 0x26000000ULL), 0x1000,
+            /* sched_obj[0x820] = scheduling slot/processor index (32-bit int).
+             * RVA 0x3584ba reads as: mov esi, [rax+0x820] (32-bit!)
+             * Then uses esi as array index: [rbx + esi*9*4 + 0x18]
+             * Must be 0 (single processor) to avoid OOB array access. */
+            *(uint32_t*)(tl_sched_obj + 0x820) = 0;
+            /* sched_state[0xa20] = per-processor atomic counter array.
+             * RVA 0x35853e reads [sched_state+0xa20] for lock xadd. */
+            static uint8_t *sched_proc_counters = NULL;
+            if (!sched_proc_counters) {
+                sched_proc_counters = (uint8_t*)mmap(
+                    (void*)(LIBOS_KERNEL_HEAP + 0x27000000ULL), 0x1000,
                     PROT_READ | PROT_WRITE,
                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
             }
-            *(uint64_t*)(tl_sched_obj + 0x820) = (uint64_t)sched_counters;
+            *(uint64_t*)(tl_sched_state + 0xa20) = (uint64_t)sched_proc_counters;
 
             /* Link into TEB */
             *(uint64_t*)((uint8_t*)ntum_teb + 0x1838) = (uint64_t)boot_kthread;
