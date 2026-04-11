@@ -228,6 +228,12 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
 
             /* Link KTHREAD into TEB */
             *(uint64_t*)((uint8_t*)ntum_teb + 0x1838) = (uint64_t)boot_kthread;
+            /* TEB[0x1868] = exception frame chain (used by VirtualAlloc wrapper
+             * at RVA 0x378c28-0x378c42). Must be valid or the wrapper stores
+             * a new frame there. Initialize to 0 (no active frame). */
+            *(uint64_t*)((uint8_t*)ntum_teb + 0x1868) = 0;
+            /* TEB[0x1478] = process environment block or kernel state */
+            *(uint64_t*)((uint8_t*)ntum_teb + 0x1478) = (uint64_t)boot_kthread;
 
             printf("  [0x1806092c0] = %p (boot TEB)\n", ntum_teb);
             printf("  TEB[0x1838] = %p (boot KTHREAD)\n", boot_kthread);
