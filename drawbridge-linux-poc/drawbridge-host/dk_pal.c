@@ -548,7 +548,7 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
 
     static int dispatch_count = 0;
     dispatch_count++;
-    if (dispatch_count <= 200) {
+    if (dispatch_count <= 500) {
         fprintf(stderr, "[DK] Call #%d: type=0x%lx size=0x%lx in=%p out=%p\n",
                 dispatch_count, (unsigned long)call_type,
                 (unsigned long)data_size, in_buf, out_buf);
