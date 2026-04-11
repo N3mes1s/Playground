@@ -385,6 +385,25 @@ extern void drawbridge_enter_ntum(void *entry, void *stack, void *params);
             args->params->HostAbiTable,
             (unsigned long)*(volatile uint64_t*)0x180a00008ULL);
 
+    /* Set up TEB (Thread Environment Block) for the NTUM.
+     * The NTUM reads gs:0x30 to get the TEB self-pointer.
+     * We use arch_prctl(ARCH_SET_GS) to point GS base to our TEB. */
+    {
+        #include <asm/prctl.h>
+        #include <sys/syscall.h>
+        static uint8_t teb[4096] __attribute__((aligned(4096)));
+        memset(teb, 0, sizeof(teb));
+        /* TEB.Self at offset 0x30 */
+        *(uint64_t*)(teb + 0x30) = (uint64_t)teb;
+        /* TEB.StackBase at offset 0x08 */
+        *(uint64_t*)(teb + 0x08) = ntum_stack + 0x200000;
+        /* TEB.StackLimit at offset 0x10 */
+        *(uint64_t*)(teb + 0x10) = ntum_stack - 0x100000;
+        /* Set GS base to our TEB */
+        syscall(SYS_arch_prctl, ARCH_SET_GS, (unsigned long)teb);
+        fprintf(stderr, "[BOOT] TEB at %p (gs:0x30 = self)\n", teb);
+    }
+
     drawbridge_enter_ntum(real_init, (void*)ntum_stack, args->params);
 
     /* Should not reach here */
