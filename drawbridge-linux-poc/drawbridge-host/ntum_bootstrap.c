@@ -273,6 +273,28 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
             }
             *(uint64_t*)(boot_thread_local + 0x208) = (uint64_t)tl_sched_state;
+            /* sched_state[0x9b0] = scheduling object chain.
+             * RVA 0x3584ac reads [sched_state+0x9b0] → [+0x820].
+             * Allocate a sub-object for the scheduler chain. */
+            static uint8_t *tl_sched_obj = NULL;
+            if (!tl_sched_obj) {
+                tl_sched_obj = (uint8_t*)mmap(
+                    (void*)(LIBOS_KERNEL_HEAP + 0x25000000ULL), 0x2000,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+            }
+            *(uint64_t*)(tl_sched_state + 0x9b0) = (uint64_t)tl_sched_obj;
+            /* sched_obj[0x820] = atomic counter array base.
+             * RVA 0x3584ba reads [sched_obj+0x820] then does lock xadd on it.
+             * Must point to a valid memory region for atomic operations. */
+            static uint8_t *sched_counters = NULL;
+            if (!sched_counters) {
+                sched_counters = (uint8_t*)mmap(
+                    (void*)(LIBOS_KERNEL_HEAP + 0x26000000ULL), 0x1000,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+            }
+            *(uint64_t*)(tl_sched_obj + 0x820) = (uint64_t)sched_counters;
 
             /* Link into TEB */
             *(uint64_t*)((uint8_t*)ntum_teb + 0x1838) = (uint64_t)boot_kthread;
