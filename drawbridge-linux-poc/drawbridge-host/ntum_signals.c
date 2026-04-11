@@ -38,6 +38,49 @@
 
 static int ntum_fault_count = 0;
 
+/* PE image data source for demand-paging.
+ * When a page in the PE range faults, we copy data from the raw PE. */
+static uint8_t *g_pe_raw_data = NULL;  /* Raw PE file data mapped from SFP */
+static size_t   g_pe_raw_size = 0;
+static uint64_t g_pe_image_base = 0;
+
+/* PE section info for demand-paging */
+typedef struct {
+    uint32_t virtual_address;
+    uint32_t virtual_size;
+    uint32_t raw_offset;     /* PointerToRawData in file */
+    uint32_t raw_size;       /* SizeOfRawData */
+} pe_section_info_t;
+
+static pe_section_info_t g_pe_sections[16];
+static int g_pe_num_sections = 0;
+
+void ntum_signal_set_pe_data(void *raw_data, size_t raw_size, uint64_t image_base) {
+    g_pe_raw_data = (uint8_t*)raw_data;
+    g_pe_raw_size = raw_size;
+    g_pe_image_base = image_base;
+
+    /* Parse PE sections from the raw data */
+    if (raw_data && raw_size > 0x200) {
+        uint8_t *d = (uint8_t*)raw_data;
+        uint32_t pe_off = *(uint32_t*)(d + 60);
+        if (pe_off + 24 < raw_size) {
+            uint16_t num_sec = *(uint16_t*)(d + pe_off + 6);
+            uint16_t opt_size = *(uint16_t*)(d + pe_off + 20);
+            uint8_t *sec_hdr = d + pe_off + 24 + opt_size;
+            g_pe_num_sections = (num_sec > 16) ? 16 : num_sec;
+            for (int i = 0; i < g_pe_num_sections; i++) {
+                g_pe_sections[i].virtual_address = *(uint32_t*)(sec_hdr + i*40 + 12);
+                g_pe_sections[i].virtual_size = *(uint32_t*)(sec_hdr + i*40 + 8);
+                g_pe_sections[i].raw_offset = *(uint32_t*)(sec_hdr + i*40 + 20);
+                g_pe_sections[i].raw_size = *(uint32_t*)(sec_hdr + i*40 + 16);
+            }
+            fprintf(stderr, "[SIGNAL] PE sections loaded: %d sections for demand-paging\n",
+                    g_pe_num_sections);
+        }
+    }
+}
+
 /*
  * Check if an address is in the LibOS VM range and handle the fault.
  * Returns 1 if handled, 0 if not (should crash).
@@ -62,13 +105,42 @@ static int handle_libos_fault(void *fault_addr, int is_write, ucontext_t *uc) {
                          -1, 0);
     if (result != MAP_FAILED) {
         ntum_fault_count++;
-        if (ntum_fault_count <= 500) {
-            /* Log first 50 faults for debugging */
-            fprintf(stderr, "[FAULT] Mapped page 0x%lx (fault #%d, %s)\n",
-                    (unsigned long)page, ntum_fault_count,
-                    is_write ? "write" : "read");
+
+        /* If this page is within the PE image, copy actual section data */
+        if (g_pe_raw_data && addr >= g_pe_image_base) {
+            uint64_t rva = page - g_pe_image_base;  /* RVA of the faulted page */
+
+            /* Find which section this RVA falls in */
+            for (int s = 0; s < g_pe_num_sections; s++) {
+                uint32_t sec_va = g_pe_sections[s].virtual_address;
+                uint32_t sec_vs = g_pe_sections[s].virtual_size;
+                if (rva >= sec_va && rva < sec_va + sec_vs) {
+                    /* Found the section - calculate raw file offset */
+                    uint32_t offset_in_section = (uint32_t)(rva - sec_va);
+                    uint32_t raw_off = g_pe_sections[s].raw_offset + offset_in_section;
+                    uint32_t raw_remain = 0;
+                    if (offset_in_section < g_pe_sections[s].raw_size)
+                        raw_remain = g_pe_sections[s].raw_size - offset_in_section;
+                    size_t copy_sz = (raw_remain > 0x1000) ? 0x1000 : raw_remain;
+                    if (copy_sz > 0 && raw_off + copy_sz <= g_pe_raw_size)
+                        memcpy(result, g_pe_raw_data + raw_off, copy_sz);
+                    break;
+                }
+            }
+
+            /* Headers (RVA < first section) */
+            if (rva < 0x1000 && g_pe_raw_size >= 0x1000)
+                memcpy(result, g_pe_raw_data + rva, 0x1000);
         }
-        return 1;  /* Handled - resume execution */
+
+        if (ntum_fault_count <= 100) {
+            fprintf(stderr, "[FAULT] Page 0x%lx (#%d %s%s)\n",
+                    (unsigned long)page, ntum_fault_count,
+                    is_write ? "W" : "R",
+                    (addr >= g_pe_image_base && addr < g_pe_image_base + g_pe_raw_size)
+                        ? " +PE" : "");
+        }
+        return 1;
     }
 
     return 0;  /* Cannot map - real crash */

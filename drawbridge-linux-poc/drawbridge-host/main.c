@@ -333,6 +333,7 @@ int main(int argc, char **argv) {
     /* Step 3: Map sqlpal.dll (the NTUM kernel) from system.sfp */
     printf("\n[HOST] Loading NTUM kernel (sqlpal.dll)...\n");
     void *ntum = map_pe_from_sfp(&system_sfp, "sqlpal.dll", NULL);
+    void *ntum_raw = ntum;  /* Save raw PE data pointer for demand-paging */
     if (!ntum) {
         fprintf(stderr, "[HOST] Cannot load sqlpal.dll from system.sfp\n");
         return 1;
@@ -404,6 +405,11 @@ int main(int argc, char **argv) {
                     }
 
                     printf("  Mapped at %p (preferred 0x%lx)\n", img_base, (unsigned long)image_base);
+
+                    /* Tell the signal handler where the raw PE data is
+                     * so demand-paged pages get real content */
+                    ntum_signal_set_pe_data(ntum_raw, 2732032, image_base);
+
                     ntum = img_base;
                 } else {
                     printf("  [WARN] Cannot map at 0x%lx, using original at %p\n",
