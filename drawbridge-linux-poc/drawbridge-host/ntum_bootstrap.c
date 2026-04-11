@@ -434,6 +434,20 @@ static void *boot_thread_fn(void *arg) {
     /* Pool allocator init flag - must be set AFTER pre-fault */
     *(volatile uint32_t*)0x1806456d8ULL = 1;
     *(volatile uint32_t*)0x18064560cULL = 0x42;
+    /* Hash table size at [0x645de0] - used by kernel hash probe at RVA 0x324dcc.
+     * divq [0x645de0] causes SIGFPE if zero. Set to a prime number. */
+    /* Hash table at [0x645de0] = size, [0x645de8] = table pointer.
+     * Kernel hash probe at RVA 0x324dcc: divq [0x645de0]
+     * After division, indexes into the table at [0x645de8]. */
+    if (*(volatile uint64_t*)0x180645de0ULL == 0) {
+        *(volatile uint64_t*)0x180645de0ULL = 127;  /* Table size (prime) */
+        /* Allocate hash table: 127 entries * 24 bytes each = ~3KB */
+        void *ht = mmap((void*)(LIBOS_KERNEL_HEAP + 0x22000000ULL), 0x1000,
+                        PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+        if (ht != MAP_FAILED)
+            *(volatile uint64_t*)0x180645de8ULL = (uint64_t)ht;
+    }
     /* Re-arm thread block stack descriptor at [0x63b218].
      * Use the sched_stack_desc from the LibOS boot structs allocation. */
     {
