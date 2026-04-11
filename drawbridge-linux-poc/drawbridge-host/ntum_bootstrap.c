@@ -262,6 +262,17 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
             }
             *(uint64_t*)(boot_thread_local + 0x250) = (uint64_t)tl_exec_ctx;
+            /* thread_local[0x208] = kernel scheduling state pointer.
+             * RVA 0x35849c reads [thread_local+0x208] then [+0x9b0].
+             * Needs a large sub-object (at least 0xA00 bytes). */
+            static uint8_t *tl_sched_state = NULL;
+            if (!tl_sched_state) {
+                tl_sched_state = (uint8_t*)mmap(
+                    (void*)(LIBOS_KERNEL_HEAP + 0x24000000ULL), 0x2000,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+            }
+            *(uint64_t*)(boot_thread_local + 0x208) = (uint64_t)tl_sched_state;
 
             /* Link into TEB */
             *(uint64_t*)((uint8_t*)ntum_teb + 0x1838) = (uint64_t)boot_kthread;
