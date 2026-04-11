@@ -1,43 +1,54 @@
 CC = gcc
-MINGW = x86_64-w64-mingw32-gcc
+MINGW64 = x86_64-w64-mingw32-gcc
+MINGW32 = i686-w64-mingw32-gcc
 CFLAGS = -Wall -Wextra -O2 -g
 LDFLAGS = -lpthread
 
 HOST_SRCS = pal-host/host.c pal-host/pe_loader.c pal-host/pal_linux.c pal-host/win32_stubs.c
-HOST_BIN = drawbridge-run
+HOST_64 = drawbridge-run
+HOST_32 = drawbridge-run32
 
-TEST_SRCS = test/hello_win.c
-TEST_BIN = test/hello_win.exe
+.PHONY: all clean test test32
 
-.PHONY: all clean test
+all: $(HOST_64) $(HOST_32) test/hello_minimal.exe test/hello32.exe
 
-all: $(HOST_BIN) $(TEST_BIN)
-
-# Build the PAL host (Linux ELF)
-$(HOST_BIN): $(HOST_SRCS) pal-host/pe_loader.h include/ntum_pal.h
+# Build 64-bit PAL host (for PE32+ executables)
+$(HOST_64): $(HOST_SRCS) pal-host/pe_loader.h include/ntum_pal.h
 	$(CC) $(CFLAGS) -o $@ $(HOST_SRCS) $(LDFLAGS)
-	@echo "[BUILD] PAL host ready: $@"
+	@echo "[BUILD] 64-bit PAL host: $@"
 
-# Cross-compile test Windows program (PE64)
-$(TEST_BIN): $(TEST_SRCS)
-	@mkdir -p test
-	$(MINGW) -o $@ $< -nostdlib -lkernel32 -e mainCRTStartup
-	@echo "[BUILD] Test PE ready: $@"
+# Build 32-bit PAL host (for PE32 executables - most malware)
+$(HOST_32): $(HOST_SRCS) pal-host/pe_loader.h include/ntum_pal.h
+	$(CC) -m32 $(CFLAGS) -DHOST_32BIT -o $@ $(HOST_SRCS) $(LDFLAGS)
+	@echo "[BUILD] 32-bit PAL host: $@"
 
-# Build a minimal test that uses our stubs directly
+# 64-bit test PE
 test/hello_minimal.exe: test/hello_minimal.c
 	@mkdir -p test
-	$(MINGW) -o $@ $< -nostdlib -e _start
-	@echo "[BUILD] Minimal test PE ready: $@"
+	$(MINGW64) -o $@ $< -nostdlib -lkernel32 -e _start
+	@echo "[BUILD] 64-bit test PE: $@"
 
-# Run test
-test: $(HOST_BIN) $(TEST_BIN)
-	./$(HOST_BIN) $(TEST_BIN)
+# 32-bit test PE
+test/hello32.exe: test/hello32.c
+	@mkdir -p test
+	$(MINGW32) -o $@ $< -nostdlib -lkernel32 -e _start
+	@echo "[BUILD] 32-bit test PE: $@"
 
-# Run against a malware sample
-run-malware: $(HOST_BIN)
-	@echo "Usage: ./$(HOST_BIN) <path-to-malware.exe>"
-	@echo "Example: ./$(HOST_BIN) ../malware-analysis/samples/jeefo_virus.exe"
+# Run tests
+test: $(HOST_64) test/hello_minimal.exe
+	./$(HOST_64) test/hello_minimal.exe
+
+test32: $(HOST_32) test/hello32.exe
+	./$(HOST_32) test/hello32.exe
+
+# Run malware
+run-malware: $(HOST_32)
+	@if [ -z "$(PE)" ]; then \
+		echo "Usage: make run-malware PE=<path-to-malware.exe>"; \
+		echo "Example: make run-malware PE=../malware-analysis/samples/jeefo_virus.exe"; \
+	else \
+		./$(HOST_32) $(PE); \
+	fi
 
 clean:
-	rm -f $(HOST_BIN) $(TEST_BIN) test/hello_minimal.exe
+	rm -f $(HOST_64) $(HOST_32) test/*.exe
