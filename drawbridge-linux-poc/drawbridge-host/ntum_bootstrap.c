@@ -267,6 +267,16 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
          * Context is at 0x18063ac10, [context+0x10] needs the pointer. */
         *(volatile uint64_t*)0x18063ac20ULL = (uint64_t)boot_stack_info;
 
+        /* Pool allocator init flag at [0x6456d8] - must be non-zero
+         * for the object pool at 0x2c2a00 to create objects.
+         * Set by init command 0xe46 in the kernel dispatcher at 0x2b81d4.
+         * If 0, VirtualAlloc wrapper returns NULL and kernel objects
+         * can't be created. */
+        *(volatile uint32_t*)0x1806456d8ULL = 1;
+
+        /* Pool flags at [0x64560c] - controls pool behavior */
+        *(volatile uint32_t*)0x18064560cULL = 0x42;  /* Enable pool + large pages */
+
         printf("[BOOT] Set NTUM .data globals (no .text patches!):\n");
         printf("  [0x18063f8c0] = 1 (boot flag)\n");
         printf("  [0x18063f8c8] = %p (ABI dispatcher)\n", (void*)&DK_AbiDispatcher);
@@ -349,6 +359,46 @@ static void *boot_thread_fn(void *arg) {
     *(volatile uint64_t*)0x180c00008ULL = (uint64_t)args->params;
     *(volatile uint64_t*)0x180c00010ULL = args->params->Size;
     *(volatile uint32_t*)0x18063f5c0ULL = 2;  /* ABI version = 2 */
+    /* Pool allocator init flag - must be set AFTER pre-fault */
+    *(volatile uint32_t*)0x1806456d8ULL = 1;
+    *(volatile uint32_t*)0x18064560cULL = 0x42;
+    /* Pre-create kernel pool object at [0x6456e8].
+     * The pool allocator at RVA 0x2c2a00 normally creates this during
+     * init command 0xe46. The code at 0x218f43 reads [0x6456e8] and
+     * passes it to 0x2bc3b8 which dereferences [rdx] and [rdx+0x258].
+     * Without it, the kernel init crashes with RDX=0 at 0x2bc3c7. */
+    {
+        static uint8_t boot_pool_obj[0x1000] __attribute__((aligned(64)));
+        static uint8_t boot_pool_vtable[0x200] __attribute__((aligned(64)));
+        memset(boot_pool_obj, 0, sizeof(boot_pool_obj));
+        memset(boot_pool_vtable, 0, sizeof(boot_pool_vtable));
+        /* Pool object vtable: [+0x50] = VirtualAlloc function pointer.
+         * The PE reads pool_obj[0] as vtable, then [vtable+0x50] as
+         * the allocator function, calls it via guard_dispatch. */
+        /* Pool allocator function - different signature from DK_VirtualMemoryAllocate.
+         * Called via vtable as: pool_alloc(pool_obj, size, ...)
+         * Allocates memory and returns pointer in rax. */
+        extern uint64_t pool_allocator_fn(void*, uint64_t, uint64_t, void*, uint64_t, void*) __attribute__((ms_abi));
+        *(uint64_t*)(boot_pool_vtable + 0x50) = (uint64_t)&pool_allocator_fn;
+        /* Set vtable pointer as first field of pool object */
+        *(uint64_t*)boot_pool_obj = (uint64_t)boot_pool_vtable;
+        *(volatile uint64_t*)0x1806456e8ULL = (uint64_t)boot_pool_obj;
+    }
+    /* Re-arm TEB global (might have been overwritten by demand-paging) */
+    {
+        uint64_t teb_val = *(uint64_t*)(g_runtime_callback_state + 0x20);
+        if (teb_val) {
+            *(volatile uint64_t*)0x1806092c0ULL = teb_val;
+            /* Re-arm KTHREAD link in TEB */
+            uint64_t kthread = *(uint64_t*)((uint8_t*)teb_val + 0x1838);
+            if (kthread == 0) {
+                /* TEB[0x1838] was cleared by demand-paging, re-arm it */
+                /* The KTHREAD address was stored before in init */
+                /* We can't recover it here easily, but the init code
+                 * should have stored it before pre-fault in the init globals section */
+            }
+        }
+    }
 
     /* Verify .00cfg has the PE's built-in CFG functions (NOT our code) */
     {

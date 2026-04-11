@@ -941,6 +941,37 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
     return DK_STATUS_SUCCESS;
 }
 
+/*
+ * Pool allocator function - called from the NTUM kernel pool via vtable.
+ * Different calling convention from DK_VirtualMemoryAllocate:
+ *   rcx = pool object (this pointer)
+ *   rdx = size to allocate
+ *   r8  = flags/type
+ *   r9  = tag or additional params
+ * Returns allocated pointer in rax.
+ */
+DK_API __attribute__((force_align_arg_pointer))
+uint64_t pool_allocator_fn(void *pool_obj, uint64_t alloc_size,
+                            uint64_t flags, void *param4,
+                            uint64_t param5, void *param6) {
+    (void)pool_obj; (void)flags; (void)param4; (void)param5; (void)param6;
+
+    if (alloc_size == 0) alloc_size = 0x1000;
+    size_t aligned = (alloc_size + 0xFFF) & ~0xFFFULL;
+
+    void *result = mmap(NULL, aligned, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (result == MAP_FAILED) return 0;
+
+    static int pool_count = 0;
+    pool_count++;
+    if (pool_count <= 50) {
+        fprintf(stderr, "[POOL] #%d alloc(%lu) → %p\n",
+                pool_count, (unsigned long)alloc_size, result);
+    }
+    return (uint64_t)result;
+}
+
 /* Generic PAL stub - returns success for unimplemented functions */
 DK_API __attribute__((force_align_arg_pointer))
 uint64_t DK_GenericStub(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
