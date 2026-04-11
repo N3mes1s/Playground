@@ -571,7 +571,7 @@ DK_API __attribute__((force_align_arg_pointer)) uint64_t DK_AbiDispatcher(uint64
     /* Log first few calls for debugging (use write() not fprintf) */
     static int dispatch_count = 0;
     dispatch_count++;
-    if (dispatch_count <= 100) {
+    if (dispatch_count <= 1000) {
         char msg[128];
         int len = snprintf(msg, sizeof(msg),
             "[DK] Call #%d: type=0x%lx funcid=0x%x\n",
@@ -714,20 +714,20 @@ DK_API __attribute__((force_align_arg_pointer)) uint64_t DK_AbiDispatcher(uint64
             }
         }
 
-        return 0;
+        return 0xC0000002; /* STATUS_NOT_IMPLEMENTED for unknown types */
     }
 
     if (call_type == 0x7002001) {  /* Abi_GetVersion_v2 */
         if (out_buf) {
             *(uint32_t*)out_buf = 2;
         }
-        return 0;
+        return 0xC0000002; /* STATUS_NOT_IMPLEMENTED for unknown types */
     }
 
     /* Unknown call types - these are post-resolution config/feature calls.
      * The rdx value is a .data pointer, not a call type ID.
      * Return success and fill output with zeros. */
-    return 0;
+    return 0xC0000002; /* STATUS_NOT_IMPLEMENTED for unknown types */
 }
 
 /* Generic PAL stub that returns success */
