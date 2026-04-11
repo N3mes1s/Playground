@@ -201,7 +201,9 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
              *   +0x60: linked list (self-referencing)
              *   +0x70: scheduler processor block → must be non-NULL!
              */
-            static uint8_t boot_kthread[0x5000] __attribute__((aligned(4096)));
+            /* KTHREAD needs to be very large - the PE accesses offsets up to
+             * 0x41c0 and beyond. Allocate 0x10000 bytes to be safe. */
+            static uint8_t boot_kthread[0x10000] __attribute__((aligned(4096)));
             memset(boot_kthread, 0, sizeof(boot_kthread));
             /* Init linked lists (self-referencing like FUN_00020f03c) */
             *(uint64_t*)(boot_kthread + 0x20) = (uint64_t)(boot_kthread + 0x20);
@@ -215,6 +217,14 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
             *(uint64_t*)(boot_kthread + 0x70) = (uint64_t)boot_sched;
             /* KTHREAD[0x40] = TEB pointer (set by 0x204bc0) */
             *(uint64_t*)(boot_kthread + 0x40) = (uint64_t)ntum_teb;
+            /* KTHREAD[0x40b0] = allocated by FUN_0021698c (thread local block) */
+            /* KTHREAD[0x41c0] = critical sub-structure pointer, accessed extensively.
+             * Must point to a valid block with at least 0x260+ bytes.
+             * Fields: +0x258 (flags), +0x41a0 (ptr), +0x41a8 (count) */
+            static uint8_t boot_thread_local[0x5000] __attribute__((aligned(4096)));
+            memset(boot_thread_local, 0, sizeof(boot_thread_local));
+            *(uint64_t*)(boot_kthread + 0x41c0) = (uint64_t)boot_thread_local;
+            *(uint64_t*)(boot_kthread + 0x40b0) = (uint64_t)boot_thread_local;
 
             /* Link KTHREAD into TEB */
             *(uint64_t*)((uint8_t*)ntum_teb + 0x1838) = (uint64_t)boot_kthread;
