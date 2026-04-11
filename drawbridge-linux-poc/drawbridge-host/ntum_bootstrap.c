@@ -94,9 +94,19 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
 
     /* The 0x190 check at RVA 0x20e51d reads [0x180c00820] → ptr → [ptr] == 0x190.
      * This is SEPARATE from the ParameterBuffer ABI header. Create a dedicated buffer. */
+    /* LibOS parameters buffer read at [0x180c00820].
+     * Layout discovered from PE disassembly:
+     *   [+0x00] = 0x190 (WINDOWS_LIBOS_PARAMETERS size, checked at RVA 0x20e51d)
+     *   [+0x34] = max memory limit in 6MB units (read at RVA 0x378c5c)
+     *             The PE calculates: limit = [+0x34] * 3 << 21 (= * 6MB)
+     *             If 0, no memory can be allocated (STATUS_NO_MEMORY)!
+     *   [+0x08] = sub-header size (0x38)
+     */
     static uint8_t s_libos_size_buf[0x200] __attribute__((aligned(16)));
     memset(s_libos_size_buf, 0, sizeof(s_libos_size_buf));
-    *(uint32_t*)s_libos_size_buf = 0x190;  /* WINDOWS_LIBOS_PARAMETERS size */
+    *(uint32_t*)(s_libos_size_buf + 0x00) = 0x190;  /* Size */
+    *(uint32_t*)(s_libos_size_buf + 0x08) = 0x38;   /* SubSize */
+    *(uint32_t*)(s_libos_size_buf + 0x34) = 512;    /* 512 * 6MB = 3GB max memory */
 
     /* Feature flags */
     uint32_t *flags = (uint32_t*)&params->FeatureFlags[0];
@@ -144,6 +154,17 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
         /* Pre-store pointer for 0x190 size check at RVA 0x20e51d */
         *(volatile uint64_t*)0x180c00820ULL = (uint64_t)s_libos_size_buf;
 
+        /* ALSO write memory limit directly in case [0x180c00820] gets
+         * redirected. The PE at RVA 0x378c55 reads [0x180c00820] → ptr,
+         * then [ptr+0x34] for the memory limit. If ptr changes, the limit
+         * is lost. Write to the ptr's target directly as backup. */
+        {
+            uint64_t ptr_val = *(volatile uint64_t*)0x180c00820ULL;
+            if (ptr_val) {
+                *(volatile uint32_t*)(ptr_val + 0x34) = 512;
+            }
+        }
+
         /* ABI version at [0x63f5c0] must be 2 for second-pass resolution. */
         *(volatile uint32_t*)0x18063f5c0ULL = 2;
 
@@ -167,9 +188,40 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
             *(uint64_t*)((uint8_t*)ntum_teb + 0x10) = NTUM_STACK_BASE;
             /* Store as global TEB in PE .data */
             *(volatile uint64_t*)0x1806092c0ULL = (uint64_t)ntum_teb;
-            /* Also store in RuntimeCallbackState+0x20 for the dispatcher to re-arm */
             *(uint64_t*)(g_runtime_callback_state + 0x20) = (uint64_t)ntum_teb;
+
+            /* Pre-create a minimal KTHREAD structure and link it to TEB.
+             * The PE reads: TEB[0x1838] → KTHREAD[0x70] → scheduler_obj + 0xF0
+             * Without this, get_current_thread_state() returns 0 and the NTUM
+             * crashes at DrtlDelayCurrentThreadExecute (RVA 0x387809).
+             *
+             * KTHREAD layout (from FUN_00020f03c):
+             *   +0x20: linked list (self-referencing)
+             *   +0x30: ref_count = 1
+             *   +0x60: linked list (self-referencing)
+             *   +0x70: scheduler processor block → must be non-NULL!
+             */
+            static uint8_t boot_kthread[0x5000] __attribute__((aligned(4096)));
+            memset(boot_kthread, 0, sizeof(boot_kthread));
+            /* Init linked lists (self-referencing like FUN_00020f03c) */
+            *(uint64_t*)(boot_kthread + 0x20) = (uint64_t)(boot_kthread + 0x20);
+            *(uint64_t*)(boot_kthread + 0x28) = (uint64_t)(boot_kthread + 0x20);
+            *(uint64_t*)(boot_kthread + 0x30) = 1;  /* ref_count */
+            *(uint64_t*)(boot_kthread + 0x60) = (uint64_t)(boot_kthread + 0x60);
+            *(uint64_t*)(boot_kthread + 0x68) = (uint64_t)(boot_kthread + 0x60);
+            /* +0x70 = scheduler processor block (needs to be non-NULL) */
+            static uint8_t boot_sched[0x1000] __attribute__((aligned(4096)));
+            memset(boot_sched, 0, sizeof(boot_sched));
+            *(uint64_t*)(boot_kthread + 0x70) = (uint64_t)boot_sched;
+            /* KTHREAD[0x40] = TEB pointer (set by 0x204bc0) */
+            *(uint64_t*)(boot_kthread + 0x40) = (uint64_t)ntum_teb;
+
+            /* Link KTHREAD into TEB */
+            *(uint64_t*)((uint8_t*)ntum_teb + 0x1838) = (uint64_t)boot_kthread;
+
             printf("  [0x1806092c0] = %p (boot TEB)\n", ntum_teb);
+            printf("  TEB[0x1838] = %p (boot KTHREAD)\n", boot_kthread);
+            printf("  KTHREAD[0x70] = %p (scheduler block)\n", boot_sched);
         }
 
         /* Default thread block at [0x63b220] - used by thread switcher at

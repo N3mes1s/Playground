@@ -699,9 +699,17 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
     /* Re-arm global TEB pointer if it was cleared */
     if (*(volatile uint64_t*)0x1806092c0ULL == 0) {
         extern uint8_t g_runtime_callback_state[];
-        /* Use our pre-allocated TEB */
         uint64_t teb = *(volatile uint64_t*)(g_runtime_callback_state + 0x20);
         if (teb) *(volatile uint64_t*)0x1806092c0ULL = teb;
+    }
+
+    /* Re-arm memory limit. The PE reads [0x180c00820] → ptr → [ptr+0x34].
+     * If [ptr+0x34] is 0, VirtualAlloc returns NO_MEMORY for everything. */
+    {
+        uint64_t params_ptr = *(volatile uint64_t*)0x180c00820ULL;
+        if (params_ptr && *(volatile uint32_t*)(params_ptr + 0x34) == 0) {
+            *(volatile uint32_t*)(params_ptr + 0x34) = 512;  /* 512 * 6MB = 3GB */
+        }
     }
 
     static int dispatch_count = 0;

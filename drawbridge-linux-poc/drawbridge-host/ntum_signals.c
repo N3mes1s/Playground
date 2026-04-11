@@ -436,6 +436,18 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
     }
 
     /* ---- Unhandled: Fatal crash ---- */
+    /* Dump key .data values at crash time */
+    {
+        uint64_t params_ptr = *(volatile uint64_t*)0x180c00820ULL;
+        fprintf(stderr, "[CRASH-DATA] [0x6092c0]=0x%lx [0x63f8c0]=0x%x [0x63f5c0]=0x%x\n"
+                "  [0xc00820]=0x%lx [ptr+0]=0x%x [ptr+34]=0x%x\n",
+                (unsigned long)*(volatile uint64_t*)0x1806092c0ULL,
+                *(volatile uint32_t*)0x18063f8c0ULL,
+                *(volatile uint32_t*)0x18063f5c0ULL,
+                (unsigned long)params_ptr,
+                params_ptr ? *(volatile uint32_t*)params_ptr : 0xDEAD,
+                params_ptr ? *(volatile uint32_t*)(params_ptr + 0x34) : 0xDEAD);
+    }
     uint64_t rsp_val = (uint64_t)uc->uc_mcontext.gregs[REG_RSP];
     char msg[1024];
     int len = snprintf(msg, sizeof(msg),
