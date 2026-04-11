@@ -8,4 +8,5 @@ drawbridge_enter_ntum:
     /* rdx already = params */
     movq %rsi, %rsp        /* switch to NTUM stack */
     xorq %rbp, %rbp        /* clean frame */
-    jmpq *%rdi             /* jump to entry */
+    callq *%rdi            /* call entry (not jmp) */
+    hlt                    /* never reached */

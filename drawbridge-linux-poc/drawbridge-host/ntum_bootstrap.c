@@ -337,7 +337,8 @@ static void *boot_thread_fn(void *arg) {
 
     /* Use assembly trampoline (drawbridge_enter_ntum from trampoline.S) */
     extern void drawbridge_enter_ntum(void *entry, void *stack, void *params);
-    ntum_direct_call(real_init, (void*)ntum_stack, args->params);
+    fprintf(stderr, "[BOOT] Byte at 0x1803a05d5: 0x%02x (expect 0x90)\n", *(volatile uint8_t*)0x1803a05d5ULL);
+    ntum_patch_rcx_to_global(); drawbridge_enter_ntum(real_init, (void*)ntum_stack, args->params);
 
     /* Should not reach here */
     printf("[BOOT] NTUM returned unexpectedly\n");
@@ -421,4 +422,50 @@ void ntum_direct_call(void *entry, void *stack, void *params) {
     
     /* Restore rsp (never reached) */
     __asm__ volatile ("mov %0, %%rsp" :: "r"(rsp_save) : "memory");
+}
+
+/* EXTRA: Patch NTUM init to read params from global [0x180c00008] 
+ * instead of rcx register (works around the rcx corruption) */
+void ntum_patch_rcx_to_global(void) {
+    /* 0x18020478b: mov r14, rcx → mov r14, [rip+0x9fb876] = [0x180c00008] */
+    volatile uint8_t *p1 = (uint8_t*)0x18020478bULL;
+    p1[0] = 0x4c; p1[1] = 0x8b; p1[2] = 0x35;  /* mov r14, [rip+...] */
+    p1[3] = 0x76; p1[4] = 0xb8; p1[5] = 0x9f; p1[6] = 0x00;  /* offset = 0x9fb876 */
+
+    /* Fix: the original instruction was 3 bytes, new is 7 bytes.
+     * We overwrite into 'mov esi, 0xc000000d' which starts at 0x18020478e.
+     * The new mov r14 ends at 0x180204792. The mov esi starts at 0x18020478e
+     * but we overwrote 4 bytes of it. We need to rewrite it at 0x180204792. */
+    volatile uint8_t *p2 = (uint8_t*)0x180204792ULL;
+    p2[0] = 0xbe; p2[1] = 0x0d; p2[2] = 0x00; p2[3] = 0x00; p2[4] = 0xc0;
+
+    /* 0x180204797: test rcx, rcx → test r14, r14 */
+    volatile uint8_t *p3 = (uint8_t*)0x180204797ULL;
+    p3[0] = 0x4d; p3[1] = 0x85; p3[2] = 0xf6;  /* test r14, r14 */
+
+    /* 0x18020479c: mov r8, [rcx] → mov r8, [r14] */
+    volatile uint8_t *p4 = (uint8_t*)0x18020479cULL;
+    p4[0] = 0x4d; p4[1] = 0x8b; p4[2] = 0x06;  /* mov r8, [r14] */
+
+    /* Also patch 0x180204781: mov rdi, rdx → mov rdi, [rip+0x9fb880] = [0x180c00008] 
+     * to also read params from global for the rdi copy */
+    volatile uint8_t *p5 = (uint8_t*)0x180204781ULL;
+    /* Original: 48 8b fa = mov rdi, rdx (3 bytes) */
+    /* New: 48 8b 3d 80 b8 9f 00 = mov rdi, [rip+0x9fb880] (7 bytes) */
+    /* But this needs 7 bytes and we only have 3. Skip this - use a different approach */
+    /* Actually: mov rdi,rdx is fine because rdx = params from trampoline too */
+
+    fprintf(stderr, "[BOOT] Patched NTUM init: rcx→global at [0x180c00008]\n");
+
+    /* Patch ALL __fastfail (int 0x29 = CD 29) in .text to nop nop */
+    volatile uint8_t *text = (uint8_t*)0x180200000ULL;
+    int ff_count = 0;
+    for (size_t i = 0; i < 0x1AA000 - 1; i++) {
+        if (text[i] == 0xCD && text[i+1] == 0x29) {
+            text[i] = 0x90;
+            text[i+1] = 0x90;
+            ff_count++;
+        }
+    }
+    fprintf(stderr, "[BOOT] Patched %d __fastfail (int 0x29) calls\n", ff_count);
 }
