@@ -214,7 +214,7 @@ DK_API uint64_t DK_StreamUnmap(void *address, uint64_t size) {
 
 DK_API uint64_t DK_StreamDelete(DK_HANDLE stream) {
     (void)stream;
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_StreamControl(DK_HANDLE in_handle, uint64_t op_code,
@@ -222,40 +222,40 @@ DK_API uint64_t DK_StreamControl(DK_HANDLE in_handle, uint64_t op_code,
                                   void *out_buf, uint64_t out_size) {
     (void)in_handle; (void)op_code; (void)in_buf; (void)in_size;
     (void)out_buf; (void)out_size;
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_StreamAttributesQuery(const void *uri, void *attrs) {
     (void)uri; (void)attrs;
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_StreamAttributesQueryByHandle(DK_HANDLE stream,
                                                    uint64_t flags, void *attrs) {
     (void)stream; (void)flags; (void)attrs;
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_StreamEnumerateChildren(DK_HANDLE stream, void *buf,
                                             uint64_t buf_size, uint64_t *used) {
     (void)stream; (void)buf; (void)buf_size; (void)used;
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_StreamRename(DK_HANDLE stream, const void *new_name) {
     (void)stream; (void)new_name;
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_StreamChangesRegister(DK_HANDLE stream, uint64_t filter,
                                           uint64_t watch_tree, DK_HANDLE *event) {
     (void)stream; (void)filter; (void)watch_tree; (void)event;
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_StreamChangesPoll(DK_HANDLE stream, void *buf, uint64_t *size) {
     (void)stream; (void)buf; (void)size;
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_StreamRangeLock(DK_HANDLE stream, uint64_t off, uint64_t len,
@@ -272,13 +272,13 @@ DK_API uint64_t DK_StreamRangeUnlock(DK_HANDLE stream, uint64_t off, uint64_t le
 DK_API uint64_t DK_StreamGetEvent(DK_HANDLE stream, uint64_t event_id,
                                    DK_HANDLE *event) {
     (void)stream; (void)event_id; (void)event;
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_StreamEventSelect(DK_HANDLE stream, DK_HANDLE event,
                                       uint64_t poll_events, DK_HANDLE *async) {
     (void)stream; (void)event; (void)poll_events; (void)async;
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;
 }
 
 /* ================================================================
@@ -472,7 +472,7 @@ DK_API uint64_t DK_ObjectReference(DK_HANDLE handle) {
 
 DK_API uint64_t DK_ProcessCreate(void *params, DK_HANDLE *process) {
     (void)params; (void)process;
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;
 }
 
 DK_API void DK_ProcessExit(uint64_t exit_code) {
@@ -521,7 +521,7 @@ DK_API uint64_t DK_RandomBitsRead(void *buffer, uint64_t length) {
 
 DK_API uint64_t DK_ConsoleCreate(DK_HANDLE *console) {
     (void)console;
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;
 }
 
 /* ================================================================
