@@ -155,6 +155,7 @@ static void *make_thunk(const uint8_t *template, size_t tpl_size,
 #define PAGE_EXECUTE_READWRITE 0x40
 
 /* Thread-local last error */
+typedef void *HKEY;
 static __thread DWORD tls_last_error = 0;
 
 /* DATA exports for msvcrt - these must be actual data, not function pointers.
@@ -581,9 +582,321 @@ LONG WINAPI stub_InterlockedDecrement(volatile LONG *Addend) {
     return __sync_sub_and_fetch(Addend, 1);
 }
 
+/* ---- Critical Sections (needed by WannaCry, updater_trojan) ---- */
+
+typedef struct { pthread_mutex_t m; int init; } CRITICAL_SECTION_IMPL;
+
+void WINAPI stub_InitializeCriticalSection(LPVOID lpCriticalSection) {
+    CRITICAL_SECTION_IMPL *cs = (CRITICAL_SECTION_IMPL*)lpCriticalSection;
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&cs->m, &attr);
+    pthread_mutexattr_destroy(&attr);
+    cs->init = 1;
+}
+
+void WINAPI stub_EnterCriticalSection(LPVOID lpCriticalSection) {
+    CRITICAL_SECTION_IMPL *cs = (CRITICAL_SECTION_IMPL*)lpCriticalSection;
+    if (!cs->init) stub_InitializeCriticalSection(lpCriticalSection);
+    pthread_mutex_lock(&cs->m);
+}
+
+void WINAPI stub_LeaveCriticalSection(LPVOID lpCriticalSection) {
+    CRITICAL_SECTION_IMPL *cs = (CRITICAL_SECTION_IMPL*)lpCriticalSection;
+    pthread_mutex_unlock(&cs->m);
+}
+
+void WINAPI stub_DeleteCriticalSection(LPVOID lpCriticalSection) {
+    CRITICAL_SECTION_IMPL *cs = (CRITICAL_SECTION_IMPL*)lpCriticalSection;
+    if (cs->init) pthread_mutex_destroy(&cs->m);
+    cs->init = 0;
+}
+
+BOOL WINAPI stub_InitializeCriticalSectionAndSpinCount(LPVOID lpCS, DWORD dwSpinCount) {
+    (void)dwSpinCount;
+    stub_InitializeCriticalSection(lpCS);
+    return TRUE;
+}
+
+/* ---- VirtualProtect / VirtualQuery ---- */
+
+BOOL WINAPI stub_VirtualProtect(LPVOID lpAddress, SIZE_T dwSize,
+                                 DWORD flNewProtect, DWORD *lpflOldProtect) {
+    if (lpflOldProtect) *lpflOldProtect = 0x04; /* PAGE_READWRITE */
+    int prot = PROT_READ | PROT_WRITE;
+    if (flNewProtect & 0x40) prot |= PROT_EXEC; /* PAGE_EXECUTE_READWRITE */
+    if (flNewProtect & 0x20) prot = PROT_READ | PROT_EXEC;
+    mprotect(lpAddress, dwSize, prot);
+    return TRUE;
+}
+
+SIZE_T WINAPI stub_VirtualQuery(LPCVOID lpAddress, LPVOID lpBuffer, SIZE_T dwLength) {
+    (void)lpAddress;
+    if (lpBuffer && dwLength >= 28) memset(lpBuffer, 0, dwLength);
+    return dwLength;
+}
+
+/* ---- Unicode (W) variants ---- */
+
+HANDLE WINAPI stub_CreateFileW(const void *lpFileName, DWORD dwDesiredAccess,
+    DWORD dwShareMode, LPVOID lpSecAttr, DWORD dwCreation, DWORD dwFlags, HANDLE hTpl) {
+    /* Convert wchar to char (ASCII only for PoC) */
+    const uint16_t *w = (const uint16_t*)lpFileName;
+    char buf[512]; int i;
+    for (i = 0; w[i] && i < 511; i++) buf[i] = (char)(w[i] & 0xFF);
+    buf[i] = 0;
+    return stub_CreateFileA(buf, dwDesiredAccess, dwShareMode, lpSecAttr, dwCreation, dwFlags, hTpl);
+}
+
+DWORD WINAPI stub_GetFileAttributesW(const void *lpFileName) {
+    const uint16_t *w = (const uint16_t*)lpFileName;
+    char buf[512]; int i;
+    for (i = 0; w[i] && i < 511; i++) buf[i] = (char)(w[i] & 0xFF);
+    buf[i] = 0;
+    return stub_GetFileAttributesA(buf);
+}
+
+BOOL WINAPI stub_SetFileAttributesW(const void *lpFileName, DWORD dwFileAttributes) {
+    (void)lpFileName; (void)dwFileAttributes;
+    return TRUE;
+}
+
+BOOL WINAPI stub_CreateDirectoryA(LPCSTR lpPathName, LPVOID lpSecurityAttributes) {
+    (void)lpSecurityAttributes;
+    mkdir(lpPathName, 0755);
+    return TRUE;
+}
+
+BOOL WINAPI stub_CreateDirectoryW(const void *lpPathName, LPVOID lpSecurityAttributes) {
+    const uint16_t *w = (const uint16_t*)lpPathName;
+    char buf[512]; int i;
+    for (i = 0; w[i] && i < 511; i++) buf[i] = (char)(w[i] & 0xFF);
+    buf[i] = 0;
+    return stub_CreateDirectoryA(buf, lpSecurityAttributes);
+}
+
+BOOL WINAPI stub_SetCurrentDirectoryA(LPCSTR lpPathName) {
+    return chdir(lpPathName) == 0;
+}
+
+BOOL WINAPI stub_SetCurrentDirectoryW(const void *lpPathName) {
+    const uint16_t *w = (const uint16_t*)lpPathName;
+    char buf[512]; int i;
+    for (i = 0; w[i] && i < 511; i++) buf[i] = (char)(w[i] & 0xFF);
+    buf[i] = 0;
+    return stub_SetCurrentDirectoryA(buf);
+}
+
+DWORD WINAPI stub_GetTempPathW(DWORD nBufLen, void *lpBuffer) {
+    uint16_t *w = (uint16_t*)lpBuffer;
+    const char *tmp = "/tmp/";
+    int i;
+    for (i = 0; tmp[i] && (DWORD)i < nBufLen - 1; i++) w[i] = tmp[i];
+    w[i] = 0;
+    return (DWORD)i;
+}
+
+DWORD WINAPI stub_GetWindowsDirectoryW(void *lpBuffer, DWORD uSize) {
+    uint16_t *w = (uint16_t*)lpBuffer;
+    const char *dir = "C:\\Windows";
+    int i;
+    for (i = 0; dir[i] && (DWORD)i < uSize - 1; i++) w[i] = dir[i];
+    w[i] = 0;
+    return (DWORD)i;
+}
+
+DWORD WINAPI stub_GetComputerNameW(void *lpBuffer, DWORD *nSize) {
+    uint16_t *w = (uint16_t*)lpBuffer;
+    const char *name = "DRAWBRIDGE";
+    DWORD i;
+    for (i = 0; name[i] && i < *nSize - 1; i++) w[i] = name[i];
+    w[i] = 0;
+    *nSize = i;
+    return TRUE;
+}
+
+int WINAPI stub_MultiByteToWideChar(DWORD CodePage, DWORD dwFlags,
+    LPCSTR lpMBStr, int cbMB, void *lpWCStr, int cchWC) {
+    (void)CodePage; (void)dwFlags;
+    if (cbMB == -1) cbMB = (int)strlen(lpMBStr) + 1;
+    if (!lpWCStr || cchWC == 0) return cbMB;
+    uint16_t *w = (uint16_t*)lpWCStr;
+    int i;
+    for (i = 0; i < cbMB && i < cchWC; i++) w[i] = (uint8_t)lpMBStr[i];
+    return i;
+}
+
+int WINAPI stub_WideCharToMultiByte(DWORD CodePage, DWORD dwFlags,
+    const void *lpWCStr, int cchWC, LPSTR lpMBStr, int cbMB,
+    LPCSTR lpDefault, BOOL *lpUsed) {
+    (void)CodePage; (void)dwFlags; (void)lpDefault; (void)lpUsed;
+    const uint16_t *w = (const uint16_t*)lpWCStr;
+    if (cchWC == -1) { int n = 0; while (w[n]) n++; cchWC = n + 1; }
+    if (!lpMBStr || cbMB == 0) return cchWC;
+    int i;
+    for (i = 0; i < cchWC && i < cbMB; i++) lpMBStr[i] = (char)(w[i] & 0xFF);
+    return i;
+}
+
+DWORD WINAPI stub_GetFullPathNameA(LPCSTR lpFileName, DWORD nBufLen,
+                                     LPSTR lpBuffer, LPSTR *lpFilePart) {
+    if (!lpFileName) return 0;
+    size_t len = strlen(lpFileName);
+    if (len >= nBufLen) return (DWORD)(len + 1);
+    memcpy(lpBuffer, lpFileName, len + 1);
+    if (lpFilePart) {
+        char *p = lpBuffer + len;
+        while (p > lpBuffer && *(p-1) != '\\' && *(p-1) != '/') p--;
+        *lpFilePart = p;
+    }
+    return (DWORD)len;
+}
+
+HANDLE WINAPI stub_OpenMutexA(DWORD dwDesiredAccess, BOOL bInherit, LPCSTR lpName) {
+    (void)dwDesiredAccess; (void)bInherit; (void)lpName;
+    return NULL; /* Mutex doesn't exist */
+}
+
+void WINAPI stub_FreeLibrary(HANDLE hLibModule) { (void)hLibModule; }
+
+BOOL WINAPI stub_IsBadReadPtr(LPCVOID lp, SIZE_T ucb) { (void)lp; (void)ucb; return FALSE; }
+
+DWORD WINAPI stub_GetExitCodeProcess(HANDLE hProcess, LPDWORD lpExitCode) {
+    (void)hProcess;
+    if (lpExitCode) *lpExitCode = 0;
+    return TRUE;
+}
+
+void WINAPI stub_TerminateProcess(HANDLE hProcess, DWORD uExitCode) {
+    (void)hProcess;
+    printf("[DRAWBRIDGE] TerminateProcess(%u) - blocked\n", uExitCode);
+}
+
+DWORD WINAPI stub_GetFileSizeEx(HANDLE hFile, void *lpFileSize) {
+    struct stat st;
+    if (fstat((int)(intptr_t)hFile, &st) < 0) return FALSE;
+    if (lpFileSize) *(int64_t*)lpFileSize = st.st_size;
+    return TRUE;
+}
+
+void WINAPI stub_SystemTimeToFileTime(LPVOID lpSysTime, LPVOID lpFileTime) {
+    *(uint64_t*)lpFileTime = 0;
+}
+
+void WINAPI stub_LocalFileTimeToFileTime(LPVOID lpLocal, LPVOID lpFileTime) {
+    if (lpLocal && lpFileTime) *(uint64_t*)lpFileTime = *(uint64_t*)lpLocal;
+}
+
+/* Resource stubs */
+HANDLE WINAPI stub_FindResourceA(HANDLE hModule, LPCSTR lpName, LPCSTR lpType) {
+    (void)hModule; (void)lpName; (void)lpType;
+    return NULL;
+}
+
+HANDLE WINAPI stub_LoadResource(HANDLE hModule, HANDLE hResInfo) {
+    (void)hModule; (void)hResInfo;
+    return NULL;
+}
+
+LPVOID WINAPI stub_LockResource(HANDLE hResData) { (void)hResData; return NULL; }
+DWORD  WINAPI stub_SizeofResource(HANDLE hModule, HANDLE hResInfo) {
+    (void)hModule; (void)hResInfo; return 0;
+}
+
+LPVOID WINAPI stub_GlobalAlloc(DWORD uFlags, SIZE_T dwBytes) {
+    (void)uFlags;
+    return malloc(dwBytes);
+}
+
+HANDLE WINAPI stub_GlobalFree(LPVOID hMem) { free(hMem); return NULL; }
+
+/* ---- Crypto stubs (advapi32) ---- */
+/* HKEY typedef needed here if not already defined */
+BOOL WINAPI stub_CryptAcquireContextA(LPVOID phProv, LPCSTR a, LPCSTR b, DWORD c, DWORD d) {
+    (void)a;(void)b;(void)c;(void)d;
+    if (phProv) *(void**)phProv = (void*)(intptr_t)0xC9D0;
+    return TRUE;
+}
+BOOL WINAPI stub_CryptAcquireContextW(LPVOID phProv, const void *a, const void *b, DWORD c, DWORD d) {
+    (void)a;(void)b;(void)c;(void)d;
+    if (phProv) *(void**)phProv = (void*)(intptr_t)0xC9D0;
+    return TRUE;
+}
+BOOL WINAPI stub_CryptReleaseContext(HANDLE hProv, DWORD dwFlags) { (void)hProv;(void)dwFlags; return TRUE; }
+BOOL WINAPI stub_CryptGenRandom(HANDLE hProv, DWORD dwLen, void *pbBuffer) {
+    (void)hProv;
+    /* Use real randomness from Linux */
+    getrandom(pbBuffer, dwLen, 0);
+    return TRUE;
+}
+BOOL WINAPI stub_CryptCreateHash(HANDLE hProv, DWORD algId, HANDLE hKey, DWORD dwFlags, LPVOID phHash) {
+    (void)hProv;(void)algId;(void)hKey;(void)dwFlags;
+    if (phHash) *(void**)phHash = (void*)(intptr_t)0xA5A5;
+    return TRUE;
+}
+BOOL WINAPI stub_CryptHashData(HANDLE hHash, const void *pbData, DWORD dwDataLen, DWORD dwFlags) {
+    (void)hHash;(void)pbData;(void)dwDataLen;(void)dwFlags; return TRUE;
+}
+BOOL WINAPI stub_CryptGetHashParam(HANDLE hHash, DWORD dwParam, void *pbData, DWORD *pdwDataLen, DWORD dwFlags) {
+    (void)hHash;(void)dwParam;(void)dwFlags;
+    if (pbData && pdwDataLen) memset(pbData, 0, *pdwDataLen);
+    return TRUE;
+}
+BOOL WINAPI stub_CryptDestroyHash(HANDLE hHash) { (void)hHash; return TRUE; }
+BOOL WINAPI stub_CryptGenKey(HANDLE hProv, DWORD algId, DWORD dwFlags, LPVOID phKey) {
+    (void)hProv;(void)algId;(void)dwFlags;
+    if (phKey) *(void**)phKey = (void*)(intptr_t)0x0AE5;
+    return TRUE;
+}
+BOOL WINAPI stub_CryptDestroyKey(HANDLE hKey) { (void)hKey; return TRUE; }
+BOOL WINAPI stub_CryptEncrypt(HANDLE hKey, HANDLE hHash, BOOL Final, DWORD dwFlags,
+    void *pbData, DWORD *pdwDataLen, DWORD dwBufLen) {
+    (void)hKey;(void)hHash;(void)Final;(void)dwFlags;(void)pbData;(void)pdwDataLen;(void)dwBufLen;
+    return TRUE;
+}
+BOOL WINAPI stub_CryptImportKey(HANDLE hProv, const void *pbData, DWORD dwDataLen,
+    HANDLE hPubKey, DWORD dwFlags, LPVOID phKey) {
+    (void)hProv;(void)pbData;(void)dwDataLen;(void)hPubKey;(void)dwFlags;
+    if (phKey) *(void**)phKey = (void*)(intptr_t)0x0AE5;
+    return TRUE;
+}
+BOOL WINAPI stub_CryptExportKey(HANDLE hKey, HANDLE hExpKey, DWORD dwBlobType,
+    DWORD dwFlags, void *pbData, DWORD *pdwDataLen) {
+    (void)hKey;(void)hExpKey;(void)dwBlobType;(void)dwFlags;(void)pbData;(void)pdwDataLen;
+    return FALSE; /* Not supported */
+}
+BOOL WINAPI stub_CryptSetKeyParam(HANDLE hKey, DWORD dwParam, const void *pbData, DWORD dwFlags) {
+    (void)hKey;(void)dwParam;(void)pbData;(void)dwFlags; return TRUE;
+}
+
+/* Registry extras */
+LONG WINAPI stub_RegQueryValueExA(HKEY hKey, LPCSTR lpValueName, LPDWORD lpReserved,
+    LPDWORD lpType, void *lpData, LPDWORD lpcbData) {
+    (void)hKey;(void)lpValueName;(void)lpReserved;(void)lpType;(void)lpData;(void)lpcbData;
+    return 2; /* ERROR_FILE_NOT_FOUND */
+}
+LONG WINAPI stub_RegDeleteKeyA(HKEY hKey, LPCSTR lpSubKey) { (void)hKey;(void)lpSubKey; return 0; }
+LONG WINAPI stub_RegDeleteValueA(HKEY hKey, LPCSTR lpValueName) { (void)hKey;(void)lpValueName; return 0; }
+LONG WINAPI stub_RegEnumKeyA(HKEY hKey, DWORD dwIndex, LPSTR lpName, DWORD cchName) {
+    (void)hKey;(void)dwIndex;(void)lpName;(void)cchName; return 259; /* ERROR_NO_MORE_ITEMS */
+}
+LONG WINAPI stub_RegCreateKeyW(HKEY hKey, const void *lpSubKey, HKEY *phkResult) {
+    (void)hKey;(void)lpSubKey;
+    if (phkResult) *phkResult = (HKEY)(intptr_t)0xBAAD;
+    return 0;
+}
+
+/* Security stubs */
+BOOL WINAPI stub_InitializeSecurityDescriptor(LPVOID pSD, DWORD dwRevision) {
+    (void)dwRevision; if (pSD) memset(pSD, 0, 20); return TRUE;
+}
+BOOL WINAPI stub_SetSecurityDescriptorDacl(LPVOID pSD, BOOL bDaclPresent, LPVOID pDacl, BOOL bDefault) {
+    (void)pSD;(void)bDaclPresent;(void)pDacl;(void)bDefault; return TRUE;
+}
+
 /* ---- advapi32.dll stubs ---- */
 
-typedef void* HKEY;
 #define ERROR_SUCCESS 0
 
 LONG WINAPI stub_RegOpenKeyExA(HKEY hKey, LPCSTR lpSubKey, DWORD ulOptions,
@@ -772,8 +1085,45 @@ static const stub_entry_t g_stubs[] = {
     {"KERNEL32.dll", "CreateProcessA", stub_CreateProcessA},
     {"KERNEL32.dll", "InterlockedIncrement", stub_InterlockedIncrement},
     {"KERNEL32.dll", "InterlockedDecrement", stub_InterlockedDecrement},
-    {"KERNEL32.dll", "GetFileTime", stub_IsDebuggerPresent},  /* stub returns FALSE/0 */
-    {"KERNEL32.dll", "SetFileTime", stub_IsDebuggerPresent},  /* stub */
+    {"KERNEL32.dll", "GetFileTime", stub_IsDebuggerPresent},
+    {"KERNEL32.dll", "SetFileTime", stub_IsDebuggerPresent},
+    /* Critical sections */
+    {"KERNEL32.dll", "InitializeCriticalSection", stub_InitializeCriticalSection},
+    {"KERNEL32.dll", "InitializeCriticalSectionAndSpinCount", stub_InitializeCriticalSectionAndSpinCount},
+    {"KERNEL32.dll", "EnterCriticalSection", stub_EnterCriticalSection},
+    {"KERNEL32.dll", "LeaveCriticalSection", stub_LeaveCriticalSection},
+    {"KERNEL32.dll", "DeleteCriticalSection", stub_DeleteCriticalSection},
+    /* Memory */
+    {"KERNEL32.dll", "VirtualProtect", stub_VirtualProtect},
+    {"KERNEL32.dll", "VirtualQuery", stub_VirtualQuery},
+    /* Unicode W variants */
+    {"KERNEL32.dll", "CreateFileW", stub_CreateFileW},
+    {"KERNEL32.dll", "GetFileAttributesW", stub_GetFileAttributesW},
+    {"KERNEL32.dll", "SetFileAttributesW", stub_SetFileAttributesW},
+    {"KERNEL32.dll", "CreateDirectoryA", stub_CreateDirectoryA},
+    {"KERNEL32.dll", "CreateDirectoryW", stub_CreateDirectoryW},
+    {"KERNEL32.dll", "SetCurrentDirectoryA", stub_SetCurrentDirectoryA},
+    {"KERNEL32.dll", "SetCurrentDirectoryW", stub_SetCurrentDirectoryW},
+    {"KERNEL32.dll", "GetTempPathW", stub_GetTempPathW},
+    {"KERNEL32.dll", "GetWindowsDirectoryW", stub_GetWindowsDirectoryW},
+    {"KERNEL32.dll", "GetComputerNameW", stub_GetComputerNameW},
+    {"KERNEL32.dll", "MultiByteToWideChar", stub_MultiByteToWideChar},
+    {"KERNEL32.dll", "WideCharToMultiByte", stub_WideCharToMultiByte},
+    {"KERNEL32.dll", "GetFullPathNameA", stub_GetFullPathNameA},
+    {"KERNEL32.dll", "OpenMutexA", stub_OpenMutexA},
+    {"KERNEL32.dll", "FreeLibrary", stub_FreeLibrary},
+    {"KERNEL32.dll", "IsBadReadPtr", stub_IsBadReadPtr},
+    {"KERNEL32.dll", "GetExitCodeProcess", stub_GetExitCodeProcess},
+    {"KERNEL32.dll", "TerminateProcess", stub_TerminateProcess},
+    {"KERNEL32.dll", "GetFileSizeEx", stub_GetFileSizeEx},
+    {"KERNEL32.dll", "SystemTimeToFileTime", stub_SystemTimeToFileTime},
+    {"KERNEL32.dll", "LocalFileTimeToFileTime", stub_LocalFileTimeToFileTime},
+    {"KERNEL32.dll", "FindResourceA", stub_FindResourceA},
+    {"KERNEL32.dll", "LoadResource", stub_LoadResource},
+    {"KERNEL32.dll", "LockResource", stub_LockResource},
+    {"KERNEL32.dll", "SizeofResource", stub_SizeofResource},
+    {"KERNEL32.dll", "GlobalAlloc", stub_GlobalAlloc},
+    {"KERNEL32.dll", "GlobalFree", stub_GlobalFree},
 
     /* advapi32.dll */
     {"ADVAPI32.DLL", "RegOpenKeyExA", stub_RegOpenKeyExA},
@@ -789,6 +1139,30 @@ static const stub_entry_t g_stubs[] = {
     {"ADVAPI32.DLL", "RegisterServiceCtrlHandlerA", stub_RegisterServiceCtrlHandlerA},
     {"ADVAPI32.DLL", "SetServiceStatus", stub_SetServiceStatus},
     {"ADVAPI32.DLL", "StartServiceCtrlDispatcherA", stub_StartServiceCtrlDispatcherA},
+    /* Crypto */
+    {"ADVAPI32.DLL", "CryptAcquireContextA", stub_CryptAcquireContextA},
+    {"ADVAPI32.DLL", "CryptAcquireContextW", stub_CryptAcquireContextW},
+    {"ADVAPI32.DLL", "CryptReleaseContext", stub_CryptReleaseContext},
+    {"ADVAPI32.DLL", "CryptGenRandom", stub_CryptGenRandom},
+    {"ADVAPI32.DLL", "CryptCreateHash", stub_CryptCreateHash},
+    {"ADVAPI32.DLL", "CryptHashData", stub_CryptHashData},
+    {"ADVAPI32.DLL", "CryptGetHashParam", stub_CryptGetHashParam},
+    {"ADVAPI32.DLL", "CryptDestroyHash", stub_CryptDestroyHash},
+    {"ADVAPI32.DLL", "CryptGenKey", stub_CryptGenKey},
+    {"ADVAPI32.DLL", "CryptDestroyKey", stub_CryptDestroyKey},
+    {"ADVAPI32.DLL", "CryptEncrypt", stub_CryptEncrypt},
+    {"ADVAPI32.DLL", "CryptImportKey", stub_CryptImportKey},
+    {"ADVAPI32.DLL", "CryptExportKey", stub_CryptExportKey},
+    {"ADVAPI32.DLL", "CryptSetKeyParam", stub_CryptSetKeyParam},
+    /* Registry extras */
+    {"ADVAPI32.DLL", "RegQueryValueExA", stub_RegQueryValueExA},
+    {"ADVAPI32.DLL", "RegDeleteKeyA", stub_RegDeleteKeyA},
+    {"ADVAPI32.DLL", "RegDeleteValueA", stub_RegDeleteValueA},
+    {"ADVAPI32.DLL", "RegEnumKeyA", stub_RegEnumKeyA},
+    {"ADVAPI32.DLL", "RegCreateKeyW", stub_RegCreateKeyW},
+    /* Security */
+    {"ADVAPI32.DLL", "InitializeSecurityDescriptor", stub_InitializeSecurityDescriptor},
+    {"ADVAPI32.DLL", "SetSecurityDescriptorDacl", stub_SetSecurityDescriptorDacl},
 
     /* msvcrt.dll / api-ms-win-crt-* */
     {"msvcrt.dll", "puts", stub_puts},
