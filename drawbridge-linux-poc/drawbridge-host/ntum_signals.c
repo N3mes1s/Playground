@@ -122,8 +122,23 @@ static int handle_libos_fault(void *fault_addr, int is_write, ucontext_t *uc) {
                     if (offset_in_section < g_pe_sections[s].raw_size)
                         raw_remain = g_pe_sections[s].raw_size - offset_in_section;
                     size_t copy_sz = (raw_remain > 0x1000) ? 0x1000 : raw_remain;
-                    if (copy_sz > 0 && raw_off + copy_sz <= g_pe_raw_size)
+                    if (copy_sz > 0 && raw_off + copy_sz <= g_pe_raw_size) {
                         memcpy(result, g_pe_raw_data + raw_off, copy_sz);
+                        /* Patch int3+jmp (CC EB FD) patterns in code sections */
+                        if (sec_va == 0x200000) {  /* .text section */
+                            uint8_t *p = (uint8_t*)result;
+                            for (size_t j = 0; j + 2 < copy_sz; j++) {
+                                if (p[j] == 0xCC && p[j+1] == 0xEB && p[j+2] == 0xFD) {
+                                    p[j] = 0x90; p[j+1] = 0x90; p[j+2] = 0x90;
+                                }
+                            }
+                            /* Patch standalone int3 after ret/nop */
+                            for (size_t j = 1; j < copy_sz; j++) {
+                                if (p[j] == 0xCC && (p[j-1] == 0xC3 || p[j-1] == 0x90 || p[j-1] == 0xCC))
+                                    p[j] = 0x90;
+                            }
+                        }
+                    }
                     break;
                 }
             }
@@ -154,6 +169,20 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
     if (sig == SIGSEGV || sig == SIGBUS) {
         if (handle_libos_fault(fault_addr, is_write, uc)) {
             return;  /* Handled - resume execution */
+        }
+    }
+
+    /* Handle SIGTRAP (int3) - skip the int3 byte and continue */
+    if (sig == SIGTRAP) {
+        uintptr_t rip = uc->uc_mcontext.gregs[REG_RIP];
+        /* Check if RIP is in NTUM code and the byte before is 0xCC (int3) */
+        if (rip >= PE_IMAGE_START && rip < PE_IMAGE_END) {
+            /* int3 already executed, RIP points AFTER the CC byte.
+             * Patch the byte to NOP for future executions and resume. */
+            uint8_t *cc = (uint8_t*)(rip - 1);
+            if (*cc == 0xCC) *cc = 0x90;
+            ntum_fault_count++;
+            return;  /* Resume execution after the (now-patched) int3 */
         }
     }
 
@@ -194,7 +223,7 @@ void ntum_signal_init(void) {
     sigaction(SIGSEGV, &sa, NULL);
     sigaction(SIGBUS, &sa, NULL);
     sigaction(SIGFPE, &sa, NULL);
-    /* Do NOT handle SIGTRAP - let the NTUM use int3 for its own purposes */
+    sigaction(SIGTRAP, &sa, NULL);  /* Handle SIGTRAP from remaining int3 bytes */
 
     fprintf(stderr, "[SIGNAL] Handler installed (SIGSEGV/SIGBUS/SIGFPE) altstack=%p\n", ss.ss_sp);
 }
