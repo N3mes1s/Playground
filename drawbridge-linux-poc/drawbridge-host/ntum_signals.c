@@ -140,6 +140,14 @@ static int handle_libos_fault(void *fault_addr, ucontext_t *uc) {
     if (addr >= LIBOS_VM_END)
         return 0;
 
+    /* Don't map NULL page or very low addresses - these are real crashes */
+    if (addr < LIBOS_VM_START) {
+        uintptr_t rip = uc ? uc->uc_mcontext.gregs[REG_RIP] : 0;
+        fprintf(stderr, "[FAULT] NULL deref at 0x%lx from RIP=0x%lx - not mapped\n",
+                (unsigned long)addr, (unsigned long)rip);
+        return 0;
+    }
+
     /* Map the faulted page (MAP_FIXED_NOREPLACE preserves existing maps) */
     void *result = mmap((void*)page, 0x1000,
                         PROT_READ | PROT_WRITE | PROT_EXEC,

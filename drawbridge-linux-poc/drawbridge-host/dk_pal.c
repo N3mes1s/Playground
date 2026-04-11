@@ -542,7 +542,14 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
                            uint64_t out_size, void *out_buf) {
     (void)context; (void)out_size;
 
-    /* Re-arm the ABI dispatcher pointer in .data */
+    /* Re-arm ALL critical .data globals on EVERY dispatcher call.
+     * The NTUM's resolution loop stores results at .data addresses that
+     * overlap with our critical globals:
+     *   [0x18063f8c0] = boot flag (overwritten by 0x7001000 AbiGetVersion)
+     *   [0x18063f8c8] = dispatcher ptr (overwritten by 0x8001001 SystemTimeQuery v1)
+     * We must re-arm these after every call to prevent them from being
+     * corrupted by the resolution process. */
+    *(volatile uint32_t*)NTUM_BOOT_FLAG_ADDR = 1;
     *(volatile uint64_t*)NTUM_ABI_DISPATCHER_ADDR =
         (uint64_t)&DK_AbiDispatcher;
 
@@ -554,13 +561,36 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
                 (unsigned long)data_size, in_buf, out_buf);
     }
 
-    if (call_type == ABI_GET_FUNCTION_V2) {
+    /* Debug: check critical values */
+    if (dispatch_count <= 100 || dispatch_count % 100 == 0) {
+        fprintf(stderr, "[DK] #%d boot_flag=%u disp=0x%lx abi_ver=%u type=0x%lx\n",
+                dispatch_count,
+                *(volatile uint32_t*)NTUM_BOOT_FLAG_ADDR,
+                (unsigned long)*(volatile uint64_t*)NTUM_ABI_DISPATCHER_ADDR,
+                *(volatile uint32_t*)0x18063f5c0ULL,
+                (unsigned long)call_type);
+    }
+
+    /* Handle ALL ABI function resolution variants:
+     * 0x7002002 = GetFunction_v2 (first pass, version 0)
+     * 0x7001002 = GetFunction version 2 (second pass, called by second resolver)
+     * The second resolver at PE RVA 0x213ea4 calls with type=0x7001002
+     * and stores the output buffer value at critical .data addresses. */
+    if (call_type == ABI_GET_FUNCTION_V2 || call_type == 0x7001002) {
         uint32_t *in = (uint32_t*)in_buf;
         uint32_t func_id = in ? in[0] : 0;
         uint32_t version = in ? in[1] : 0;
 
+        /* The second resolution pass uses version 1+ (func_ids ending in 001+).
+         * These store results at critical .data addresses (boot flag, dispatcher ptr).
+         * Normalize to the base func_id (version 0) to get the same function. */
+        uint32_t base_func_id = func_id & 0xFFFFF000;
+
         void *func = (void*)&DK_GenericStub;
         int is_stub = 1;  /* Track if we're returning a real impl or generic stub */
+
+        /* Use base_func_id for the switch to handle all versions uniformly */
+        func_id = base_func_id;
 
         switch (func_id) {
         /* Stream I/O (category 0x01) */
@@ -604,18 +634,22 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
         /* Console (category 0x06) */
         case 0x6001000: func = (void*)&DK_ConsoleCreate; is_stub=0; break;
 
-        /* ABI (category 0x07) */
-        case 0x7001000:
-            /* AbiGetVersion: The resolution stores the return value at
-             * 0x18063f8c0, which is ALSO the boot flag. The boot flag
-             * must be exactly 1 for the ABI dispatch wrapper to work.
-             * Return (void*)1 so the stored value = 1. */
-            func = (void*)1; is_stub=0; break;
-        case 0x7002000: func = (void*)&DK_AbiGetFunction; is_stub=0; break;
+        /* ABI (category 0x07) - these store version/flag values, not function ptrs.
+         * 0x7001000 (AbiGetVersion): stored at boot flag [0x63f8c0], must be 1
+         * 0x7002000 (AbiGetFunction): stored at [0x63f5c0], must be 2 (ABI v2)
+         *   The second resolver at RVA 0x213ea4 checks [0x63f5c0] == 2
+         *   and returns 0xC0000002 if not equal. */
+        case 0x7001000: func = (void*)1; is_stub=0; break;
+        case 0x7002000: func = (void*)2; is_stub=0; break;
 
         /* System (category 0x08) */
         case 0x8001000: func = (void*)&DK_SystemTimeQuery; is_stub=0; break;
         case 0x8002000: func = (void*)&DK_RandomBitsRead; is_stub=0; break;
+
+        /* IMPORTANT: Version 1 variants (xxx001) of system functions
+         * are stored at critical .data addresses. 0x8001001 stores at
+         * [0x63f8c8] which is the ABI dispatcher pointer. We must return
+         * our dispatcher address to keep it working. */
 
         /* Process (category 0x09) */
         case 0x9001000: func = (void*)&DK_ProcessCreate; is_stub=0; break;
@@ -639,6 +673,21 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
         /* Extended threading (category 0x0E) */
         case 0xe001000: func = (void*)&DK_ThreadInterrupt; is_stub=0; break;
         case 0xe002000: func = (void*)&DK_ThreadSetAffinity; is_stub=0; break;
+
+        /* Stream extended (category 0x0F):
+         * First pass (version 0, func_id ends in 000) = feature flags.
+         * The PE checks if result == 1 to determine support.
+         * Second pass (version 1+, func_id ends in 001+) = actual function pointers.
+         * Discovered from PE disassembly:
+         *   RVA 0x2133bf: 0xf005000 → [0x63f4f0] (flag, checked == 1)
+         *   RVA 0x213ba2: 0xf005001 → [0x63f4f8] (func ptr, called via jmp *rax)
+         */
+        case 0xf001000: case 0xf002000: case 0xf003000:
+        case 0xf004000: case 0xf005000: case 0xf006000:
+        case 0xf007000: func = (void*)1; is_stub=0; break;
+
+        /* Async (category 0x10) - also feature flags for version 0 */
+        case 0x10001000: case 0x10002000: func = (void*)1; is_stub=0; break;
 
         /* Memory v2 (category 0x12) */
         case 0x12001000: func = (void*)&DK_VirtualMemoryAllocate; is_stub=0; break;
