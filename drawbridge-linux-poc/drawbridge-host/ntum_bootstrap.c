@@ -292,6 +292,16 @@ static void *boot_thread_fn(void *arg) {
      * We use ms_abi to ensure rcx = params (Windows x64 convention).
      * The entry point sets its own stack, so our stack doesn't matter.
      */
+    /* Write mapped PE sections to a file for offline analysis */
+    {
+        FILE *pef = fopen("/tmp/sqlpal_mapped.bin", "wb");
+        if (pef) {
+            fwrite(args->params->ImageBase, 1, 0x1000000, pef);
+            fclose(pef);
+            fprintf(stderr, "[BOOT] Wrote mapped PE to /tmp/sqlpal_mapped.bin (16MB)\n");
+        }
+    }
+
     /* Dump key PE function bytes for analysis */
     {
         /* Syscall wrapper at PE RVA 0x354180 */

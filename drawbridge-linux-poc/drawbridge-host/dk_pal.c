@@ -663,26 +663,43 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
             uint64_t *result_ptr = *(uint64_t**)out_buf;
             if (result_ptr) {
                 *result_ptr = (uint64_t)func;
-                if (dispatch_count <= 5) {
-                    fprintf(stderr, "[DK] Wrote %p to *(%p) [out_buf=%p]\n",
-                            func, result_ptr, out_buf);
-                    /* Verify the write */
-                    fprintf(stderr, "[DK] Verify: *result_ptr=0x%lx\n",
-                            (unsigned long)*result_ptr);
-                }
             }
         }
 
-        /* After call #84, check specific addresses the NTUM reads later */
+        /* Monitor 0x18063ae88 for when the error appears */
+        {
+            uint64_t err_val = *(volatile uint64_t*)0x18063ae88ULL;
+            if (err_val != 0 && dispatch_count <= 100) {
+                fprintf(stderr, "[DK] !!! [0x18063ae88]=0x%lx after resolving funcid 0x%x (#%d)\n",
+                        (unsigned long)err_val, func_id, dispatch_count);
+            }
+        }
+
+        /* After call #84, dump PE code around config call sites */
         if (dispatch_count == 84) {
-            fprintf(stderr, "[DK] === After 84 resolutions ===\n");
-            fprintf(stderr, "[DK]   [0x18063af08] = 0x%lx (config call #85 type)\n",
-                    (unsigned long)*(volatile uint64_t*)0x18063af08ULL);
-            fprintf(stderr, "[DK]   [0x18063af18] = 0x%lx\n",
-                    (unsigned long)*(volatile uint64_t*)0x18063af18ULL);
-            extern uint8_t g_runtime_callback_state[];
-            fprintf(stderr, "[DK]   RuntimeCallbackState+0x10 = 0x%lx (KiDispatcher)\n",
-                    (unsigned long)*(volatile uint64_t*)(g_runtime_callback_state + 0x10));
+            fprintf(stderr, "[DK] === PE code at config call return addresses ===\n");
+            /* The 'out' param in config calls is the return address.
+             * Dump bytes BEFORE each return addr to see the call instruction. */
+            uint64_t sites[] = {0x180204818ULL, 0x180204850ULL, 0x1802048e2ULL, 0x1802049d5ULL};
+            const char *names[] = {"#85", "#86", "#87", "#88"};
+            for (int a = 0; a < 4; a++) {
+                volatile uint8_t *p = (uint8_t*)(sites[a] - 32);
+                fprintf(stderr, "[DK] Call %s (ret=0x%lx) [-32]:\n  ", names[a], (unsigned long)sites[a]);
+                for (int j = 0; j < 48; j++) {
+                    fprintf(stderr, "%02x ", p[j]);
+                    if (j == 15 || j == 31) fprintf(stderr, "\n  ");
+                }
+                fprintf(stderr, "\n");
+            }
+            /* Dump dispatch table */
+            fprintf(stderr, "[DK] Dispatch table 0x18063ae50-0x18063af50:\n");
+            for (uint64_t addr = 0x18063ae50ULL; addr < 0x18063af50ULL; addr += 16) {
+                volatile uint8_t *p = (uint8_t*)addr;
+                fprintf(stderr, "  %lx: %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x\n",
+                        (unsigned long)addr,
+                        p[0],p[1],p[2],p[3], p[4],p[5],p[6],p[7],
+                        p[8],p[9],p[10],p[11], p[12],p[13],p[14],p[15]);
+            }
         }
         return 0;  /* STATUS_SUCCESS */
     }
