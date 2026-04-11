@@ -245,7 +245,7 @@ static void *boot_thread_fn(void *arg) {
      * plus add rsp,[rip+offset] (stack adjustment from .rdata) */
     uint64_t ntum_stack_base = 0x180637000ULL;
     uint64_t *stack_adj_ptr = (uint64_t*)0x180413480ULL;  /* .rdata offset */
-    uint64_t ntum_stack = ntum_stack_base + *stack_adj_ptr;
+    uint64_t ntum_stack = ntum_stack_base + *stack_adj_ptr - 0x50;  /* Adjusted for skipping entry+wrapper */
 
     printf("[BOOT] Cookie: 0x%lx at 0x180600000\n", (unsigned long)cv);
     printf("[BOOT] NTUM stack: 0x%lx (base 0x%lx + adj 0x%lx)\n",
@@ -254,7 +254,7 @@ static void *boot_thread_fn(void *arg) {
 
     /* Jump directly to 0x180204754 (the real init) using our trampoline.
      * rcx = LIBOS_PARAMS, rdx = LIBOS_PARAMS (config context) */
-    void *real_init = (void*)((uint8_t*)args->params->ImageBase + 0x3a04d0); /* ORIGINAL ENTRY */
+    void *real_init = (void*)((uint8_t*)args->params->ImageBase + 0x204754); /* REAL INIT DIRECT */
     /* Verify the bytes at the target haven't been patched incorrectly */
     volatile uint8_t *target = (uint8_t*)real_init;
     printf("[BOOT] Entering REAL init at %p bytes: %02x %02x %02x %02x %02x\n",
@@ -337,7 +337,7 @@ static void *boot_thread_fn(void *arg) {
 
     /* Use assembly trampoline (drawbridge_enter_ntum from trampoline.S) */
     extern void drawbridge_enter_ntum(void *entry, void *stack, void *params);
-    drawbridge_enter_ntum(real_init, (void*)ntum_stack, args->params);
+    ntum_direct_call(real_init, (void*)ntum_stack, args->params);
 
     /* Should not reach here */
     printf("[BOOT] NTUM returned unexpectedly\n");
@@ -402,4 +402,23 @@ int ntum_bootstrap_launch(WINDOWS_LIBOS_PARAMETERS *params) {
 
     printf("[BOOT] NTUM boot thread exited\n");
     return 0;
+}
+
+/* Direct call to NTUM init using ms_abi */
+typedef void (__attribute__((ms_abi)) *ntum_init_fn)(void *rcx, void *rdx);
+
+void ntum_direct_call(void *entry, void *stack, void *params) {
+    /* Switch stack manually then call */
+    register void *rsp_save asm("r12");
+    rsp_save = __builtin_frame_address(0);
+    
+    /* Set rsp to NTUM stack */
+    __asm__ volatile ("mov %0, %%rsp" :: "r"(stack) : "memory");
+    
+    /* Call the function with ms_abi convention */
+    ntum_init_fn fn = (ntum_init_fn)entry;
+    fn(params, params);
+    
+    /* Restore rsp (never reached) */
+    __asm__ volatile ("mov %0, %%rsp" :: "r"(rsp_save) : "memory");
 }
