@@ -27,6 +27,8 @@
 #include <pthread.h>
 #include <dlfcn.h>
 
+#include "ntum_bootstrap.h"
+
 /*
  * NTUM Memory Layout (from strace reverse engineering)
  *
@@ -349,30 +351,23 @@ int main(int argc, char **argv) {
     }
     printf("[HOST] Size: %lu bytes\n", (unsigned long)st.st_size);
 
-    /*
-     * Step 6: Bootstrap the NTUM
-     *
-     * TODO: This is the critical part that requires more decompilation.
-     * We need to:
-     * 1. Parse sqlpal.dll PE headers to find entry point
-     * 2. Map sections to 0x200000000 with correct permissions
-     * 3. Construct WINDOWS_LIBOS_PARAMETERS
-     * 4. Call the NTUM entry point
-     *
-     * For now, we've proven the memory layout and SFP loading work.
-     * The NTUM bootstrap itself requires understanding the exact
-     * PAL callback table structure, which the decompilation agents
-     * are analyzing.
-     */
-
+    /* Step 6: Bootstrap the NTUM */
     printf("\n[HOST] ═══════════════════════════════════════════\n");
-    printf("[HOST] NTUM loaded. Bootstrap requires PAL table setup.\n");
-    printf("[HOST] Memory regions: OK\n");
-    printf("[HOST] SFP archives: OK\n");
-    printf("[HOST] sqlpal.dll: mapped at %p\n", ntum);
-    printf("[HOST] ═══════════════════════════════════════════\n");
-    printf("\n[HOST] Next step: decompile PAL callback table from sqlservr\n");
-    printf("[HOST] then call sqlpal.dll entry at RVA 0x3A04D0\n");
+    printf("[HOST] Bootstrapping NTUM kernel...\n");
+    printf("[HOST] ═══════════════════════════════════════════\n\n");
+
+    WINDOWS_LIBOS_PARAMETERS libos_params;
+    ntum_bootstrap_init(&libos_params, ntum, 2732032, /* ~2.7MB */
+                        0x3A04D0,  /* sqlpal.dll entry RVA */
+                        NULL);     /* PAL table (built-in) */
+
+    printf("\n[HOST] Launching NTUM boot thread...\n");
+    printf("[HOST] This will switch to Windows x64 ABI and enter sqlpal.dll\n\n");
+
+    int boot_result = ntum_bootstrap_launch(&libos_params);
+    if (boot_result != 0) {
+        fprintf(stderr, "[HOST] NTUM boot failed\n");
+    }
 
     /* Cleanup */
     if (system_sfp.fd > 0) close(system_sfp.fd);
