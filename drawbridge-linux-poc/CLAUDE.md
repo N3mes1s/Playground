@@ -40,8 +40,29 @@ uint64_t *result_ptr = *(uint64_t**)out_buf;
 - It is NOT from our DK function returns
 - It is NOT from our output protocol
 - It IS generated inside the NTUM's C++ initialization code
-- Specifically in FUN_001f1c50 (FileIoCompletionPort init)
+- Specifically in FUN_001f1c50 (FileIoCompletionPort init) → io_setup failure
 - Zero DK stubs are ever called during boot - the failure is before any PAL call
+- Root cause: The NTUM needs io_setup (Linux AIO syscall 0xce=206) which is
+  normally provided by the ELF host's FUN_00354180 (raw syscall wrapper)
+
+### Boot Functions are in the ELF Host
+- The decompiled functions (FUN_00204680, FUN_001f1c50, etc.) are
+  in the sqlservr ELF binary, NOT in sqlpal.dll PE
+- The real sqlservr provides io_setup, threading, OpenSSL init etc.
+- Post-resolution config calls (#85-90) are the PE calling BACK to us
+- We need to handle these callbacks to provide the init services
+
+### Error Handling Pattern (used throughout NTUM)
+```c
+struct pal_result {
+    char    *source_file;  // +0x00
+    int32_t  status;       // +0x08 (HRESULT: negative = error)
+    uint16_t line;         // +0x0C
+    int32_t  extended;     // +0x10
+};
+// FUN_0028e530(r) = r->status >= 0  // success check
+// FUN_0028e0d0(r, status, file, line) = set error
+```
 
 ### Boot Sync vs Exception int3
 - `CC EB FD` preceded by `74` (je) = boot sync spin loop → patch to nops + set flag

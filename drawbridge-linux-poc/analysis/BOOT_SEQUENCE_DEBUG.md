@@ -164,22 +164,66 @@ out_buf for GetFunc:    0x18063ae70 (fixed)
 *out_buf (result slot): 0x18063aeb0 (fixed, NTUM copies from here)
 ```
 
+## Critical Discovery: Boot Functions are in ELF Host, Not PE
+
+The decompiled functions FUN_001f1c50, FUN_001f1fd0, FUN_00202100, etc.
+are ALL at ELF addresses (0x1xxxxx-0x3xxxxx). These are the HOST's code,
+not the NTUM PE's code. The real sqlservr ELF contains:
+
+- FUN_00354180 → raw syscall wrapper (io_setup=0xce, io_destroy=0xcf, etc.)
+- FUN_00202100 → io_setup(nr_events, ctx_ptr) wrapper
+- FUN_001f1fd0 → FileIoCompletionPort constructor
+- FUN_001f1e20 → io_setup initialization
+- FUN_00204680 → PAL boot (creates I/O subsystem, OpenSSL, threads)
+
+The NTUM PE calls BACK to the ELF host for these operations.
+The post-resolution config calls (#85-90) ARE this callback mechanism.
+
+### Error Handling Pattern (Result type)
+```c
+// Result object (used throughout - FUN_0028e0xx family)
+struct pal_result {
+    char    *source_file;   // +0x00: source filename
+    int32_t  status;        // +0x08: HRESULT (negative = error)
+    uint16_t line;          // +0x0C: source line number
+    int32_t  extended;      // +0x10: sign extension of status
+};
+
+// FUN_0028e530(result) = result->status >= 0 (is success)
+// FUN_0028e0d0(result, status, file, line) = set error
+// FUN_0028e560(dst, src) = propagate error
+// FUN_0028e070(result) = clear/init result
+// FUN_0028e1f0(result) = check if error (inverse of 0028e530)
+```
+
+### FUN_0029a4e0: Simple offset accessor
+```c
+// Returns param + 0x46a - accesses a flag byte in the module object
+long get_io_mode_flag(long module_handle) { return module_handle + 0x46a; }
+```
+
+### The io_setup Failure
+The FileIoCompletionPort init calls io_setup(0x400, &ctx) via syscall 0xce.
+In the real sqlservr, this is done by the ELF's FUN_00354180 (raw syscall).
+In our host, the NTUM PE can't call io_setup directly because:
+1. The PE uses Windows ABI, not Linux syscall convention
+2. The syscall wrappers are in the ELF host, not in the PE
+
+The NTUM expects the host to provide io_setup through the PAL or via
+the config calls. We need to handle config call types properly.
+
 ## Next Steps
 
-1. **Examine what FUN_0029a4e0 reads from DAT_0036f598+0x138**
-   - This is the module/SFP handle that FileIO init needs
-   - May need to populate this in our ParameterBuffer
+1. **Understand config call protocol**: The post-resolution calls (#85-90)
+   are the NTUM asking our host to perform initialization. Examine what
+   each call type means and what response is expected.
 
-2. **Examine FUN_001f5120 (base I/O object init)**
-   - Understand what I/O infrastructure the NTUM expects
-   - May need to implement io_uring or epoll backend
+2. **Implement io_setup in the PAL**: The NTUM needs Linux AIO support.
+   Add io_setup/io_destroy handling to our DK PAL or config call handler.
 
-3. **Check if FEATURE_IO_URING flag matters**
-   - Our features = 0x60000 (BASE_PAL | TLS)
-   - May need to add IO_EXTRA (0x80000) or IO_URING (0x100000)
-   - The decompiled FUN_0020bcf0 shows these flags control which
-     init functions are called
+3. **Add proper SystemInfoQuery**: The 0x8003000 function ID (currently stub)
+   may be needed to provide system configuration the NTUM reads during init.
 
-4. **Consider: should we NOT call FUN_00204680 at all?**
-   - The real sqlservr host may skip certain init steps
-   - The boot function chain may have conditional paths we're missing
+4. **Trace what the real sqlservr does**: Compare our config call responses
+   with what the original sqlservr host provides by running the real binary
+   with strace or ltrace.
