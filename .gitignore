@@ -30,3 +30,4 @@ drawbridge-linux-poc/ntum-builder/reactos-dlls/dlls/
 drawbridge-linux-poc/custom-pkg/Content/
 drawbridge-linux-poc/custom-app.sfp/Content/
 drawbridge-linux-poc/tools/sfp_pack
+drawbridge-linux-poc/test-apps/*.exe
