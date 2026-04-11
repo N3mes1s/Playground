@@ -368,8 +368,8 @@ int main(int argc, char **argv) {
                 /* Map at preferred base + extra page for boundary access */
                 munmap((void*)0x200000000ULL, 4096);
                 void *img_base = mmap((void*)image_base, size_of_image + 0x10000,
-                                       PROT_READ | PROT_WRITE,
-                                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+                                       PROT_READ | PROT_WRITE | PROT_EXEC,
+                                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED | MAP_POPULATE,
                                        -1, 0);
                 if (img_base != MAP_FAILED) {
                     printf("  mmap result: %p (requested 0x%lx, size 0x%x)\n",

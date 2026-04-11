@@ -262,27 +262,82 @@ static void *boot_thread_fn(void *arg) {
     printf("[BOOT] Expected: 48 89 5c 24 18 (mov [rsp+0x18], rbx)\n");
     printf("[BOOT] Params ptr: %p\n\n", (void*)args->params);
 
-    /* Direct trampoline via inline asm - no function call overhead.
-     * This avoids any naked/ms_abi confusion. */
-    void *entry = real_init;
-    void *stack = (void*)ntum_stack;
-    void *p1 = args->params;
-    void *p2 = args->params;
+    /*
+     * PRE-FAULT all PE pages to prevent demand-paging signals during boot.
+     * Signal delivery during NTUM init corrupts register state.
+     */
+    {
+        volatile uint8_t sum = 0;
+        uint8_t *base = (uint8_t*)args->params->ImageBase;
+        size_t img_size = 0x1010000;
+        fprintf(stderr, "[BOOT] Pre-faulting %lu pages...\n", (unsigned long)(img_size/0x1000));
+        for (size_t off = 0; off < img_size; off += 0x1000)
+            sum += base[off];
+        /* Pre-fault NTUM stack and .data area */
+        for (uint64_t a = 0x180600000ULL; a < 0x18066A000ULL; a += 0x1000)
+            sum += *(volatile uint8_t*)a;
+        /* Pre-fault control pages */
+        sum += *(volatile uint8_t*)0x100000000ULL;
+        sum += *(volatile uint8_t*)0x100010000ULL;
+        (void)sum;
+        fprintf(stderr, "[BOOT] All pages pre-faulted\n");
+    }
 
-    __asm__ volatile (
-        /* Set up Win64 args: rcx=p1, rdx=p2 */
-        "movq %2, %%rcx\n"       /* rcx = params (Win64 arg1) */
-        "movq %3, %%rdx\n"       /* rdx = params (Win64 arg2) */
-        /* Switch to NTUM stack */
-        "movq %1, %%rsp\n"       /* rsp = ntum_stack */
-        /* Zero frame pointer */
-        "xorq %%rbp, %%rbp\n"
-        /* Jump to init function */
-        "jmpq *%0\n"
-        :
-        : "r"(entry), "r"(stack), "r"(p1), "r"(p2)
-        : "rcx", "rdx", "rbp", "memory"
-    );
+    /* mlock the PE image */
+    mlock(args->params->ImageBase, 0x1010000);
+
+    /* DON'T block signals - we need the crash handler to work */
+
+    /*
+     * Pre-store params at the NTUM's known global addresses.
+     * The real_init function at 0x180204784 stores rdx at [0x180c00008].
+     * At 0x18020479c it reads [rcx] = params->Size.
+     * If rcx is corrupted, the NTUM crashes. But if we pre-populate
+     * [0x180c00008] and [0x180c00010], the NTUM's later code can use them.
+     *
+     * ALSO: patch the entry to skip the cookie function entirely.
+     * Replace the wrapper at 0x180204ad0 to directly call real_init.
+     */
+    {
+        /* Pre-store params pointers at NTUM globals */
+        volatile uint64_t *g_config = (uint64_t*)0x180c00008ULL;
+        volatile uint64_t *g_size   = (uint64_t*)0x180c00010ULL;
+        *g_config = (uint64_t)args->params;  /* config/params pointer */
+        *g_size = args->params->Size;         /* params->Size = 0x90 */
+
+        /* Pre-store HostAbiTable + ParameterBuffer pointers */
+        volatile uint64_t *g_param_buf = (uint64_t*)0x180c00820ULL;
+        *g_param_buf = (uint64_t)args->params->ParameterBuffer;
+
+        fprintf(stderr, "[BOOT] Pre-stored params at NTUM globals\n");
+
+        /* PATCH: Replace wrapper to skip cookie and jump directly to real_init.
+         * Original at 0x180204ad0:
+         *   sub rsp, 0x28; mov r8,rdx; mov r9,rcx; call cookie; restore; call init
+         * New: just pass through to real_init
+         *   48 83 ec 28           sub rsp, 0x28
+         *   e8 7b fc ff ff        call 0x180204754 (real_init)
+         *   90 90 90 90 90 90 90  nop padding
+         */
+        volatile uint8_t *wrapper = (uint8_t*)0x180204ad0ULL;
+        /* Keep sub rsp, 0x28 (first 4 bytes) */
+        /* Replace bytes 4-8 with direct call to real_init */
+        /* call rel32 = E8 + (target - (current+5)) */
+        /* At 0x180204ad4: call 0x180204754 → offset = 0x204754 - 0x204ad9 = -0x385 = 0xFFFFFC7B */
+        wrapper[4] = 0xE8;
+        wrapper[5] = 0x7B;
+        wrapper[6] = 0xFC;
+        wrapper[7] = 0xFF;
+        wrapper[8] = 0xFF;
+        /* Nop the rest */
+        for (int i = 9; i < 26; i++) wrapper[i] = 0x90;
+
+        fprintf(stderr, "[BOOT] Patched wrapper to skip cookie init\n");
+    }
+
+    /* Use assembly trampoline (drawbridge_enter_ntum from trampoline.S) */
+    extern void drawbridge_enter_ntum(void *entry, void *stack, void *params);
+    drawbridge_enter_ntum(real_init, (void*)ntum_stack, args->params);
 
     /* Should not reach here */
     printf("[BOOT] NTUM returned unexpectedly\n");
