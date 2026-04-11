@@ -7,3 +7,6 @@ __pycache__/
 
 # Sliver source files fetched for scanning (not our code)
 vulnllm-analyzer/sliver-src/
+
+# External cloned repos (used for research, not our code)
+gramine/
