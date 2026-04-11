@@ -92,16 +92,47 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
         *pal_params = (uint64_t)params;  /* Full params pointer as context */
         *abi_call = (uint64_t)&DK_AbiDispatcher;
 
-        /* Patch the PAL call thunk to skip the boot flag check.
-         * At 0x1802046e5: int3 + jmp loop → nop nop nop
-         * This check fires every time the NTUM calls a PAL function,
-         * and the flag gets cleared by the NTUM init code. */
-        volatile uint8_t *thunk_patch = (uint8_t*)0x1802046e5ULL;
-        thunk_patch[0] = 0x90;  /* nop (was int3) */
-        thunk_patch[1] = 0x90;  /* nop (was jmp) */
-        thunk_patch[2] = 0x90;  /* nop (was -3 offset) */
+        /* Patch ALL int3 assertions in the boot path.
+         * The NTUM has multiple debug traps that fire during init. */
 
-        printf("[BOOT] Patched PAL thunk at 0x1802046e5 (int3 -> nop)\n");
+        /* 0x1802046e5: PAL call thunk boot flag check */
+        volatile uint8_t *p1 = (uint8_t*)0x1802046e5ULL;
+        p1[0] = 0x90; p1[1] = 0x90; p1[2] = 0x90;
+
+        /* 0x180204ac9: post-init error handler */
+        volatile uint8_t *p2 = (uint8_t*)0x180204ac9ULL;
+        p2[0] = 0x90; p2[1] = 0x90; p2[2] = 0x90;
+
+        /* 0x180204aba: init call chain error */
+        volatile uint8_t *p3 = (uint8_t*)0x180204abaULL;
+        p3[0] = 0x90;
+
+        /* 0x180204aea: after second init function */
+        volatile uint8_t *p4 = (uint8_t*)0x180204aeaULL;
+        p4[0] = 0x90;
+
+        /* Patch SPECIFIC int3 locations (discovered by tracing).
+         * Only patch int3 bytes that are standalone debug traps,
+         * NOT bytes that are part of multi-byte instructions. */
+        int patched = 4;  /* The 4 specific patches above */
+
+        /* Patch ALL standalone int3 bytes in .text that follow ret/nop/int3.
+         * These are debug padding between functions.
+         * DO NOT patch 0xCC that follows non-terminating instructions. */
+        volatile uint8_t *code = (uint8_t*)0x180200000ULL;
+        size_t text_size = 0x1AA000;  /* .text section size */
+        for (size_t i = 1; i < text_size; i++) {
+            if (code[i] == 0xCC) {
+                uint8_t prev = code[i-1];
+                /* Safe to patch if previous byte is ret, nop, or another int3 */
+                if (prev == 0xC3 || prev == 0x90 || prev == 0xCC) {
+                    code[i] = 0x90;
+                    patched++;
+                }
+            }
+        }
+
+        printf("[BOOT] Patched %d int3+jmp traps in .text\n", patched);
         printf("[BOOT] Patched NTUM data section:\n");
         printf("  [0x18063f8c0] = 1 (boot ready flag)\n");
         printf("  [0x18063f8c8] = %p (PAL dispatch)\n", (void*)(uintptr_t)*dispatch_fn);

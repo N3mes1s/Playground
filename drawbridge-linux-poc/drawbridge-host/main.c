@@ -363,8 +363,9 @@ int main(int argc, char **argv) {
                        num_sections, (unsigned long)image_base, size_of_image, entry_rva);
 
                 /* Map at the PE's preferred ImageBase for correct RIP-relative addressing */
+                /* Map at preferred base + extra page for boundary access */
                 munmap((void*)0x200000000ULL, 4096);
-                void *img_base = mmap((void*)image_base, size_of_image,
+                void *img_base = mmap((void*)image_base, size_of_image + 0x10000,
                                        PROT_READ | PROT_WRITE,
                                        MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
                                        -1, 0);

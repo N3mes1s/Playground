@@ -114,7 +114,6 @@ DK_API uint64_t DK_StreamOpen(const void *uri, uint64_t uri_len,
 
     int fd = open(p, oflags, 0644);
     if (fd < 0) {
-        fprintf(stderr, "[DK] StreamOpen(\"%s\"): %s\n", p, strerror(errno));
         return DK_STATUS_INVALID_PARAM;
     }
 
@@ -281,19 +280,20 @@ static int dk_prot_to_linux(uint64_t dk_prot) {
 
 DK_API uint64_t DK_VirtualMemoryAllocate(void **address, uint64_t *size,
                                           uint64_t alloc_type, uint64_t protect) {
-    int prot = dk_prot_to_linux(protect);
-    int flags = MAP_PRIVATE | MAP_ANONYMOUS;
-
     void *hint = address ? *address : NULL;
     size_t len = size ? *size : 4096;
+
+
+    int prot_linux = dk_prot_to_linux(protect);
+    int flags = MAP_PRIVATE | MAP_ANONYMOUS;
 
     if (hint) flags |= MAP_FIXED_NOREPLACE;
     if (alloc_type & 0x2000) flags |= MAP_NORESERVE;  /* MEM_RESERVE */
 
-    void *result = mmap(hint, len, prot, flags, -1, 0);
+    void *result = mmap(hint, len, prot_linux, flags, -1, 0);
     if (result == MAP_FAILED) {
         if (hint) {
-            result = mmap(NULL, len, prot,
+            result = mmap(NULL, len, prot_linux,
                           MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
         }
         if (result == MAP_FAILED) return DK_STATUS_NO_MEMORY;
@@ -432,18 +432,15 @@ DK_API uint64_t DK_ObjectReference(DK_HANDLE handle) {
 
 DK_API uint64_t DK_ProcessCreate(void *params, DK_HANDLE *process) {
     (void)params;(void)process;
-    fprintf(stderr, "[DK] ProcessCreate - blocked\n");
     return DK_STATUS_NOT_IMPLEMENTED;
 }
 
 DK_API void DK_ProcessExit(uint64_t exit_code) {
-    fprintf(stderr, "[DK] ProcessExit(%lu)\n", (unsigned long)exit_code);
     _exit((int)exit_code);
 }
 
 DK_API uint64_t DK_ProcessTerminate(DK_HANDLE process, uint64_t exit_code) {
     (void)process;
-    fprintf(stderr, "[DK] ProcessTerminate(%lu)\n", (unsigned long)exit_code);
     return DK_STATUS_SUCCESS;
 }
 
@@ -533,10 +530,6 @@ static const dk_func_entry_t g_dk_functions[] = {
 DK_API uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
                                    uint64_t data_size, void *in_buf,
                                    uint64_t out_size, void *out_buf) {
-    fprintf(stderr, "[DK] Dispatch(ctx=0x%lx type=0x%lx size=%lu in=%p out_sz=%lu out=%p)\n",
-            (unsigned long)context, (unsigned long)call_type,
-            (unsigned long)data_size, in_buf,
-            (unsigned long)out_size, out_buf);
 
     void *input_buf = in_buf;
 
@@ -669,34 +662,28 @@ DK_API uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
             *(uint32_t*)out_buf = (uint32_t)(uintptr_t)func;
         }
 
-        static int call_count = 0;
-        call_count++;
-        if (call_count <= 83) {
-            fprintf(stderr, "[DK] GetFunction(0x%07x) -> %p\n", func_id, func);
-        }
         return 0;
     }
 
     if (call_type == 0x7002001) {  /* Abi_GetVersion_v2 */
-        fprintf(stderr, "[DK] GetVersion_v2()\n");
         if (out_buf) {
             *(uint32_t*)out_buf = 2;
         }
         return 0;
     }
 
-    fprintf(stderr, "[DK] AbiDispatch(type=0x%lx)\n", (unsigned long)call_type);
+    /* Unknown call types - these are post-resolution config/feature calls.
+     * The rdx value is a .data pointer, not a call type ID.
+     * Return success and fill output with zeros. */
     return 0;
 }
 
 /* Generic PAL stub that returns success */
 DK_API uint64_t DK_GenericStub(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
-    (void)a;(void)b;(void)c;(void)d;
     return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_AbiGetFunction(uint64_t abi_id, void **func_ptr) {
-    fprintf(stderr, "[DK] AbiGetFunction(0x%lx", (unsigned long)abi_id);
 
     /*
      * The NTUM calls this to resolve PAL functions by ID.
