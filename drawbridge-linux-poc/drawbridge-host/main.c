@@ -372,6 +372,8 @@ int main(int argc, char **argv) {
                                        MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
                                        -1, 0);
                 if (img_base != MAP_FAILED) {
+                    printf("  mmap result: %p (requested 0x%lx, size 0x%x)\n",
+                           img_base, (unsigned long)image_base, size_of_image + 0x10000);
                     /* Copy headers */
                     uint32_t headers_size = *(uint32_t*)(pe_data + pe_off + 24 + 60);
                     memcpy(img_base, pe_data, headers_size);
