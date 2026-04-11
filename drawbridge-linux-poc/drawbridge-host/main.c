@@ -362,9 +362,9 @@ int main(int argc, char **argv) {
                 printf("  PE: %d sections, ImageBase=0x%lx, SizeOfImage=0x%x, EntryRVA=0x%x\n",
                        num_sections, (unsigned long)image_base, size_of_image, entry_rva);
 
-                /* Unmap the placeholder we set earlier, map full PE image */
+                /* Map at the PE's preferred ImageBase for correct RIP-relative addressing */
                 munmap((void*)0x200000000ULL, 4096);
-                void *img_base = mmap((void*)0x200000000ULL, size_of_image,
+                void *img_base = mmap((void*)image_base, size_of_image,
                                        PROT_READ | PROT_WRITE,
                                        MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
                                        -1, 0);
@@ -388,10 +388,9 @@ int main(int argc, char **argv) {
                         if (rsize > 0 && raddr + rsize <= 2732032)
                             memcpy((uint8_t*)img_base + vaddr, pe_data + raddr, copy_sz);
 
-                        /* Set section permissions */
-                        int prot = PROT_READ;
+                        /* Set section permissions (keep .00cfg and .roafter writable) */
+                        int prot = PROT_READ | PROT_WRITE;
                         if (chars & 0x20000000) prot |= PROT_EXEC;
-                        if (chars & 0x80000000) prot |= PROT_WRITE;
                         size_t aligned_size = (vsize + 4095) & ~4095UL;
                         mprotect((uint8_t*)img_base + vaddr, aligned_size, prot);
 
@@ -402,12 +401,11 @@ int main(int argc, char **argv) {
                                (chars & 0x20000000) ? 'x' : '-');
                     }
 
-                    printf("  Mapped at %p (wanted 0x200000000)\n", img_base);
-
-                    /* Update ntum pointer and recalculate entry */
+                    printf("  Mapped at %p (preferred 0x%lx)\n", img_base, (unsigned long)image_base);
                     ntum = img_base;
                 } else {
-                    printf("  [WARN] Cannot map at 0x200000000, using original at %p\n", ntum);
+                    printf("  [WARN] Cannot map at 0x%lx, using original at %p\n",
+                           (unsigned long)image_base, ntum);
                 }
             }
         }

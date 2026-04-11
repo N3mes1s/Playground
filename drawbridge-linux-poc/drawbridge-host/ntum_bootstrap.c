@@ -19,6 +19,7 @@
 #include <pthread.h>
 
 #include "ntum_bootstrap.h"
+#include "dk_pal.h"
 
 /* PAL callback state (lives in BSS like sqlservr's 0x2b2138) */
 static uint8_t g_runtime_callback_state[256] __attribute__((aligned(64)));
@@ -71,6 +72,32 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
     uint64_t *sentinel = (uint64_t*)(g_abi_table + 0x30);
     *sentinel = 0xFFFFFFFFFFFFFFFFULL;
 
+    /*
+     * Patch critical locations in sqlpal.dll's .data section.
+     * These are hardcoded addresses discovered by disassembly:
+     *
+     * [0x18063f8c0] = boot ready flag (must be 1)
+     * [0x18063f8c8] = PAL dispatch function pointer
+     * [0x180c00010] = PAL table/params pointer (Size field from params)
+     * [0x180a00008] = ABI call handler function pointer
+     */
+    if ((uintptr_t)image_base == 0x180000000ULL) {
+        volatile uint32_t *boot_flag = (uint32_t*)0x18063f8c0ULL;
+        volatile uint64_t *dispatch_fn = (uint64_t*)0x18063f8c8ULL;
+        volatile uint64_t *pal_params = (uint64_t*)0x180c00010ULL;
+        volatile uint64_t *abi_call = (uint64_t*)0x180a00008ULL;
+
+        *boot_flag = 1;
+        *dispatch_fn = (uint64_t)&DK_AbiGetFunction;
+        *pal_params = (uint64_t)params->Size;  /* The init reads this */
+        *abi_call = (uint64_t)&DK_AbiGetFunction;
+
+        printf("[BOOT] Patched NTUM data section:\n");
+        printf("  [0x18063f8c0] = 1 (boot ready flag)\n");
+        printf("  [0x18063f8c8] = %p (PAL dispatch)\n", (void*)&DK_AbiGetFunction);
+        printf("  [0x180a00008] = %p (ABI call handler)\n", (void*)&DK_AbiGetFunction);
+    }
+
     printf("[BOOT] NTUM parameters initialized:\n");
     printf("  ImageBase: %p\n", image_base);
     printf("  ImageSize: %lu KB\n", (unsigned long)(image_size / 1024));
@@ -114,6 +141,27 @@ void ntum_trampoline(void *entry_point, void *stack_ptr,
 }
 
 /* Thread function for the NTUM boot */
+#include <signal.h>
+#include <ucontext.h>
+
+static void boot_sigtrap_handler(int sig, siginfo_t *info, void *ctx) {
+    ucontext_t *uc = (ucontext_t*)ctx;
+    fprintf(stderr, "\n[BOOT] Signal %d at %p\n", sig, info->si_addr);
+    fprintf(stderr, "[BOOT] RIP=0x%016llx RSP=0x%016llx\n",
+            (unsigned long long)uc->uc_mcontext.gregs[REG_RIP],
+            (unsigned long long)uc->uc_mcontext.gregs[REG_RSP]);
+    fprintf(stderr, "[BOOT] RCX=0x%016llx RDX=0x%016llx\n",
+            (unsigned long long)uc->uc_mcontext.gregs[REG_RCX],
+            (unsigned long long)uc->uc_mcontext.gregs[REG_RDX]);
+    fprintf(stderr, "[BOOT] RAX=0x%016llx RBX=0x%016llx\n",
+            (unsigned long long)uc->uc_mcontext.gregs[REG_RAX],
+            (unsigned long long)uc->uc_mcontext.gregs[REG_RBX]);
+    fprintf(stderr, "[BOOT] RSI=0x%016llx RDI=0x%016llx\n",
+            (unsigned long long)uc->uc_mcontext.gregs[REG_RSI],
+            (unsigned long long)uc->uc_mcontext.gregs[REG_RDI]);
+    _exit(128 + sig);
+}
+
 typedef struct {
     void *entry_point;
     void *stack_top;
@@ -127,6 +175,13 @@ static void *boot_thread_fn(void *arg) {
     printf("[BOOT] Entering NTUM at %p with stack %p\n",
            args->entry_point, args->stack_top);
     printf("[BOOT] Switching to Windows x64 ABI...\n\n");
+
+    /* Install SIGTRAP handler for debugging */
+    struct sigaction sa = {0};
+    sa.sa_sigaction = boot_sigtrap_handler;
+    sa.sa_flags = SA_SIGINFO;
+    sigaction(SIGTRAP, &sa, NULL);
+    sigaction(SIGSEGV, &sa, NULL);
 
     /* Call the trampoline - this doesn't return normally */
     ntum_trampoline(args->entry_point,

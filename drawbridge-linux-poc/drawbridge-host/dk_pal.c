@@ -507,10 +507,80 @@ DK_API uint64_t DK_AbiGetVersion(void *in_buf, uint64_t in_size,
     return DK_STATUS_SUCCESS;
 }
 
+/* Generic PAL stub that returns success */
+DK_API uint64_t DK_GenericStub(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+    (void)a;(void)b;(void)c;(void)d;
+    return DK_STATUS_SUCCESS;
+}
+
 DK_API uint64_t DK_AbiGetFunction(uint64_t abi_id, void **func_ptr) {
-    fprintf(stderr, "[DK] AbiGetFunction(0x%lx) called\n", (unsigned long)abi_id);
-    if (func_ptr) *func_ptr = NULL;
-    return DK_STATUS_NOT_IMPLEMENTED;
+    fprintf(stderr, "[DK] AbiGetFunction(0x%lx", (unsigned long)abi_id);
+
+    /*
+     * The NTUM calls this to resolve PAL functions by ID.
+     * Return our DK implementations for known IDs, and a generic
+     * success-returning stub for unknown ones.
+     */
+
+    /* Return a valid function pointer for ALL requests */
+    void *result = (void*)&DK_GenericStub;
+
+    /* Map known ABI IDs to specific implementations */
+    switch (abi_id) {
+        /* Stream operations */
+        case 0x01: result = (void*)&DK_StreamOpen; break;
+        case 0x02: result = (void*)&DK_StreamRead; break;
+        case 0x03: result = (void*)&DK_StreamWrite; break;
+        case 0x04: result = (void*)&DK_StreamFlush; break;
+        case 0x05: result = (void*)&DK_ObjectClose; break;  /* StreamClose = ObjectClose */
+        case 0x06: result = (void*)&DK_StreamMap; break;
+        case 0x07: result = (void*)&DK_StreamMapPeBinary; break;
+        case 0x08: result = (void*)&DK_StreamUnmap; break;
+        case 0x09: result = (void*)&DK_StreamSetLength; break;
+        case 0x0A: result = (void*)&DK_StreamControl; break;
+        case 0x0B: result = (void*)&DK_StreamAttributesQuery; break;
+        case 0x0C: result = (void*)&DK_StreamAttributesQueryByHandle; break;
+        case 0x0D: result = (void*)&DK_StreamEnumerateChildren; break;
+        case 0x0E: result = (void*)&DK_StreamDelete; break;
+        case 0x0F: result = (void*)&DK_StreamRename; break;
+
+        /* Memory */
+        case 0x10: result = (void*)&DK_VirtualMemoryAllocate; break;
+        case 0x11: result = (void*)&DK_VirtualMemoryFree; break;
+        case 0x12: result = (void*)&DK_VirtualMemoryProtect; break;
+
+        /* Threading */
+        case 0x20: result = (void*)&DK_ThreadCreate; break;
+        case 0x21: result = (void*)&DK_ThreadExit; break;
+        case 0x22: result = (void*)&DK_ThreadYieldExecution; break;
+
+        /* Sync */
+        case 0x30: result = (void*)&DK_NotificationEventCreate; break;
+        case 0x31: result = (void*)&DK_SynchronizationEventCreate; break;
+        case 0x32: result = (void*)&DK_EventSet; break;
+        case 0x33: result = (void*)&DK_EventClear; break;
+        case 0x34: result = (void*)&DK_ObjectsWaitAny; break;
+
+        /* Objects */
+        case 0x40: result = (void*)&DK_ObjectClose; break;
+        case 0x41: result = (void*)&DK_ObjectReference; break;
+
+        /* Process */
+        case 0x50: result = (void*)&DK_ProcessCreate; break;
+        case 0x51: result = (void*)&DK_ProcessExit; break;
+
+        /* System */
+        case 0x60: result = (void*)&DK_SystemTimeQuery; break;
+        case 0x61: result = (void*)&DK_RandomBitsRead; break;
+
+        /* ABI version query (0x90 = structure size, used as version) */
+        case 0x90: result = (void*)&DK_AbiGetVersion; break;
+    }
+
+    if (func_ptr) *func_ptr = result;
+    fprintf(stderr, ") -> %p\n", result);
+
+    return DK_STATUS_SUCCESS;
 }
 
 /* ================================================================
