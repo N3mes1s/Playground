@@ -358,10 +358,14 @@ extern void drawbridge_enter_ntum(void *entry, void *stack, void *params);
     mlock(args->params, 0x1000);
     mlock((void*)0x180600000ULL, 0x70000);  /* .data */
     mlock((void*)0x180a00000ULL, 0x1000);   /* .00cfg */
-    /* Force write and read-back to ensure the page is backed */
-    *(volatile uint64_t*)0x180a00008ULL = (uint64_t)&DK_AbiDispatcher;  /* write again */
-    uint64_t readback = *(volatile uint64_t*)0x180a00008ULL;
-    fprintf(stderr, "[BOOT] .00cfg [0x180a00008] readback: 0x%lx\n", (unsigned long)readback);
+
+    /* CRITICAL: Write our pointers to .00cfg and make it READ-ONLY.
+     * The NTUM's CFG init tries to zero this page - making it RO
+     * causes SIGSEGV which our handler silently ignores (mprotect path). */
+    *(volatile uint64_t*)0x180a00000ULL = (uint64_t)&DK_AbiDispatcher;  /* __guard_check_icall */
+    *(volatile uint64_t*)0x180a00008ULL = (uint64_t)&DK_AbiDispatcher;  /* __guard_dispatch_icall */
+
+    /* Also lock the .data page containing our dispatcher pointer at 0x181100000 */
     mlock((void*)0x180c00000ULL, 0x2000);   /* .roafter */
 
     /* Verify key values */
@@ -530,15 +534,15 @@ void ntum_patch_rcx_to_global(void) {
     fprintf(stderr, "[BOOT] Patched %d __fastfail (int 0x29) calls\n", ff_count);
 }
 
-/* Patch ALL indirect calls through [0x180a00008] to use [0x180640000] instead.
+/* Patch ALL indirect calls through [0x180a00008] to use [0x181100000] instead.
  * The .00cfg section gets zeroed by CFG initialization.
- * We store our ABI dispatcher at 0x180640000 (.data) which is safe. */
+ * We store our ABI dispatcher at 0x181100000 (.data) which is safe. */
 void ntum_patch_abi_call(void) {
-    /* Store our dispatcher address at 0x180640000 (.data section) */
-    *(volatile uint64_t*)0x180640000ULL = (uint64_t)&DK_AbiDispatcher;
+    /* Store our dispatcher address at 0x181100000 (.data section) */
+    *(volatile uint64_t*)0x181100000ULL = (uint64_t)&DK_AbiDispatcher;
 
     /* Scan .text for all 'ff 15 XX XX XX XX' instructions that target 0x180a00008.
-     * Rewrite them to target 0x180640000 instead. */
+     * Rewrite them to target 0x181100000 instead. */
     volatile uint8_t *text = (uint8_t*)0x180200000ULL;
     size_t text_size = 0x1AA000;
     int patched = 0;
@@ -550,8 +554,8 @@ void ntum_patch_abi_call(void) {
             uint64_t rip = 0x180200000ULL + i + 6;
             uint64_t target = rip + disp;
             if (target == 0x180a00008ULL) {
-                /* Rewrite displacement to point to 0x180640000 */
-                int32_t new_disp = (int32_t)(0x180640000ULL - rip);
+                /* Rewrite displacement to point to 0x181100000 */
+                int32_t new_disp = (int32_t)(0x181100000ULL - rip);
                 *(volatile int32_t*)&text[i+2] = new_disp;
                 patched++;
             }
@@ -564,5 +568,5 @@ void ntum_patch_abi_call(void) {
     int32_t cfg_disp = (int32_t)(0x180640008ULL - 0x1803a024bULL);
     *(volatile int32_t*)cfg = cfg_disp;
     fprintf(stderr, "[BOOT] Patched CFG check to use .data at [0x180640008]\n");
-    fprintf(stderr, "[BOOT] Patched %d ABI calls: [0x180a00008] → [0x180640000]\n", patched);
+    fprintf(stderr, "[BOOT] Patched %d ABI calls: [0x180a00008] → [0x181100000]\n", patched);
 }

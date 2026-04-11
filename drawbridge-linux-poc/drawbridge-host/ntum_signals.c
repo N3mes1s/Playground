@@ -208,10 +208,12 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
     /* Unhandled fault */
     char msg[256];
     int len = snprintf(msg, sizeof(msg),
-        "\n[CRASH] sig=%d addr=%p RIP=0x%llx faults=%d\n",
+        "\n[CRASH] sig=%d [0x181100000]=0x%llx [0x180a00008]=0x%llx addr=%p RIP=0x%llx faults=%d\n",
         sig, fault_addr,
         (unsigned long long)uc->uc_mcontext.gregs[REG_RIP],
-        ntum_fault_count);
+        ntum_fault_count,
+        (unsigned long long)*(volatile uint64_t*)0x181100000ULL,
+        (unsigned long long)*(volatile uint64_t*)0x180a00008ULL);
     write(STDERR_FILENO, msg, len);
     _exit(128 + sig);
 }
