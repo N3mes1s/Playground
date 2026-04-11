@@ -60,7 +60,7 @@ static void free_handle(DK_HANDLE h) {
 }
 
 /* Forward declaration */
-DK_API uint64_t DK_GenericStub(uint64_t a, uint64_t b, uint64_t c, uint64_t d);
+DK_API __attribute__((force_align_arg_pointer)) uint64_t DK_GenericStub(uint64_t a, uint64_t b, uint64_t c, uint64_t d);
 
 /* ================================================================
  * Stream I/O
@@ -296,6 +296,12 @@ DK_API uint64_t DK_VirtualMemoryAllocate(void **address, uint64_t *size,
                                           uint64_t alloc_type, uint64_t protect) {
     void *hint = address ? *address : NULL;
     size_t len = size ? *size : 4096;
+    {
+        char msg[128];
+        int l = snprintf(msg, sizeof(msg), "[PAL] VirtualAlloc(%p, 0x%lx, type=0x%lx, prot=0x%lx)\n",
+                         hint, (unsigned long)len, (unsigned long)alloc_type, (unsigned long)protect);
+        write(2, msg, l);
+    }
 
 
     int prot_linux = dk_prot_to_linux(protect);
@@ -549,7 +555,7 @@ static const dk_func_entry_t g_dk_functions[] = {
  *   input[1] = uint32_t version_info
  *   output = { uint32_t result_code }
  */
-DK_API uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
+DK_API __attribute__((force_align_arg_pointer)) uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
                                    uint64_t data_size, void *in_buf,
                                    uint64_t out_size, void *out_buf) {
 
@@ -558,6 +564,8 @@ DK_API uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
     /* Re-arm: write our dispatcher pointer every time we're called.
      * The NTUM may zero this between calls during PE re-init. */
     *(volatile uint64_t*)0x181100000ULL = (uint64_t)&DK_AbiDispatcher;
+    *(volatile uint64_t*)0x180a00008ULL = (uint64_t)&DK_AbiDispatcher;
+    *(volatile uint64_t*)0x180a00000ULL = (uint64_t)&DK_AbiDispatcher;
 
     /* Log first few calls for debugging (use write() not fprintf) */
     static int dispatch_count = 0;
@@ -717,7 +725,19 @@ DK_API uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
 }
 
 /* Generic PAL stub that returns success */
-DK_API uint64_t DK_GenericStub(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+DK_API __attribute__((force_align_arg_pointer)) uint64_t DK_GenericStub(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+    /* Log that this stub was called - helps identify which unimplemented
+     * function the NTUM is trying to use */
+    static int stub_count = 0;
+    stub_count++;
+    if (stub_count <= 20) {
+        char msg[128];
+        int len = snprintf(msg, sizeof(msg),
+            "[STUB] #%d: a=0x%lx b=0x%lx c=0x%lx d=0x%lx\n",
+            stub_count, (unsigned long)a, (unsigned long)b,
+            (unsigned long)c, (unsigned long)d);
+        write(2, msg, len);
+    }
     return DK_STATUS_SUCCESS;
 }
 

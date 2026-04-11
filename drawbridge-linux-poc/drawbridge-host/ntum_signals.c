@@ -156,6 +156,25 @@ static int handle_libos_fault(void *fault_addr, int is_write, ucontext_t *uc) {
                                 if (p[j] == 0xCC && (p[j-1] == 0xC3 || p[j-1] == 0x90 || p[j-1] == 0xCC))
                                     p[j] = 0x90;
                             }
+                            /* Patch call/jmp [rip+disp] to 0x180a00008 → 0x181100000 */
+                            uint64_t page_rva = rva;
+                            for (size_t j = 0; j + 6 <= copy_sz; j++) {
+                                if (p[j] == 0xFF && (p[j+1] == 0x15 || p[j+1] == 0x25)) {
+                                    int32_t disp = *(int32_t*)&p[j+2];
+                                    uint64_t rip_addr = g_pe_image_base + page_rva + j + 6;
+                                    uint64_t target = rip_addr + disp;
+                                    if (target == 0x180a00008ULL) {
+                                        int32_t new_disp = (int32_t)(0x181100000ULL - rip_addr);
+                                        *(int32_t*)&p[j+2] = new_disp;
+                                    }
+                                }
+                            }
+                            /* Patch __fastfail (CD 29) */
+                            for (size_t j = 0; j + 1 < copy_sz; j++) {
+                                if (p[j] == 0xCD && p[j+1] == 0x29) {
+                                    p[j] = 0x90; p[j+1] = 0x90;
+                                }
+                            }
                         }
                     }
                     break;
@@ -206,14 +225,19 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
     }
 
     /* Unhandled fault */
-    char msg[256];
+    char msg[512];
     int len = snprintf(msg, sizeof(msg),
-        "\n[CRASH] sig=%d [0x181100000]=0x%llx [0x180a00008]=0x%llx addr=%p RIP=0x%llx faults=%d\n",
+        "\n[CRASH] sig=%d addr=%p RIP=0x%llx faults=%d\n"
+        "  [0x181100000]=0x%llx [0x180a00008]=0x%llx\n"
+        "  RCX=0x%llx RDX=0x%llx RSP=0x%llx\n",
         sig, fault_addr,
         (unsigned long long)uc->uc_mcontext.gregs[REG_RIP],
         ntum_fault_count,
         (unsigned long long)*(volatile uint64_t*)0x181100000ULL,
-        (unsigned long long)*(volatile uint64_t*)0x180a00008ULL);
+        (unsigned long long)*(volatile uint64_t*)0x180a00008ULL,
+        (unsigned long long)uc->uc_mcontext.gregs[REG_RCX],
+        (unsigned long long)uc->uc_mcontext.gregs[REG_RDX],
+        (unsigned long long)uc->uc_mcontext.gregs[REG_RSP]);
     write(STDERR_FILENO, msg, len);
     _exit(128 + sig);
 }
