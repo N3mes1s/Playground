@@ -70,11 +70,33 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
     /* Entry point - the REAL DllMain, not the skip-ahead */
     params->BootEntryPoint = (void*)((uint8_t*)image_base + entry_rva);
 
-    /* ParameterBuffer: the NTUM reads [ParameterBuffer] and expects first dword = 0x190 */
+    /* ParameterBuffer: Two different PE code paths read this:
+     * 1. FUN_20e4e4 (RVA 0x20e4e4): reads [ParameterBuffer] and compares to 0x190
+     *    This checks the WINDOWS_LIBOS_PARAMETERS size field.
+     * 2. FUN_204a37 (RVA 0x204a37): reads [ParameterBuffer] comparing to 0x10 and [+4] to 0x38
+     *    This checks for the ABI table header format.
+     *
+     * The ParameterBuffer serves DOUBLE DUTY:
+     * - [+0x00] = 0x10 (ABI header size, checked at 0x204a3f)
+     * - [+0x04] = 0x38 (ABI sub-header size, checked at 0x204a44)
+     * - [+0x08] = callback function pointer (0 = use default, checked at 0x204a4a)
+     *
+     * Separately, [0x180c00820] stores a pointer to a buffer where [0] = 0x190.
+     * These are TWO DIFFERENT checks in different code paths. */
     static uint8_t param_buffer[0x200] __attribute__((aligned(16)));
-    *(uint32_t*)param_buffer = 0x190;
+    memset(param_buffer, 0, sizeof(param_buffer));
+    /* ABI header format for the PAL boot function */
+    *(uint32_t*)(param_buffer + 0x00) = 0x10;   /* Size field */
+    *(uint32_t*)(param_buffer + 0x04) = 0x38;   /* SubSize field */
+    *(uint64_t*)(param_buffer + 0x08) = 0;       /* Callback (0 = use default) */
     params->ParameterBuffer = param_buffer;
     params->ParameterBufferSize = sizeof(param_buffer);
+
+    /* The 0x190 check at RVA 0x20e51d reads [0x180c00820] → ptr → [ptr] == 0x190.
+     * This is SEPARATE from the ParameterBuffer ABI header. Create a dedicated buffer. */
+    static uint8_t s_libos_size_buf[0x200] __attribute__((aligned(16)));
+    memset(s_libos_size_buf, 0, sizeof(s_libos_size_buf));
+    *(uint32_t*)s_libos_size_buf = 0x190;  /* WINDOWS_LIBOS_PARAMETERS size */
 
     /* Feature flags */
     uint32_t *flags = (uint32_t*)&params->FeatureFlags[0];
@@ -119,8 +141,8 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
         *(volatile uint64_t*)0x180c00008ULL = (uint64_t)params;
         *(volatile uint64_t*)0x180c00010ULL = params->Size;
 
-        /* Pre-store ParameterBuffer pointer */
-        *(volatile uint64_t*)0x180c00820ULL = (uint64_t)params->ParameterBuffer;
+        /* Pre-store pointer for 0x190 size check at RVA 0x20e51d */
+        *(volatile uint64_t*)0x180c00820ULL = (uint64_t)s_libos_size_buf;
 
         /* ABI version at [0x63f5c0] must be 2 for second-pass resolution.
          * The second resolver at PE RVA 0x213eb2 reads this and compares to 2. */
@@ -260,25 +282,33 @@ static void *boot_thread_fn(void *arg) {
         #include <asm/prctl.h>
         #include <sys/syscall.h>
 
-        static uint8_t teb[65536] __attribute__((aligned(4096)));
-        memset(teb, 0, sizeof(teb));
+        /* Allocate TEB in the LibOS thread environment area so the NTUM
+         * accepts it. Using a static host-space TEB causes issues when the
+         * NTUM's code reads gs:0x30 and follows pointer chains that
+         * expect to be in LibOS address space. */
+        uint8_t *teb = (uint8_t*)mmap((void*)LIBOS_THREAD_ENV, 65536,
+                        PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
+                        -1, 0);
+        if (teb == MAP_FAILED)
+            teb = (uint8_t*)mmap(NULL, 65536, PROT_READ | PROT_WRITE,
+                                  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        memset(teb, 0, 65536);
 
-        /* TEB self-pointer at offset 0x30 */
-        *(uint64_t*)(teb + 0x30) = (uint64_t)teb;
-        /* TEB.StackBase at offset 0x08 */
-        *(uint64_t*)(teb + 0x08) = 0x18063b000ULL + 0x200000;
-        /* TEB.StackLimit at offset 0x10 */
-        *(uint64_t*)(teb + 0x10) = 0x180637000ULL;
-
-        /* Fill other TEB slots with valid thread_state pointer */
-        static uint8_t thread_state[0x1000] __attribute__((aligned(4096)));
-        memset(thread_state, 0, sizeof(thread_state));
-        for (int off = 0; off < 8192; off += 8)
-            *(uint64_t*)(teb + off) = (uint64_t)thread_state;
-        /* Re-set critical TEB fields after the fill */
-        *(uint64_t*)(teb + 0x30) = (uint64_t)teb;
-        *(uint64_t*)(teb + 0x08) = 0x18063b000ULL + 0x200000;
-        *(uint64_t*)(teb + 0x10) = 0x180637000ULL;
+        /* TEB layout (from PE disassembly at RVA 0x244cd0):
+         * +0x08: StackBase
+         * +0x10: StackLimit
+         * +0x30: Self-pointer (gs:0x30 → &TEB)
+         * +0x1838: Pointer to NTUM kernel thread info (KTHREAD-like)
+         *          The NTUM reads TEB[0x1838] → [+0x70] → [+0xF0] to get
+         *          the current thread's scheduling state. Must be NULL or
+         *          a valid NTUM structure. DO NOT fill with garbage.
+         */
+        *(uint64_t*)(teb + 0x08) = NTUM_STACK_TOP + 0x200000;  /* StackBase */
+        *(uint64_t*)(teb + 0x10) = NTUM_STACK_BASE;             /* StackLimit */
+        *(uint64_t*)(teb + 0x30) = (uint64_t)teb;               /* Self-pointer */
+        /* TEB[0x1838] = NULL - the NTUM will set this when it creates
+         * the kernel thread during initialization. */
 
         /* Set GS base to our TEB */
         syscall(SYS_arch_prctl, ARCH_SET_GS, (unsigned long)teb);

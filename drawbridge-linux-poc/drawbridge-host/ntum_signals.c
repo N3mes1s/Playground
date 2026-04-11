@@ -436,16 +436,38 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
     }
 
     /* ---- Unhandled: Fatal crash ---- */
-    char msg[512];
+    uint64_t rsp_val = (uint64_t)uc->uc_mcontext.gregs[REG_RSP];
+    char msg[1024];
     int len = snprintf(msg, sizeof(msg),
         "\n[CRASH] sig=%d addr=%p RIP=0x%llx faults=%d\n"
-        "  RCX=0x%llx RDX=0x%llx RSP=0x%llx\n",
+        "  RAX=0x%llx RBX=0x%llx RCX=0x%llx RDX=0x%llx\n"
+        "  RSI=0x%llx RDI=0x%llx RBP=0x%llx RSP=0x%llx\n"
+        "  R8=0x%llx R9=0x%llx R14=0x%llx R15=0x%llx\n",
         sig, fault_addr,
         (unsigned long long)uc->uc_mcontext.gregs[REG_RIP],
         g_fault_count,
+        (unsigned long long)uc->uc_mcontext.gregs[REG_RAX],
+        (unsigned long long)uc->uc_mcontext.gregs[REG_RBX],
         (unsigned long long)uc->uc_mcontext.gregs[REG_RCX],
         (unsigned long long)uc->uc_mcontext.gregs[REG_RDX],
-        (unsigned long long)uc->uc_mcontext.gregs[REG_RSP]);
+        (unsigned long long)uc->uc_mcontext.gregs[REG_RSI],
+        (unsigned long long)uc->uc_mcontext.gregs[REG_RDI],
+        (unsigned long long)uc->uc_mcontext.gregs[REG_RBP],
+        (unsigned long long)rsp_val,
+        (unsigned long long)uc->uc_mcontext.gregs[REG_R8],
+        (unsigned long long)uc->uc_mcontext.gregs[REG_R9],
+        (unsigned long long)uc->uc_mcontext.gregs[REG_R14],
+        (unsigned long long)uc->uc_mcontext.gregs[REG_R15]);
+    /* Dump stack frames (return addresses) */
+    if (rsp_val >= 0x180000000ULL && rsp_val < 0x181000000ULL) {
+        len += snprintf(msg + len, sizeof(msg) - len,
+            "  Stack: [RSP]=0x%llx [+8]=0x%llx [+16]=0x%llx [+24]=0x%llx [+32]=0x%llx\n",
+            (unsigned long long)*(uint64_t*)rsp_val,
+            (unsigned long long)*(uint64_t*)(rsp_val+8),
+            (unsigned long long)*(uint64_t*)(rsp_val+16),
+            (unsigned long long)*(uint64_t*)(rsp_val+24),
+            (unsigned long long)*(uint64_t*)(rsp_val+32));
+    }
     ssize_t wr = write(STDERR_FILENO, msg, len);
     (void)wr;
     _exit(128 + sig);
