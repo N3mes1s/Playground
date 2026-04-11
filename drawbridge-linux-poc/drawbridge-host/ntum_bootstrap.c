@@ -519,6 +519,20 @@ static void *boot_thread_fn(void *arg) {
             *(uint64_t*)(sd + 0x30) = NTUM_STACK_TOP;
         *(volatile uint64_t*)0x18063b218ULL = (uint64_t)sd;
     }
+    /* Init kernel object manager global at [0x648c00].
+     * Written by init command at RVA 0x2bd0a6. Read at RVA 0x31a602.
+     * Points to a system object with [+0x18] = next and [+0x10] = type. */
+    if (*(volatile uint64_t*)0x180648c00ULL == 0) {
+        static uint8_t *sys_obj = NULL;
+        if (!sys_obj) {
+            sys_obj = (uint8_t*)mmap(
+                (void*)(LIBOS_KERNEL_HEAP + 0x28000000ULL), 0x1000,
+                PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+        }
+        *(volatile uint64_t*)0x180648c00ULL = (uint64_t)sys_obj;
+    }
+
     /* Re-arm pool and KTHREAD pointers (all in LibOS space now) */
     *(volatile uint64_t*)0x1806456e8ULL = (uint64_t)(BOOT_STRUCTS_ADDR + 0x16200);
     /* Re-arm TEB KTHREAD link */
