@@ -384,6 +384,18 @@ static void *boot_thread_fn(void *arg) {
     mlock((void*)0x180a00000ULL, 0x1000);   /* .00cfg */
     mlock((void*)0x180c00000ULL, 0x2000);   /* .roafter */
 
+    /* The PE sets TEB[0x1478] = 0x180637000 (NTUM_STACK_BASE) during init.
+     * The thread switcher reads [TEB[0x1478]+0x10] as stack_info.
+     * So [0x180637010] must be a valid pointer to a stack descriptor
+     * where [+0x30] = valid stack pointer.
+     * Write our stack descriptor pointer at 0x180637010. */
+    {
+        uint8_t *sd = (uint8_t*)(BOOT_STRUCTS_ADDR + 0x16000);
+        if (*(uint64_t*)(sd + 0x30) == 0)
+            *(uint64_t*)(sd + 0x30) = NTUM_STACK_TOP;
+        *(volatile uint64_t*)0x180637010ULL = (uint64_t)sd;
+    }
+
     /* Write stack descriptors into the NTUM stack frame area.
      * The thread switcher at RVA 0x3a0650 reads [rsp+0x4f0+0x10] as stack_info.
      * The NTUM stack is at 0x180637000-0x18063b000. The entry sets rsp=0x18063b000.
