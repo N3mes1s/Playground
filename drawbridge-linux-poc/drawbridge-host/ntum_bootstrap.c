@@ -336,9 +336,10 @@ static void *boot_thread_fn(void *arg) {
     }
 
     /* Use assembly trampoline (drawbridge_enter_ntum from trampoline.S) */
-    extern void drawbridge_enter_ntum(void *entry, void *stack, void *params);
+    extern uint64_t DK_GenericStub(uint64_t,uint64_t,uint64_t,uint64_t) __attribute__((ms_abi));
+extern void drawbridge_enter_ntum(void *entry, void *stack, void *params);
     fprintf(stderr, "[BOOT] Byte at 0x1803a05d5: 0x%02x (expect 0x90)\n", *(volatile uint8_t*)0x1803a05d5ULL);
-    ntum_patch_rcx_to_global();
+    ntum_patch_rcx_to_global(); ntum_patch_abi_call();
 
     /* RE-APPLY all data section patches right before trampoline.
      * Demand-paging might have overwritten them. */
@@ -351,6 +352,10 @@ static void *boot_thread_fn(void *arg) {
     mlock(args->params, 0x1000);
     mlock((void*)0x180600000ULL, 0x70000);  /* .data */
     mlock((void*)0x180a00000ULL, 0x1000);   /* .00cfg */
+    /* Force write and read-back to ensure the page is backed */
+    *(volatile uint64_t*)0x180a00008ULL = (uint64_t)&DK_AbiDispatcher;  /* write again */
+    uint64_t readback = *(volatile uint64_t*)0x180a00008ULL;
+    fprintf(stderr, "[BOOT] .00cfg [0x180a00008] readback: 0x%lx\n", (unsigned long)readback);
     mlock((void*)0x180c00000ULL, 0x2000);   /* .roafter */
 
     /* Verify key values */
@@ -517,4 +522,41 @@ void ntum_patch_rcx_to_global(void) {
         }
     }
     fprintf(stderr, "[BOOT] Patched %d __fastfail (int 0x29) calls\n", ff_count);
+}
+
+/* Patch ALL indirect calls through [0x180a00008] to use [0x180640000] instead.
+ * The .00cfg section gets zeroed by CFG initialization.
+ * We store our ABI dispatcher at 0x180640000 (.data) which is safe. */
+void ntum_patch_abi_call(void) {
+    /* Store our dispatcher address at 0x180640000 (.data section) */
+    *(volatile uint64_t*)0x180640000ULL = (uint64_t)&DK_AbiDispatcher;
+
+    /* Scan .text for all 'ff 15 XX XX XX XX' instructions that target 0x180a00008.
+     * Rewrite them to target 0x180640000 instead. */
+    volatile uint8_t *text = (uint8_t*)0x180200000ULL;
+    size_t text_size = 0x1AA000;
+    int patched = 0;
+
+    for (size_t i = 0; i + 6 <= text_size; i++) {
+        if (text[i] == 0xFF && (text[i+1] == 0x15 || text[i+1] == 0x25)) {
+            /* Indirect call/jmp through [rip+disp32] */
+            int32_t disp = *(int32_t*)&text[i+2];
+            uint64_t rip = 0x180200000ULL + i + 6;
+            uint64_t target = rip + disp;
+            if (target == 0x180a00008ULL) {
+                /* Rewrite displacement to point to 0x180640000 */
+                int32_t new_disp = (int32_t)(0x180640000ULL - rip);
+                *(volatile int32_t*)&text[i+2] = new_disp;
+                patched++;
+            }
+        }
+    }
+
+    /* Also patch mov rax, [0x180a00000] at 0x1803a0244 */
+    *(volatile uint64_t*)0x180640008ULL = (uint64_t)&DK_AbiDispatcher; /* CFG check */
+    volatile uint8_t *cfg = (uint8_t*)0x1803a0247ULL; /* offset bytes of the mov */
+    int32_t cfg_disp = (int32_t)(0x180640008ULL - 0x1803a024bULL);
+    *(volatile int32_t*)cfg = cfg_disp;
+    fprintf(stderr, "[BOOT] Patched CFG check to use .data at [0x180640008]\n");
+    fprintf(stderr, "[BOOT] Patched %d ABI calls: [0x180a00008] → [0x180640000]\n", patched);
 }
