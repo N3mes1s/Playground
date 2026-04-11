@@ -68,6 +68,14 @@ struct pal_result {
 // FUN_0028e0d0(r, status, file, line) = set error
 ```
 
+### Resolution Results Overlap Critical .data Globals
+- 0x7001000 (AbiGetVersion) v0 → [0x63f8c0] (boot flag, must be 1)
+- 0x7002000 (AbiGetFunction) v0 → [0x63f5c0] (ABI version, must be 2)  
+- 0x8001001 (SystemTimeQuery v1) → [0x63f8c8] (dispatcher ptr!)
+- 0xf005000 (StreamExt) v0 → [0x63f4f0] (feature flag, must be 1)
+- Re-arm ALL these values on every dispatcher call
+- Version 0 = flag values (1, 2), Version 1+ = real function pointers
+
 ### AbiGetVersion (0x7001000) Overwrites Boot Flag
 - Resolution of func_id 0x7001000 stores result at [0x18063f8c0]
 - This IS the boot flag address! Must return (void*)1 to keep flag valid
