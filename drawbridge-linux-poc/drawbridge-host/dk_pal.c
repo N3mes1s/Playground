@@ -496,15 +496,72 @@ static const dk_func_entry_t g_dk_functions[] = {
     {0, NULL, NULL}
 };
 
-DK_API uint64_t DK_AbiGetVersion(void *in_buf, uint64_t in_size,
-                                  void *out_buf, uint64_t out_size) {
-    (void)in_buf;(void)in_size;(void)out_buf;(void)out_size;
-    fprintf(stderr, "[DK] AbiGetVersion called\n");
-    /* Return version info */
-    if (out_buf && out_size >= 8) {
-        *(uint64_t*)out_buf = 2;  /* Version 2 */
+/*
+ * Generic ABI call dispatcher
+ *
+ * The NTUM calls this through [0x180a00008] with:
+ *   rcx = host context (value from [0x180c00010])
+ *   rdx = ABI call type (e.g., 0x7002002 = GetFunction_v2)
+ *   r8  = input size
+ *   r9  = input buffer pointer
+ *   [rsp+0x20] = output size
+ *   [rsp+0x28] = output buffer pointer
+ *
+ * For GetFunction_v2 (0x7002002):
+ *   input = { uint32_t function_id, uint32_t version }
+ *   output = { uint32_t result_code }
+ */
+/*
+ * Generic ABI call dispatcher
+ *
+ * Called through [0x180a00008] by the NTUM. Win64 convention:
+ *   rcx = HostAbiTable pointer (NOT context)
+ *   rdx = ABI call type ID (e.g., 0x7002002)
+ *   r8  = data size
+ *   r9  = input buffer
+ *   [rsp+0x28] = output size (5th stack arg in Win64)
+ *   [rsp+0x30] = output buffer pointer (6th stack arg)
+ *
+ * For Abi_GetFunction_v2 (0x7002002):
+ *   input[0] = uint32_t function_id (e.g., 0x1001000)
+ *   input[1] = uint32_t version_info
+ *   output = { uint32_t result_code }
+ */
+DK_API uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
+                                   uint64_t data_size, void *in_buf,
+                                   uint64_t out_size, void *out_buf) {
+    fprintf(stderr, "[DK] Dispatch(ctx=0x%lx type=0x%lx size=%lu in=%p out_sz=%lu out=%p)\n",
+            (unsigned long)context, (unsigned long)call_type,
+            (unsigned long)data_size, in_buf,
+            (unsigned long)out_size, out_buf);
+
+    void *input_buf = in_buf;
+
+    if (call_type == 0x7002002) {  /* Abi_GetFunction_v2 */
+        uint32_t *in = (uint32_t*)input_buf;
+        uint32_t func_id = in ? in[0] : 0;
+        uint32_t version = in ? in[1] : 0;
+
+        fprintf(stderr, "[DK] GetFunction(0x%07x v%u)", func_id, version);
+
+        /* Return 1 (available) in the output buffer */
+        if (out_buf) {
+            *(uint32_t*)out_buf = 1;
+        }
+        fprintf(stderr, " -> 1\n");
+        return 0;
     }
-    return DK_STATUS_SUCCESS;
+
+    if (call_type == 0x7002001) {  /* Abi_GetVersion_v2 */
+        fprintf(stderr, "[DK] GetVersion_v2()\n");
+        if (out_buf) {
+            *(uint32_t*)out_buf = 2;
+        }
+        return 0;
+    }
+
+    fprintf(stderr, "[DK] AbiDispatch(type=0x%lx)\n", (unsigned long)call_type);
+    return 0;
 }
 
 /* Generic PAL stub that returns success */
@@ -574,7 +631,7 @@ DK_API uint64_t DK_AbiGetFunction(uint64_t abi_id, void **func_ptr) {
         case 0x61: result = (void*)&DK_RandomBitsRead; break;
 
         /* ABI version query (0x90 = structure size, used as version) */
-        case 0x90: result = (void*)&DK_AbiGetVersion; break;
+        case 0x90: result = (void*)&DK_AbiDispatcher; break;
     }
 
     if (func_ptr) *func_ptr = result;

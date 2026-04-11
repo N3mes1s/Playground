@@ -119,6 +119,7 @@ DK_API uint64_t DK_RandomBitsRead(void *buffer, uint64_t length);
 DK_API uint64_t DK_ConsoleCreate(DK_HANDLE *console);
 
 /* ABI dispatch */
+DK_API uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type, uint64_t in_size, void *in_buf, uint64_t out_size, void *out_buf);
 DK_API uint64_t DK_AbiGetVersion(void *in_buf, uint64_t in_size,
                                   void *out_buf, uint64_t out_size);
 DK_API uint64_t DK_AbiGetFunction(uint64_t abi_id, void **func_ptr);

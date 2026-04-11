@@ -88,14 +88,14 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
         volatile uint64_t *abi_call = (uint64_t*)0x180a00008ULL;
 
         *boot_flag = 1;
-        *dispatch_fn = (uint64_t)&DK_AbiGetFunction;
-        *pal_params = (uint64_t)params->Size;  /* The init reads this */
-        *abi_call = (uint64_t)&DK_AbiGetFunction;
+        *dispatch_fn = (uint64_t)&DK_AbiDispatcher;
+        *pal_params = (uint64_t)params;  /* Full params pointer as context */
+        *abi_call = (uint64_t)&DK_AbiDispatcher;
 
         printf("[BOOT] Patched NTUM data section:\n");
         printf("  [0x18063f8c0] = 1 (boot ready flag)\n");
-        printf("  [0x18063f8c8] = %p (PAL dispatch)\n", (void*)&DK_AbiGetFunction);
-        printf("  [0x180a00008] = %p (ABI call handler)\n", (void*)&DK_AbiGetFunction);
+        printf("  [0x18063f8c8] = %p (PAL dispatch)\n", (void*)(uintptr_t)*dispatch_fn);
+        printf("  [0x180a00008] = %p (ABI dispatcher)\n", (void*)(uintptr_t)*abi_call);
     }
 
     printf("[BOOT] NTUM parameters initialized:\n");
@@ -183,11 +183,13 @@ static void *boot_thread_fn(void *arg) {
     sigaction(SIGTRAP, &sa, NULL);
     sigaction(SIGSEGV, &sa, NULL);
 
-    /* Call the trampoline - this doesn't return normally */
+    /* Call the trampoline - this doesn't return normally.
+     * Entry point receives: rcx = LIBOS_PARAMS, rdx = config_context
+     * The config_context must be non-NULL (the NTUM checks rdi=rdx). */
     ntum_trampoline(args->entry_point,
                     args->stack_top,
-                    args->params,   /* becomes rcx = LIBOS_PARAMS */
-                    NULL);          /* becomes rdx = 0 */
+                    args->params,        /* becomes rcx = LIBOS_PARAMS */
+                    args->params);       /* becomes rdx = config_context (same ptr) */
 
     /* Should not reach here */
     printf("[BOOT] NTUM returned unexpectedly\n");
