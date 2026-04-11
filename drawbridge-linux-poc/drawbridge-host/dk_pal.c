@@ -701,17 +701,27 @@ DK_API __attribute__((force_align_arg_pointer)) uint64_t DK_AbiDispatcher(uint64
         }
 
         /* Write result to the output buffer.
-         * out_buf is a POINTER TO A POINTER: out_buf → result_ptr → result_val
-         * Write the function pointer so the NTUM can call it. */
+         * Protocol discovered from NTUM call site at RVA 0x213e50:
+         *   out_buf = &stack[0x40] (a pointer to a stack slot)
+         *   stack[0x40] = initial rax (possibly a pointer to the result area)
+         *   Caller reads result from stack[0x80] after the call
+         *
+         * Try both: write directly to *out_buf AND to **out_buf
+         * to determine which the NTUM actually uses. */
+        /* Write to the output buffer using double-dereference protocol:
+         * out_buf → ptr → result_area
+         * Confirmed from debugging: out_buf=0x18063ae70, *out_buf=0x18063aeb0.
+         * The caller reads the result from [*out_buf] after the call. */
         if (out_buf) {
-            void **result_ptr_ptr = (void**)out_buf;
-            if (*result_ptr_ptr) {
-                *(uint64_t*)(*result_ptr_ptr) = (uint64_t)func;
+            uint64_t *result_area = *(uint64_t**)out_buf;
+            if (result_area) {
+                /* Write the function pointer to the result area */
+                *result_area = (uint64_t)func;
             }
         }
 
-        /* Return SUCCESS - the NTUM checks this to know if resolution worked */
-        return 0;  /* STATUS_SUCCESS */
+        /* Return SUCCESS (0) - the NTUM checks eax for negative = error */
+        return 0;
     }
 
     if (call_type == 0x7002001) {  /* Abi_GetVersion_v2 */
@@ -721,11 +731,15 @@ DK_API __attribute__((force_align_arg_pointer)) uint64_t DK_AbiDispatcher(uint64
         return 0xC0000002; /* STATUS_NOT_IMPLEMENTED for unknown types */
     }
 
-    /* Post-resolution configuration calls.
-     * After resolving all 84 DK functions, the NTUM makes additional calls
-     * with type values that are .data pointers (e.g., 0x18063af08).
-     * These are feature/capability queries. Return SUCCESS without
-     * touching the output buffer (different protocol than GetFunction_v2). */
+    /* Post-resolution calls with .data address types.
+     * Log safely without dereferencing potentially invalid pointers. */
+    {
+        char msg[128];
+        int l = snprintf(msg, sizeof(msg),
+            "[DK] PostRes: type=0x%lx size=0x%lx in=%p\n",
+            (unsigned long)call_type, (unsigned long)data_size, input_buf);
+        write(2, msg, l);
+    }
     return 0;  /* STATUS_SUCCESS */
 }
 
