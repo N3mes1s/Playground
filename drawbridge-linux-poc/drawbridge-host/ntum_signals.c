@@ -356,11 +356,10 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
         if (handle_libos_fault(fault_addr, uc))
             return;
 
-        /* If RIP is in NTUM code, try exception forwarding */
-        if (rip >= PE_IMAGE_START && rip < PE_IMAGE_END) {
-            if (forward_exception_to_ntum(sig, uc))
-                return;
-        }
+        /* Don't forward SIGSEGV to NTUM exception dispatcher during boot.
+         * The dispatcher IS the thread switcher (0x3a0664) and crashes if
+         * thread context is not initialized. Only forward after thread pool
+         * is set up. For now, let demand-paging or crash handler deal with it. */
     }
 
     /* ---- SIGTRAP: Boot sync + exception forwarding for int3 callbacks ---- */
@@ -394,10 +393,8 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
                         }
                         return;
                     } else {
-                        /* Debug assertion - try exception forwarding first */
-                        if (forward_exception_to_ntum(sig, uc))
-                            return;
-                        /* Fallback: patch to ret */
+                        /* Debug assertion - don't forward to thread switcher.
+                         * Patch to ret and continue. */
                         cc[0] = 0xC3; next[0] = 0x90; next[1] = 0x90;
                         uc->uc_mcontext.gregs[REG_RIP] = rip - 1;
                         if (trap_count <= 20) {
@@ -409,9 +406,9 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
                     }
                 }
 
-                /* Regular int3 - try exception forwarding */
-                if (forward_exception_to_ntum(sig, uc))
-                    return;
+                /* Regular int3 - RuntimeCallbackState+0x10 is the thread
+                 * switcher, NOT the exception dispatcher. Don't forward.
+                 * Just patch the int3 to nop and continue. */
 
                 /* Fallback: patch to nop */
                 *cc = 0x90;
