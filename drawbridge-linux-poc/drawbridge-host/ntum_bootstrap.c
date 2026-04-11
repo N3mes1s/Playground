@@ -265,14 +265,17 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
             /* exec_ctx scheduling counters: [+0x18] used as divisor at RVA 0x35868c.
              * divl [rbx+rdi*4+0x18] where rbx=exec_ctx+0x80. Must be non-zero. */
             *(uint32_t*)(tl_exec_ctx + 0x80 + 0x18) = 1;  /* Avoid div-by-zero */
-            /* Initialize linked list heads in exec_ctx as self-referencing.
-             * The PE does circular list insertions at offsets like 0x1298.
-             * RVA 0x33c635 reads [exec_ctx+offset] as list head.
-             * For empty circular lists: head→next = head, head→prev = head. */
-            for (int off = 0; off < 0x2000; off += 16) {
+            /* Initialize SPECIFIC linked list heads in exec_ctx as self-referencing.
+             * Only set offsets that are known list heads (NOT offset 0 = vtable).
+             * RVA 0x33c635 reads [exec_ctx+0x1298] as list head.
+             * Leave offset 0 and other vtable/pointer fields as 0. */
+            /* Initialize linked list heads at 16-byte aligned offsets.
+             * Skip offset 0 (used as vtable pointer by kernel objects).
+             * Start from 0x10 to preserve vtable fields at [0] and [8]. */
+            for (int off = 0x10; off < 0x2000; off += 16) {
                 uint64_t addr = (uint64_t)tl_exec_ctx + off;
-                *(uint64_t*)(tl_exec_ctx + off) = addr;        /* next = self */
-                *(uint64_t*)(tl_exec_ctx + off + 8) = addr;    /* prev = self */
+                *(uint64_t*)(tl_exec_ctx + off) = addr;
+                *(uint64_t*)(tl_exec_ctx + off + 8) = addr;
             }
             /* thread_local[0x208] = kernel scheduling state pointer.
              * RVA 0x35849c reads [thread_local+0x208] then [+0x9b0].
@@ -562,15 +565,14 @@ static void *boot_thread_fn(void *arg) {
          * Called via vtable as: pool_alloc(pool_obj, size, ...)
          * Allocates memory and returns pointer in rax. */
         extern uint64_t pool_allocator_fn(void*, uint64_t, uint64_t, void*, uint64_t, void*) __attribute__((ms_abi));
-        *(uint64_t*)(boot_pool_vtable + 0x50) = (uint64_t)&pool_allocator_fn;
-        /* The PE calls multiple vtable entries via guard_dispatch:
-         * [+0x50] = allocate (we set above)
-         * [+0xe8] = query/resize (RVA 0x319b0a: mov rax,[vtable+0xe8])
-         * [+0xf0] = destroy/release (RVA 0x319b26: mov rax,[vtable+0xf0])
-         * All must be valid function pointers or guard_dispatch returns 0
-         * and the caller treats 0 as the result. Set all to pool_allocator_fn. */
-        *(uint64_t*)(boot_pool_vtable + 0xe8) = (uint64_t)&pool_allocator_fn;
-        *(uint64_t*)(boot_pool_vtable + 0xf0) = (uint64_t)&pool_allocator_fn;
+        /* Fill ENTIRE vtable with pool_allocator_fn.
+         * The PE calls many different vtable offsets (0x50, 0xe8, 0xf0, etc.)
+         * via guard_dispatch. If any entry is 0, guard_dispatch returns 0
+         * and the caller treats it as allocation failure → crash.
+         * By filling all entries, any vtable call reaches our allocator. */
+        for (int i = 0; i < 0x200; i += 8) {
+            *(uint64_t*)(boot_pool_vtable + i) = (uint64_t)&pool_allocator_fn;
+        }
         /* Set vtable pointer as first field of pool object */
         *(uint64_t*)boot_pool_obj = (uint64_t)boot_pool_vtable;
         /* Pool object fields discovered from PE code:
