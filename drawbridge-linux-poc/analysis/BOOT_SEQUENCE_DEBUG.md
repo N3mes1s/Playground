@@ -212,18 +212,46 @@ In our host, the NTUM PE can't call io_setup directly because:
 The NTUM expects the host to provide io_setup through the PAL or via
 the config calls. We need to handle config call types properly.
 
+## Current Status (Updated)
+
+### Milestones Achieved
+- **183 DK dispatcher calls** (84 first-pass + 89 second-pass + 10 config/internal)
+- **Boot assert ELIMINATED** via feature flag fix (0xf005000 → return 1)
+- **Second resolution pass WORKING** via ABI version fix ([0x63f5c0] = 2)
+- **Exception forwarding LIVE**: KiUserExceptionDispatcher at 0x1803a0664
+- **First DK STUB runtime call** from PE at RVA 0x204a04
+
+### Current Blocker: Thread Switching
+The NTUM crashes at thread switcher (RVA 0x3a0674) because thread context
+`[rcx+0x10]` = NULL. The thread context is built on the NTUM's stack.
+KiUserExceptionDispatcher IS the thread switcher - exception forwarding
+loops back to the same crash.
+
+### Key Discovery: Resolution Overwrites Critical Globals
+Several function resolutions store their results at addresses that overlap
+with boot-critical globals:
+- 0x7001000 v0 → [0x63f8c0] (boot flag, must be 1)
+- 0x7002000 v0 → [0x63f5c0] (ABI version, must be 2)
+- 0x8001001 v1 → [0x63f8c8] (dispatcher pointer!)
+- 0xf005000 v0 → [0x63f4f0] (feature flag, checked == 1)
+
+All must be re-armed on every dispatcher call.
+
+### Key Discovery: Two Resolution Passes
+- **First pass** (type 0x7002002): 84 functions, stores 32-bit values at
+  per-function .data addresses. Version 0 - feature flags use special values.
+- **Second pass** (type 0x7001002): 89 functions, stores 64-bit function
+  pointers. Version 1+ - must return callable function addresses.
+
 ## Next Steps
 
-1. **Understand config call protocol**: The post-resolution calls (#85-90)
-   are the NTUM asking our host to perform initialization. Examine what
-   each call type means and what response is expected.
+1. **Fix thread context initialization**: The NTUM's init code should write
+   to the thread context area. Need to understand what config/init step
+   populates `[stack_frame + 0x4f0 + 0x10]`.
 
-2. **Implement io_setup in the PAL**: The NTUM needs Linux AIO support.
-   Add io_setup/io_destroy handling to our DK PAL or config call handler.
+2. **Implement proper DK_ThreadCreate**: When the NTUM calls DK_ThreadCreate,
+   we need to set up thread structures compatible with the switcher.
 
-3. **Add proper SystemInfoQuery**: The 0x8003000 function ID (currently stub)
-   may be needed to provide system configuration the NTUM reads during init.
-
-4. **Trace what the real sqlservr does**: Compare our config call responses
-   with what the original sqlservr host provides by running the real binary
-   with strace or ltrace.
+3. **Handle the exception dispatch loop**: KiUserExceptionDispatcher = thread
+   switcher. Exceptions forwarded there crash because no thread context exists.
+   May need to NOT forward to it until thread context is initialized.
