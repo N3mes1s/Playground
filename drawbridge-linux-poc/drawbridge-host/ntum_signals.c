@@ -92,7 +92,7 @@ static int handle_libos_fault(void *fault_addr, int is_write, ucontext_t *uc) {
     uintptr_t page = addr & ~0xFFFULL;
 
     /* Check if in LibOS range. Reject NULL page (real crash). */
-    if (addr < 0x1000 || addr >= LIBOS_VM_END)
+    if (addr >= LIBOS_VM_END)
         return 0;  /* NULL or outside range - real crash */
 
     /* Try to map the faulted page.
