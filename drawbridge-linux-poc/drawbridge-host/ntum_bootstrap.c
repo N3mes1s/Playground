@@ -251,6 +251,17 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
             *(uint64_t*)(boot_kthread + 0x40) = (uint64_t)ntum_teb;
             *(uint64_t*)(boot_kthread + 0x41c0) = (uint64_t)boot_thread_local;
             *(uint64_t*)(boot_kthread + 0x40b0) = (uint64_t)boot_thread_local;
+            /* Thread-local block[0x250] = execution context sub-object.
+             * RVA 0x3336dd reads [thread_local+0x250] then [+0xe88] as a lock.
+             * Allocate a sub-object with room for the lock at +0xe88. */
+            static uint8_t *tl_exec_ctx = NULL;
+            if (!tl_exec_ctx) {
+                tl_exec_ctx = (uint8_t*)mmap(
+                    (void*)(LIBOS_KERNEL_HEAP + 0x23000000ULL), 0x2000,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+            }
+            *(uint64_t*)(boot_thread_local + 0x250) = (uint64_t)tl_exec_ctx;
 
             /* Link into TEB */
             *(uint64_t*)((uint8_t*)ntum_teb + 0x1838) = (uint64_t)boot_kthread;
