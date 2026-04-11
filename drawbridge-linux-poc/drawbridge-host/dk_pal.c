@@ -555,13 +555,14 @@ DK_API uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
 
     void *input_buf = in_buf;
 
-    /* Re-arm our dispatcher pointer (safe write to our external page) */
+    /* Re-arm: write our dispatcher pointer every time we're called.
+     * The NTUM may zero this between calls during PE re-init. */
     *(volatile uint64_t*)0x181100000ULL = (uint64_t)&DK_AbiDispatcher;
 
     /* Log first few calls for debugging (use write() not fprintf) */
     static int dispatch_count = 0;
     dispatch_count++;
-    if (dispatch_count <= 5) {
+    if (dispatch_count <= 100) {
         char msg[128];
         int len = snprintf(msg, sizeof(msg),
             "[DK] Call #%d: ctx=0x%lx type=0x%lx size=%lu\n",

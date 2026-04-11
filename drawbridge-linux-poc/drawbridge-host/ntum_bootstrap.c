@@ -365,7 +365,11 @@ extern void drawbridge_enter_ntum(void *entry, void *stack, void *params);
     *(volatile uint64_t*)0x180a00000ULL = (uint64_t)&DK_AbiDispatcher;  /* __guard_check_icall */
     *(volatile uint64_t*)0x180a00008ULL = (uint64_t)&DK_AbiDispatcher;  /* __guard_dispatch_icall */
 
-    /* Also lock the .data page containing our dispatcher pointer at 0x181100000 */
+    /* Write dispatcher to external page (will be re-armed by dispatcher on each call) */
+    *(volatile uint64_t*)0x181100000ULL = (uint64_t)&DK_AbiDispatcher;
+    mlock((void*)0x181100000ULL, 0x1000);
+    fprintf(stderr, "[BOOT] Dispatcher at 0x181100000 = 0x%lx\n",
+            (unsigned long)*(volatile uint64_t*)0x181100000ULL);
     mlock((void*)0x180c00000ULL, 0x2000);   /* .roafter */
 
     /* Verify key values */
