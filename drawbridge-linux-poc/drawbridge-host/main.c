@@ -429,15 +429,25 @@ int main(int argc, char **argv) {
     /* Initialize DK PAL */
     dk_pal_init();
 
-    WINDOWS_LIBOS_PARAMETERS libos_params;
-    ntum_bootstrap_init(&libos_params, ntum, 16 * 1024 * 1024, /* SizeOfImage */
+    /* Allocate params in LibOS address space (NTUM requires addr < 0x400000000000) */
+    WINDOWS_LIBOS_PARAMETERS *libos_params_ptr = (WINDOWS_LIBOS_PARAMETERS*)
+        mmap((void*)0x100010000ULL, sizeof(WINDOWS_LIBOS_PARAMETERS),
+             PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+    if (libos_params_ptr == MAP_FAILED) {
+        libos_params_ptr = (WINDOWS_LIBOS_PARAMETERS*)
+            mmap(NULL, sizeof(WINDOWS_LIBOS_PARAMETERS),
+                 PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    }
+    WINDOWS_LIBOS_PARAMETERS *libos_params = libos_params_ptr;
+    printf("[HOST] LIBOS_PARAMS at %p (in LibOS address space)\n", (void*)libos_params);
+    ntum_bootstrap_init(libos_params, ntum, 16 * 1024 * 1024, /* SizeOfImage */
                         0x3A04D0,  /* sqlpal.dll entry RVA */
                         dk_pal_get_table());
 
     printf("\n[HOST] Launching NTUM boot thread...\n");
     printf("[HOST] This will switch to Windows x64 ABI and enter sqlpal.dll\n\n");
 
-    int boot_result = ntum_bootstrap_launch(&libos_params);
+    int boot_result = ntum_bootstrap_launch(libos_params);
     if (boot_result != 0) {
         fprintf(stderr, "[HOST] NTUM boot failed\n");
     }

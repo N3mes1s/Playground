@@ -255,7 +255,7 @@ static void *boot_thread_fn(void *arg) {
 
     /* Jump directly to 0x180204754 (the real init) using our trampoline.
      * rcx = LIBOS_PARAMS, rdx = LIBOS_PARAMS (config context) */
-    void *real_init = (void*)((uint8_t*)args->params->ImageBase + 0x204754);
+    void *real_init = (void*)((uint8_t*)args->params->ImageBase + 0x3a04d0); /* ORIGINAL ENTRY */
     /* Verify the bytes at the target haven't been patched incorrectly */
     volatile uint8_t *target = (uint8_t*)real_init;
     printf("[BOOT] Entering REAL init at %p bytes: %02x %02x %02x %02x %02x\n",
