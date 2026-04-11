@@ -45,12 +45,16 @@ uint64_t *result_ptr = *(uint64_t**)out_buf;
 - Root cause: The NTUM needs io_setup (Linux AIO syscall 0xce=206) which is
   normally provided by the ELF host's FUN_00354180 (raw syscall wrapper)
 
-### Boot Functions are in the ELF Host
-- The decompiled functions (FUN_00204680, FUN_001f1c50, etc.) are
-  in the sqlservr ELF binary, NOT in sqlpal.dll PE
-- The real sqlservr provides io_setup, threading, OpenSSL init etc.
-- Post-resolution config calls (#85-90) are the PE calling BACK to us
-- We need to handle these callbacks to provide the init services
+### CORRECTION: PE and ELF Share RVAs but Have DIFFERENT Code
+- Ghidra decompiled the ELF (sqlservr), NOT the PE (sqlpal.dll)
+- Functions at same RVAs have DIFFERENT implementations:
+  - ELF's FUN_00354180: raw Linux syscall wrapper (mov rax,nr; syscall)
+  - PE's RVA 0x354180: different code (30 03 00 00 48 3b...)
+  - ELF's FUN_00202100: calls io_setup via syscall
+  - PE's RVA 0x202100: sub rsp,0x28; lea rcx,... (calls through PAL)
+- The PE goes through our ABI dispatcher for ALL host operations
+- Post-resolution config calls (#85-90) are the PE's PAL requests
+- We need to handle these config types properly (they're NOT just status reports)
 
 ### Error Handling Pattern (used throughout NTUM)
 ```c
