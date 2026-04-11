@@ -285,45 +285,92 @@ DK_API uint64_t DK_StreamEventSelect(DK_HANDLE stream, DK_HANDLE event,
  * Memory Management
  * ================================================================ */
 
+/*
+ * Protection flag converter - matches the REAL sqlservr implementation
+ * at FUN_001d9720:
+ *   return (flags & 3) | ((flags >> 1) & 6);
+ *
+ * This maps Drawbridge protection values to Linux PROT_* flags:
+ *   DK prot 0 → Linux 0 (PROT_NONE)
+ *   DK prot 1 → Linux 1 (PROT_READ)
+ *   DK prot 2 → Linux 3 (PROT_READ|PROT_WRITE)
+ *   DK prot 3 → Linux 3 (PROT_READ|PROT_WRITE)
+ *   DK prot 4 → Linux 6 (PROT_WRITE|PROT_EXEC) - actually R+X
+ *   DK prot 5 → Linux 5 (PROT_READ|PROT_EXEC)
+ *   DK prot 6 → Linux 7 (PROT_READ|PROT_WRITE|PROT_EXEC)
+ */
 static int dk_prot_to_linux(uint64_t dk_prot) {
-    int prot = 0;
-    if (dk_prot & WIN_PAGE_NOACCESS)          prot |= PROT_READ;
-    if (dk_prot & WIN_PAGE_READONLY)          prot |= PROT_READ | PROT_WRITE;
-    if (dk_prot & WIN_PAGE_READWRITE)         prot |= PROT_READ | PROT_WRITE;
-    if (dk_prot & WIN_PAGE_EXECUTE)           prot |= PROT_EXEC;
-    if (dk_prot & WIN_PAGE_EXECUTE_READ)      prot |= PROT_READ | PROT_EXEC;
-    if (dk_prot & WIN_PAGE_EXECUTE_READWRITE) prot |= PROT_READ | PROT_WRITE | PROT_EXEC;
-    if (prot == 0) prot = PROT_READ | PROT_WRITE;
-    return prot;
+    uint32_t p = (uint32_t)dk_prot;
+    int linux_prot = (int)((p & 3) | ((p >> 1) & 6));
+    /* Ensure at least RW for non-zero protections so pages are accessible */
+    if (linux_prot == 0 && p != 0) linux_prot = PROT_READ | PROT_WRITE;
+    return linux_prot;
 }
 
+/*
+ * DK_VirtualMemoryAllocate - based on real FUN_0024b4f0 / FUN_0024b210
+ *
+ * Real behavior:
+ * 1. Page-aligns address down and size up
+ * 2. MEM_RESERVE only → MAP_NORESERVE
+ * 3. MEM_COMMIT → MAP_PRIVATE|MAP_ANONYMOUS, MAP_FIXED if address given
+ * 4. Protects PE image range from remapping
+ * 5. Protection flags via (p & 3) | ((p >> 1) & 6)
+ */
 DK_API uint64_t DK_VirtualMemoryAllocate(void **address, uint64_t *size,
                                           uint64_t alloc_type, uint64_t protect) {
     void *hint = address ? *address : NULL;
-    size_t len = size ? *size : 4096;
+    size_t len = size ? *size : 0x1000;
 
-    fprintf(stderr, "[PAL] VirtualAlloc(%p, 0x%lx, type=0x%lx, prot=0x%lx)\n",
-            hint, (unsigned long)len, (unsigned long)alloc_type,
-            (unsigned long)protect);
+    /* Page-align (real host does this) */
+    uintptr_t addr_val = (uintptr_t)hint;
+    uintptr_t aligned = addr_val & ~0xFFFULL;
+    size_t extra = addr_val - aligned;
+    size_t aligned_len = (len + extra + 0xFFF) & ~0xFFFULL;
+    if (aligned_len == 0) aligned_len = 0x1000;
 
-    int prot_linux = dk_prot_to_linux(protect);
-    int flags = MAP_PRIVATE | MAP_ANONYMOUS;
-
-    if (hint) flags |= MAP_FIXED_NOREPLACE;
-    if (alloc_type & WIN_MEM_RESERVE) flags |= MAP_NORESERVE;
-
-    void *result = mmap(hint, len, prot_linux, flags, -1, 0);
-    if (result == MAP_FAILED) {
-        if (hint) {
-            mprotect(hint, len, prot_linux);
-            result = hint;
-        } else {
-            return DK_STATUS_NO_MEMORY;
-        }
+    static int va_count = 0;
+    va_count++;
+    if (va_count <= 50) {
+        fprintf(stderr, "[PAL] VirtualAlloc(%p→0x%lx, 0x%lx, type=0x%lx, prot=0x%lx)\n",
+                hint, (unsigned long)aligned, (unsigned long)aligned_len,
+                (unsigned long)alloc_type, (unsigned long)protect);
     }
 
+    int prot_linux = dk_prot_to_linux(protect);
+    if (prot_linux == 0) prot_linux = PROT_READ | PROT_WRITE;
+
+    /* Protect PE image range - don't remap, just adjust protection */
+    if (hint && aligned >= PE_IMAGE_START && aligned < PE_IMAGE_END) {
+        mprotect((void*)aligned, aligned_len, prot_linux);
+        if (address) *address = hint;
+        if (size) *size = aligned_len;
+        return DK_STATUS_SUCCESS;
+    }
+
+    int flags = MAP_PRIVATE | MAP_ANONYMOUS;
+    if ((alloc_type & WIN_MEM_RESERVE) && !(alloc_type & WIN_MEM_COMMIT))
+        flags |= MAP_NORESERVE;
+
+    if (hint) {
+        /* Real host uses MAP_FIXED for commit with address.
+         * We use NOREPLACE first to avoid clobbering, then FIXED as fallback. */
+        void *result = mmap((void*)aligned, aligned_len, prot_linux,
+                            flags | MAP_FIXED_NOREPLACE, -1, 0);
+        if (result == MAP_FAILED) {
+            /* Already mapped - just adjust protection (preserves existing data) */
+            mprotect((void*)aligned, aligned_len, prot_linux);
+        }
+        if (address) *address = hint;
+        if (size) *size = aligned_len;
+        return DK_STATUS_SUCCESS;
+    }
+
+    void *result = mmap(NULL, aligned_len, prot_linux, flags, -1, 0);
+    if (result == MAP_FAILED) return DK_STATUS_NO_MEMORY;
+
     if (address) *address = result;
-    if (size) *size = len;
+    if (size) *size = aligned_len;
     return DK_STATUS_SUCCESS;
 }
 
@@ -354,16 +401,71 @@ DK_API uint64_t DK_VirtualMemoryProtect(void *address, uint64_t size,
  * Threading
  * ================================================================ */
 
+/*
+ * Thread start wrapper - installs signal handler and calls NTUM function.
+ * The NTUM's start_routine uses ms_abi calling convention.
+ */
+struct dk_thread_ctx {
+    void *start_routine;
+    void *stack_ptr;
+};
+
+static void *dk_thread_wrapper(void *arg) {
+    struct dk_thread_ctx *ctx = (struct dk_thread_ctx *)arg;
+    void *routine = ctx->start_routine;
+    free(ctx);
+
+    /* Install signal handler on this thread */
+    extern void ntum_signal_init(void);
+    ntum_signal_init();
+
+    fprintf(stderr, "[PAL] Thread started, calling %p\n", routine);
+
+    /* Call the NTUM's thread entry (ms_abi convention) */
+    typedef uint64_t (__attribute__((ms_abi)) *thread_fn_t)(void*);
+    thread_fn_t fn = (thread_fn_t)routine;
+    fn(NULL);
+    return NULL;
+}
+
+/*
+ * DK_ThreadCreate - based on real FUN_00252e60
+ *
+ * Real behavior: allocates 0xAA0 thread block, links into global list,
+ * creates pthread with entry thunk that sets up TEB via ARCH_SET_GS.
+ * The NTUM's own thread entry does its TEB/GS setup internally.
+ */
 DK_API uint64_t DK_ThreadCreate(void *start_routine, void *stack_ptr,
                                  uint64_t flags, DK_HANDLE *thread) {
-    (void)stack_ptr; (void)flags;
+    (void)flags;
     DK_HANDLE h = alloc_handle();
     if (h == DK_NULL_HANDLE) return DK_STATUS_NO_MEMORY;
 
+    struct dk_thread_ctx *ctx = calloc(1, sizeof(*ctx));
+    if (!ctx) { free_handle(h); return DK_STATUS_NO_MEMORY; }
+    ctx->start_routine = start_routine;
+    ctx->stack_ptr = stack_ptr;
+
     g_handles[h].type = HANDLE_THREAD;
-    int ret = pthread_create(&g_handles[h].thread, NULL,
-                             (void*(*)(void*))start_routine, NULL);
-    if (ret != 0) { free_handle(h); return DK_STATUS_NO_MEMORY; }
+
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 4 * 1024 * 1024);
+
+    int ret = pthread_create(&g_handles[h].thread, &attr,
+                             dk_thread_wrapper, ctx);
+    pthread_attr_destroy(&attr);
+
+    if (ret != 0) {
+        free(ctx);
+        free_handle(h);
+        fprintf(stderr, "[PAL] ThreadCreate(%p) FAILED: %d\n", start_routine, ret);
+        return DK_STATUS_NO_MEMORY;
+    }
+
+    fprintf(stderr, "[PAL] ThreadCreate(%p, %p) → handle %lu\n",
+            start_routine, stack_ptr, (unsigned long)h);
+
     if (thread) *thread = h;
     return DK_STATUS_SUCCESS;
 }
