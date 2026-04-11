@@ -972,17 +972,12 @@ uint64_t pool_allocator_fn(void *pool_obj, uint64_t alloc_size,
     if (result == MAP_FAILED) return 0;
 
     /* Pre-fill a stack descriptor at offset +0x10 of the allocation.
-     * The thread switcher at RVA 0x3a0670 reads [ptr+0x10] as stack_info,
-     * then [stack_info+0x30] as stack_ptr. If any pool allocation is used
-     * as a thread context, this prevents NULL dereference. */
-    static uint8_t boot_stack_desc[256] __attribute__((aligned(64)));
-    if (boot_stack_desc[0] == 0) {
-        /* Initialize once: stack_desc+0x30 = valid stack pointer */
-        *(uint64_t*)(boot_stack_desc + 0x30) = NTUM_STACK_TOP;
-        *(uint64_t*)(boot_stack_desc + 0x90) = 0x18021ff10ULL; /* guard_check=ret */
-        boot_stack_desc[0] = 1; /* initialized flag */
-    }
-    *(uint64_t*)((uint8_t*)result + 0x10) = (uint64_t)boot_stack_desc;
+     * The stack descriptor MUST be in LibOS space.
+     * Use the boot stack descriptor from our LibOS structs. */
+    uint8_t *sd = (uint8_t*)(BOOT_STRUCTS_ADDR + 0x16000);
+    if (*(uint64_t*)(sd + 0x30) == 0)
+        *(uint64_t*)(sd + 0x30) = NTUM_STACK_TOP;
+    *(uint64_t*)((uint8_t*)result + 0x10) = (uint64_t)sd;
 
     static int pool_count = 0;
     pool_count++;

@@ -83,8 +83,14 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
      *
      * Separately, [0x180c00820] stores a pointer to a buffer where [0] = 0x190.
      * These are TWO DIFFERENT checks in different code paths. */
-    static uint8_t param_buffer[0x200] __attribute__((aligned(16)));
-    memset(param_buffer, 0, sizeof(param_buffer));
+    /* ParameterBuffer must be in LibOS space - the PE follows pointers from it */
+    static uint8_t *param_buffer = NULL;
+    if (!param_buffer) {
+        param_buffer = (uint8_t*)mmap((void*)(LIBOS_KERNEL_HEAP + 0x21000000ULL), 0x1000,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+    }
+    memset(param_buffer, 0, 0x200);
     /* ABI header format for the PAL boot function */
     *(uint32_t*)(param_buffer + 0x00) = 0x10;   /* Size field */
     *(uint32_t*)(param_buffer + 0x04) = 0x38;   /* SubSize field */
@@ -102,8 +108,14 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
      *             If 0, no memory can be allocated (STATUS_NO_MEMORY)!
      *   [+0x08] = sub-header size (0x38)
      */
-    static uint8_t s_libos_size_buf[0x200] __attribute__((aligned(16)));
-    memset(s_libos_size_buf, 0, sizeof(s_libos_size_buf));
+    /* s_libos_size_buf also in LibOS space */
+    static uint8_t *s_libos_size_buf = NULL;
+    if (!s_libos_size_buf) {
+        s_libos_size_buf = (uint8_t*)mmap((void*)(LIBOS_KERNEL_HEAP + 0x21001000ULL), 0x1000,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+    }
+    memset(s_libos_size_buf, 0, 0x200);
     *(uint32_t*)(s_libos_size_buf + 0x00) = 0x190;  /* Size */
     *(uint32_t*)(s_libos_size_buf + 0x08) = 0x38;   /* SubSize */
     *(uint32_t*)(s_libos_size_buf + 0x34) = 512;    /* 512 * 6MB = 3GB max memory */
@@ -215,8 +227,6 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
              *   +0x17600: sub-inner (0x200 bytes)
              *   +0x17800: thread state / TCB (0x2000 bytes)
              */
-            #define BOOT_STRUCTS_SIZE 0x20000
-            #define BOOT_STRUCTS_ADDR (LIBOS_KERNEL_HEAP + 0x20000000ULL) /* +512MB */
             uint8_t *bs = (uint8_t*)mmap((void*)BOOT_STRUCTS_ADDR, BOOT_STRUCTS_SIZE,
                             PROT_READ | PROT_WRITE,
                             MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);

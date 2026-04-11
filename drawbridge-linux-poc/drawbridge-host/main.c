@@ -149,15 +149,25 @@ static void *map_pe_from_sfp(sfp_archive_t *archive, const char *name,
     uint64_t offset_adj = data_offset - page_offset;
     size_t map_size = (data_size + offset_adj + 4095) & ~4095ULL;
 
+    /* All SFP mappings must be in LibOS address range.
+     * The NTUM uses these addresses in thread context frames
+     * and expects them to be within the valid LibOS range. */
+    static uint64_t sfp_map_next = 0x3FFF80000000ULL; /* High kernel control area */
     int flags = MAP_PRIVATE;
-    if (base_hint) flags |= MAP_FIXED_NOREPLACE;
+    if (base_hint) {
+        flags |= MAP_FIXED_NOREPLACE;
+    } else {
+        /* Assign a LibOS-range address */
+        base_hint = (void*)__atomic_fetch_add(&sfp_map_next, map_size + 0x1000,
+                                               __ATOMIC_SEQ_CST);
+    }
 
     void *mapped = mmap(base_hint, map_size, PROT_READ | PROT_WRITE,
                         flags, archive->fd, page_offset);
-    if (mapped == MAP_FAILED) {
-        /* Try without fixed address */
-        mapped = mmap(NULL, map_size, PROT_READ | PROT_WRITE,
-                      MAP_PRIVATE, archive->fd, page_offset);
+    if (mapped == MAP_FAILED && base_hint) {
+        /* Try MAP_FIXED (overwrite) */
+        mapped = mmap(base_hint, map_size, PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_FIXED, archive->fd, page_offset);
     }
     if (mapped == MAP_FAILED) return NULL;
 

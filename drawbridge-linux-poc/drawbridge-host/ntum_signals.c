@@ -442,13 +442,10 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
         return;
     }
 
-    /* ---- SIGFPE: Forward to NTUM ---- */
-    if (sig == SIGFPE) {
-        if (rip >= PE_IMAGE_START && rip < PE_IMAGE_END) {
-            if (forward_exception_to_ntum(sig, uc))
-                return;
-        }
-    }
+    /* ---- SIGFPE: Don't forward to thread switcher.
+     * RuntimeCallbackState+0x10 is the thread switcher, not exception handler.
+     * Forwarding exceptions there crashes because it expects a thread context,
+     * not an exception record. Just crash on SIGFPE for now. */
 
     /* ---- Unhandled: Fatal crash ---- */
     /* Dump key .data values at crash time */

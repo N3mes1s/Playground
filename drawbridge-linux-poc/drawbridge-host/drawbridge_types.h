@@ -408,6 +408,10 @@ typedef struct {
 #define BOOT_STACK_SIZE       (2 * 1024 * 1024)   /* 2MB */
 #define BOOT_STACK_ADDR       0x300100000ULL       /* In kernel heap */
 
+/* Boot structures allocation in LibOS kernel heap */
+#define BOOT_STRUCTS_SIZE     0x20000
+#define BOOT_STRUCTS_ADDR     (LIBOS_KERNEL_HEAP + 0x20000000ULL) /* +512MB = 0x320000000 */
+
 /* Thread args passed to the boot thread function */
 typedef struct {
     void *entry_point;
