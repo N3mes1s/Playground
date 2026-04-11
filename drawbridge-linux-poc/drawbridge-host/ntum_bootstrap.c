@@ -55,6 +55,13 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
     /* Entry point */
     params->BootEntryPoint = (void*)((uint8_t*)image_base + entry_rva);
 
+    /* ParameterBuffer: the NTUM reads [ParameterBuffer] and expects 0x190.
+     * Allocate in LibOS address space. */
+    static uint8_t param_buffer[0x200] __attribute__((aligned(16)));
+    *(uint32_t*)param_buffer = 0x190;  /* Size = sizeof(WINDOWS_LIBOS_PARAMETERS) */
+    params->ParameterBuffer = param_buffer;
+    params->ParameterBufferSize = sizeof(param_buffer);
+
     /* Feature flags - base PAL features */
     uint32_t *flags = (uint32_t*)&params->FeatureFlags[0];
     *flags = FEATURE_BASE_PAL | FEATURE_TLS;

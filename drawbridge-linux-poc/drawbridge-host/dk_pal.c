@@ -566,6 +566,7 @@ DK_API __attribute__((force_align_arg_pointer)) uint64_t DK_AbiDispatcher(uint64
     *(volatile uint64_t*)0x181100000ULL = (uint64_t)&DK_AbiDispatcher;
     *(volatile uint64_t*)0x180a00008ULL = (uint64_t)&DK_AbiDispatcher;
     *(volatile uint64_t*)0x180a00000ULL = (uint64_t)&DK_AbiDispatcher;
+    *(volatile uint64_t*)0x18063f8c8ULL = (uint64_t)&DK_AbiDispatcher;
 
     /* Log first few calls for debugging (use write() not fprintf) */
     static int dispatch_count = 0;
@@ -701,11 +702,16 @@ DK_API __attribute__((force_align_arg_pointer)) uint64_t DK_AbiDispatcher(uint64
         case 0x13001000: func = (void*)&DK_RandomBitsRead; break;
         }
 
-        /* Write function pointer to output buffer */
-        if (out_buf && out_size >= 8) {
-            *(uint64_t*)out_buf = (uint64_t)func;
-        } else if (out_buf && out_size >= 4) {
-            *(uint32_t*)out_buf = (uint32_t)(uintptr_t)func;
+        /* Write result to the output buffer.
+         * out_buf is a POINTER TO A POINTER: out_buf → result_ptr → result_val
+         * The caller reads the result from *result_ptr.
+         * We need to write to **out_buf (the dereference chain). */
+        if (out_buf) {
+            void **result_ptr_ptr = (void**)out_buf;
+            if (*result_ptr_ptr) {
+                /* Write function availability (non-zero = available) */
+                *(uint32_t*)(*result_ptr_ptr) = (func != NULL) ? 1 : 0;
+            }
         }
 
         return 0;
