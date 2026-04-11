@@ -221,8 +221,8 @@ static void *boot_thread_fn(void *arg) {
     struct sigaction sa = {0};
     sa.sa_sigaction = boot_sigtrap_handler;
     sa.sa_flags = SA_SIGINFO;
-    sigaction(SIGTRAP, &sa, NULL);
-    sigaction(SIGSEGV, &sa, NULL);
+    //sigaction(SIGTRAP, &sa, NULL);
+    //sigaction(SIGSEGV, &sa, NULL);
 
     /*
      * Initialize the security cookie ourselves (what 0x180204704 does),
