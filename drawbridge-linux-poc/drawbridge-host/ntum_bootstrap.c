@@ -563,6 +563,14 @@ static void *boot_thread_fn(void *arg) {
          * Allocates memory and returns pointer in rax. */
         extern uint64_t pool_allocator_fn(void*, uint64_t, uint64_t, void*, uint64_t, void*) __attribute__((ms_abi));
         *(uint64_t*)(boot_pool_vtable + 0x50) = (uint64_t)&pool_allocator_fn;
+        /* The PE calls multiple vtable entries via guard_dispatch:
+         * [+0x50] = allocate (we set above)
+         * [+0xe8] = query/resize (RVA 0x319b0a: mov rax,[vtable+0xe8])
+         * [+0xf0] = destroy/release (RVA 0x319b26: mov rax,[vtable+0xf0])
+         * All must be valid function pointers or guard_dispatch returns 0
+         * and the caller treats 0 as the result. Set all to pool_allocator_fn. */
+        *(uint64_t*)(boot_pool_vtable + 0xe8) = (uint64_t)&pool_allocator_fn;
+        *(uint64_t*)(boot_pool_vtable + 0xf0) = (uint64_t)&pool_allocator_fn;
         /* Set vtable pointer as first field of pool object */
         *(uint64_t*)boot_pool_obj = (uint64_t)boot_pool_vtable;
         /* Pool object fields discovered from PE code:
