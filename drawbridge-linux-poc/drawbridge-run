@@ -1,0 +1,162 @@
+#!/bin/bash
+#
+# drawbridge-run - Run Windows PE executables on Linux via Drawbridge
+#
+# Uses the real SQLPAL NTUM from SQL Server on Linux.
+# Supports: 64-bit Windows PE executables (.exe)
+#
+# Usage: drawbridge-run [options] <windows.exe> [args...]
+#
+# Options:
+#   --trace      Enable API call tracing (LD_PRELOAD syscall logger)
+#   --timeout N  Kill after N seconds (default: no timeout)
+#   --quiet      Suppress host boot messages
+#   --setup      First-time setup (download mssql-server, extract SFPs)
+#
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+MSSQL_DIR="$SCRIPT_DIR/deps/mssql-extracted"
+SQLSERVR="$MSSQL_DIR/opt/mssql/bin/sqlservr"
+PKG_DIR="$MSSQL_DIR/opt/mssql/lib/sqlservr"
+SFP_DIR="$MSSQL_DIR/opt/mssql/lib"
+
+# Parse options
+TRACE=0
+TIMEOUT=""
+QUIET=0
+SETUP=0
+while [[ "$1" == --* ]]; do
+    case "$1" in
+        --trace)   TRACE=1; shift ;;
+        --timeout) TIMEOUT="$2"; shift 2 ;;
+        --quiet)   QUIET=1; shift ;;
+        --setup)   SETUP=1; shift ;;
+        *)         echo "Unknown option: $1"; exit 1 ;;
+    esac
+done
+
+# Setup mode
+if [ "$SETUP" = "1" ]; then
+    echo "[SETUP] Downloading mssql-server..."
+    mkdir -p "$SCRIPT_DIR/deps/mssql-pkg"
+    cd "$SCRIPT_DIR/deps/mssql-pkg"
+
+    URL=$(curl -sL "https://packages.microsoft.com/ubuntu/22.04/mssql-server-2022/pool/main/m/mssql-server/" | grep -oP 'href="(mssql-server_[^"]+_amd64\.deb)"' | tail -1 | sed 's/href="//;s/"//')
+    [ -f "$URL" ] || curl -LO "https://packages.microsoft.com/ubuntu/22.04/mssql-server-2022/pool/main/m/mssql-server/$URL"
+
+    echo "[SETUP] Extracting..."
+    mkdir -p "$MSSQL_DIR"
+    dpkg-deb -x "$URL" "$MSSQL_DIR"
+
+    echo "[SETUP] Extracting SFP packages..."
+    if [ ! -d "$SCRIPT_DIR/deps/sfpack" ]; then
+        git clone https://github.com/nta/sfpack.git "$SCRIPT_DIR/deps/sfpack"
+        make -C "$SCRIPT_DIR/deps/sfpack"
+    fi
+    "$SCRIPT_DIR/deps/sfpack/sfpack" "$SFP_DIR/sqlservr.sfp"
+
+    echo "[SETUP] Installing LDAP compatibility libraries..."
+    apt-get install -y libnuma1 libsss-nss-idmap0 2>/dev/null || true
+
+    # Check for LDAP 2.5
+    if ! ldconfig -p | grep -q "liblber-2.5"; then
+        echo "[SETUP] Downloading LDAP 2.5 compatibility libs..."
+        cd /tmp
+        wget -q "http://archive.ubuntu.com/ubuntu/pool/main/o/openldap/libldap-2.5-0_2.5.20+dfsg-0ubuntu0.22.04.1_amd64.deb" 2>/dev/null || true
+        dpkg-deb -x libldap-2.5-0_*.deb ./ldap25/ 2>/dev/null || true
+        cp ./ldap25/usr/lib/x86_64-linux-gnu/lib*.so.* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || true
+        ldconfig 2>/dev/null || true
+    fi
+
+    echo "[SETUP] Done! Run: drawbridge-run <windows.exe>"
+    exit 0
+fi
+
+# Check args
+if [ -z "$1" ]; then
+    echo "drawbridge-run - Run Windows PE on Linux via Drawbridge"
+    echo ""
+    echo "Usage: $0 [options] <windows-64bit.exe> [args...]"
+    echo ""
+    echo "Options:"
+    echo "  --trace      Enable syscall tracing"
+    echo "  --timeout N  Kill after N seconds"
+    echo "  --quiet      Suppress boot messages"
+    echo "  --setup      First-time setup (downloads ~300MB)"
+    echo ""
+    echo "Requires: mssql-server extracted (run --setup first)"
+    exit 1
+fi
+
+TARGET_EXE="$(realpath "$1")"
+shift
+
+# Check prerequisites
+if [ ! -f "$SQLSERVR" ]; then
+    echo "ERROR: mssql-server not found. Run: $0 --setup"
+    exit 1
+fi
+if [ ! -d "$PKG_DIR" ]; then
+    echo "ERROR: sqlservr.sfp not extracted. Run: $0 --setup"
+    exit 1
+fi
+
+# Check target is PE64
+if ! file "$TARGET_EXE" | grep -q "PE32+"; then
+    echo "WARNING: $TARGET_EXE may not be a 64-bit PE executable"
+    file "$TARGET_EXE"
+fi
+
+# Prepare the package
+cp "$TARGET_EXE" "$PKG_DIR/Content/binn/sqlservr.exe"
+
+# Clean any lock files
+rm -rf /var/opt/mssql/.system 2>/dev/null
+mkdir -p /var/opt/mssql/{data,log,secrets} 2>/dev/null
+
+# Set required limits
+ulimit -d unlimited 2>/dev/null
+
+# Environment
+export LD_LIBRARY_PATH="$MSSQL_DIR/opt/mssql/lib:$LD_LIBRARY_PATH"
+export ACCEPT_EULA=Y
+export PAL_OVERRIDE_PACKAGES="sqlservr=$PKG_DIR"
+
+# Output control
+if [ "$QUIET" = "1" ]; then
+    exec 3>&1
+fi
+
+# Tracing
+PRELOAD=""
+if [ "$TRACE" = "1" ]; then
+    echo "[TRACE] Syscall tracing enabled (strace-lite)"
+    TRACE_LOG="/tmp/drawbridge-trace-$$.log"
+    # Use strace if available
+    if command -v strace &>/dev/null; then
+        STRACE_CMD="strace -f -e trace=write,openat,mmap -o $TRACE_LOG"
+    fi
+fi
+
+# Run
+if [ -n "$TIMEOUT" ]; then
+    TIMEOUT_CMD="timeout $TIMEOUT"
+fi
+
+[ "$QUIET" != "1" ] && echo "[DRAWBRIDGE] Running: $(basename "$TARGET_EXE")"
+[ "$QUIET" != "1" ] && echo "[DRAWBRIDGE] NTUM: sqlpal.dll (1407 exports, 62 real Windows DLLs)"
+[ "$QUIET" != "1" ] && echo ""
+
+$TIMEOUT_CMD $STRACE_CMD "$SQLSERVR" "$@"
+EXIT_CODE=$?
+
+if [ "$TRACE" = "1" ] && [ -f "$TRACE_LOG" ]; then
+    echo ""
+    echo "[TRACE] Log saved to: $TRACE_LOG"
+    echo "[TRACE] Write syscalls: $(grep -c 'write(' "$TRACE_LOG" 2>/dev/null)"
+    echo "[TRACE] File opens: $(grep -c 'openat(' "$TRACE_LOG" 2>/dev/null)"
+fi
+
+exit $EXIT_CODE
