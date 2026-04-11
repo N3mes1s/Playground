@@ -265,6 +265,15 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
             /* exec_ctx scheduling counters: [+0x18] used as divisor at RVA 0x35868c.
              * divl [rbx+rdi*4+0x18] where rbx=exec_ctx+0x80. Must be non-zero. */
             *(uint32_t*)(tl_exec_ctx + 0x80 + 0x18) = 1;  /* Avoid div-by-zero */
+            /* Initialize linked list heads in exec_ctx as self-referencing.
+             * The PE does circular list insertions at offsets like 0x1298.
+             * RVA 0x33c635 reads [exec_ctx+offset] as list head.
+             * For empty circular lists: head→next = head, head→prev = head. */
+            for (int off = 0; off < 0x2000; off += 16) {
+                uint64_t addr = (uint64_t)tl_exec_ctx + off;
+                *(uint64_t*)(tl_exec_ctx + off) = addr;        /* next = self */
+                *(uint64_t*)(tl_exec_ctx + off + 8) = addr;    /* prev = self */
+            }
             /* thread_local[0x208] = kernel scheduling state pointer.
              * RVA 0x35849c reads [thread_local+0x208] then [+0x9b0].
              * Needs a large sub-object (at least 0xA00 bytes). */
