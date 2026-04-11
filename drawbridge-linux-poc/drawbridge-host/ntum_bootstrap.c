@@ -126,6 +126,15 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
          * The second resolver at PE RVA 0x213eb2 reads this and compares to 2. */
         *(volatile uint32_t*)0x18063f5c0ULL = 2;
 
+        /* Default thread block at [0x63b220] - used by thread switcher at
+         * RVA 0x3a0650 as fallback when rdx=NULL.
+         * +0x08: ownership lock
+         * +0x10: stack_base (top of stack)
+         * +0x18: stack_limit (bottom of stack)
+         */
+        *(volatile uint64_t*)0x18063b228ULL = NTUM_STACK_TOP + 0x200000;  /* stack_base */
+        *(volatile uint64_t*)0x18063b230ULL = NTUM_STACK_BASE;            /* stack_limit */
+
         printf("[BOOT] Set NTUM .data globals (no .text patches!):\n");
         printf("  [0x18063f8c0] = 1 (boot flag)\n");
         printf("  [0x18063f8c8] = %p (ABI dispatcher)\n", (void*)&DK_AbiDispatcher);
