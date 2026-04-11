@@ -22,6 +22,10 @@
 #include <sys/random.h>
 #include <sys/sysinfo.h>
 #include <sys/eventfd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 #include <pthread.h>
 
 typedef int32_t LONG;
@@ -77,7 +81,48 @@ static __thread DWORD tls_last_error = 0;
  * When malware imports _fmode or _iob as DATA, the IAT entry must point
  * to the variable, not to a function. */
 static int msvcrt_fmode_data = 0;          /* _fmode: text/binary mode flag */
-static char msvcrt_iob_data[3 * 64] = {0}; /* _iob: stdin/stdout/stderr FILE structs */
+
+/* _iob: Array of 3 Windows FILE structures (each 64 bytes).
+ * The mingw CRT accesses _iob[0] for stdin, _iob[1] for stdout, _iob[2] for stderr.
+ * We store a magic value at offset 0 of each entry so our stubs can identify
+ * which real FILE* to use. */
+#define IOB_MAGIC_STDIN  0xDB10
+#define IOB_MAGIC_STDOUT 0xDB11
+#define IOB_MAGIC_STDERR 0xDB12
+static uint8_t msvcrt_iob_data[3 * 64];
+static int msvcrt_iob_initialized = 0;
+
+static void init_iob(void) {
+    if (msvcrt_iob_initialized) return;
+    memset(msvcrt_iob_data, 0, sizeof(msvcrt_iob_data));
+    /* Store magic values so stubs can map back to real FILE* */
+    *(uint32_t*)(msvcrt_iob_data + 0 * 64) = IOB_MAGIC_STDIN;
+    *(uint32_t*)(msvcrt_iob_data + 1 * 64) = IOB_MAGIC_STDOUT;
+    *(uint32_t*)(msvcrt_iob_data + 2 * 64) = IOB_MAGIC_STDERR;
+    msvcrt_iob_initialized = 1;
+}
+
+/* Map a Windows FILE* (pointing into our iob array) to a real Linux FILE* */
+static FILE *map_win_file(void *stream) {
+    if (!stream) return stdout;
+    uintptr_t s = (uintptr_t)stream;
+    uintptr_t base = (uintptr_t)msvcrt_iob_data;
+    if (s >= base && s < base + sizeof(msvcrt_iob_data)) {
+        int idx = (int)((s - base) / 64);
+        switch (idx) {
+            case 0: return stdin;
+            case 1: return stdout;
+            case 2: return stderr;
+        }
+    }
+    /* Check magic values */
+    uint32_t magic = *(uint32_t*)stream;
+    if (magic == IOB_MAGIC_STDIN) return stdin;
+    if (magic == IOB_MAGIC_STDOUT) return stdout;
+    if (magic == IOB_MAGIC_STDERR) return stderr;
+    /* Unknown - assume stdout */
+    return stdout;
+}
 
 /* ---- kernel32.dll stubs ---- */
 
@@ -1025,7 +1070,15 @@ static char **msvcrt_initenv_ptr = NULL;  /* __initenv: pointer to char** */
 
 WINAPI int *stub_errno(void) { return &msvcrt_errno_val; }
 WINAPI int *stub_commode(void) { return &msvcrt_commode_val; }
-WINAPI void *stub___iob_func(void) { return &msvcrt_iob_data; }
+WINAPI void *stub___iob_func(void) {
+    /* Return pointer to an array of 3 FILE* (stdin, stdout, stderr).
+     * The mingw CRT indexes this: __iob_func()[0]=stdin, [1]=stdout, [2]=stderr.
+     * We store the actual Linux FILE pointers. */
+    static FILE *iob[3];
+    static int init = 0;
+    if (!init) { iob[0] = stdin; iob[1] = stdout; iob[2] = stderr; init = 1; }
+    return iob;
+}
 WINAPI void *stub___initenv(void) { return &msvcrt_initenv_ptr; }
 WINAPI int stub___lc_codepage_func(void) { return 0; }
 WINAPI int stub___mb_cur_max_func(void) { return 1; }
@@ -1094,6 +1147,77 @@ WINAPI char ***stub___p__environ(void) {
 /* __p__fmode returns pointer to _fmode */
 WINAPI int *stub___p__fmode(void) {
     return &msvcrt_fmode_data;
+}
+
+/* ---- WS2_32 (Winsock) stubs ---- */
+
+/* WSADATA structure (at least 400 bytes on Windows) */
+typedef struct {
+    uint16_t wVersion;
+    uint16_t wHighVersion;
+    char szDescription[257];
+    char szSystemStatus[129];
+    uint16_t iMaxSockets;
+    uint16_t iMaxUdpDg;
+    char *lpVendorInfo;
+} WSADATA_STUB;
+
+WINAPI int stub_WSAStartup(uint16_t wVersionRequested, WSADATA_STUB *lpWSAData) {
+    if (lpWSAData) {
+        memset(lpWSAData, 0, sizeof(*lpWSAData));
+        lpWSAData->wVersion = wVersionRequested;
+        lpWSAData->wHighVersion = 0x0202;  /* 2.2 */
+        strcpy(lpWSAData->szDescription, "Drawbridge Winsock");
+    }
+    return 0;  /* Success */
+}
+
+WINAPI int stub_WSACleanup(void) { return 0; }
+
+WINAPI uint64_t stub_socket(int af, int type, int protocol) {
+    int fd = socket(af, type, protocol);
+    if (fd < 0) return (uint64_t)-1;  /* INVALID_SOCKET */
+    return (uint64_t)fd;
+}
+
+WINAPI int stub_connect(uint64_t s, const struct sockaddr *name, int namelen) {
+    int ret = connect((int)s, name, (socklen_t)namelen);
+    return ret;  /* 0 = success, -1 = error */
+}
+
+WINAPI int stub_closesocket(uint64_t s) {
+    return close((int)s);
+}
+
+WINAPI uint16_t stub_htons(uint16_t hostshort) {
+    return htons(hostshort);
+}
+
+WINAPI uint32_t stub_inet_addr(const char *cp) {
+    return inet_addr(cp);
+}
+
+WINAPI int stub_getaddrinfo(const char *node, const char *service,
+                            const struct addrinfo *hints,
+                            struct addrinfo **res) {
+    return getaddrinfo(node, service, hints, res);
+}
+
+WINAPI void stub_freeaddrinfo(struct addrinfo *res) {
+    freeaddrinfo(res);
+}
+
+/* ---- msvcrt lock stubs ---- */
+static pthread_mutex_t msvcrt_locks[64] = { [0 ... 63] = PTHREAD_MUTEX_INITIALIZER };
+
+WINAPI void stub__lock(int locknum) {
+    if (locknum >= 0 && locknum < 64)
+        pthread_mutex_lock(&msvcrt_locks[locknum]);
+}
+
+WINAPI void stub__unlock(int locknum) {
+    if (locknum >= 0 && locknum < 64)
+        pthread_mutex_unlock(&msvcrt_locks[locknum]);
 }
 
 /* ---- Import resolution table ---- */
@@ -1328,6 +1452,21 @@ static const stub_entry_t g_stubs[] = {
     {"api-ms-win-crt-heap-l1-1-0.dll", "free", stub_free},
     {"api-ms-win-crt-heap-l1-1-0.dll", "calloc", stub_calloc},
     {"api-ms-win-crt-stdio-l1-1-0.dll", "__acrt_iob_func", stub_GetCurrentProcess}, /* stub */
+
+    /* WS2_32.dll (Winsock) */
+    {"WS2_32.dll", "WSAStartup", stub_WSAStartup},
+    {"WS2_32.dll", "WSACleanup", stub_WSACleanup},
+    {"WS2_32.dll", "socket", stub_socket},
+    {"WS2_32.dll", "connect", stub_connect},
+    {"WS2_32.dll", "closesocket", stub_closesocket},
+    {"WS2_32.dll", "htons", stub_htons},
+    {"WS2_32.dll", "inet_addr", stub_inet_addr},
+    {"WS2_32.dll", "getaddrinfo", stub_getaddrinfo},
+    {"WS2_32.dll", "freeaddrinfo", stub_freeaddrinfo},
+
+    /* msvcrt locks */
+    {"msvcrt.dll", "_lock", stub__lock},
+    {"msvcrt.dll", "_unlock", stub__unlock},
 
     {NULL, NULL, NULL}
 };
