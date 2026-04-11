@@ -652,17 +652,38 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
                     func_id, version, func, is_stub ? "(STUB)" : "(impl)");
         }
 
-        /* Write function pointer to output buffer.
-         * Write to **out_buf (double-deref): the NTUM's call site passes
-         * out_buf = &stack_slot, where stack_slot points to result area.
-         * Also write to *out_buf for safety. Return 0 = STATUS_SUCCESS. */
+        /* Write function pointer to output via double-deref.
+         *
+         * Confirmed from debug: out_buf=0x18063ae70, *out_buf=0x18063aeb0.
+         * The NTUM's call site at RVA 0x213e50:
+         *   out_buf points to a .data slot containing a pointer to the
+         *   result area. We must write to **out_buf, NOT *out_buf.
+         *   Writing to *out_buf would destroy the NTUM's internal pointer.
+         */
         if (out_buf) {
-            uint64_t *slot = *(uint64_t**)out_buf;
-            if (slot && (uintptr_t)slot > 0x1000 && (uintptr_t)slot < LIBOS_VM_END) {
-                *slot = (uint64_t)func;
+            uint64_t *result_ptr = *(uint64_t**)out_buf;
+            if (result_ptr) {
+                *result_ptr = (uint64_t)func;
+                if (dispatch_count <= 5) {
+                    fprintf(stderr, "[DK] Wrote %p to *(%p) [out_buf=%p]\n",
+                            func, result_ptr, out_buf);
+                    /* Verify the write */
+                    fprintf(stderr, "[DK] Verify: *result_ptr=0x%lx\n",
+                            (unsigned long)*result_ptr);
+                }
             }
-            /* Also store at *out_buf in case the protocol is single-deref */
-            *(uint64_t*)out_buf = (uint64_t)func;
+        }
+
+        /* After call #84, check specific addresses the NTUM reads later */
+        if (dispatch_count == 84) {
+            fprintf(stderr, "[DK] === After 84 resolutions ===\n");
+            fprintf(stderr, "[DK]   [0x18063af08] = 0x%lx (config call #85 type)\n",
+                    (unsigned long)*(volatile uint64_t*)0x18063af08ULL);
+            fprintf(stderr, "[DK]   [0x18063af18] = 0x%lx\n",
+                    (unsigned long)*(volatile uint64_t*)0x18063af18ULL);
+            extern uint8_t g_runtime_callback_state[];
+            fprintf(stderr, "[DK]   RuntimeCallbackState+0x10 = 0x%lx (KiDispatcher)\n",
+                    (unsigned long)*(volatile uint64_t*)(g_runtime_callback_state + 0x10));
         }
         return 0;  /* STATUS_SUCCESS */
     }
