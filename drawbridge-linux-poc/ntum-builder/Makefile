@@ -4,7 +4,7 @@ MINGW32 = i686-w64-mingw32-gcc
 CFLAGS = -Wall -Wextra -O2 -g
 LDFLAGS = -lpthread
 
-HOST_SRCS = pal-host/host.c pal-host/pe_loader.c pal-host/pal_linux.c pal-host/win32_stubs.c
+HOST_SRCS = pal-host/host.c pal-host/pe_loader.c pal-host/pal_linux.c pal-host/win32_stubs.c pal-host/dll_registry.c
 HOST_64 = drawbridge-run
 HOST_32 = drawbridge-run32
 

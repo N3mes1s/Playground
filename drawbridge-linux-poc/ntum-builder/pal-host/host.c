@@ -17,6 +17,7 @@
 #include <signal.h>
 
 #include "pe_loader.h"
+#include "dll_registry.h"
 
 /* From pal_linux.c */
 extern void *pal_linux_create(void);
@@ -95,9 +96,20 @@ int main(int argc, char **argv) {
                (unsigned long)image.preferred_base, image.base);
     printf("\n");
 
+    /* Step 2.5: Initialize DLL registry */
+    dll_registry_t registry;
+    const char *dll_path = getenv("DRAWBRIDGE_DLL_PATH");
+    dll_registry_init(&registry, dll_path, win32_resolve_import, NULL);
+
+    if (dll_path) {
+        printf("[HOST] Loading ReactOS DLLs from: %s\n", dll_path);
+        int n = dll_registry_load_all(&registry);
+        printf("[HOST] Loaded %d DLLs from registry\n\n", n);
+    }
+
     /* Step 3: Resolve imports */
     printf("[HOST] Resolving Win32 API imports...\n");
-    int import_result = pe_resolve_imports(&image, win32_resolve_import, NULL);
+    int import_result = pe_resolve_imports(&image, dll_registry_resolve, &registry);
 
     if (import_result != 0) {
         printf("\n[HOST] WARNING: Some imports could not be resolved.\n");

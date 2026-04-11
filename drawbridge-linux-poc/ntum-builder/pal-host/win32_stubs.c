@@ -229,6 +229,11 @@ LPVOID WINAPI stub_HeapAlloc(HANDLE hHeap, DWORD dwFlags, SIZE_T dwBytes) {
     return p;
 }
 
+LPVOID WINAPI stub_HeapReAlloc(HANDLE hHeap, DWORD dwFlags, LPVOID lpMem, SIZE_T dwBytes) {
+    (void)hHeap; (void)dwFlags;
+    return realloc(lpMem, dwBytes);
+}
+
 BOOL WINAPI stub_HeapFree(HANDLE hHeap, DWORD dwFlags, LPVOID lpMem) {
     (void)hHeap; (void)dwFlags;
     free(lpMem);
@@ -708,6 +713,7 @@ static const stub_entry_t g_stubs[] = {
     {"KERNEL32.dll", "VirtualFree", stub_VirtualFree},
     {"KERNEL32.dll", "GetProcessHeap", stub_GetProcessHeap},
     {"KERNEL32.dll", "HeapAlloc", stub_HeapAlloc},
+    {"KERNEL32.dll", "HeapReAlloc", stub_HeapReAlloc},
     {"KERNEL32.dll", "HeapFree", stub_HeapFree},
     {"KERNEL32.dll", "GetLastError", stub_GetLastError},
     {"KERNEL32.dll", "SetLastError", stub_SetLastError},
