@@ -1,101 +1,92 @@
-# Drawbridge Linux PoC
+# Drawbridge Linux PoC - Real Component Extraction
 
-A proof-of-concept implementation of Microsoft's Drawbridge architecture for
-running Windows PE executables on Linux.
+Extracting and integrating **real components** from open-source projects to
+replicate Microsoft's Drawbridge architecture for running Windows PE
+executables on Linux.
 
-## Background
+**We don't rebuild Windows - we extract real pieces and wire them together.**
 
-Microsoft's Drawbridge (ASPLOS 2011) introduced a **library OS** architecture
-that refactors Windows into three layers:
-
-1. **Picoprocess** - A minimal isolation container with ~45 syscall surface
-2. **Library OS** - Windows APIs implemented as a user-mode library (~16MB)
-3. **PAL (Platform Abstraction Layer)** - ~45 primitive operations bridging to the host
-
-This is how **SQL Server on Linux** works: Microsoft uses SQLPAL (derived from
-Drawbridge) to run the full SQL Server engine on Linux without rewriting it.
+## The Drawbridge Principle
 
 ```
 +---------------------------------------------+
-|        Windows Application (.exe)           |
-|        (unmodified PE binary)               |
+|      Windows Application (.exe)             |
+|      (unmodified PE binary)                 |
 +---------------------------------------------+
-|        Win32 API / NT API                   |
-|        (library OS - user mode stubs)       |
+|      Real Windows DLLs (ReactOS)            |
+|      kernel32.dll, ntdll.dll, msvcrt.dll    |
 +---------------------------------------------+
-|        Platform Abstraction Layer           |
-|        (~45 primitive operations)           |
+|      PE Loader (from Wine)                  |
+|      Loads PE, resolves imports, relocates  |
 +---------------------------------------------+
-|        Linux Kernel                         |
-|        (host OS)                            |
+|      PAL - Platform Abstraction Layer       |
+|      (from Gramine - ~50 operations)        |
++---------------------------------------------+
+|      Linux Kernel                           |
 +---------------------------------------------+
 ```
 
-## Architecture of this PoC
+## Real Components We Extract
 
-### Components
+| Component | Source Project | What We Get | License |
+|-----------|--------------|-------------|---------|
+| **PAL** | [Gramine](https://github.com/gramineproject/gramine) | Real Linux PAL (~50 ops mapped to syscalls) | LGPL-3.0 |
+| **PE Loader** | [Wine](https://gitlab.winehq.org/wine/wine) | Real PE/COFF loader, import resolver, relocator | LGPL-2.1 |
+| **Windows DLLs** | [ReactOS](https://github.com/nicedreams/reactos) | Real kernel32.dll, ntdll.dll, msvcrt.dll | GPL-2.0 |
+| **Reference** | SQL Server on Linux | SQLPAL analysis (proprietary, study only) | Proprietary |
 
-| Component | Directory | Description |
-|-----------|-----------|-------------|
-| PE Loader | `loader/` | Parses PE/COFF headers, maps sections into memory |
-| PAL | `pal/` | Platform Abstraction Layer - maps ~45 operations to Linux syscalls |
-| Library OS | `libos/` | Minimal Win32 API stubs (kernel32, ntdll) |
-| Test Programs | `test/` | Simple Windows programs cross-compiled with MinGW |
-| Runner | `main.c` | Orchestrator that ties all components together |
+## How SQL Server on Linux Does It (SQLPAL)
 
-### PAL Operations (Linux Implementation)
+Microsoft's production implementation (`mssql-server` package):
+- Ships real Windows DLLs bundled with the SQL Server engine
+- SQLPAL implements the PAL on Linux (pthreads, mmap, epoll, io_uring)
+- SQL Server runs as a normal Linux process, calling Win32 APIs internally
+- The library OS layer translates Win32 -> PAL -> Linux syscalls
 
-| Category | PAL Function | Linux Mapping |
-|----------|-------------|---------------|
-| Memory | `pal_mem_alloc` | `mmap()` |
-| Memory | `pal_mem_free` | `munmap()` |
-| Memory | `pal_mem_protect` | `mprotect()` |
-| Threading | `pal_thread_create` | `clone()` / `pthread_create()` |
-| Threading | `pal_thread_exit` | `pthread_exit()` |
-| I/O | `pal_stream_open` | `open()` |
-| I/O | `pal_stream_read` | `read()` |
-| I/O | `pal_stream_write` | `write()` |
-| I/O | `pal_stream_close` | `close()` |
-| Process | `pal_process_exit` | `exit()` |
-| Sync | `pal_mutex_create` | `pthread_mutex_init()` |
-| Sync | `pal_event_create` | `eventfd()` |
-| Time | `pal_time_query` | `clock_gettime()` |
-| Crypto | `pal_random_read` | `getrandom()` |
-| Console | `pal_console_write` | `write(STDOUT)` |
+## Project Structure
 
-### PE Loading Process
+```
+drawbridge-linux-poc/
+├── README.md                    # This file
+├── docs/
+│   └── architecture.md          # Deep architecture analysis
+├── analysis/
+│   ├── sqlpal_analysis.py       # Analyze SQLPAL from mssql-server packages
+│   ├── gramine_pal_map.md       # Gramine PAL operation mapping
+│   └── component_matrix.md      # Component compatibility matrix
+├── extraction/
+│   ├── extract_gramine_pal.sh   # Extract PAL from Gramine source
+│   ├── extract_wine_loader.sh   # Extract PE loader from Wine
+│   └── extract_reactos_dlls.sh  # Extract DLLs from ReactOS
+├── integration/
+│   ├── drawbridge_runner.c      # Orchestrator: load PE via Wine loader,
+│   │                            # resolve imports via ReactOS DLLs,
+│   │                            # execute via Gramine PAL
+│   ├── pal_bridge.h             # Bridge between Wine PE loader and Gramine PAL
+│   └── win32_to_pal.c           # Win32 API -> PAL call translation layer
+├── scripts/
+│   └── setup_environment.sh     # Download and build all dependencies
+└── test/
+    └── hello_win.c              # Simple Windows test program
+```
 
-1. Read PE/COFF headers from the .exe file
-2. Validate PE signature and architecture (x86-64)
-3. Map each section (.text, .data, .rdata, .bss) into memory with correct permissions
-4. Process the Import Address Table (IAT) - resolve Win32 API imports to our libos stubs
-5. Apply relocations if the image cannot be loaded at its preferred base address
-6. Transfer control to the PE entry point
-
-## Building
+## Quick Start
 
 ```bash
-# Requires: gcc, MinGW-w64 (for cross-compiling test programs)
-make all
+# 1. Set up the environment (downloads real components)
+./scripts/setup_environment.sh
 
-# Build only the loader (no test programs)
-make loader
+# 2. Build the integration layer
+make
 
-# Cross-compile test programs
-make test-programs
-```
-
-## Running
-
-```bash
-# Run a simple Windows executable on Linux
-./drawbridge-run test/hello.exe
+# 3. Run a Windows executable on Linux
+./drawbridge-run test/hello_win.exe
 ```
 
 ## References
 
-- [Rethinking the Library OS from the Top Down (ASPLOS 2011)](https://www.microsoft.com/en-us/research/publication/rethinking-the-library-os-from-the-top-down/)
-- [Haven: Shielding Applications from an Untrusted Cloud (OSDI 2014)](https://www.microsoft.com/en-us/research/publication/shielding-applications-from-an-untrusted-cloud-with-haven/)
-- [Gramine (open-source library OS)](https://github.com/gramineproject/gramine)
-- [SQL Server on Linux architecture](https://cloudblogs.microsoft.com/sqlserver/2016/03/07/sql-server-on-linux/)
-- [Microsoft Research Drawbridge project](https://www.microsoft.com/en-us/research/project/drawbridge/)
+- [Drawbridge: Rethinking the Library OS (ASPLOS 2011)](https://www.microsoft.com/en-us/research/publication/rethinking-the-library-os-from-the-top-down/)
+- [Gramine Library OS](https://github.com/gramineproject/gramine)
+- [Wine PE Loader](https://gitlab.winehq.org/wine/wine)
+- [ReactOS](https://reactos.org/)
+- [SQL Server on Linux announcement](https://cloudblogs.microsoft.com/sqlserver/2016/03/07/sql-server-on-linux/)
