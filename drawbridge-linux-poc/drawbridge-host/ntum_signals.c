@@ -211,17 +211,69 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
         }
     }
 
-    /* Handle SIGTRAP (int3) - skip the int3 byte and continue */
+    /* Handle SIGTRAP (int3) - handle boot synchronization and debug traps */
     if (sig == SIGTRAP) {
+        static int trap_count = 0;
+        trap_count++;
         uintptr_t rip = uc->uc_mcontext.gregs[REG_RIP];
+        if (trap_count <= 20) {
+            char tmsg[128];
+            int tl = snprintf(tmsg, sizeof(tmsg),
+                "[TRAP] #%d at RIP=0x%lx\n", trap_count, (unsigned long)rip);
+            write(2, tmsg, tl);
+        }
         /* Check if RIP is in NTUM code and the byte before is 0xCC (int3) */
         if (rip >= PE_IMAGE_START && rip < PE_IMAGE_END) {
-            /* int3 already executed, RIP points AFTER the CC byte.
-             * Patch the byte to NOP for future executions and resume. */
             uint8_t *cc = (uint8_t*)(rip - 1);
-            if (*cc == 0xCC) *cc = 0x90;
+            if (*cc == 0xCC) {
+                /* Check for CC EB FD pattern (int3 + jmp -3 = boot spin loop).
+                 * The NTUM spins here waiting for the host to set a flag.
+                 * We set the boot flag and patch all 3 bytes to nop. */
+                uint8_t *next = (uint8_t*)rip;
+                if (next[0] == 0xEB && next[1] == 0xFD) {
+                    /* CC EB FD = int3 + jmp -3 = spin loop.
+                     * Check if preceded by a conditional jump (boot sync)
+                     * or unconditional (debug assertion). */
+                    uint8_t *prev2 = (uint8_t*)(rip - 3);
+                    int is_boot_sync = (prev2[0] == 0x74); /* je = 0x74 */
+
+                    if (is_boot_sync) {
+                        /* Boot synchronization: set flag and skip spin loop.
+                         * Patch CC EB FD → 90 90 90 and set boot flag. */
+                        extern uint64_t DK_AbiDispatcher(uint64_t,uint64_t,uint64_t,void*,uint64_t,void*) __attribute__((ms_abi));
+                        *(volatile uint32_t*)0x18063f8c0ULL = 1;
+                        *(volatile uint64_t*)0x18063f8c8ULL = (uint64_t)&DK_AbiDispatcher;
+                        cc[0] = 0x90; next[0] = 0x90; next[1] = 0x90;
+                        if (trap_count <= 20) {
+                            char tmsg[128];
+                            int tl = snprintf(tmsg, sizeof(tmsg),
+                                "[TRAP] Boot sync at 0x%lx - flag set\n",
+                                (unsigned long)(rip - 1));
+                            write(2, tmsg, tl);
+                        }
+                    } else {
+                        /* Debug assertion (call; int3; jmp -3).
+                         * The preceding call wasn't supposed to return.
+                         * Patch CC EB FD → C3 90 90 (ret + nops) to return
+                         * to the caller cleanly. */
+                        cc[0] = 0xC3; next[0] = 0x90; next[1] = 0x90;
+                        if (trap_count <= 20) {
+                            char tmsg[128];
+                            int tl = snprintf(tmsg, sizeof(tmsg),
+                                "[TRAP] Debug assert at 0x%lx - patched to ret\n",
+                                (unsigned long)(rip - 1));
+                            write(2, tmsg, tl);
+                        }
+                        /* Back up RIP to the ret we just wrote */
+                        uc->uc_mcontext.gregs[REG_RIP] = rip - 1;
+                    }
+                } else {
+                    /* Regular standalone int3 - patch to nop */
+                    *cc = 0x90;
+                }
+            }
             ntum_fault_count++;
-            return;  /* Resume execution after the (now-patched) int3 */
+            return;  /* Resume execution */
         }
     }
 

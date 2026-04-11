@@ -702,17 +702,16 @@ DK_API __attribute__((force_align_arg_pointer)) uint64_t DK_AbiDispatcher(uint64
 
         /* Write result to the output buffer.
          * out_buf is a POINTER TO A POINTER: out_buf → result_ptr → result_val
-         * The caller reads the result from *result_ptr.
-         * We need to write to **out_buf (the dereference chain). */
+         * Write the function pointer so the NTUM can call it. */
         if (out_buf) {
             void **result_ptr_ptr = (void**)out_buf;
             if (*result_ptr_ptr) {
-                /* Write function availability (non-zero = available) */
-                *(uint32_t*)(*result_ptr_ptr) = (func != NULL) ? 1 : 0;
+                *(uint64_t*)(*result_ptr_ptr) = (uint64_t)func;
             }
         }
 
-        return 0xC0000002; /* STATUS_NOT_IMPLEMENTED for unknown types */
+        /* Return SUCCESS - the NTUM checks this to know if resolution worked */
+        return 0;  /* STATUS_SUCCESS */
     }
 
     if (call_type == 0x7002001) {  /* Abi_GetVersion_v2 */
@@ -722,10 +721,12 @@ DK_API __attribute__((force_align_arg_pointer)) uint64_t DK_AbiDispatcher(uint64
         return 0xC0000002; /* STATUS_NOT_IMPLEMENTED for unknown types */
     }
 
-    /* Unknown call types - these are post-resolution config/feature calls.
-     * The rdx value is a .data pointer, not a call type ID.
-     * Return success and fill output with zeros. */
-    return 0xC0000002; /* STATUS_NOT_IMPLEMENTED for unknown types */
+    /* Post-resolution configuration calls.
+     * After resolving all 84 DK functions, the NTUM makes additional calls
+     * with type values that are .data pointers (e.g., 0x18063af08).
+     * These are feature/capability queries. Return SUCCESS without
+     * touching the output buffer (different protocol than GetFunction_v2). */
+    return 0;  /* STATUS_SUCCESS */
 }
 
 /* Generic PAL stub that returns success */
