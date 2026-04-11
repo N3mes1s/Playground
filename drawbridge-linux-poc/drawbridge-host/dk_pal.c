@@ -605,6 +605,12 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
         case 0x6001000: func = (void*)&DK_ConsoleCreate; is_stub=0; break;
 
         /* ABI (category 0x07) */
+        case 0x7001000:
+            /* AbiGetVersion: The resolution stores the return value at
+             * 0x18063f8c0, which is ALSO the boot flag. The boot flag
+             * must be exactly 1 for the ABI dispatch wrapper to work.
+             * Return (void*)1 so the stored value = 1. */
+            func = (void*)1; is_stub=0; break;
         case 0x7002000: func = (void*)&DK_AbiGetFunction; is_stub=0; break;
 
         /* System (category 0x08) */
