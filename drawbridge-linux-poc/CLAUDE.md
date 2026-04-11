@@ -68,6 +68,13 @@ struct pal_result {
 // FUN_0028e0d0(r, status, file, line) = set error
 ```
 
+### AbiGetVersion (0x7001000) Overwrites Boot Flag
+- Resolution of func_id 0x7001000 stores result at [0x18063f8c0]
+- This IS the boot flag address! Must return (void*)1 to keep flag valid
+- If the flag ≠ 1, the ABI dispatch wrapper enters int3 spin loop
+- The PE's resolution loop at RVA 0x212e0c stores ALL resolved function
+  pointers at specific .data addresses via `mov [rip+offset], eax`
+
 ### Boot Sync vs Exception int3
 - `CC EB FD` preceded by `74` (je) = boot sync spin loop → patch to nops + set flag
 - `CC EB FD` preceded by anything else = debug assertion → need exception forwarding
