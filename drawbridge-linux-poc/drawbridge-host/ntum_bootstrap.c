@@ -221,8 +221,7 @@ static void *boot_thread_fn(void *arg) {
     struct sigaction sa = {0};
     sa.sa_sigaction = boot_sigtrap_handler;
     sa.sa_flags = SA_SIGINFO;
-    //sigaction(SIGTRAP, &sa, NULL);
-    //sigaction(SIGSEGV, &sa, NULL);
+    extern void ntum_signal_init(void); ntum_signal_init(); /* Install on boot thread */
 
     /*
      * Initialize the security cookie ourselves (what 0x180204704 does),

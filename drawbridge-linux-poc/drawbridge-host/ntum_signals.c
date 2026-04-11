@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <stdint.h>
 /*
  * NTUM Signal Handler - Forwards signals to the NTUM's exception dispatcher
@@ -61,7 +62,7 @@ static int handle_libos_fault(void *fault_addr, int is_write, ucontext_t *uc) {
                          -1, 0);
     if (result != MAP_FAILED) {
         ntum_fault_count++;
-        if (ntum_fault_count <= 50) {
+        if (ntum_fault_count <= 500) {
             /* Log first 50 faults for debugging */
             fprintf(stderr, "[FAULT] Mapped page 0x%lx (fault #%d, %s)\n",
                     (unsigned long)page, ntum_fault_count,
