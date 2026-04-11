@@ -224,13 +224,66 @@ static void *boot_thread_fn(void *arg) {
     sigaction(SIGTRAP, &sa, NULL);
     sigaction(SIGSEGV, &sa, NULL);
 
-    /* Call the trampoline - this doesn't return normally.
-     * Entry point receives: rcx = LIBOS_PARAMS, rdx = config_context
-     * The config_context must be non-NULL (the NTUM checks rdi=rdx). */
-    ntum_trampoline(args->entry_point,
-                    args->stack_top,
-                    args->params,        /* becomes rcx = LIBOS_PARAMS */
-                    args->params);       /* becomes rdx = config_context (same ptr) */
+    /*
+     * Initialize the security cookie ourselves (what 0x180204704 does),
+     * then call the REAL init at 0x180204754 directly, skipping the
+     * wrapper at 0x1803a04d0 that uses volatile r8/r9 for params.
+     */
+
+    /* Security cookie at [0x180600000] and inverted at [0x180600008] */
+    volatile uint64_t *cookie = (uint64_t*)0x180600000ULL;
+    volatile uint64_t *cookie_inv = (uint64_t*)0x180600008ULL;
+    uint32_t lo, hi;
+    __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
+    uint64_t ts = ((uint64_t)hi << 32) | lo;
+    uint64_t cv = (ts ^ 0x180600000ULL) & 0xFFFFFFFFFFFFULL;
+    if (cv == 0 || cv == 0x2b992ddfa232ULL) cv = 0x2b992ddfa233ULL;
+    *cookie = cv;
+    *cookie_inv = ~cv;
+
+    /* Set up the NTUM's internal stack at 0x180637000 (from .data).
+     * The entry point normally does: lea rsp,[rip+offset] → 0x180637000
+     * plus add rsp,[rip+offset] (stack adjustment from .rdata) */
+    uint64_t ntum_stack_base = 0x180637000ULL;
+    uint64_t *stack_adj_ptr = (uint64_t*)0x180413480ULL;  /* .rdata offset */
+    uint64_t ntum_stack = ntum_stack_base + *stack_adj_ptr;
+
+    printf("[BOOT] Cookie: 0x%lx at 0x180600000\n", (unsigned long)cv);
+    printf("[BOOT] NTUM stack: 0x%lx (base 0x%lx + adj 0x%lx)\n",
+           (unsigned long)ntum_stack, (unsigned long)ntum_stack_base,
+           (unsigned long)*stack_adj_ptr);
+
+    /* Jump directly to 0x180204754 (the real init) using our trampoline.
+     * rcx = LIBOS_PARAMS, rdx = LIBOS_PARAMS (config context) */
+    void *real_init = (void*)((uint8_t*)args->params->ImageBase + 0x204754);
+    /* Verify the bytes at the target haven't been patched incorrectly */
+    volatile uint8_t *target = (uint8_t*)real_init;
+    printf("[BOOT] Entering REAL init at %p bytes: %02x %02x %02x %02x %02x\n",
+           real_init, target[0], target[1], target[2], target[3], target[4]);
+    printf("[BOOT] Expected: 48 89 5c 24 18 (mov [rsp+0x18], rbx)\n");
+    printf("[BOOT] Params ptr: %p\n\n", (void*)args->params);
+
+    /* Direct trampoline via inline asm - no function call overhead.
+     * This avoids any naked/ms_abi confusion. */
+    void *entry = real_init;
+    void *stack = (void*)ntum_stack;
+    void *p1 = args->params;
+    void *p2 = args->params;
+
+    __asm__ volatile (
+        /* Set up Win64 args: rcx=p1, rdx=p2 */
+        "movq %2, %%rcx\n"       /* rcx = params (Win64 arg1) */
+        "movq %3, %%rdx\n"       /* rdx = params (Win64 arg2) */
+        /* Switch to NTUM stack */
+        "movq %1, %%rsp\n"       /* rsp = ntum_stack */
+        /* Zero frame pointer */
+        "xorq %%rbp, %%rbp\n"
+        /* Jump to init function */
+        "jmpq *%0\n"
+        :
+        : "r"(entry), "r"(stack), "r"(p1), "r"(p2)
+        : "rcx", "rdx", "rbp", "memory"
+    );
 
     /* Should not reach here */
     printf("[BOOT] NTUM returned unexpectedly\n");
