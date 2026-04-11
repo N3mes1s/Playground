@@ -1,0 +1,12 @@
+;
+; Custom Application Package for Drawbridge
+;
+[OS Entry Point]
+StartModule=file://windows/system32/sqlpal.dll
+
+[Mappings]
+stdin:=stdin:
+
+[Writeable Mappings]
+stdout:=stdout:
+stderr:=stderr:

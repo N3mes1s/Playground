@@ -7,3 +7,28 @@ __pycache__/
 
 # Sliver source files fetched for scanning (not our code)
 vulnllm-analyzer/sliver-src/
+
+# External cloned repos (used for research, not our code)
+gramine/
+
+# Rust build artifacts
+drawbridge-linux-poc/target/
+
+# Drawbridge extracted components (large, downloaded at runtime)
+drawbridge-linux-poc/deps/
+drawbridge-linux-poc/extracted/
+
+# Malware samples (downloaded from VirusTotal, NOT safe to commit)
+drawbridge-linux-poc/malware-analysis/samples/
+drawbridge-linux-poc/malware-analysis/compatibility_report.json
+
+# Built binaries
+drawbridge-linux-poc/ntum-builder/drawbridge-run
+drawbridge-linux-poc/ntum-builder/drawbridge-run32
+drawbridge-linux-poc/ntum-builder/test/*.exe
+drawbridge-linux-poc/ntum-builder/reactos-dlls/dlls/
+drawbridge-linux-poc/custom-pkg/Content/
+drawbridge-linux-poc/custom-app.sfp/Content/
+drawbridge-linux-poc/tools/sfp_pack
+drawbridge-linux-poc/test-apps/*.exe
+drawbridge-linux-poc/drawbridge-host/drawbridge-host

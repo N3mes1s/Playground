@@ -1,0 +1,51 @@
+[package]
+name = "drawbridge-poc"
+version = "0.1.0"
+edition = "2024"
+description = "Drawbridge Linux PoC - Extract and run Windows PE binaries on Linux using NTUM"
+
+[[bin]]
+name = "drawbridge-poc"
+path = "src/main.rs"
+
+[[bin]]
+name = "sfp-extract"
+path = "src/bin/sfp_extract.rs"
+
+[[bin]]
+name = "pe-analyze"
+path = "src/bin/pe_analyze.rs"
+
+[[bin]]
+name = "dbpatch-reverse"
+path = "src/bin/dbpatch_reverse.rs"
+
+[[bin]]
+name = "pal-map"
+path = "src/bin/pal_map.rs"
+
+[dependencies]
+# PE/COFF parsing
+goblin = "0.9"
+# CLI
+clap = { version = "4", features = ["derive"] }
+# Error handling
+anyhow = "1"
+thiserror = "2"
+# Colored output
+colored = "3"
+# Memory mapping
+memmap2 = "0.9"
+# Hex display
+hex = "0.4"
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Linux syscall interface (for PAL implementation)
+nix = { version = "0.29", features = ["mman", "signal", "pthread", "event", "time", "fs"] }
+# Byte order
+byteorder = "1"
+# Disassembly (for dbpatch analysis)
+capstone = "0.12"
+# Libc for low-level access
+libc = "0.2"

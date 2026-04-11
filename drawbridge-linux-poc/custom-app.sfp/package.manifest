@@ -1,0 +1,35 @@
+[Package]
+ManifestVersion=1
+
+[Identity]
+Name=custom-app
+Architecture=x64
+MajorVersion=1
+MinorVersion=0
+FriendlyName=Drawbridge Custom App
+Publisher=Drawbridge
+
+[Dependencies]
+=Dependency.Windows
+
+[Dependency.Windows]
+Name=Windows
+MajorVersion=6
+
+[Writeable Mappings]
+stdout:=stdout:
+stderr:=stderr:
+stdin:=stdin:
+tcp:=tcp:
+tcp.server:=tcp.server:
+tcp.client:=tcp.client:
+dns:=dns:
+
+[Application]
+Program=/binn/app.exe
+
+[Outbound Networking App Whitelist]
+App=app.exe
+
+[Inbound Networking App Whitelist]
+App=app.exe
