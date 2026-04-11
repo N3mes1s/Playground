@@ -28,6 +28,7 @@
 #include <dlfcn.h>
 
 #include "ntum_bootstrap.h"
+#include "dk_pal.h"
 
 /*
  * NTUM Memory Layout (from strace reverse engineering)
@@ -342,6 +343,76 @@ int main(int argc, char **argv) {
     map_pe_from_sfp(&system_sfp, "AppLoader.exe", NULL);
     map_pe_from_sfp(&system_sfp, "vcruntime140.dll", NULL);
 
+    /* Step 4b: Parse sqlpal.dll PE and map sections at 0x200000000 */
+    printf("\n[HOST] Mapping NTUM PE sections at 0x200000000...\n");
+    {
+        /* Parse PE headers from the mapped sqlpal.dll data */
+        uint8_t *pe_data = (uint8_t*)ntum;
+        uint16_t dos_magic = *(uint16_t*)pe_data;
+        if (dos_magic == 0x5A4D) {  /* MZ */
+            uint32_t pe_off = *(uint32_t*)(pe_data + 60);
+            uint32_t pe_sig = *(uint32_t*)(pe_data + pe_off);
+            if (pe_sig == 0x00004550) {  /* PE\0\0 */
+                uint16_t num_sections = *(uint16_t*)(pe_data + pe_off + 6);
+                uint16_t opt_size = *(uint16_t*)(pe_data + pe_off + 20);
+                uint32_t size_of_image = *(uint32_t*)(pe_data + pe_off + 24 + 56);
+                uint32_t entry_rva = *(uint32_t*)(pe_data + pe_off + 24 + 16);
+                uint64_t image_base = *(uint64_t*)(pe_data + pe_off + 24 + 24);
+
+                printf("  PE: %d sections, ImageBase=0x%lx, SizeOfImage=0x%x, EntryRVA=0x%x\n",
+                       num_sections, (unsigned long)image_base, size_of_image, entry_rva);
+
+                /* Unmap the placeholder we set earlier, map full PE image */
+                munmap((void*)0x200000000ULL, 4096);
+                void *img_base = mmap((void*)0x200000000ULL, size_of_image,
+                                       PROT_READ | PROT_WRITE,
+                                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+                                       -1, 0);
+                if (img_base != MAP_FAILED) {
+                    /* Copy headers */
+                    uint32_t headers_size = *(uint32_t*)(pe_data + pe_off + 24 + 60);
+                    memcpy(img_base, pe_data, headers_size);
+
+                    /* Copy sections */
+                    uint8_t *sec_hdr = pe_data + pe_off + 24 + opt_size;
+                    for (int i = 0; i < num_sections; i++) {
+                        char name[9] = {0};
+                        memcpy(name, sec_hdr + i*40, 8);
+                        uint32_t vsize = *(uint32_t*)(sec_hdr + i*40 + 8);
+                        uint32_t vaddr = *(uint32_t*)(sec_hdr + i*40 + 12);
+                        uint32_t rsize = *(uint32_t*)(sec_hdr + i*40 + 16);
+                        uint32_t raddr = *(uint32_t*)(sec_hdr + i*40 + 20);
+                        uint32_t chars = *(uint32_t*)(sec_hdr + i*40 + 36);
+
+                        uint32_t copy_sz = rsize < vsize ? rsize : vsize;
+                        if (rsize > 0 && raddr + rsize <= 2732032)
+                            memcpy((uint8_t*)img_base + vaddr, pe_data + raddr, copy_sz);
+
+                        /* Set section permissions */
+                        int prot = PROT_READ;
+                        if (chars & 0x20000000) prot |= PROT_EXEC;
+                        if (chars & 0x80000000) prot |= PROT_WRITE;
+                        size_t aligned_size = (vsize + 4095) & ~4095UL;
+                        mprotect((uint8_t*)img_base + vaddr, aligned_size, prot);
+
+                        printf("  %-8s VA=0x%08x Size=0x%06x %c%c%c\n", name,
+                               vaddr, vsize,
+                               (chars & 0x40000000) ? 'r' : '-',
+                               (chars & 0x80000000) ? 'w' : '-',
+                               (chars & 0x20000000) ? 'x' : '-');
+                    }
+
+                    printf("  Mapped at %p (wanted 0x200000000)\n", img_base);
+
+                    /* Update ntum pointer and recalculate entry */
+                    ntum = img_base;
+                } else {
+                    printf("  [WARN] Cannot map at 0x200000000, using original at %p\n", ntum);
+                }
+            }
+        }
+    }
+
     /* Step 5: Load target EXE */
     printf("\n[HOST] Target: %s\n", target_exe);
     struct stat st;
@@ -356,10 +427,13 @@ int main(int argc, char **argv) {
     printf("[HOST] Bootstrapping NTUM kernel...\n");
     printf("[HOST] ═══════════════════════════════════════════\n\n");
 
+    /* Initialize DK PAL */
+    dk_pal_init();
+
     WINDOWS_LIBOS_PARAMETERS libos_params;
-    ntum_bootstrap_init(&libos_params, ntum, 2732032, /* ~2.7MB */
+    ntum_bootstrap_init(&libos_params, ntum, 16 * 1024 * 1024, /* SizeOfImage */
                         0x3A04D0,  /* sqlpal.dll entry RVA */
-                        NULL);     /* PAL table (built-in) */
+                        dk_pal_get_table());
 
     printf("\n[HOST] Launching NTUM boot thread...\n");
     printf("[HOST] This will switch to Windows x64 ABI and enter sqlpal.dll\n\n");
