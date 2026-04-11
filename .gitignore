@@ -26,3 +26,4 @@ drawbridge-linux-poc/malware-analysis/compatibility_report.json
 drawbridge-linux-poc/ntum-builder/drawbridge-run
 drawbridge-linux-poc/ntum-builder/drawbridge-run32
 drawbridge-linux-poc/ntum-builder/test/*.exe
+drawbridge-linux-poc/ntum-builder/reactos-dlls/dlls/
