@@ -936,8 +936,15 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
         return DK_STATUS_SUCCESS;
     }
 
-    fprintf(stderr, "[DK] PostRes: type=0x%lx size=0x%lx in=%p\n",
-            (unsigned long)call_type, (unsigned long)data_size, in_buf);
+    /* Config calls: type is a .data address pointing to config structure.
+     * These are NOT indirect function calls (the .data contains line numbers
+     * and config data, not function pointers). Just return SUCCESS. */
+    static int post_count = 0;
+    post_count++;
+    if (post_count <= 50) {
+        fprintf(stderr, "[DK] PostRes: type=0x%lx size=0x%lx in=%p\n",
+                (unsigned long)call_type, (unsigned long)data_size, in_buf);
+    }
     return DK_STATUS_SUCCESS;
 }
 
