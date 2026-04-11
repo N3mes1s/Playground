@@ -292,6 +292,23 @@ static void *boot_thread_fn(void *arg) {
      * We use ms_abi to ensure rcx = params (Windows x64 convention).
      * The entry point sets its own stack, so our stack doesn't matter.
      */
+    /* Dump key PE function bytes for analysis */
+    {
+        /* Syscall wrapper at PE RVA 0x354180 */
+        volatile uint8_t *sw = (uint8_t*)0x180354180ULL;
+        fprintf(stderr, "[BOOT] Syscall wrapper at 0x180354180: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                sw[0], sw[1], sw[2], sw[3], sw[4], sw[5], sw[6], sw[7], sw[8], sw[9]);
+
+        /* io_setup wrapper at PE RVA 0x202100 */
+        volatile uint8_t *io = (uint8_t*)0x180202100ULL;
+        fprintf(stderr, "[BOOT] io_setup wrapper at 0x180202100: %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                io[0], io[1], io[2], io[3], io[4], io[5], io[6], io[7]);
+
+        /* Check RuntimeCallbackState for KiUserExceptionDispatcher */
+        fprintf(stderr, "[BOOT] RuntimeCallbackState+0x10 = 0x%lx (KiDispatcher)\n",
+                (unsigned long)*(volatile uint64_t*)(g_runtime_callback_state + 0x10));
+    }
+
     fprintf(stderr, "[BOOT] Calling REAL entry point at %p (no hacks!)\n",
             args->entry_point);
     fprintf(stderr, "[BOOT] rcx = rdx = %p (params)\n", args->params);
