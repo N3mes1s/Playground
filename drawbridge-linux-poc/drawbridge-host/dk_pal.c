@@ -548,11 +548,10 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
 
     static int dispatch_count = 0;
     dispatch_count++;
-    if (dispatch_count <= 1000) {
-        fprintf(stderr, "[DK] Call #%d: type=0x%lx funcid=0x%x\n",
+    if (dispatch_count <= 200) {
+        fprintf(stderr, "[DK] Call #%d: type=0x%lx size=0x%lx in=%p out=%p\n",
                 dispatch_count, (unsigned long)call_type,
-                (in_buf && call_type == ABI_GET_FUNCTION_V2)
-                    ? *(uint32_t*)in_buf : (uint32_t)data_size);
+                (unsigned long)data_size, in_buf, out_buf);
     }
 
     if (call_type == ABI_GET_FUNCTION_V2) {
@@ -705,10 +704,11 @@ DK_API __attribute__((force_align_arg_pointer))
 uint64_t DK_GenericStub(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
     static int stub_count = 0;
     stub_count++;
-    if (stub_count <= 20) {
-        fprintf(stderr, "[STUB] #%d: a=0x%lx b=0x%lx c=0x%lx d=0x%lx\n",
+    if (stub_count <= 100) {
+        fprintf(stderr, "[STUB] #%d: a=0x%lx b=0x%lx c=0x%lx d=0x%lx RET=0x%lx\n",
                 stub_count, (unsigned long)a, (unsigned long)b,
-                (unsigned long)c, (unsigned long)d);
+                (unsigned long)c, (unsigned long)d,
+                (unsigned long)__builtin_return_address(0));
     }
     return DK_STATUS_SUCCESS;
 }
