@@ -255,6 +255,16 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
          * The function sets: [0]=magic, [0x10]=stack_top, [0x18]=stack_base,
          * [0x48]=current_sp, [0x4090]=top, [0x4098]=[0x40a0]=base.
          * The thread switcher reads [rdx+0x10] and [rdx+0x18] as fallback. */
+        /* Default thread block at 0x63b220 matches FUN_0020ff2c layout.
+         * Also set [0x63b218] (offset -8) which is read at RVA 0x204d37
+         * and stored as TEB[0x1478]. This value becomes the stack_info
+         * that the thread switcher reads via [context_frame+0x10].
+         * It must point to a structure where [+0x30] = valid stack ptr. */
+        static uint8_t sched_stack_desc[256] __attribute__((aligned(64)));
+        memset(sched_stack_desc, 0, sizeof(sched_stack_desc));
+        *(uint64_t*)(sched_stack_desc + 0x30) = NTUM_STACK_TOP;
+        *(volatile uint64_t*)0x18063b218ULL = (uint64_t)sched_stack_desc;
+
         uint8_t *dtb = (uint8_t*)0x18063b220ULL;
         *(uint64_t*)(dtb + 0x00) = 0x53647268546c6150ULL;  /* "PalThrds" magic */
         *(uint64_t*)(dtb + 0x10) = NTUM_STACK_TOP + 0x4000; /* stack_top */
@@ -393,6 +403,16 @@ static void *boot_thread_fn(void *arg) {
     /* Pool allocator init flag - must be set AFTER pre-fault */
     *(volatile uint32_t*)0x1806456d8ULL = 1;
     *(volatile uint32_t*)0x18064560cULL = 0x42;
+    /* Re-arm thread block stack descriptor at [0x63b218].
+     * This gets copied to TEB[0x1478] by the scheduler at RVA 0x204d37.
+     * Must point to stack desc where [+0x30] = valid stack pointer. */
+    {
+        static uint8_t rearm_stack_desc[256] __attribute__((aligned(64)));
+        if (rearm_stack_desc[0x30] == 0) {
+            *(uint64_t*)(rearm_stack_desc + 0x30) = NTUM_STACK_TOP;
+        }
+        *(volatile uint64_t*)0x18063b218ULL = (uint64_t)rearm_stack_desc;
+    }
     /* Pre-create kernel pool object at [0x6456e8].
      * The pool allocator at RVA 0x2c2a00 normally creates this during
      * init command 0xe46. The code at 0x218f43 reads [0x6456e8] and
