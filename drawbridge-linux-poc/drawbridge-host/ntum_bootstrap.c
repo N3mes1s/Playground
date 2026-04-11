@@ -135,6 +135,24 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
         *(volatile uint64_t*)0x18063b228ULL = NTUM_STACK_TOP + 0x200000;  /* stack_base */
         *(volatile uint64_t*)0x18063b230ULL = NTUM_STACK_BASE;            /* stack_limit */
 
+        /* Thread context area at 0x63ac10 - the thread switcher at RVA 0x3a0650
+         * reads [rsp+0x4f0] as the context pointer when rsp is at ~0x18063a720.
+         * rsp+0x4f0 = 0x18063ac10. The context needs:
+         * +0x10: pointer to stack_info structure (must NOT be NULL)
+         * stack_info+0x30: stack pointer value
+         *
+         * We create a minimal stack_info in the .data area. */
+        static uint8_t boot_stack_info[256] __attribute__((aligned(64)));
+        memset(boot_stack_info, 0, sizeof(boot_stack_info));
+        /* stack_info+0x30 = stack pointer (middle of NTUM stack) */
+        *(uint64_t*)(boot_stack_info + 0x30) = NTUM_STACK_TOP;
+        /* stack_info+0x90 = RIP for thread resume (point to a ret) */
+        *(uint64_t*)(boot_stack_info + 0x90) = 0x18021ff10ULL; /* guard_check = ret */
+
+        /* Write the stack_info pointer to the context area.
+         * Context is at 0x18063ac10, [context+0x10] needs the pointer. */
+        *(volatile uint64_t*)0x18063ac20ULL = (uint64_t)boot_stack_info;
+
         printf("[BOOT] Set NTUM .data globals (no .text patches!):\n");
         printf("  [0x18063f8c0] = 1 (boot flag)\n");
         printf("  [0x18063f8c8] = %p (ABI dispatcher)\n", (void*)&DK_AbiDispatcher);
