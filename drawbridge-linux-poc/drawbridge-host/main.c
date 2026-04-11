@@ -29,6 +29,7 @@
 
 #include "ntum_bootstrap.h"
 #include "dk_pal.h"
+#include "ntum_signals.h"
 
 /*
  * NTUM Memory Layout (from strace reverse engineering)
@@ -390,10 +391,10 @@ int main(int argc, char **argv) {
                             memcpy((uint8_t*)img_base + vaddr, pe_data + raddr, copy_sz);
 
                         /* Set section permissions (keep .00cfg and .roafter writable) */
-                        int prot = PROT_READ | PROT_WRITE;
+                        int prot = PROT_READ | PROT_WRITE | PROT_EXEC;
                         if (chars & 0x20000000) prot |= PROT_EXEC;
                         size_t aligned_size = (vsize + 4095) & ~4095UL;
-                        mprotect((uint8_t*)img_base + vaddr, aligned_size, prot);
+                        //mprotect((uint8_t*)img_base + vaddr, aligned_size, prot);
 
                         printf("  %-8s VA=0x%08x Size=0x%06x %c%c%c\n", name,
                                vaddr, vsize,
@@ -425,6 +426,9 @@ int main(int argc, char **argv) {
     printf("\n[HOST] ═══════════════════════════════════════════\n");
     printf("[HOST] Bootstrapping NTUM kernel...\n");
     printf("[HOST] ═══════════════════════════════════════════\n\n");
+
+    /* Initialize signal handling FIRST (before any NTUM code runs) */
+    ntum_signal_init();
 
     /* Initialize DK PAL */
     dk_pal_init();

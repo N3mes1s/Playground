@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS = -Wall -Wextra -O2 -g
 LDFLAGS = -lpthread -ldl
 
-SRCS = main.c ntum_bootstrap.c dk_pal.c
+SRCS = main.c ntum_bootstrap.c dk_pal.c ntum_signals.c
 
 all: drawbridge-host
 
