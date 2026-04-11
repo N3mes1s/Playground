@@ -31,66 +31,9 @@
 #include "dk_pal.h"
 #include "ntum_signals.h"
 
-/*
- * NTUM Memory Layout (from strace reverse engineering)
- *
- * The NTUM expects these memory regions to be set up before boot:
- */
-#define LIBOS_CONTROL_PAGE    0x100000000ULL    /* 4KB control */
-#define LIBOS_IMAGE_BASE      0x200000000ULL    /* PE images mapped here */
-#define LIBOS_KERNEL_HEAP     0x300000000ULL    /* 1GB kernel heap */
-#define LIBOS_KERNEL_HEAP_SZ  0x40000000ULL     /* 1GB */
-#define LIBOS_THREAD_ENV      0x300000000000ULL /* Thread environment */
-#define LIBOS_THREAD_ENV_SZ   0x500000ULL       /* ~5MB */
-#define LIBOS_HIGH_CONTROL    0x400000000000ULL /* High control page */
-#define LIBOS_APP_HEAP        0x500000000ULL    /* 1GB app heap */
-#define LIBOS_APP_HEAP_SZ     0x40000000ULL     /* 1GB */
-#define LIBOS_CONTROL_600     0x600000000ULL    /* Control */
-#define LIBOS_CONTROL_700     0x700000000ULL    /* Control */
-#define LIBOS_CONFIG          0x800000000ULL    /* 64KB config */
-#define LIBOS_ADDITIONAL      0x900000000ULL    /* 64KB additional */
+/* Memory layout constants now defined in drawbridge_types.h */
 
-/* SFP file format structures */
-#pragma pack(push, 1)
-typedef struct {
-    uint32_t magic;           /* "SFP\0" = 0x00504653 */
-    uint32_t version;         /* 1 */
-    uint64_t entry_count;
-    uint64_t first_dir_offset;
-    uint64_t name_table_offset;
-    uint64_t data_offset;
-    uint64_t archive_size;
-    uint64_t package_label_offset;
-    uint64_t reserved;
-    uint8_t  padding[32];     /* Total header: 96 bytes */
-} sfp_header_t;
-
-typedef struct {
-    uint32_t magic;           /* "DIR\0" = 0x00524944 */
-    uint64_t name_offset;
-    uint32_t reserved1;
-    uint64_t parent_offset;
-    uint32_t is_dir;
-    uint64_t file_length;
-    uint64_t modified_time;
-    uint64_t created_time;
-    uint64_t reserved2;
-    uint64_t reserved3;
-    uint64_t start_offset;    /* For dirs: first child entry offset
-                                 For files: data offset in archive */
-    uint32_t data_length;     /* For dirs: children size (N * 80)
-                                 For files: same as file_length */
-} sfp_dir_entry_t;
-#pragma pack(pop)
-
-/* Loaded SFP archive */
-typedef struct {
-    int fd;                   /* File descriptor */
-    sfp_header_t header;
-    uint8_t *name_table;      /* Loaded name table */
-    size_t name_table_size;
-    char label[256];          /* Package label */
-} sfp_archive_t;
+/* SFP types are now defined in drawbridge_types.h (included via ntum_bootstrap.h) */
 
 /* Forward declarations */
 static int setup_libos_memory(void);
@@ -127,7 +70,8 @@ static int load_sfp(const char *path, sfp_archive_t *archive) {
     if (!archive->name_table) { close(archive->fd); return -1; }
 
     lseek(archive->fd, archive->header.name_table_offset, SEEK_SET);
-    read(archive->fd, archive->name_table, archive->name_table_size);
+    ssize_t nr = read(archive->fd, archive->name_table, archive->name_table_size);
+    (void)nr;
 
     /* Get package label (pkgLabel is absolute offset, convert to relative) */
     uint64_t label_rel = archive->header.package_label_offset - archive->header.name_table_offset;
@@ -393,11 +337,7 @@ int main(int argc, char **argv) {
                         if (rsize > 0 && raddr + rsize <= 2732032)
                             memcpy((uint8_t*)img_base + vaddr, pe_data + raddr, copy_sz);
 
-                        /* Set section permissions (keep .00cfg and .roafter writable) */
-                        int prot = PROT_READ | PROT_WRITE | PROT_EXEC;
-                        if (chars & 0x20000000) prot |= PROT_EXEC;
-                        size_t aligned_size = (vsize + 4095) & ~4095UL;
-                        //mprotect((uint8_t*)img_base + vaddr, aligned_size, prot);
+                        (void)chars;
 
                         printf("  %-8s VA=0x%08x Size=0x%06x %c%c%c\n", name,
                                vaddr, vsize,

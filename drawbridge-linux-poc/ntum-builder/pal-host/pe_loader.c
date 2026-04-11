@@ -38,7 +38,7 @@ static uint8_t *read_file(const char *path, size_t *out_size) {
 }
 
 /* Convert PE section characteristics to mmap protection flags */
-static int pe_prot_to_linux(uint32_t characteristics) {
+int pe_prot_to_linux(uint32_t characteristics) {
     int prot = 0;
     if (characteristics & 0x20000000) prot |= PROT_EXEC;
     if (characteristics & 0x40000000) prot |= PROT_READ;
@@ -87,7 +87,6 @@ int pe_load_image(const char *path, pe_loaded_image_t *image) {
     /* Parse optional header */
     uint8_t *opt_hdr = (uint8_t*)coff + sizeof(IMAGE_FILE_HEADER);
     uint64_t image_base, entry_rva, size_of_image;
-    uint32_t section_alignment;
     uint32_t num_data_dirs;
     IMAGE_DATA_DIRECTORY *data_dirs;
 
@@ -96,7 +95,6 @@ int pe_load_image(const char *path, pe_loaded_image_t *image) {
         image_base = opt->ImageBase;
         entry_rva = opt->AddressOfEntryPoint;
         size_of_image = opt->SizeOfImage;
-        section_alignment = opt->SectionAlignment;
         num_data_dirs = opt->NumberOfRvaAndSizes;
         data_dirs = opt->DataDirectory;
     } else {
@@ -104,7 +102,6 @@ int pe_load_image(const char *path, pe_loaded_image_t *image) {
         image_base = opt->ImageBase;
         entry_rva = opt->AddressOfEntryPoint;
         size_of_image = opt->SizeOfImage;
-        section_alignment = opt->SectionAlignment;
         num_data_dirs = opt->NumberOfRvaAndSizes;
         data_dirs = opt->DataDirectory;
     }

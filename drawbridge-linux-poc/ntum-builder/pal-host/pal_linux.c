@@ -175,7 +175,8 @@ static int pal_linux_event_set(PAL_HANDLE event) {
 
 static int pal_linux_event_reset(PAL_HANDLE event) {
     uint64_t val;
-    read((int)event, &val, sizeof(val));  /* Drain */
+    ssize_t ret = read((int)event, &val, sizeof(val));  /* Drain */
+    (void)ret;
     return PAL_SUCCESS;
 }
 

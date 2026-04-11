@@ -15,9 +15,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <signal.h>
 #include <unistd.h>
 #include <ucontext.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
+#include <asm/prctl.h>
 
 #include "pe_loader.h"
 #include "dll_registry.h"
@@ -139,6 +143,38 @@ int main(int argc, char **argv) {
         printf("[HOST] Continuing anyway (Drawbridge-style fault handling)...\n\n");
     } else {
         printf("[HOST] All imports resolved successfully!\n\n");
+    }
+
+    /* Step 3.5: Set up Thread Environment Block (TEB)
+     *
+     * The Windows CRT startup code reads gs:0x30 to get the TEB
+     * self-pointer, and TEB+0x08 for StackBase, TEB+0x10 for StackLimit.
+     * We must set up GS base register via arch_prctl(ARCH_SET_GS)
+     * before calling the PE entry point.
+     *
+     * From decompiled NTUM boot sequence (drawbridge_types.h):
+     *   TEB+0x08 = StackBase
+     *   TEB+0x10 = StackLimit
+     *   TEB+0x30 = Self-pointer
+     */
+    {
+        static uint8_t teb[4096] __attribute__((aligned(4096)));
+        memset(teb, 0, sizeof(teb));
+
+        /* TEB self-pointer at offset 0x30 */
+        *(uint64_t*)(teb + 0x30) = (uint64_t)teb;
+        /* StackBase at offset 0x08 - use current stack region */
+        *(uint64_t*)(teb + 0x08) = 0x7FFFFFFFE000ULL;
+        /* StackLimit at offset 0x10 */
+        *(uint64_t*)(teb + 0x10) = 0x7FFFFF000000ULL;
+        /* ProcessEnvironmentBlock (PEB) at offset 0x60 */
+        static uint8_t peb[4096] __attribute__((aligned(4096)));
+        memset(peb, 0, sizeof(peb));
+        *(uint64_t*)(teb + 0x60) = (uint64_t)peb;
+
+        /* Set GS base to our TEB */
+        syscall(SYS_arch_prctl, ARCH_SET_GS, (unsigned long)teb);
+        printf("[HOST] TEB set up at %p (gs:0x30 = self-pointer)\n", teb);
     }
 
     /* Step 4: Transfer control to PE entry point */

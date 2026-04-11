@@ -23,18 +23,8 @@
 #include <unistd.h>
 
 /* LibOS address range */
-#define LIBOS_VM_START  0x10000ULL
-#define LIBOS_VM_END    0x400000000000ULL
-
-/* PE image range */
-#define PE_IMAGE_START  0x180000000ULL
-#define PE_IMAGE_END    0x181010000ULL  /* SizeOfImage + extra */
-
-/* Heap ranges */
-#define KERNEL_HEAP_START 0x300000000ULL
-#define KERNEL_HEAP_END   0x340000000ULL
-#define APP_HEAP_START    0x500000000ULL
-#define APP_HEAP_END      0x540000000ULL
+/* Memory range constants now defined in drawbridge_types.h */
+#include "drawbridge_types.h"
 
 static int ntum_fault_count = 0;
 
@@ -44,13 +34,7 @@ static uint8_t *g_pe_raw_data = NULL;  /* Raw PE file data mapped from SFP */
 static size_t   g_pe_raw_size = 0;
 static uint64_t g_pe_image_base = 0;
 
-/* PE section info for demand-paging */
-typedef struct {
-    uint32_t virtual_address;
-    uint32_t virtual_size;
-    uint32_t raw_offset;     /* PointerToRawData in file */
-    uint32_t raw_size;       /* SizeOfRawData */
-} pe_section_info_t;
+/* pe_section_info_t defined in drawbridge_types.h */
 
 static pe_section_info_t g_pe_sections[16];
 static int g_pe_num_sections = 0;
@@ -204,7 +188,7 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
                 rsp >= 0x180000000ULL ? (unsigned long long)*(uint64_t*)rsp : 0ULL,
                 rsp >= 0x180000000ULL ? (unsigned long long)*(uint64_t*)(rsp+8) : 0ULL,
                 rsp >= 0x180000000ULL ? (unsigned long long)*(uint64_t*)(rsp+16) : 0ULL);
-            write(2, msg, l);
+            { ssize_t _r = write(2, msg, l); (void)_r; }
         }
         if (handle_libos_fault(fault_addr, is_write, uc)) {
             return;  /* Handled - resume execution */
@@ -220,7 +204,7 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
             char tmsg[128];
             int tl = snprintf(tmsg, sizeof(tmsg),
                 "[TRAP] #%d at RIP=0x%lx\n", trap_count, (unsigned long)rip);
-            write(2, tmsg, tl);
+            { ssize_t _r = write(2, tmsg, tl); (void)_r; }
         }
         /* Check if RIP is in NTUM code and the byte before is 0xCC (int3) */
         if (rip >= PE_IMAGE_START && rip < PE_IMAGE_END) {
@@ -249,7 +233,7 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
                             int tl = snprintf(tmsg, sizeof(tmsg),
                                 "[TRAP] Boot sync at 0x%lx - flag set\n",
                                 (unsigned long)(rip - 1));
-                            write(2, tmsg, tl);
+                            { ssize_t _r = write(2, tmsg, tl); (void)_r; }
                         }
                     } else {
                         /* Debug assertion (call; int3; jmp -3).
@@ -266,9 +250,9 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
                             (unsigned long long)uc->uc_mcontext.gregs[REG_RDX],
                             (unsigned long long)uc->uc_mcontext.gregs[REG_RAX],
                             (unsigned long long)uc->uc_mcontext.gregs[REG_RSP],
-                            uc->uc_mcontext.gregs[REG_RSP] >= 0x180000000ULL ?
+                            (uint64_t)uc->uc_mcontext.gregs[REG_RSP] >= 0x180000000ULL ?
                                 (unsigned long long)*(uint64_t*)uc->uc_mcontext.gregs[REG_RSP] : 0ULL);
-                        write(2, tmsg, tl);
+                        { ssize_t _r = write(2, tmsg, tl); (void)_r; }
                         /* Patch to ret and continue */
                         cc[0] = 0xC3; next[0] = 0x90; next[1] = 0x90;
                         uc->uc_mcontext.gregs[REG_RIP] = rip - 1;
@@ -297,7 +281,7 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
         (unsigned long long)uc->uc_mcontext.gregs[REG_RCX],
         (unsigned long long)uc->uc_mcontext.gregs[REG_RDX],
         (unsigned long long)uc->uc_mcontext.gregs[REG_RSP]);
-    write(STDERR_FILENO, msg, len);
+    { ssize_t _r = write(STDERR_FILENO, msg, len); (void)_r; }
     _exit(128 + sig);
 }
 

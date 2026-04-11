@@ -20,6 +20,8 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <sys/random.h>
+#include <sys/sysinfo.h>
+#include <sys/eventfd.h>
 #include <pthread.h>
 
 typedef int32_t LONG;
@@ -43,108 +45,21 @@ typedef int64_t LARGE_INTEGER;
 #define STD_OUTPUT_HANDLE ((DWORD)-11)
 #define STD_ERROR_HANDLE  ((DWORD)-12)
 
-/* In 32-bit mode, Windows uses stdcall (callee cleans stack).
- * We declare stubs as stdcall so they're ABI-compatible. */
+/* ABI Convention:
+ * In 64-bit mode: use ms_abi so the compiler translates Windows x64
+ * calling convention (rcx, rdx, r8, r9) to SysV automatically.
+ * This eliminates the need for hand-written thunks.
+ * In 32-bit mode: stdcall (callee cleans stack). */
 #ifdef HOST_32BIT
 #define WINAPI __attribute__((stdcall))
 #else
-#define WINAPI /* nothing - thunks handle ABI translation */
+#define WINAPI __attribute__((ms_abi))
 #endif
 
 /*
- * ABI TRANSLATION
- *
- * Windows x64 ABI:    rcx, rdx, r8, r9, stack (callee saves rbx,rsi,rdi,rbp,r12-r15)
- * System V AMD64 ABI: rdi, rsi, rdx, rcx, r8, r9, stack (callee saves rbx,rbp,r12-r15)
- *
- * We generate thunks that shuffle registers from Windows to SysV convention.
- * Each thunk is a small piece of x86-64 machine code.
+ * ABI Note: With ms_abi on all WINAPI stubs, the compiler handles
+ * register translation automatically. No thunks needed.
  */
-
-#include <sys/mman.h>
-
-/* Thunk code templates for ABI translation (Windows x64 -> SysV AMD64) */
-
-/* 1-arg thunk: mov rdi,rcx; jmp target */
-static const uint8_t thunk_1arg[] = {
-    0x48, 0x89, 0xcf,              /* mov rdi, rcx */
-    0x48, 0xb8, 0,0,0,0,0,0,0,0,  /* mov rax, <target> */
-    0xff, 0xe0                     /* jmp rax */
-};
-
-/* 2-arg thunk: mov rdi,rcx; mov rsi,rdx; jmp target */
-static const uint8_t thunk_2arg[] = {
-    0x48, 0x89, 0xcf,              /* mov rdi, rcx */
-    0x48, 0x89, 0xd6,              /* mov rsi, rdx */
-    0x48, 0xb8, 0,0,0,0,0,0,0,0,  /* mov rax, <target> */
-    0xff, 0xe0                     /* jmp rax */
-};
-
-/* 3-arg thunk: mov rdi,rcx; mov rsi,rdx; mov rdx,r8; jmp target */
-static const uint8_t thunk_3arg[] = {
-    0x48, 0x89, 0xcf,              /* mov rdi, rcx */
-    0x48, 0x89, 0xd6,              /* mov rsi, rdx */
-    0x4c, 0x89, 0xc2,              /* mov rdx, r8 */
-    0x48, 0xb8, 0,0,0,0,0,0,0,0,  /* mov rax, <target> */
-    0xff, 0xe0                     /* jmp rax */
-};
-
-/* 4-arg thunk: mov rdi,rcx; mov rsi,rdx; mov rdx,r8; mov rcx,r9; jmp target */
-static const uint8_t thunk_4arg[] = {
-    0x48, 0x89, 0xcf,              /* mov rdi, rcx */
-    0x48, 0x89, 0xd6,              /* mov rsi, rdx */
-    0x4c, 0x89, 0xc2,              /* mov rdx, r8 */
-    0x4c, 0x89, 0xc9,              /* mov rcx, r9 */
-    0x48, 0xb8, 0,0,0,0,0,0,0,0,  /* mov rax, <target> */
-    0xff, 0xe0                     /* jmp rax */
-};
-
-/* 5-arg thunk: mov rdi,rcx; mov rsi,rdx; mov rdx,r8; mov rcx,r9; mov r8,[rsp+0x28]; jmp */
-static const uint8_t thunk_5arg[] = {
-    0x48, 0x89, 0xcf,              /* mov rdi, rcx */
-    0x48, 0x89, 0xd6,              /* mov rsi, rdx */
-    0x4c, 0x89, 0xc2,              /* mov rdx, r8 */
-    0x4c, 0x89, 0xc9,              /* mov rcx, r9 */
-    0x4c, 0x8b, 0x44, 0x24, 0x28, /* mov r8, [rsp+0x28] */
-    0x48, 0xb8, 0,0,0,0,0,0,0,0,  /* mov rax, <target> */
-    0xff, 0xe0                     /* jmp rax */
-};
-
-/* 0-arg thunk: just jmp target (no translation needed) */
-static const uint8_t thunk_0arg[] = {
-    0x48, 0xb8, 0,0,0,0,0,0,0,0,  /* mov rax, <target> */
-    0xff, 0xe0                     /* jmp rax */
-};
-
-static uint8_t *thunk_page = NULL;
-static size_t thunk_offset = 0;
-#define THUNK_PAGE_SIZE 65536
-
-static void *make_thunk(const uint8_t *template, size_t tpl_size,
-                        size_t addr_offset, void *target) {
-    if (!thunk_page) {
-        thunk_page = mmap(NULL, THUNK_PAGE_SIZE,
-                          PROT_READ | PROT_WRITE | PROT_EXEC,
-                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        if (thunk_page == MAP_FAILED) return NULL;
-    }
-
-    if (thunk_offset + tpl_size > THUNK_PAGE_SIZE) return NULL;
-
-    uint8_t *thunk = thunk_page + thunk_offset;
-    memcpy(thunk, template, tpl_size);
-    /* Patch the target address into the thunk */
-    *(uint64_t*)(thunk + addr_offset) = (uint64_t)target;
-    thunk_offset += (tpl_size + 15) & ~15;  /* Align to 16 bytes */
-    return thunk;
-}
-
-#define THUNK0(fn) make_thunk(thunk_0arg, sizeof(thunk_0arg), 2, (fn))
-#define THUNK1(fn) make_thunk(thunk_1arg, sizeof(thunk_1arg), 5, (fn))
-#define THUNK2(fn) make_thunk(thunk_2arg, sizeof(thunk_2arg), 8, (fn))
-#define THUNK3(fn) make_thunk(thunk_3arg, sizeof(thunk_3arg), 11, (fn))
-#define THUNK4(fn) make_thunk(thunk_4arg, sizeof(thunk_4arg), 14, (fn))
-#define THUNK5(fn) make_thunk(thunk_5arg, sizeof(thunk_5arg), 19, (fn))
 
 /* Memory flags */
 #define MEM_COMMIT  0x1000
@@ -336,13 +251,13 @@ HANDLE WINAPI stub_CreateThread(void *lpAttributes, SIZE_T dwStackSize,
     return (HANDLE)t;
 }
 
-/* MSVCRT stubs */
-int stub_puts(const char *str) {
+/* MSVCRT stubs - all use WINAPI (ms_abi) for correct ABI */
+WINAPI int stub_puts(const char *str) {
     int n = printf("%s\n", str);
     return n;
 }
 
-int stub_printf(const char *fmt, ...) {
+WINAPI int stub_printf(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
     int n = vprintf(fmt, ap);
@@ -350,29 +265,37 @@ int stub_printf(const char *fmt, ...) {
     return n;
 }
 
-void *stub_malloc(size_t size) { return malloc(size); }
-void  stub_free(void *ptr) { free(ptr); }
-void *stub_memset(void *s, int c, size_t n) { return memset(s, c, n); }
-void *stub_memcpy(void *d, const void *s, size_t n) { return memcpy(d, s, n); }
-size_t stub_strlen(const char *s) { return strlen(s); }
-int stub_strcmp(const char *a, const char *b) { return strcmp(a, b); }
-void stub_exit(int status) { _exit(status); }
+WINAPI int stub_sprintf(char *buf, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsprintf(buf, fmt, ap);
+    va_end(ap);
+    return n;
+}
 
-void *stub_calloc(size_t nmemb, size_t size) { return calloc(nmemb, size); }
-void *stub_realloc(void *ptr, size_t size) { return realloc(ptr, size); }
+WINAPI void *stub_malloc(size_t size) { return malloc(size); }
+WINAPI void  stub_free(void *ptr) { free(ptr); }
+WINAPI void *stub_memset(void *s, int c, size_t n) { return memset(s, c, n); }
+WINAPI void *stub_memcpy(void *d, const void *s, size_t n) { return memcpy(d, s, n); }
+WINAPI size_t stub_strlen(const char *s) { return strlen(s); }
+WINAPI int stub_strcmp(const char *a, const char *b) { return strcmp(a, b); }
+WINAPI void stub_exit(int status) { _exit(status); }
+
+WINAPI void *stub_calloc(size_t nmemb, size_t size) { return calloc(nmemb, size); }
+WINAPI void *stub_realloc(void *ptr, size_t size) { return realloc(ptr, size); }
 
 /* CRT init stubs */
-void stub_initterm(void **start, void **end) {
+WINAPI void stub_initterm(void **start, void **end) {
     while (start < end) {
-        if (*start) ((void(*)(void))(*start))();
+        if (*start) ((void(WINAPI *)(void))(*start))();
         start++;
     }
 }
 
-int stub_initterm_e(void **start, void **end) {
+WINAPI int stub_initterm_e(void **start, void **end) {
     while (start < end) {
         if (*start) {
-            int ret = ((int(*)(void))(*start))();
+            int ret = ((int(WINAPI *)(void))(*start))();
             if (ret) return ret;
         }
         start++;
@@ -441,7 +364,10 @@ BOOL WINAPI stub_CopyFileA(LPCSTR lpExistingFileName, LPCSTR lpNewFileName, BOOL
     if (dst < 0) { close(src); return FALSE; }
     char buf[4096];
     ssize_t n;
-    while ((n = read(src, buf, sizeof(buf))) > 0) write(dst, buf, n);
+    while ((n = read(src, buf, sizeof(buf))) > 0) {
+        ssize_t w = write(dst, buf, n);
+        (void)w;
+    }
     close(src); close(dst);
     return TRUE;
 }
@@ -827,7 +753,8 @@ BOOL WINAPI stub_CryptReleaseContext(HANDLE hProv, DWORD dwFlags) { (void)hProv;
 BOOL WINAPI stub_CryptGenRandom(HANDLE hProv, DWORD dwLen, void *pbBuffer) {
     (void)hProv;
     /* Use real randomness from Linux */
-    getrandom(pbBuffer, dwLen, 0);
+    ssize_t ret = getrandom(pbBuffer, dwLen, 0);
+    (void)ret;
     return TRUE;
 }
 BOOL WINAPI stub_CryptCreateHash(HANDLE hProv, DWORD algId, HANDLE hKey, DWORD dwFlags, LPVOID phHash) {
@@ -903,7 +830,7 @@ LONG WINAPI stub_RegOpenKeyExA(HKEY hKey, LPCSTR lpSubKey, DWORD ulOptions,
                                 DWORD samDesired, HKEY *phkResult) {
     (void)hKey; (void)lpSubKey; (void)ulOptions; (void)samDesired;
     printf("[DRAWBRIDGE] RegOpenKeyExA(\"%s\") - stub\n", lpSubKey ? lpSubKey : "(null)");
-    if (phkResult) *phkResult = 0xBAAD;
+    if (phkResult) *phkResult = (HKEY)(intptr_t)0xBAAD;
     return ERROR_SUCCESS;
 }
 
@@ -913,7 +840,7 @@ LONG WINAPI stub_RegCreateKeyExA(HKEY hKey, LPCSTR lpSubKey, DWORD Reserved,
     (void)hKey;(void)Reserved;(void)lpClass;(void)dwOptions;
     (void)samDesired;(void)lpSecurityAttributes;
     printf("[DRAWBRIDGE] RegCreateKeyExA(\"%s\") - stub\n", lpSubKey ? lpSubKey : "(null)");
-    if (phkResult) *phkResult = 0xBAAD;
+    if (phkResult) *phkResult = (HKEY)(intptr_t)0xBAAD;
     if (lpdwDisposition) *lpdwDisposition = 1; /* REG_CREATED_NEW_KEY */
     return ERROR_SUCCESS;
 }
@@ -989,28 +916,184 @@ BOOL WINAPI stub_StartServiceCtrlDispatcherA(LPVOID lpServiceStartTable) {
 }
 
 /* ---- msvcrt additional stubs ---- */
-int stub_fprintf(void *stream, const char *fmt, ...) {
+WINAPI int stub_fprintf(void *stream, const char *fmt, ...) {
     va_list ap; va_start(ap, fmt);
-    int n = vfprintf(stream ? stream : stderr, fmt, ap);
+    int n = vfprintf(stream ? (FILE*)stream : stderr, fmt, ap);
     va_end(ap); return n;
 }
 
-int stub_rand(void) { return rand(); }
-void stub_srand(unsigned int seed) { srand(seed); }
-int64_t stub_time(int64_t *t) {
+WINAPI int stub_rand(void) { return rand(); }
+WINAPI void stub_srand(unsigned int seed) { srand(seed); }
+WINAPI int64_t stub_time(int64_t *t) {
     int64_t now = (int64_t)time(NULL);
     if (t) *t = now;
     return now;
 }
-char *stub_strcat(char *d, const char *s) { return strcat(d, s); }
-char *stub_strcpy(char *d, const char *s) { return strcpy(d, s); }
-void stub_abort(void) { abort(); }
-int stub_atexit(void (*func)(void)) { return atexit(func); }
+WINAPI char *stub_strcat(char *d, const char *s) { return strcat(d, s); }
+WINAPI char *stub_strcpy(char *d, const char *s) { return strcpy(d, s); }
+WINAPI void stub_abort(void) { abort(); }
+WINAPI int stub_atexit(void (*func)(void)) { (void)func; return 0; }
 
 typedef void (*signal_handler_t)(int);
-signal_handler_t stub_signal(int signum, signal_handler_t handler) {
+WINAPI signal_handler_t stub_signal(int signum, signal_handler_t handler) {
     (void)signum; (void)handler;
     return NULL; /* SIG_DFL */
+}
+
+/* ---- kernel32 additional stubs for full_test/hello_drawbridge ---- */
+
+BOOL WINAPI stub_GetComputerNameA(LPSTR lpBuffer, LPDWORD nSize) {
+    const char *name = "DRAWBRIDGE";
+    DWORD len = (DWORD)strlen(name);
+    if (len >= *nSize) { *nSize = len + 1; return FALSE; }
+    memcpy(lpBuffer, name, len + 1);
+    *nSize = len;
+    return TRUE;
+}
+
+void WINAPI stub_GetSystemInfo(void *lpSystemInfo) {
+    /* Minimal SYSTEM_INFO: page size and processor count */
+    memset(lpSystemInfo, 0, 48);
+    uint32_t *si = (uint32_t*)lpSystemInfo;
+    si[0] = 9;   /* wProcessorArchitecture = PROCESSOR_ARCHITECTURE_AMD64 */
+    si[1] = 4096; /* dwPageSize */
+    /* dwNumberOfProcessors at offset 20 (32-bit) or similar */
+    si[5] = (uint32_t)sysconf(_SC_NPROCESSORS_ONLN);
+    si[8] = 6;   /* dwProcessorType */
+    si[9] = 4096; /* dwAllocationGranularity */
+}
+
+void WINAPI stub_GlobalMemoryStatus(void *lpBuffer) {
+    /* MEMORYSTATUS structure */
+    uint32_t *ms = (uint32_t*)lpBuffer;
+    struct sysinfo si;
+    sysinfo(&si);
+    ms[0] = 32;  /* dwLength */
+    ms[1] = 50;  /* dwMemoryLoad */
+    /* Store as 32-bit values (MEMORYSTATUS uses DWORD) */
+    ms[2] = (uint32_t)(si.totalram * si.mem_unit);  /* dwTotalPhys */
+    ms[3] = (uint32_t)(si.freeram * si.mem_unit);    /* dwAvailPhys */
+    ms[4] = (uint32_t)(si.totalswap * si.mem_unit);  /* dwTotalPageFile */
+    ms[5] = (uint32_t)(si.freeswap * si.mem_unit);   /* dwAvailPageFile */
+    ms[6] = 0x7FFE0000;  /* dwTotalVirtual */
+    ms[7] = 0x7FFD0000;  /* dwAvailVirtual */
+}
+
+BOOL WINAPI stub_IsDBCSLeadByteEx(DWORD CodePage, DWORD TestChar) {
+    (void)CodePage; (void)TestChar;
+    return FALSE;
+}
+
+HANDLE WINAPI stub_CreateEventA(LPVOID lpAttributes, BOOL bManualReset,
+                                 BOOL bInitialState, LPCSTR lpName) {
+    (void)lpAttributes; (void)lpName; (void)bManualReset;
+    int efd = eventfd(bInitialState ? 1 : 0, EFD_NONBLOCK);
+    if (efd < 0) return NULL;
+    return (HANDLE)(intptr_t)efd;
+}
+
+BOOL WINAPI stub_SetEvent(HANDLE hEvent) {
+    uint64_t val = 1;
+    ssize_t r = write((int)(intptr_t)hEvent, &val, sizeof(val));
+    (void)r;
+    return TRUE;
+}
+
+BOOL WINAPI stub_ResetEvent(HANDLE hEvent) {
+    uint64_t val;
+    ssize_t r = read((int)(intptr_t)hEvent, &val, sizeof(val));
+    (void)r;
+    return TRUE;
+}
+
+DWORD WINAPI stub_GetExitCodeThread(HANDLE hThread, LPDWORD lpExitCode) {
+    (void)hThread;
+    if (lpExitCode) *lpExitCode = 0;
+    return TRUE;
+}
+
+void WINAPI stub_GetStartupInfoW(void *lpStartupInfo) {
+    memset(lpStartupInfo, 0, 104); /* sizeof(STARTUPINFOW) on x64 */
+    *(uint32_t*)lpStartupInfo = 104; /* cb */
+}
+
+/* ---- msvcrt additional stubs for CRT init ---- */
+
+static int msvcrt_errno_val = 0;
+static int msvcrt_commode_val = 0;
+static char **msvcrt_initenv_ptr = NULL;  /* __initenv: pointer to char** */
+
+WINAPI int *stub_errno(void) { return &msvcrt_errno_val; }
+WINAPI int *stub_commode(void) { return &msvcrt_commode_val; }
+WINAPI void *stub___iob_func(void) { return &msvcrt_iob_data; }
+WINAPI void *stub___initenv(void) { return &msvcrt_initenv_ptr; }
+WINAPI int stub___lc_codepage_func(void) { return 0; }
+WINAPI int stub___mb_cur_max_func(void) { return 1; }
+WINAPI void stub___setusermatherr(void *handler) { (void)handler; }
+WINAPI void stub__amsg_exit(int rterrnum) { (void)rterrnum; _exit(255); }
+
+WINAPI void *stub__onexit(void *func) { (void)func; return func; }
+
+WINAPI int stub_fputc(int c, void *stream) {
+    return fputc(c, stream ? (FILE*)stream : stdout);
+}
+
+WINAPI size_t stub_fwrite(const void *ptr, size_t size, size_t nmemb, void *stream) {
+    return fwrite(ptr, size, nmemb, stream ? (FILE*)stream : stdout);
+}
+
+WINAPI int stub_vfprintf_impl(void *stream, const char *fmt, va_list ap) {
+    return vfprintf(stream ? (FILE*)stream : stderr, fmt, ap);
+}
+
+WINAPI void *stub_localeconv(void) {
+    static struct { char *decimal_point; char *thousands_sep; } lc = { ".", "" };
+    return &lc;
+}
+
+WINAPI char *stub_strerror(int errnum) {
+    return strerror(errnum);
+}
+
+WINAPI int stub_strncmp(const char *a, const char *b, size_t n) {
+    return strncmp(a, b, n);
+}
+
+WINAPI size_t stub_wcslen(const void *s) {
+    const uint16_t *w = (const uint16_t*)s;
+    size_t len = 0;
+    while (w[len]) len++;
+    return len;
+}
+
+WINAPI void *stub___C_specific_handler(void) { return NULL; }
+
+/* __getmainargs populates argc, argv, envp for the CRT startup.
+ * Windows signature: int __getmainargs(int *argc, char ***argv,
+ *                                       char ***envp, int doWildcard,
+ *                                       void *startInfo) */
+static char *dummy_argv[] = { "drawbridge.exe", NULL };
+static char *dummy_envp[] = { NULL };
+
+WINAPI int stub___getmainargs(int *_argc, char ***_argv,
+                              char ***_envp, int doWild, void *startInfo) {
+    (void)doWild; (void)startInfo;
+    if (_argc) *_argc = 1;
+    if (_argv) *_argv = dummy_argv;
+    if (_envp) *_envp = dummy_envp;
+    return 0;
+}
+
+/* __p__environ returns a pointer to the _environ variable */
+WINAPI char ***stub___p__environ(void) {
+    static char **env_ptr = NULL;
+    if (!env_ptr) env_ptr = dummy_envp;
+    return &env_ptr;
+}
+
+/* __p__fmode returns pointer to _fmode */
+WINAPI int *stub___p__fmode(void) {
+    return &msvcrt_fmode_data;
 }
 
 /* ---- Import resolution table ---- */
@@ -1124,6 +1207,15 @@ static const stub_entry_t g_stubs[] = {
     {"KERNEL32.dll", "SizeofResource", stub_SizeofResource},
     {"KERNEL32.dll", "GlobalAlloc", stub_GlobalAlloc},
     {"KERNEL32.dll", "GlobalFree", stub_GlobalFree},
+    {"KERNEL32.dll", "GetComputerNameA", stub_GetComputerNameA},
+    {"KERNEL32.dll", "GetSystemInfo", stub_GetSystemInfo},
+    {"KERNEL32.dll", "GlobalMemoryStatus", stub_GlobalMemoryStatus},
+    {"KERNEL32.dll", "IsDBCSLeadByteEx", stub_IsDBCSLeadByteEx},
+    {"KERNEL32.dll", "CreateEventA", stub_CreateEventA},
+    {"KERNEL32.dll", "SetEvent", stub_SetEvent},
+    {"KERNEL32.dll", "ResetEvent", stub_ResetEvent},
+    {"KERNEL32.dll", "GetExitCodeThread", stub_GetExitCodeThread},
+    {"KERNEL32.dll", "GetStartupInfoW", stub_GetStartupInfoW},
 
     /* advapi32.dll */
     {"ADVAPI32.DLL", "RegOpenKeyExA", stub_RegOpenKeyExA},
@@ -1189,9 +1281,10 @@ static const stub_entry_t g_stubs[] = {
     {"msvcrt.dll", "signal", stub_signal},
     {"msvcrt.dll", "_cexit", stub_exit},
     {"msvcrt.dll", "_fpreset", stub_IsDebuggerPresent},  /* nop */
-    {"msvcrt.dll", "__set_app_type", stub_IsDebuggerPresent},  /* nop */
-    {"msvcrt.dll", "__getmainargs", stub_IsDebuggerPresent},   /* nop */
-    {"msvcrt.dll", "__p__environ", stub_GetCurrentProcess},    /* nop */
+    {"msvcrt.dll", "__set_app_type", stub___setusermatherr},    /* nop - takes 1 arg */
+    {"msvcrt.dll", "__getmainargs", stub___getmainargs},
+    {"msvcrt.dll", "__p__environ", stub___p__environ},
+    {"msvcrt.dll", "__p__fmode", stub___p__fmode},
 
     /* DATA imports: _iob and _fmode must point to actual data, not functions.
      * The IAT entry gets set to the ADDRESS of the data. */
@@ -1200,6 +1293,24 @@ static const stub_entry_t g_stubs[] = {
     {"msvcrt.dll", "_fileno", stub_GetCurrentProcess},         /* nop */
     {"msvcrt.dll", "_setmode", stub_IsDebuggerPresent},        /* nop */
     {"msvcrt.dll", "_assert", stub_abort},
+    {"msvcrt.dll", "__C_specific_handler", stub___C_specific_handler},
+    {"msvcrt.dll", "___lc_codepage_func", stub___lc_codepage_func},
+    {"msvcrt.dll", "___mb_cur_max_func", stub___mb_cur_max_func},
+    {"msvcrt.dll", "__initenv", (void*)&msvcrt_initenv_ptr},
+    {"msvcrt.dll", "__iob_func", stub___iob_func},
+    {"msvcrt.dll", "__setusermatherr", stub___setusermatherr},
+    {"msvcrt.dll", "_amsg_exit", stub__amsg_exit},
+    {"msvcrt.dll", "_commode", (void*)&msvcrt_commode_val},
+    {"msvcrt.dll", "_errno", stub_errno},
+    {"msvcrt.dll", "_onexit", stub__onexit},
+    {"msvcrt.dll", "fputc", stub_fputc},
+    {"msvcrt.dll", "fwrite", stub_fwrite},
+    {"msvcrt.dll", "localeconv", stub_localeconv},
+    {"msvcrt.dll", "strerror", stub_strerror},
+    {"msvcrt.dll", "strncmp", stub_strncmp},
+    {"msvcrt.dll", "vfprintf", stub_vfprintf_impl},
+    {"msvcrt.dll", "wcslen", stub_wcslen},
+    {"msvcrt.dll", "sprintf", stub_sprintf},
 
     /* VCRUNTIME140.dll */
     {"VCRUNTIME140.dll", "memcpy", stub_memcpy},
@@ -1240,18 +1351,9 @@ void *win32_resolve_import(const char *dll_name, const char *func_name,
     for (const stub_entry_t *e = g_stubs; e->dll_name; e++) {
         if (stricmp(dll_name, e->dll_name) == 0 &&
             strcmp(func_name, e->func_name) == 0) {
-#ifdef HOST_32BIT
-            /* 32-bit mode: stdcall uses stack args, same as cdecl on Linux.
-             * No ABI translation needed - return stub directly. */
+            /* With ms_abi on all stubs, the compiler handles ABI
+             * translation automatically. Return function pointer directly. */
             return e->addr;
-#else
-            /* 64-bit mode: Windows x64 passes args in rcx,rdx,r8,r9
-             * Linux SysV passes args in rdi,rsi,rdx,rcx,r8,r9
-             * The thunk shuffles registers before calling our stub. */
-            void *thunk = make_thunk(thunk_5arg, sizeof(thunk_5arg),
-                                     19, e->addr);
-            return thunk ? thunk : e->addr;
-#endif
         }
     }
     return NULL;

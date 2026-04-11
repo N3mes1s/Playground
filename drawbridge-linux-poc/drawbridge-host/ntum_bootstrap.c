@@ -135,12 +135,7 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
     printf("  Features: 0x%x\n", *flags);
 }
 
-/* Thread args for the NTUM boot */
-typedef struct {
-    void *entry_point;
-    void *stack_top;
-    WINDOWS_LIBOS_PARAMETERS *params;
-} boot_thread_args_t;
+/* boot_thread_args_t defined in drawbridge_types.h */
 
 static void *boot_thread_fn(void *arg) {
     boot_thread_args_t *args = (boot_thread_args_t*)arg;
