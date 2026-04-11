@@ -391,8 +391,13 @@ extern void drawbridge_enter_ntum(void *entry, void *stack, void *params);
     {
         #include <asm/prctl.h>
         #include <sys/syscall.h>
-        static uint8_t teb[4096] __attribute__((aligned(4096)));
+        static uint8_t teb[65536] __attribute__((aligned(4096)));
         memset(teb, 0, sizeof(teb));
+        /* Fill TEB with pointers to a valid thread_state buffer */
+        static uint8_t thread_state[16384] __attribute__((aligned(4096)));
+        memset(thread_state, 0, sizeof(thread_state));
+        for (int off = 0; off < 8192; off += 8)
+            *(uint64_t*)(teb + off) = (uint64_t)thread_state;
         /* TEB.Self at offset 0x30 */
         *(uint64_t*)(teb + 0x30) = (uint64_t)teb;
         /* TEB.StackBase at offset 0x08 */
