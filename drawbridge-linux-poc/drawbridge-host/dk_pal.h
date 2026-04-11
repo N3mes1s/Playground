@@ -111,6 +111,14 @@ DK_API uint64_t DK_ProcessGetExitCode(DK_HANDLE process, uint64_t *exit_code);
 
 DK_API uint64_t DK_SystemTimeQuery(uint64_t clock_type, uint64_t *time);
 DK_API uint64_t DK_RandomBitsRead(void *buffer, uint64_t length);
+DK_API uint64_t DK_SystemInfoQuery(uint64_t info_class, void *buffer,
+                                    uint64_t buffer_size, uint64_t *result_size);
+
+/* ================================================================
+ * Process Management
+ * ================================================================ */
+
+DK_API uint64_t DK_ProcessGetId(uint64_t *pid);
 
 /* ================================================================
  * Console

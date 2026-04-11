@@ -520,7 +520,47 @@ DK_API uint64_t DK_RandomBitsRead(void *buffer, uint64_t length) {
  * ================================================================ */
 
 DK_API uint64_t DK_ConsoleCreate(DK_HANDLE *console) {
-    (void)console;
+    /* Create a console handle backed by our stdin/stdout */
+    DK_HANDLE h = alloc_handle();
+    g_handles[h].type = HANDLE_FD;
+    g_handles[h].fd = STDOUT_FILENO;
+    if (console) *console = h;
+    return DK_STATUS_SUCCESS;
+}
+
+/* ================================================================
+ * System Info Query
+ *
+ * The NTUM calls this (func_id 0x8003000) during boot to learn
+ * about the system: processor count, page size, memory, etc.
+ * Without it, the NTUM's internal structures remain uninitialized.
+ * ================================================================ */
+
+DK_API uint64_t DK_SystemInfoQuery(uint64_t info_class, void *buffer,
+                                    uint64_t buffer_size, uint64_t *result_size) {
+    (void)info_class;
+    if (buffer && buffer_size >= 48) {
+        /* Fill a basic SYSTEM_INFO-like structure */
+        memset(buffer, 0, buffer_size > 256 ? 256 : buffer_size);
+        uint32_t *info = (uint32_t*)buffer;
+        info[0] = 4096;                      /* Page size */
+        info[1] = (uint32_t)sysconf(_SC_NPROCESSORS_ONLN); /* Processor count */
+        info[2] = 0x8664;                    /* Processor architecture (AMD64) */
+        info[3] = 6;                         /* Processor level */
+        *(uint64_t*)(info + 4) = 0x10000;    /* Allocation granularity */
+        *(uint64_t*)(info + 6) = (uint64_t)sysconf(_SC_PHYS_PAGES) *
+                                  (uint64_t)sysconf(_SC_PAGESIZE); /* Total physical memory */
+    }
+    if (result_size) *result_size = 48;
+    return DK_STATUS_SUCCESS;
+}
+
+/* ================================================================
+ * Process ID
+ * ================================================================ */
+
+DK_API uint64_t DK_ProcessGetId(uint64_t *pid) {
+    if (pid) *pid = (uint64_t)getpid();
     return DK_STATUS_SUCCESS;
 }
 
@@ -654,17 +694,14 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
         /* System (category 0x08) */
         case 0x8001000: func = (void*)&DK_SystemTimeQuery; is_stub=0; break;
         case 0x8002000: func = (void*)&DK_RandomBitsRead; is_stub=0; break;
-
-        /* IMPORTANT: Version 1 variants (xxx001) of system functions
-         * are stored at critical .data addresses. 0x8001001 stores at
-         * [0x63f8c8] which is the ABI dispatcher pointer. We must return
-         * our dispatcher address to keep it working. */
+        case 0x8003000: func = (void*)&DK_SystemInfoQuery; is_stub=0; break;
 
         /* Process (category 0x09) */
         case 0x9001000: func = (void*)&DK_ProcessCreate; is_stub=0; break;
         case 0x9002000: func = (void*)&DK_ProcessExit; is_stub=0; break;
         case 0x9003000: func = (void*)&DK_ProcessTerminate; is_stub=0; break;
         case 0x9004000: func = (void*)&DK_ProcessGetExitCode; is_stub=0; break;
+        case 0x9005000: func = (void*)&DK_ProcessGetId; is_stub=0; break;
 
         /* Exception (category 0x0A) */
         case 0xa001000: func = (void*)&DK_ExceptionRecordFree; is_stub=0; break;
@@ -672,6 +709,7 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
         /* Objects (category 0x0B) */
         case 0xb001000: func = (void*)&DK_ObjectClose; is_stub=0; break;
         case 0xb002000: func = (void*)&DK_ObjectReference; is_stub=0; break;
+        case 0xb003000: func = (void*)&DK_ObjectReference; is_stub=0; break; /* Dereference = same as Reference for now */
 
         /* Cache/Events (category 0x0C) */
         case 0xc001000: func = (void*)&DK_InstructionCacheFlush; is_stub=0; break;
@@ -682,6 +720,7 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
         /* Extended threading (category 0x0E) */
         case 0xe001000: func = (void*)&DK_ThreadInterrupt; is_stub=0; break;
         case 0xe002000: func = (void*)&DK_ThreadSetAffinity; is_stub=0; break;
+        case 0xe003000: func = (void*)&DK_ThreadSetAffinity; is_stub=0; break; /* AssertAffinity */
 
         /* Stream extended (category 0x0F):
          * First pass (version 0, func_id ends in 000) = feature flags.

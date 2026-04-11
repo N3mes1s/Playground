@@ -27,6 +27,7 @@
 #include <pthread.h>
 #include <dlfcn.h>
 
+#include "drawbridge_types.h"
 #include "ntum_bootstrap.h"
 #include "dk_pal.h"
 #include "ntum_signals.h"
@@ -289,76 +290,96 @@ int main(int argc, char **argv) {
     map_pe_from_sfp(&system_sfp, "AppLoader.exe", NULL);
     map_pe_from_sfp(&system_sfp, "vcruntime140.dll", NULL);
 
-    /* Step 4b: Parse sqlpal.dll PE and map sections at 0x200000000 */
-    printf("\n[HOST] Mapping NTUM PE sections at 0x200000000...\n");
+    /* Step 4b: Parse sqlpal.dll PE using proper structures and map sections */
+    printf("\n[HOST] Parsing NTUM PE with proper structures...\n");
+    uint32_t pe_entry_rva = 0;
+    uint32_t pe_size_of_image = 0;
     {
-        /* Parse PE headers from the mapped sqlpal.dll data */
         uint8_t *pe_data = (uint8_t*)ntum;
-        uint16_t dos_magic = *(uint16_t*)pe_data;
-        if (dos_magic == 0x5A4D) {  /* MZ */
-            uint32_t pe_off = *(uint32_t*)(pe_data + 60);
-            uint32_t pe_sig = *(uint32_t*)(pe_data + pe_off);
-            if (pe_sig == 0x00004550) {  /* PE\0\0 */
-                uint16_t num_sections = *(uint16_t*)(pe_data + pe_off + 6);
-                uint16_t opt_size = *(uint16_t*)(pe_data + pe_off + 20);
-                uint32_t size_of_image = *(uint32_t*)(pe_data + pe_off + 24 + 56);
-                uint32_t entry_rva = *(uint32_t*)(pe_data + pe_off + 24 + 16);
-                uint64_t image_base = *(uint64_t*)(pe_data + pe_off + 24 + 24);
+        pe_dos_header_t *dos = (pe_dos_header_t*)pe_data;
 
-                printf("  PE: %d sections, ImageBase=0x%lx, SizeOfImage=0x%x, EntryRVA=0x%x\n",
-                       num_sections, (unsigned long)image_base, size_of_image, entry_rva);
-
-                /* Map at the PE's preferred ImageBase for correct RIP-relative addressing */
-                /* Map at preferred base + extra page for boundary access */
-                munmap((void*)0x200000000ULL, 4096);
-                void *img_base = mmap((void*)image_base, size_of_image + 0x10000,
-                                       PROT_READ | PROT_WRITE | PROT_EXEC,
-                                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED | MAP_POPULATE,
-                                       -1, 0);
-                if (img_base != MAP_FAILED) {
-                    printf("  mmap result: %p (requested 0x%lx, size 0x%x)\n",
-                           img_base, (unsigned long)image_base, size_of_image + 0x10000);
-                    /* Copy headers */
-                    uint32_t headers_size = *(uint32_t*)(pe_data + pe_off + 24 + 60);
-                    memcpy(img_base, pe_data, headers_size);
-
-                    /* Copy sections */
-                    uint8_t *sec_hdr = pe_data + pe_off + 24 + opt_size;
-                    for (int i = 0; i < num_sections; i++) {
-                        char name[9] = {0};
-                        memcpy(name, sec_hdr + i*40, 8);
-                        uint32_t vsize = *(uint32_t*)(sec_hdr + i*40 + 8);
-                        uint32_t vaddr = *(uint32_t*)(sec_hdr + i*40 + 12);
-                        uint32_t rsize = *(uint32_t*)(sec_hdr + i*40 + 16);
-                        uint32_t raddr = *(uint32_t*)(sec_hdr + i*40 + 20);
-                        uint32_t chars = *(uint32_t*)(sec_hdr + i*40 + 36);
-
-                        uint32_t copy_sz = rsize < vsize ? rsize : vsize;
-                        if (rsize > 0 && raddr + rsize <= 2732032)
-                            memcpy((uint8_t*)img_base + vaddr, pe_data + raddr, copy_sz);
-
-                        (void)chars;
-
-                        printf("  %-8s VA=0x%08x Size=0x%06x %c%c%c\n", name,
-                               vaddr, vsize,
-                               (chars & 0x40000000) ? 'r' : '-',
-                               (chars & 0x80000000) ? 'w' : '-',
-                               (chars & 0x20000000) ? 'x' : '-');
-                    }
-
-                    printf("  Mapped at %p (preferred 0x%lx)\n", img_base, (unsigned long)image_base);
-
-                    /* Tell the signal handler where the raw PE data is
-                     * so demand-paged pages get real content */
-                    ntum_signal_set_pe_data(ntum_raw, 2732032, image_base);
-
-                    ntum = img_base;
-                } else {
-                    printf("  [WARN] Cannot map at 0x%lx, using original at %p\n",
-                           (unsigned long)image_base, ntum);
-                }
-            }
+        if (dos->e_magic != PE_DOS_MAGIC) {
+            fprintf(stderr, "[HOST] Bad DOS magic: 0x%x\n", dos->e_magic);
+            return 1;
         }
+
+        uint32_t *pe_sig = (uint32_t*)(pe_data + dos->e_lfanew);
+        if (*pe_sig != PE_SIGNATURE) {
+            fprintf(stderr, "[HOST] Bad PE signature: 0x%x\n", *pe_sig);
+            return 1;
+        }
+
+        pe_file_header_t *file_hdr = (pe_file_header_t*)((uint8_t*)pe_sig + 4);
+        pe_optional_header_64_t *opt = (pe_optional_header_64_t*)(
+            (uint8_t*)file_hdr + sizeof(pe_file_header_t));
+
+        if (opt->Magic != PE_OPT_MAGIC_64) {
+            fprintf(stderr, "[HOST] Not PE32+: magic=0x%x\n", opt->Magic);
+            return 1;
+        }
+
+        pe_entry_rva = opt->AddressOfEntryPoint;
+        pe_size_of_image = opt->SizeOfImage;
+        uint64_t image_base = opt->ImageBase;
+
+        pe_section_header_t *sections = (pe_section_header_t*)(
+            (uint8_t*)opt + file_hdr->SizeOfOptionalHeader);
+
+        printf("  Machine:  0x%x (%s)\n", file_hdr->Machine,
+               file_hdr->Machine == PE_MACHINE_AMD64 ? "AMD64" : "other");
+        printf("  Sections: %d\n", file_hdr->NumberOfSections);
+        printf("  ImageBase:    0x%lx\n", (unsigned long)image_base);
+        printf("  SizeOfImage:  0x%x\n", pe_size_of_image);
+        printf("  EntryPoint:   0x%x\n", pe_entry_rva);
+        printf("  SizeOfHeaders: 0x%x\n", opt->SizeOfHeaders);
+        printf("  Subsystem:    %d\n", opt->Subsystem);
+
+        /* Map at the PE's preferred ImageBase */
+        munmap((void*)LIBOS_IMAGE_BASE, 4096);
+        void *img_base = mmap((void*)image_base, pe_size_of_image + 0x10000,
+                               PROT_READ | PROT_WRITE | PROT_EXEC,
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED | MAP_POPULATE,
+                               -1, 0);
+        if (img_base == MAP_FAILED) {
+            fprintf(stderr, "[HOST] Cannot map PE at 0x%lx\n", (unsigned long)image_base);
+            return 1;
+        }
+
+        /* Copy PE headers */
+        memcpy(img_base, pe_data, opt->SizeOfHeaders);
+
+        /* Copy each section using pe_section_header_t */
+        size_t raw_file_size = 0;
+        for (int i = 0; i < file_hdr->NumberOfSections; i++) {
+            pe_section_header_t *sec = &sections[i];
+            char name[9] = {0};
+            memcpy(name, sec->Name, 8);
+
+            uint32_t copy_sz = sec->SizeOfRawData < sec->VirtualSize
+                             ? sec->SizeOfRawData : sec->VirtualSize;
+
+            if (sec->SizeOfRawData > 0) {
+                memcpy((uint8_t*)img_base + sec->VirtualAddress,
+                       pe_data + sec->PointerToRawData, copy_sz);
+                size_t end = sec->PointerToRawData + sec->SizeOfRawData;
+                if (end > raw_file_size) raw_file_size = end;
+            }
+
+            printf("  %-8s VA=0x%08x VSize=0x%06x RawSz=0x%06x %c%c%c\n",
+                   name, sec->VirtualAddress, sec->VirtualSize,
+                   sec->SizeOfRawData,
+                   (sec->Characteristics & PE_SCN_MEM_READ)    ? 'r' : '-',
+                   (sec->Characteristics & PE_SCN_MEM_WRITE)   ? 'w' : '-',
+                   (sec->Characteristics & PE_SCN_MEM_EXECUTE) ? 'x' : '-');
+        }
+
+        printf("  Mapped at %p, raw file size %lu bytes\n",
+               img_base, (unsigned long)raw_file_size);
+
+        /* Tell the signal handler where the raw PE data is */
+        ntum_signal_set_pe_data(ntum_raw, raw_file_size, image_base);
+
+        ntum = img_base;
     }
 
     /* Step 5: Load target EXE */
@@ -392,8 +413,9 @@ int main(int argc, char **argv) {
     }
     WINDOWS_LIBOS_PARAMETERS *libos_params = libos_params_ptr;
     printf("[HOST] LIBOS_PARAMS at %p (in LibOS address space)\n", (void*)libos_params);
-    ntum_bootstrap_init(libos_params, ntum, 16 * 1024 * 1024, /* SizeOfImage */
-                        0x3A04D0,  /* sqlpal.dll entry RVA */
+    ntum_bootstrap_init(libos_params, ntum,
+                        pe_size_of_image ? pe_size_of_image : 16 * 1024 * 1024,
+                        pe_entry_rva ? pe_entry_rva : 0x3A04D0,
                         dk_pal_get_table());
 
     printf("\n[HOST] Launching NTUM boot thread...\n");
