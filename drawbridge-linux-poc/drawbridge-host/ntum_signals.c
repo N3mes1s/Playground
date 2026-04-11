@@ -106,8 +106,18 @@ static int handle_libos_fault(void *fault_addr, int is_write, ucontext_t *uc) {
     if (result != MAP_FAILED) {
         ntum_fault_count++;
 
-        /* If this page is within the PE image, copy actual section data */
-        if (g_pe_raw_data && addr >= g_pe_image_base) {
+        /* If this page is within the PE image, copy actual section data.
+         * SKIP if the page is in a section we already patched (.data, .00cfg, .roafter)
+         * because we wrote runtime values there that would be overwritten. */
+        int is_patched_section = 0;
+        if (addr >= g_pe_image_base) {
+            uint64_t rva = page - g_pe_image_base;
+            /* .data at 0x600000, .00cfg at 0xa00000, .roafter at 0xc00000 */
+            if (rva >= 0x600000 && rva < 0x670000) is_patched_section = 1;  /* .data */
+            if (rva >= 0xa00000 && rva < 0xa01000) is_patched_section = 1;  /* .00cfg */
+            if (rva >= 0xc00000 && rva < 0xc02000) is_patched_section = 1;  /* .roafter */
+        }
+        if (g_pe_raw_data && addr >= g_pe_image_base && !is_patched_section) {
             uint64_t rva = page - g_pe_image_base;  /* RVA of the faulted page */
 
             /* Find which section this RVA falls in */

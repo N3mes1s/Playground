@@ -338,7 +338,19 @@ static void *boot_thread_fn(void *arg) {
     /* Use assembly trampoline (drawbridge_enter_ntum from trampoline.S) */
     extern void drawbridge_enter_ntum(void *entry, void *stack, void *params);
     fprintf(stderr, "[BOOT] Byte at 0x1803a05d5: 0x%02x (expect 0x90)\n", *(volatile uint8_t*)0x1803a05d5ULL);
-    ntum_patch_rcx_to_global(); drawbridge_enter_ntum(real_init, (void*)ntum_stack, args->params);
+    ntum_patch_rcx_to_global();
+
+    /* RE-APPLY all data section patches right before trampoline.
+     * Demand-paging might have overwritten them. */
+    *(volatile uint32_t*)0x18063f8c0ULL = 1;  /* boot flag */
+    *(volatile uint64_t*)0x18063f8c8ULL = (uint64_t)&DK_AbiDispatcher;
+    *(volatile uint64_t*)0x180a00008ULL = (uint64_t)&DK_AbiDispatcher;
+    *(volatile uint64_t*)0x180c00008ULL = (uint64_t)args->params;
+    *(volatile uint64_t*)0x180c00010ULL = args->params->Size;
+    fprintf(stderr, "[BOOT] Re-applied data patches. ABI dispatcher at %p\n",
+            (void*)&DK_AbiDispatcher);
+
+    drawbridge_enter_ntum(real_init, (void*)ntum_stack, args->params);
 
     /* Should not reach here */
     printf("[BOOT] NTUM returned unexpectedly\n");
