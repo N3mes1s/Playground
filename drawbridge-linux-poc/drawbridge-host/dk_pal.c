@@ -565,9 +565,9 @@ DK_API uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
     if (dispatch_count <= 100) {
         char msg[128];
         int len = snprintf(msg, sizeof(msg),
-            "[DK] Call #%d: ctx=0x%lx type=0x%lx size=%lu\n",
-            dispatch_count, (unsigned long)context,
-            (unsigned long)call_type, (unsigned long)data_size);
+            "[DK] Call #%d: type=0x%lx funcid=0x%x\n",
+            dispatch_count, (unsigned long)call_type,
+            (input_buf && call_type == 0x7002002) ? *(uint32_t*)input_buf : (uint32_t)data_size);
         write(2, msg, len);
     }
 
