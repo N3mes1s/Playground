@@ -21,3 +21,7 @@ drawbridge-linux-poc/extracted/
 # Malware samples (downloaded from VirusTotal, NOT safe to commit)
 drawbridge-linux-poc/malware-analysis/samples/
 drawbridge-linux-poc/malware-analysis/compatibility_report.json
+
+# Built binaries
+drawbridge-linux-poc/ntum-builder/drawbridge-run
+drawbridge-linux-poc/ntum-builder/test/*.exe
