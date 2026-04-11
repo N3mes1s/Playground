@@ -959,9 +959,24 @@ uint64_t pool_allocator_fn(void *pool_obj, uint64_t alloc_size,
     if (alloc_size == 0) alloc_size = 0x1000;
     size_t aligned = (alloc_size + 0xFFF) & ~0xFFFULL;
 
-    void *result = mmap(NULL, aligned, PROT_READ | PROT_WRITE,
+    /* Allocate extra space for a stack descriptor at +0x10 */
+    size_t total = aligned < 0x1000 ? 0x1000 : aligned;
+    void *result = mmap(NULL, total, PROT_READ | PROT_WRITE,
                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (result == MAP_FAILED) return 0;
+
+    /* Pre-fill a stack descriptor at offset +0x10 of the allocation.
+     * The thread switcher at RVA 0x3a0670 reads [ptr+0x10] as stack_info,
+     * then [stack_info+0x30] as stack_ptr. If any pool allocation is used
+     * as a thread context, this prevents NULL dereference. */
+    static uint8_t boot_stack_desc[256] __attribute__((aligned(64)));
+    if (boot_stack_desc[0] == 0) {
+        /* Initialize once: stack_desc+0x30 = valid stack pointer */
+        *(uint64_t*)(boot_stack_desc + 0x30) = NTUM_STACK_TOP;
+        *(uint64_t*)(boot_stack_desc + 0x90) = 0x18021ff10ULL; /* guard_check=ret */
+        boot_stack_desc[0] = 1; /* initialized flag */
+    }
+    *(uint64_t*)((uint8_t*)result + 0x10) = (uint64_t)boot_stack_desc;
 
     static int pool_count = 0;
     pool_count++;

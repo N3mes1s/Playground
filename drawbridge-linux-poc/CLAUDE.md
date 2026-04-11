@@ -1,5 +1,24 @@
 # Drawbridge Linux PoC - Development Context
 
+## Development Rules
+
+1. **ALWAYS read the decompiled ELF code FIRST** before writing any host code.
+   The decompiled sqlservr at `analysis/sqlservr_FULL.c` IS the working 
+   implementation. Search it for the function you need, understand what it does,
+   THEN implement it in our host.
+
+2. **Take notes in the annotated code** at `analysis/ANNOTATED_BOOT_FUNCTIONS.c`.
+   When you discover what a function does, add it there with the proper name,
+   address mapping, and implementation status.
+
+3. **Cross-reference PE disassembly with decompiled ELF**. They share similar
+   RVAs but have different code. The PE calls through the PAL, the ELF calls
+   Linux directly. Understanding BOTH helps.
+
+4. **Don't guess .data field values**. Use the decompiled code to find who
+   writes each field, what function creates each structure, and what the
+   real initialization sequence looks like.
+
 ## Project Overview
 Reimplementation of Microsoft's Drawbridge architecture (Library OS) on Linux.
 The real NTUM kernel (sqlpal.dll from MSSQL Server) runs Windows PE executables
