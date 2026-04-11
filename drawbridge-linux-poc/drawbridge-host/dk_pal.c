@@ -696,6 +696,14 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
         (uint64_t)&DK_AbiDispatcher;
     *(volatile uint32_t*)0x18063f5c0ULL = 2;  /* ABI version = 2 */
 
+    /* Re-arm global TEB pointer if it was cleared */
+    if (*(volatile uint64_t*)0x1806092c0ULL == 0) {
+        extern uint8_t g_runtime_callback_state[];
+        /* Use our pre-allocated TEB */
+        uint64_t teb = *(volatile uint64_t*)(g_runtime_callback_state + 0x20);
+        if (teb) *(volatile uint64_t*)0x1806092c0ULL = teb;
+    }
+
     static int dispatch_count = 0;
     dispatch_count++;
     if (dispatch_count <= 500) {

@@ -461,12 +461,21 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
     /* Dump stack frames (return addresses) */
     if (rsp_val >= 0x180000000ULL && rsp_val < 0x181000000ULL) {
         len += snprintf(msg + len, sizeof(msg) - len,
-            "  Stack: [RSP]=0x%llx [+8]=0x%llx [+16]=0x%llx [+24]=0x%llx [+32]=0x%llx\n",
-            (unsigned long long)*(uint64_t*)rsp_val,
-            (unsigned long long)*(uint64_t*)(rsp_val+8),
-            (unsigned long long)*(uint64_t*)(rsp_val+16),
-            (unsigned long long)*(uint64_t*)(rsp_val+24),
-            (unsigned long long)*(uint64_t*)(rsp_val+32));
+            "  Stack: [+0]=0x%llx [+8]=0x%llx [+10]=0x%llx [+18]=0x%llx\n"
+            "         [+20]=0x%llx [+28]=0x%llx [+30]=0x%llx [+38]=0x%llx\n"
+            "         [+40]=0x%llx [+48]=0x%llx [+50]=0x%llx [+58]=0x%llx\n",
+            (unsigned long long)*(uint64_t*)(rsp_val),
+            (unsigned long long)*(uint64_t*)(rsp_val+0x8),
+            (unsigned long long)*(uint64_t*)(rsp_val+0x10),
+            (unsigned long long)*(uint64_t*)(rsp_val+0x18),
+            (unsigned long long)*(uint64_t*)(rsp_val+0x20),
+            (unsigned long long)*(uint64_t*)(rsp_val+0x28),
+            (unsigned long long)*(uint64_t*)(rsp_val+0x30),
+            (unsigned long long)*(uint64_t*)(rsp_val+0x38),
+            (unsigned long long)*(uint64_t*)(rsp_val+0x40),
+            (unsigned long long)*(uint64_t*)(rsp_val+0x48),
+            (unsigned long long)*(uint64_t*)(rsp_val+0x50),
+            (unsigned long long)*(uint64_t*)(rsp_val+0x58));
     }
     ssize_t wr = write(STDERR_FILENO, msg, len);
     (void)wr;

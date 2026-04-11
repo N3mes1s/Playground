@@ -144,9 +144,33 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
         /* Pre-store pointer for 0x190 size check at RVA 0x20e51d */
         *(volatile uint64_t*)0x180c00820ULL = (uint64_t)s_libos_size_buf;
 
-        /* ABI version at [0x63f5c0] must be 2 for second-pass resolution.
-         * The second resolver at PE RVA 0x213eb2 reads this and compares to 2. */
+        /* ABI version at [0x63f5c0] must be 2 for second-pass resolution. */
         *(volatile uint32_t*)0x18063f5c0ULL = 2;
+
+        /* Global TEB at [0x6092c0] - the PE reads this at RVA 0x20492c and
+         * stores it as the boot thread's TEB. The scheduler at RVA 0x204c72
+         * compares gs:0x30 with this value and asserts if they don't match.
+         * Pre-allocate a 64KB TEB in LibOS space (filled with 0xb0 sentinel
+         * like the real host's FUN_001fa9c0 does). */
+        void *ntum_teb = mmap((void*)0x300000100000ULL, 0x10000,
+                              PROT_READ | PROT_WRITE,
+                              MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+        if (ntum_teb == MAP_FAILED)
+            ntum_teb = mmap(NULL, 0x10000, PROT_READ|PROT_WRITE,
+                            MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+        if (ntum_teb != MAP_FAILED) {
+            memset(ntum_teb, 0, 0x10000);
+            /* TEB self-pointer at +0x30 */
+            *(uint64_t*)((uint8_t*)ntum_teb + 0x30) = (uint64_t)ntum_teb;
+            /* StackBase and StackLimit */
+            *(uint64_t*)((uint8_t*)ntum_teb + 0x08) = NTUM_STACK_TOP + 0x4000;
+            *(uint64_t*)((uint8_t*)ntum_teb + 0x10) = NTUM_STACK_BASE;
+            /* Store as global TEB in PE .data */
+            *(volatile uint64_t*)0x1806092c0ULL = (uint64_t)ntum_teb;
+            /* Also store in RuntimeCallbackState+0x20 for the dispatcher to re-arm */
+            *(uint64_t*)(g_runtime_callback_state + 0x20) = (uint64_t)ntum_teb;
+            printf("  [0x1806092c0] = %p (boot TEB)\n", ntum_teb);
+        }
 
         /* Default thread block at [0x63b220] - used by thread switcher at
          * RVA 0x3a0650 as fallback when rdx=NULL.
@@ -310,8 +334,16 @@ static void *boot_thread_fn(void *arg) {
         /* TEB[0x1838] = NULL - the NTUM will set this when it creates
          * the kernel thread during initialization. */
 
-        /* Set GS base to our TEB */
-        syscall(SYS_arch_prctl, ARCH_SET_GS, (unsigned long)teb);
+        /* Set GS base to the NTUM TEB (must match [0x1806092c0]) */
+        uint64_t ntum_teb_addr = *(volatile uint64_t*)0x1806092c0ULL;
+        if (ntum_teb_addr) {
+            syscall(SYS_arch_prctl, ARCH_SET_GS, ntum_teb_addr);
+            fprintf(stderr, "[BOOT] GS base set to NTUM TEB at 0x%lx\n",
+                    (unsigned long)ntum_teb_addr);
+        } else {
+            syscall(SYS_arch_prctl, ARCH_SET_GS, (unsigned long)teb);
+            fprintf(stderr, "[BOOT] GS base set to fallback TEB at %p\n", teb);
+        }
 
         /* Store thread control block (TCB) at fs:-0x10 and fs:-8.
          * The NTUM's signal handler (FUN_002899d0) reads from FS_OFFSET - 0x10:
