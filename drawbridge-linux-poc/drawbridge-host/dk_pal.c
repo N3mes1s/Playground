@@ -552,6 +552,7 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
     *(volatile uint32_t*)NTUM_BOOT_FLAG_ADDR = 1;
     *(volatile uint64_t*)NTUM_ABI_DISPATCHER_ADDR =
         (uint64_t)&DK_AbiDispatcher;
+    *(volatile uint32_t*)0x18063f5c0ULL = 2;  /* ABI version = 2 */
 
     static int dispatch_count = 0;
     dispatch_count++;
@@ -589,7 +590,11 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
         void *func = (void*)&DK_GenericStub;
         int is_stub = 1;  /* Track if we're returning a real impl or generic stub */
 
-        /* Use base_func_id for the switch to handle all versions uniformly */
+        /* For version 0 (first pass): use base_func_id for the switch.
+         * For version 1+ (second pass): use base_func_id BUT skip feature
+         * flag returns (0xf/0x10 categories) - return real function instead.
+         * The second resolver stores the return as a CALLABLE function pointer. */
+        int original_version = func_id & 0xFFF;
         func_id = base_func_id;
 
         switch (func_id) {
@@ -639,8 +644,12 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
          * 0x7002000 (AbiGetFunction): stored at [0x63f5c0], must be 2 (ABI v2)
          *   The second resolver at RVA 0x213ea4 checks [0x63f5c0] == 2
          *   and returns 0xC0000002 if not equal. */
-        case 0x7001000: func = (void*)1; is_stub=0; break;
-        case 0x7002000: func = (void*)2; is_stub=0; break;
+        case 0x7001000:
+            func = (original_version == 0) ? (void*)1 : (void*)&DK_GenericStub;
+            is_stub = (original_version != 0); break;
+        case 0x7002000:
+            func = (original_version == 0) ? (void*)2 : (void*)&DK_AbiGetFunction;
+            is_stub=0; break;
 
         /* System (category 0x08) */
         case 0x8001000: func = (void*)&DK_SystemTimeQuery; is_stub=0; break;
@@ -684,10 +693,14 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
          */
         case 0xf001000: case 0xf002000: case 0xf003000:
         case 0xf004000: case 0xf005000: case 0xf006000:
-        case 0xf007000: func = (void*)1; is_stub=0; break;
+        case 0xf007000:
+            func = (original_version == 0) ? (void*)1 : (void*)&DK_GenericStub;
+            is_stub = (original_version != 0); break;
 
-        /* Async (category 0x10) - also feature flags for version 0 */
-        case 0x10001000: case 0x10002000: func = (void*)1; is_stub=0; break;
+        /* Async (category 0x10) */
+        case 0x10001000: case 0x10002000:
+            func = (original_version == 0) ? (void*)1 : (void*)&DK_GenericStub;
+            is_stub = (original_version != 0); break;
 
         /* Memory v2 (category 0x12) */
         case 0x12001000: func = (void*)&DK_VirtualMemoryAllocate; is_stub=0; break;

@@ -122,6 +122,10 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
         /* Pre-store ParameterBuffer pointer */
         *(volatile uint64_t*)0x180c00820ULL = (uint64_t)params->ParameterBuffer;
 
+        /* ABI version at [0x63f5c0] must be 2 for second-pass resolution.
+         * The second resolver at PE RVA 0x213eb2 reads this and compares to 2. */
+        *(volatile uint32_t*)0x18063f5c0ULL = 2;
+
         printf("[BOOT] Set NTUM .data globals (no .text patches!):\n");
         printf("  [0x18063f8c0] = 1 (boot flag)\n");
         printf("  [0x18063f8c8] = %p (ABI dispatcher)\n", (void*)&DK_AbiDispatcher);
@@ -203,6 +207,7 @@ static void *boot_thread_fn(void *arg) {
     *(volatile uint64_t*)0x18063f8c8ULL = (uint64_t)&DK_AbiDispatcher;
     *(volatile uint64_t*)0x180c00008ULL = (uint64_t)args->params;
     *(volatile uint64_t*)0x180c00010ULL = args->params->Size;
+    *(volatile uint32_t*)0x18063f5c0ULL = 2;  /* ABI version = 2 */
 
     /* Verify .00cfg has the PE's built-in CFG functions (NOT our code) */
     {
