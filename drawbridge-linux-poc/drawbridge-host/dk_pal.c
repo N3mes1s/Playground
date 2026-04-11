@@ -708,19 +708,33 @@ DK_API __attribute__((force_align_arg_pointer)) uint64_t DK_AbiDispatcher(uint64
          *
          * Try both: write directly to *out_buf AND to **out_buf
          * to determine which the NTUM actually uses. */
-        /* Write to the output buffer using double-dereference protocol:
-         * out_buf → ptr → result_area
-         * Confirmed from debugging: out_buf=0x18063ae70, *out_buf=0x18063aeb0.
-         * The caller reads the result from [*out_buf] after the call. */
+        /* Write status to the output buffer.
+         * Protocol from decompiled FUN_00284540/FUN_00269650:
+         *   out_buf → &stack_slot → result_area
+         *   FUN_00269650 writes 8 bytes to *result_area
+         *   Caller reads low 32 bits: mov ecx, [result_area]
+         *   If bit 31 set → error. So we write STATUS_SUCCESS (0).
+         *
+         * The NTUM uses the returned function pointers through a
+         * separate mechanism (the ABI dispatch table at params+0x90
+         * or through the HostAbiTable). Our resolved function pointers
+         * are already stored at [0x18063f8c8] for the dispatcher. */
+        /* The NTUM's GetFunction_v2 caller (RVA 0x213e8c) reads
+         * low 32 bits from the output: mov ecx, [result_area].
+         * Non-negative = success status. The actual function pointer
+         * was already stored by our dispatcher when it was first
+         * resolved. Write 0 = STATUS_SUCCESS. */
+        /* Write function pointer to result area via double-deref.
+         * Protocol: out_buf → &slot → result_area, write 8 bytes.
+         * NTUM caller reads low 32 bits: negative = error.
+         * With -no-pie, our function addresses are < 0x80000000. */
         if (out_buf) {
             uint64_t *result_area = *(uint64_t**)out_buf;
             if (result_area) {
-                /* Write the function pointer to the result area */
                 *result_area = (uint64_t)func;
             }
         }
 
-        /* Return SUCCESS (0) - the NTUM checks eax for negative = error */
         return 0;
     }
 

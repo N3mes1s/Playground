@@ -253,18 +253,24 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
                         }
                     } else {
                         /* Debug assertion (call; int3; jmp -3).
-                         * The preceding call wasn't supposed to return.
-                         * Patch CC EB FD → C3 90 90 (ret + nops) to return
-                         * to the caller cleanly. */
+                         * Log the full state - ESI contains the error status. */
+                        char tmsg[512];
+                        int tl = snprintf(tmsg, sizeof(tmsg),
+                            "[TRAP] Debug assert at 0x%lx\n"
+                            "  ESI=0x%llx (error status)\n"
+                            "  RCX=0x%llx RDX=0x%llx RAX=0x%llx\n"
+                            "  RSP=0x%llx [RSP]=0x%llx\n",
+                            (unsigned long)(rip - 1),
+                            (unsigned long long)uc->uc_mcontext.gregs[REG_RSI],
+                            (unsigned long long)uc->uc_mcontext.gregs[REG_RCX],
+                            (unsigned long long)uc->uc_mcontext.gregs[REG_RDX],
+                            (unsigned long long)uc->uc_mcontext.gregs[REG_RAX],
+                            (unsigned long long)uc->uc_mcontext.gregs[REG_RSP],
+                            uc->uc_mcontext.gregs[REG_RSP] >= 0x180000000ULL ?
+                                (unsigned long long)*(uint64_t*)uc->uc_mcontext.gregs[REG_RSP] : 0ULL);
+                        write(2, tmsg, tl);
+                        /* Patch to ret and continue */
                         cc[0] = 0xC3; next[0] = 0x90; next[1] = 0x90;
-                        if (trap_count <= 20) {
-                            char tmsg[128];
-                            int tl = snprintf(tmsg, sizeof(tmsg),
-                                "[TRAP] Debug assert at 0x%lx - patched to ret\n",
-                                (unsigned long)(rip - 1));
-                            write(2, tmsg, tl);
-                        }
-                        /* Back up RIP to the ret we just wrote */
                         uc->uc_mcontext.gregs[REG_RIP] = rip - 1;
                     }
                 } else {

@@ -1,6 +1,6 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -O2 -g
-LDFLAGS = -lpthread -ldl
+CFLAGS = -Wall -Wextra -O2 -g -no-pie
+LDFLAGS = -lpthread -ldl -no-pie
 
 SRCS = main.c ntum_bootstrap.c dk_pal.c ntum_signals.c
 
