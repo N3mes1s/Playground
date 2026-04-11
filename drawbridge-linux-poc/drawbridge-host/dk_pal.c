@@ -558,116 +558,120 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
     if (call_type == ABI_GET_FUNCTION_V2) {
         uint32_t *in = (uint32_t*)in_buf;
         uint32_t func_id = in ? in[0] : 0;
+        uint32_t version = in ? in[1] : 0;
 
         void *func = (void*)&DK_GenericStub;
+        int is_stub = 1;  /* Track if we're returning a real impl or generic stub */
 
         switch (func_id) {
         /* Stream I/O (category 0x01) */
-        case 0x1001000: func = (void*)&DK_StreamOpen; break;
-        case 0x1002000: func = (void*)&DK_StreamRead; break;
-        case 0x1003000: func = (void*)&DK_StreamWrite; break;
-        case 0x1004000: func = (void*)&DK_StreamFlush; break;
-        case 0x1005000: func = (void*)&DK_ObjectClose; break;
-        case 0x1006000: func = (void*)&DK_StreamMap; break;
-        case 0x1007000: func = (void*)&DK_StreamMapPeBinary; break;
-        case 0x1008000: func = (void*)&DK_StreamUnmap; break;
-        case 0x1009000: func = (void*)&DK_StreamSetLength; break;
-        case 0x100a000: func = (void*)&DK_StreamControl; break;
-        case 0x100b000: func = (void*)&DK_StreamAttributesQuery; break;
-        case 0x100c000: func = (void*)&DK_StreamAttributesQueryByHandle; break;
-        case 0x100d000: func = (void*)&DK_StreamEnumerateChildren; break;
-        case 0x100e000: func = (void*)&DK_StreamDelete; break;
-        case 0x100f000: func = (void*)&DK_StreamRename; break;
-        case 0x1010000: func = (void*)&DK_StreamChangesRegister; break;
-        case 0x1011000: func = (void*)&DK_StreamChangesPoll; break;
-        case 0x1012000: func = (void*)&DK_StreamRangeLock; break;
-        case 0x1013000: func = (void*)&DK_StreamRangeUnlock; break;
-        case 0x1014000: func = (void*)&DK_StreamGetEvent; break;
-        case 0x1015000: func = (void*)&DK_StreamEventSelect; break;
+        case 0x1001000: func = (void*)&DK_StreamOpen; is_stub=0; break;
+        case 0x1002000: func = (void*)&DK_StreamRead; is_stub=0; break;
+        case 0x1003000: func = (void*)&DK_StreamWrite; is_stub=0; break;
+        case 0x1004000: func = (void*)&DK_StreamFlush; is_stub=0; break;
+        case 0x1005000: func = (void*)&DK_ObjectClose; is_stub=0; break;
+        case 0x1006000: func = (void*)&DK_StreamMap; is_stub=0; break;
+        case 0x1007000: func = (void*)&DK_StreamMapPeBinary; is_stub=0; break;
+        case 0x1008000: func = (void*)&DK_StreamUnmap; is_stub=0; break;
+        case 0x1009000: func = (void*)&DK_StreamSetLength; is_stub=0; break;
+        case 0x100a000: func = (void*)&DK_StreamControl; is_stub=0; break;
+        case 0x100b000: func = (void*)&DK_StreamAttributesQuery; is_stub=0; break;
+        case 0x100c000: func = (void*)&DK_StreamAttributesQueryByHandle; is_stub=0; break;
+        case 0x100d000: func = (void*)&DK_StreamEnumerateChildren; is_stub=0; break;
+        case 0x100e000: func = (void*)&DK_StreamDelete; is_stub=0; break;
+        case 0x100f000: func = (void*)&DK_StreamRename; is_stub=0; break;
+        case 0x1010000: func = (void*)&DK_StreamChangesRegister; is_stub=0; break;
+        case 0x1011000: func = (void*)&DK_StreamChangesPoll; is_stub=0; break;
+        case 0x1012000: func = (void*)&DK_StreamRangeLock; is_stub=0; break;
+        case 0x1013000: func = (void*)&DK_StreamRangeUnlock; is_stub=0; break;
+        case 0x1014000: func = (void*)&DK_StreamGetEvent; is_stub=0; break;
+        case 0x1015000: func = (void*)&DK_StreamEventSelect; is_stub=0; break;
 
         /* Memory (category 0x02) */
-        case 0x2001000: func = (void*)&DK_VirtualMemoryAllocate; break;
-        case 0x2002000: func = (void*)&DK_VirtualMemoryFree; break;
-        case 0x2004000: func = (void*)&DK_VirtualMemoryProtect; break;
+        case 0x2001000: func = (void*)&DK_VirtualMemoryAllocate; is_stub=0; break;
+        case 0x2002000: func = (void*)&DK_VirtualMemoryFree; is_stub=0; break;
+        case 0x2004000: func = (void*)&DK_VirtualMemoryProtect; is_stub=0; break;
 
         /* Threading (category 0x04) */
-        case 0x4001000: func = (void*)&DK_ThreadCreate; break;
-        case 0x4002000: func = (void*)&DK_ThreadExit; break;
-        case 0x4003000: func = (void*)&DK_ThreadYieldExecution; break;
+        case 0x4001000: func = (void*)&DK_ThreadCreate; is_stub=0; break;
+        case 0x4002000: func = (void*)&DK_ThreadExit; is_stub=0; break;
+        case 0x4003000: func = (void*)&DK_ThreadYieldExecution; is_stub=0; break;
 
         /* Synchronization (category 0x05) */
-        case 0x5001000: func = (void*)&DK_NotificationEventCreate; break;
-        case 0x5002000: func = (void*)&DK_SynchronizationEventCreate; break;
-        case 0x5003000: func = (void*)&DK_ObjectsWaitAny; break;
+        case 0x5001000: func = (void*)&DK_NotificationEventCreate; is_stub=0; break;
+        case 0x5002000: func = (void*)&DK_SynchronizationEventCreate; is_stub=0; break;
+        case 0x5003000: func = (void*)&DK_ObjectsWaitAny; is_stub=0; break;
 
         /* Console (category 0x06) */
-        case 0x6001000: func = (void*)&DK_ConsoleCreate; break;
+        case 0x6001000: func = (void*)&DK_ConsoleCreate; is_stub=0; break;
 
         /* ABI (category 0x07) */
-        case 0x7002000: func = (void*)&DK_AbiGetFunction; break;
+        case 0x7002000: func = (void*)&DK_AbiGetFunction; is_stub=0; break;
 
         /* System (category 0x08) */
-        case 0x8001000: func = (void*)&DK_SystemTimeQuery; break;
-        case 0x8002000: func = (void*)&DK_RandomBitsRead; break;
+        case 0x8001000: func = (void*)&DK_SystemTimeQuery; is_stub=0; break;
+        case 0x8002000: func = (void*)&DK_RandomBitsRead; is_stub=0; break;
 
         /* Process (category 0x09) */
-        case 0x9001000: func = (void*)&DK_ProcessCreate; break;
-        case 0x9002000: func = (void*)&DK_ProcessExit; break;
-        case 0x9003000: func = (void*)&DK_ProcessTerminate; break;
-        case 0x9004000: func = (void*)&DK_ProcessGetExitCode; break;
+        case 0x9001000: func = (void*)&DK_ProcessCreate; is_stub=0; break;
+        case 0x9002000: func = (void*)&DK_ProcessExit; is_stub=0; break;
+        case 0x9003000: func = (void*)&DK_ProcessTerminate; is_stub=0; break;
+        case 0x9004000: func = (void*)&DK_ProcessGetExitCode; is_stub=0; break;
 
         /* Exception (category 0x0A) */
-        case 0xa001000: func = (void*)&DK_ExceptionRecordFree; break;
+        case 0xa001000: func = (void*)&DK_ExceptionRecordFree; is_stub=0; break;
 
         /* Objects (category 0x0B) */
-        case 0xb001000: func = (void*)&DK_ObjectClose; break;
-        case 0xb002000: func = (void*)&DK_ObjectReference; break;
+        case 0xb001000: func = (void*)&DK_ObjectClose; is_stub=0; break;
+        case 0xb002000: func = (void*)&DK_ObjectReference; is_stub=0; break;
 
         /* Cache/Events (category 0x0C) */
-        case 0xc001000: func = (void*)&DK_InstructionCacheFlush; break;
-        case 0xc002000: func = (void*)&DK_EventSet; break;
-        case 0xc003000: func = (void*)&DK_EventClear; break;
-        case 0xc004000: func = (void*)&DK_EventPeek; break;
+        case 0xc001000: func = (void*)&DK_InstructionCacheFlush; is_stub=0; break;
+        case 0xc002000: func = (void*)&DK_EventSet; is_stub=0; break;
+        case 0xc003000: func = (void*)&DK_EventClear; is_stub=0; break;
+        case 0xc004000: func = (void*)&DK_EventPeek; is_stub=0; break;
 
         /* Extended threading (category 0x0E) */
-        case 0xe001000: func = (void*)&DK_ThreadInterrupt; break;
-        case 0xe002000: func = (void*)&DK_ThreadSetAffinity; break;
+        case 0xe001000: func = (void*)&DK_ThreadInterrupt; is_stub=0; break;
+        case 0xe002000: func = (void*)&DK_ThreadSetAffinity; is_stub=0; break;
 
         /* Memory v2 (category 0x12) */
-        case 0x12001000: func = (void*)&DK_VirtualMemoryAllocate; break;
-        case 0x12002000: func = (void*)&DK_VirtualMemoryFree; break;
-        case 0x12003000: func = (void*)&DK_VirtualMemoryProtect; break;
+        case 0x12001000: func = (void*)&DK_VirtualMemoryAllocate; is_stub=0; break;
+        case 0x12002000: func = (void*)&DK_VirtualMemoryFree; is_stub=0; break;
+        case 0x12003000: func = (void*)&DK_VirtualMemoryProtect; is_stub=0; break;
 
         /* Random (category 0x13) */
-        case 0x13001000: func = (void*)&DK_RandomBitsRead; break;
+        case 0x13001000: func = (void*)&DK_RandomBitsRead; is_stub=0; break;
 
         default: break;
         }
 
-        /* Write function pointer to output buffer.
-         * Try both single-deref and double-deref - the NTUM expects
-         * one or the other depending on how the call site was compiled.
-         *
-         * From decompiled FUN_00269650: the caller reads the function
-         * pointer from the output area. We write to *out_buf directly
-         * AND return the function pointer as the return value. */
-        if (out_buf) {
-            /* Single-deref: write directly to out_buf */
-            *(uint64_t*)out_buf = (uint64_t)func;
+        /* Log stub vs real resolution */
+        if (dispatch_count <= 100) {
+            fprintf(stderr, "[DK] Resolve 0x%x v%u → %p %s\n",
+                    func_id, version, func, is_stub ? "(STUB)" : "(impl)");
+        }
 
-            /* Also try double-deref if the pointer looks valid */
+        /* Write function pointer to output buffer.
+         * Write to **out_buf (double-deref): the NTUM's call site passes
+         * out_buf = &stack_slot, where stack_slot points to result area.
+         * Also write to *out_buf for safety. Return 0 = STATUS_SUCCESS. */
+        if (out_buf) {
             uint64_t *slot = *(uint64_t**)out_buf;
             if (slot && (uintptr_t)slot > 0x1000 && (uintptr_t)slot < LIBOS_VM_END) {
                 *slot = (uint64_t)func;
             }
+            /* Also store at *out_buf in case the protocol is single-deref */
+            *(uint64_t*)out_buf = (uint64_t)func;
         }
-        return (uint64_t)func;
+        return 0;  /* STATUS_SUCCESS */
     }
 
     if (call_type == ABI_GET_VERSION_V2) {
+        /* Return ABI version 2. Must return SUCCESS, not NOT_IMPLEMENTED. */
         if (out_buf)
             *(uint32_t*)out_buf = 2;
-        return DK_STATUS_NOT_IMPLEMENTED;
+        return DK_STATUS_SUCCESS;
     }
 
     fprintf(stderr, "[DK] PostRes: type=0x%lx size=0x%lx in=%p\n",
