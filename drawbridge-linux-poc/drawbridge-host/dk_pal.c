@@ -554,10 +554,21 @@ DK_API uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
                                    uint64_t out_size, void *out_buf) {
 
     void *input_buf = in_buf;
-    /* Re-arm: write our dispatcher to all locations every call */
+
+    /* Re-arm our dispatcher pointer (safe write to our external page) */
     *(volatile uint64_t*)0x181100000ULL = (uint64_t)&DK_AbiDispatcher;
-    *(volatile uint64_t*)0x180a00008ULL = (uint64_t)&DK_AbiDispatcher;
-    *(volatile uint64_t*)0x180a00000ULL = (uint64_t)&DK_AbiDispatcher;
+
+    /* Log first few calls for debugging (use write() not fprintf) */
+    static int dispatch_count = 0;
+    dispatch_count++;
+    if (dispatch_count <= 5) {
+        char msg[128];
+        int len = snprintf(msg, sizeof(msg),
+            "[DK] Call #%d: ctx=0x%lx type=0x%lx size=%lu\n",
+            dispatch_count, (unsigned long)context,
+            (unsigned long)call_type, (unsigned long)data_size);
+        write(2, msg, len);
+    }
 
     if (call_type == 0x7002002) {  /* Abi_GetFunction_v2 */
         uint32_t *in = (uint32_t*)input_buf;
