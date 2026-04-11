@@ -31,8 +31,10 @@
 #include "ntum_bootstrap.h"
 #include "dk_pal.h"
 
-/* PAL callback state (like sqlservr's DAT_003b2138) */
-static uint8_t g_runtime_callback_state[256] __attribute__((aligned(64)));
+/* PAL callback state (like sqlservr's DAT_003b2138).
+ * The NTUM writes KiUserExceptionDispatcher address to offset 0x10
+ * during boot initialization. Accessed by ntum_signals.c. */
+uint8_t g_runtime_callback_state[256] __attribute__((aligned(64)));
 
 /* ABI function table template (like sqlservr's DAT_00369ec8) */
 static uint8_t g_abi_table[256] __attribute__((aligned(64)));
@@ -249,16 +251,28 @@ static void *boot_thread_fn(void *arg) {
         /* Set GS base to our TEB */
         syscall(SYS_arch_prctl, ARCH_SET_GS, (unsigned long)teb);
 
-        /* Store thread_state at fs:-8 (glibc TLS - 8).
-         * The NTUM's signal handler reads from here. */
+        /* Store thread control block (TCB) at fs:-0x10 and fs:-8.
+         * The NTUM's signal handler (FUN_002899d0) reads from FS_OFFSET - 0x10:
+         *   TCB + 0x068 = thread_state_ptr (passed as RDX to exception dispatcher)
+         *   TCB + 0x088 = signal stack base
+         *   TCB + 0x9e8 = exception nesting counter (max 16)
+         *   TCB + 0xa20 = exception record pointer array[16]
+         */
         unsigned long fs_base;
         syscall(SYS_arch_prctl, ARCH_GET_FS, &fs_base);
-        static uint8_t boot_thread_state[0x1000] __attribute__((aligned(64)));
+        static uint8_t boot_thread_state[0x2000] __attribute__((aligned(4096)));
         memset(boot_thread_state, 0, sizeof(boot_thread_state));
-        *(uint64_t*)(fs_base - 8) = (uint64_t)boot_thread_state;
-        *(uint64_t*)(boot_thread_state + 0x58) = (uint64_t)boot_thread_state;
 
-        fprintf(stderr, "[BOOT] TEB at %p, thread_state at %p\n", teb, boot_thread_state);
+        /* Self-references and thread state linkage */
+        *(uint64_t*)(boot_thread_state + 0x58) = (uint64_t)boot_thread_state;
+        *(uint64_t*)(boot_thread_state + 0x68) = (uint64_t)boot_thread_state;
+        *(uint64_t*)(boot_thread_state + 0x88) = (uint64_t)teb + 0x08;
+
+        /* Store TCB pointer at both fs:-8 and fs:-0x10 (signal handler reads -0x10) */
+        *(uint64_t*)(fs_base - 8)  = (uint64_t)boot_thread_state;
+        *(uint64_t*)(fs_base - 16) = (uint64_t)boot_thread_state;
+
+        fprintf(stderr, "[BOOT] TEB at %p, TCB at %p (fs:-0x10)\n", teb, boot_thread_state);
     }
 
     /*

@@ -644,14 +644,24 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
         default: break;
         }
 
-        /* Write function pointer to result area via double-deref.
-         * Protocol: out_buf -> &slot -> result_area, write 8 bytes. */
+        /* Write function pointer to output buffer.
+         * Try both single-deref and double-deref - the NTUM expects
+         * one or the other depending on how the call site was compiled.
+         *
+         * From decompiled FUN_00269650: the caller reads the function
+         * pointer from the output area. We write to *out_buf directly
+         * AND return the function pointer as the return value. */
         if (out_buf) {
-            uint64_t *result_area = *(uint64_t**)out_buf;
-            if (result_area)
-                *result_area = (uint64_t)func;
+            /* Single-deref: write directly to out_buf */
+            *(uint64_t*)out_buf = (uint64_t)func;
+
+            /* Also try double-deref if the pointer looks valid */
+            uint64_t *slot = *(uint64_t**)out_buf;
+            if (slot && (uintptr_t)slot > 0x1000 && (uintptr_t)slot < LIBOS_VM_END) {
+                *slot = (uint64_t)func;
+            }
         }
-        return 0;
+        return (uint64_t)func;
     }
 
     if (call_type == ABI_GET_VERSION_V2) {
