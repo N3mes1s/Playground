@@ -28,6 +28,16 @@
    layout, and kernel structures should use proper typed structs, not
    raw pointer arithmetic. Keep the code clean and production-quality.
 
+7. **Write idiomatic C code**. When discovering a new structure from the
+   decompiled code, create a proper typedef struct in drawbridge_types.h
+   with named fields and comments documenting the source (function address,
+   line number in decompiled code). Never use raw offsets in implementation
+   code — always go through struct fields.
+
+8. **Understand before implementing**. Read the ENTIRE decompiled function
+   before writing a single line. Trace all callers and callees. Map the
+   data flow. Only then implement, matching the real behavior exactly.
+
 ## Project Overview
 Reimplementation of Microsoft's Drawbridge architecture (Library OS) on Linux.
 The real NTUM kernel (sqlpal.dll from MSSQL Server) runs Windows PE executables
