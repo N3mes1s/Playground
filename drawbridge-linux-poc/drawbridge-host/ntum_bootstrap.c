@@ -200,49 +200,59 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
              *   +0x60: linked list (self-referencing)
              *   +0x70: scheduler processor block → must be non-NULL!
              */
-            /* KTHREAD needs to be very large - the PE accesses offsets up to
-             * 0x41c0 and beyond. Allocate 0x10000 bytes to be safe. */
-            static uint8_t boot_kthread[0x10000] __attribute__((aligned(4096)));
-            memset(boot_kthread, 0, sizeof(boot_kthread));
-            /* Init linked lists (self-referencing like FUN_00020f03c) */
+            /* Allocate ALL boot structures in LibOS kernel heap.
+             * The PE uses pointers to these structures in context frames
+             * and expects them to be in the LibOS address range.
+             * Layout in the kernel heap allocation:
+             *   +0x00000: KTHREAD (0x10000 bytes)
+             *   +0x10000: scheduler block (0x1000 bytes)
+             *   +0x11000: thread-local block (0x5000 bytes)
+             *   +0x16000: stack descriptor (0x100 bytes)
+             *   +0x16100: sched stack descriptor (0x100 bytes)
+             *   +0x16200: pool object (0x1000 bytes)
+             *   +0x17200: pool vtable (0x200 bytes)
+             *   +0x17400: sub-allocator (0x200 bytes)
+             *   +0x17600: sub-inner (0x200 bytes)
+             *   +0x17800: thread state / TCB (0x2000 bytes)
+             */
+            #define BOOT_STRUCTS_SIZE 0x20000
+            #define BOOT_STRUCTS_ADDR (LIBOS_KERNEL_HEAP + 0x20000000ULL) /* +512MB */
+            uint8_t *bs = (uint8_t*)mmap((void*)BOOT_STRUCTS_ADDR, BOOT_STRUCTS_SIZE,
+                            PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+            if (bs == MAP_FAILED) {
+                fprintf(stderr, "[BOOT] FATAL: cannot allocate boot structs in LibOS\n");
+                _exit(1);
+            }
+            memset(bs, 0, BOOT_STRUCTS_SIZE);
+
+            uint8_t *boot_kthread      = bs + 0x00000;
+            uint8_t *boot_sched        = bs + 0x10000;
+            uint8_t *boot_thread_local = bs + 0x11000;
+            uint8_t *boot_stack_block  = bs + 0x16000;
+
+            /* KTHREAD init (from FUN_00020f03c) */
             *(uint64_t*)(boot_kthread + 0x20) = (uint64_t)(boot_kthread + 0x20);
             *(uint64_t*)(boot_kthread + 0x28) = (uint64_t)(boot_kthread + 0x20);
             *(uint64_t*)(boot_kthread + 0x30) = 1;  /* ref_count */
             *(uint64_t*)(boot_kthread + 0x60) = (uint64_t)(boot_kthread + 0x60);
             *(uint64_t*)(boot_kthread + 0x68) = (uint64_t)(boot_kthread + 0x60);
-            /* +0x70 = scheduler processor block (needs to be non-NULL) */
-            static uint8_t boot_sched[0x1000] __attribute__((aligned(4096)));
-            memset(boot_sched, 0, sizeof(boot_sched));
             *(uint64_t*)(boot_kthread + 0x70) = (uint64_t)boot_sched;
-            /* KTHREAD[0x40] = TEB pointer (set by 0x204bc0) */
             *(uint64_t*)(boot_kthread + 0x40) = (uint64_t)ntum_teb;
-            /* KTHREAD[0x40b0] = allocated by FUN_0021698c (thread local block) */
-            /* KTHREAD[0x41c0] = critical sub-structure pointer, accessed extensively.
-             * Must point to a valid block with at least 0x260+ bytes.
-             * Fields: +0x258 (flags), +0x41a0 (ptr), +0x41a8 (count) */
-            static uint8_t boot_thread_local[0x5000] __attribute__((aligned(4096)));
-            memset(boot_thread_local, 0, sizeof(boot_thread_local));
             *(uint64_t*)(boot_kthread + 0x41c0) = (uint64_t)boot_thread_local;
             *(uint64_t*)(boot_kthread + 0x40b0) = (uint64_t)boot_thread_local;
 
-            /* Link KTHREAD into TEB */
+            /* Link into TEB */
             *(uint64_t*)((uint8_t*)ntum_teb + 0x1838) = (uint64_t)boot_kthread;
-            /* TEB[0x1868] = exception frame chain */
             *(uint64_t*)((uint8_t*)ntum_teb + 0x1868) = 0;
-            /* TEB[0x1478] = stack descriptor block.
-             * FUN_020f4d4 reads TEB[0x1478] and stores it as stack_info
-             * in the thread context frame. The thread switcher at 0x3a0670
-             * reads [stack_info+0x30] as the stack pointer to switch to.
-             * So TEB[0x1478] must point to a structure where +0x30 = valid RSP. */
-            static uint8_t boot_stack_block[256] __attribute__((aligned(64)));
-            memset(boot_stack_block, 0, sizeof(boot_stack_block));
+            /* TEB[0x1478] = stack descriptor (read by FUN_020f4d4 → context frame) */
             *(uint64_t*)(boot_stack_block + 0x30) = NTUM_STACK_TOP;
-            *(uint64_t*)(boot_stack_block + 0x90) = 0x18021ff10ULL;  /* ret instruction */
+            *(uint64_t*)(boot_stack_block + 0x90) = 0x18021ff10ULL;
             *(uint64_t*)((uint8_t*)ntum_teb + 0x1478) = (uint64_t)boot_stack_block;
 
-            printf("  [0x1806092c0] = %p (boot TEB)\n", ntum_teb);
-            printf("  TEB[0x1838] = %p (boot KTHREAD)\n", boot_kthread);
-            printf("  KTHREAD[0x70] = %p (scheduler block)\n", boot_sched);
+            printf("  [0x1806092c0] = %p (boot TEB in LibOS)\n", ntum_teb);
+            printf("  TEB[0x1838] = %p (KTHREAD in LibOS)\n", (void*)boot_kthread);
+            printf("  KTHREAD[0x70] = %p (sched in LibOS)\n", (void*)boot_sched);
         }
 
         /* Default thread block at [0x63b220] - used by thread switcher at
@@ -260,8 +270,7 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
          * and stored as TEB[0x1478]. This value becomes the stack_info
          * that the thread switcher reads via [context_frame+0x10].
          * It must point to a structure where [+0x30] = valid stack ptr. */
-        static uint8_t sched_stack_desc[256] __attribute__((aligned(64)));
-        memset(sched_stack_desc, 0, sizeof(sched_stack_desc));
+        uint8_t *sched_stack_desc = (uint8_t*)(BOOT_STRUCTS_ADDR + 0x16100);
         *(uint64_t*)(sched_stack_desc + 0x30) = NTUM_STACK_TOP;
         *(volatile uint64_t*)0x18063b218ULL = (uint64_t)sched_stack_desc;
 
@@ -404,25 +413,35 @@ static void *boot_thread_fn(void *arg) {
     *(volatile uint32_t*)0x1806456d8ULL = 1;
     *(volatile uint32_t*)0x18064560cULL = 0x42;
     /* Re-arm thread block stack descriptor at [0x63b218].
-     * This gets copied to TEB[0x1478] by the scheduler at RVA 0x204d37.
-     * Must point to stack desc where [+0x30] = valid stack pointer. */
+     * Use the sched_stack_desc from the LibOS boot structs allocation. */
     {
-        static uint8_t rearm_stack_desc[256] __attribute__((aligned(64)));
-        if (rearm_stack_desc[0x30] == 0) {
-            *(uint64_t*)(rearm_stack_desc + 0x30) = NTUM_STACK_TOP;
-        }
-        *(volatile uint64_t*)0x18063b218ULL = (uint64_t)rearm_stack_desc;
+        uint8_t *sd = (uint8_t*)(BOOT_STRUCTS_ADDR + 0x16100);
+        if (*(uint64_t*)(sd + 0x30) == 0)
+            *(uint64_t*)(sd + 0x30) = NTUM_STACK_TOP;
+        *(volatile uint64_t*)0x18063b218ULL = (uint64_t)sd;
     }
+    /* Re-arm pool and KTHREAD pointers (all in LibOS space now) */
+    *(volatile uint64_t*)0x1806456e8ULL = (uint64_t)(BOOT_STRUCTS_ADDR + 0x16200);
+    /* Re-arm TEB KTHREAD link */
+    {
+        uint64_t teb_val = *(volatile uint64_t*)0x1806092c0ULL;
+        if (teb_val) {
+            *(uint64_t*)((uint8_t*)teb_val + 0x1838) = (uint64_t)(BOOT_STRUCTS_ADDR + 0x00000);
+            uint8_t *sd = (uint8_t*)(BOOT_STRUCTS_ADDR + 0x16000);
+            if (*(uint64_t*)(sd + 0x30) == 0)
+                *(uint64_t*)(sd + 0x30) = NTUM_STACK_TOP;
+            *(uint64_t*)((uint8_t*)teb_val + 0x1478) = (uint64_t)sd;
+        }
+    }
+
     /* Pre-create kernel pool object at [0x6456e8].
      * The pool allocator at RVA 0x2c2a00 normally creates this during
      * init command 0xe46. The code at 0x218f43 reads [0x6456e8] and
      * passes it to 0x2bc3b8 which dereferences [rdx] and [rdx+0x258].
      * Without it, the kernel init crashes with RDX=0 at 0x2bc3c7. */
     {
-        static uint8_t boot_pool_obj[0x1000] __attribute__((aligned(64)));
-        static uint8_t boot_pool_vtable[0x200] __attribute__((aligned(64)));
-        memset(boot_pool_obj, 0, sizeof(boot_pool_obj));
-        memset(boot_pool_vtable, 0, sizeof(boot_pool_vtable));
+        uint8_t *boot_pool_obj    = (uint8_t*)(BOOT_STRUCTS_ADDR + 0x16200);
+        uint8_t *boot_pool_vtable = (uint8_t*)(BOOT_STRUCTS_ADDR + 0x17200);
         /* Pool object vtable: [+0x50] = VirtualAlloc function pointer.
          * The PE reads pool_obj[0] as vtable, then [vtable+0x50] as
          * the allocator function, calls it via guard_dispatch. */
@@ -441,10 +460,8 @@ static void *boot_thread_fn(void *arg) {
          * [+0x258] = flags (read at RVA 0x387809)
          */
         /* Create a sub-allocator with our pool function */
-        static uint8_t boot_sub_alloc[0x200] __attribute__((aligned(64)));
-        static uint8_t boot_sub_inner[0x200] __attribute__((aligned(64)));
-        memset(boot_sub_alloc, 0, sizeof(boot_sub_alloc));
-        memset(boot_sub_inner, 0, sizeof(boot_sub_inner));
+        uint8_t *boot_sub_alloc = (uint8_t*)(BOOT_STRUCTS_ADDR + 0x17400);
+        uint8_t *boot_sub_inner = (uint8_t*)(BOOT_STRUCTS_ADDR + 0x17600);
         /* sub_inner[0] = pool_allocator_fn (called via guard_dispatch) */
         *(uint64_t*)boot_sub_inner = (uint64_t)&pool_allocator_fn;
         /* sub_alloc[0] = pointer to sub_inner */
@@ -541,8 +558,7 @@ static void *boot_thread_fn(void *arg) {
          */
         unsigned long fs_base;
         syscall(SYS_arch_prctl, ARCH_GET_FS, &fs_base);
-        static uint8_t boot_thread_state[0x2000] __attribute__((aligned(4096)));
-        memset(boot_thread_state, 0, sizeof(boot_thread_state));
+        uint8_t *boot_thread_state = (uint8_t*)(BOOT_STRUCTS_ADDR + 0x17800);
 
         /* Thread state linkage and stack info.
          * The thread switcher fallback at RVA 0x3a06cc reads [rdx+0x10]
