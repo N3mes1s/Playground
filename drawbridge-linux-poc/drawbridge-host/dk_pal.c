@@ -59,6 +59,9 @@ static void free_handle(DK_HANDLE h) {
     }
 }
 
+/* Forward declaration */
+DK_API uint64_t DK_GenericStub(uint64_t a, uint64_t b, uint64_t c, uint64_t d);
+
 /* ================================================================
  * Stream I/O
  * ================================================================ */
@@ -541,14 +544,136 @@ DK_API uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
         uint32_t *in = (uint32_t*)input_buf;
         uint32_t func_id = in ? in[0] : 0;
         uint32_t version = in ? in[1] : 0;
+        (void)version;
 
-        fprintf(stderr, "[DK] GetFunction(0x%07x v%u)", func_id, version);
+        /* Map function IDs to our DK implementations.
+         * ID format: 0xCCFFF000 where CC=category, FFF=function.
+         * Returning the function pointer in the output buffer. */
+        void *func = (void*)&DK_GenericStub;
 
-        /* Return 1 (available) in the output buffer */
-        if (out_buf) {
-            *(uint32_t*)out_buf = 1;
+        switch (func_id) {
+        /* 0x01: Stream I/O */
+        case 0x1001000: func = (void*)&DK_StreamOpen; break;
+        case 0x1002000: func = (void*)&DK_StreamRead; break;
+        case 0x1003000: func = (void*)&DK_StreamWrite; break;
+        case 0x1004000: func = (void*)&DK_StreamFlush; break;
+        case 0x1005000: func = (void*)&DK_ObjectClose; break;       /* StreamClose */
+        case 0x1006000: func = (void*)&DK_StreamMap; break;
+        case 0x1007000: func = (void*)&DK_StreamMapPeBinary; break;
+        case 0x1008000: func = (void*)&DK_StreamUnmap; break;
+        case 0x1009000: func = (void*)&DK_StreamSetLength; break;
+        case 0x100a000: func = (void*)&DK_StreamControl; break;
+        case 0x100b000: func = (void*)&DK_StreamAttributesQuery; break;
+        case 0x100c000: func = (void*)&DK_StreamAttributesQueryByHandle; break;
+        case 0x100d000: func = (void*)&DK_StreamEnumerateChildren; break;
+        case 0x100e000: func = (void*)&DK_StreamDelete; break;
+        case 0x100f000: func = (void*)&DK_StreamRename; break;
+        case 0x1010000: func = (void*)&DK_StreamChangesRegister; break;
+        case 0x1011000: func = (void*)&DK_StreamChangesPoll; break;
+        case 0x1012000: func = (void*)&DK_StreamRangeLock; break;
+        case 0x1013000: func = (void*)&DK_StreamRangeUnlock; break;
+        case 0x1014000: func = (void*)&DK_StreamGetEvent; break;
+        case 0x1015000: func = (void*)&DK_StreamEventSelect; break;
+        case 0x1016000: /* StreamReadScatter */ break;
+        case 0x1017000: /* StreamWriteGather */ break;
+        case 0x1018000: /* StreamQueryAllocatedRanges */ break;
+        case 0x1019000: /* StreamSetZeroData */ break;
+        case 0x101a000: /* StreamEnableSparse */ break;
+        case 0x101b000: /* StreamReadScatterEx */ break;
+        case 0x101c000: /* StreamWriteGatherEx */ break;
+
+        /* 0x02: Memory */
+        case 0x2001000: func = (void*)&DK_VirtualMemoryAllocate; break;
+        case 0x2002000: func = (void*)&DK_VirtualMemoryFree; break;
+        case 0x2004000: func = (void*)&DK_VirtualMemoryProtect; break;
+
+        /* 0x04: Threading */
+        case 0x4001000: func = (void*)&DK_ThreadCreate; break;
+        case 0x4002000: func = (void*)&DK_ThreadExit; break;
+        case 0x4003000: func = (void*)&DK_ThreadYieldExecution; break;
+
+        /* 0x05: Synchronization */
+        case 0x5001000: func = (void*)&DK_NotificationEventCreate; break;
+        case 0x5002000: func = (void*)&DK_SynchronizationEventCreate; break;
+        case 0x5003000: func = (void*)&DK_ObjectsWaitAny; break;
+
+        /* 0x06: Console */
+        case 0x6001000: func = (void*)&DK_ConsoleCreate; break;
+
+        /* 0x07: ABI */
+        case 0x7001000: /* AbiGetVersion */ break;
+        case 0x7002000: func = (void*)&DK_AbiGetFunction; break;
+
+        /* 0x08: System */
+        case 0x8001000: func = (void*)&DK_SystemTimeQuery; break;
+        case 0x8002000: func = (void*)&DK_RandomBitsRead; break;
+        case 0x8003000: /* SystemInfoQuery */ break;
+
+        /* 0x09: Process */
+        case 0x9001000: func = (void*)&DK_ProcessCreate; break;
+        case 0x9002000: func = (void*)&DK_ProcessExit; break;
+        case 0x9003000: func = (void*)&DK_ProcessTerminate; break;
+        case 0x9004000: func = (void*)&DK_ProcessGetExitCode; break;
+        case 0x9005000: /* ProcessGetId */ break;
+
+        /* 0x0A: Exception */
+        case 0xa001000: func = (void*)&DK_ExceptionRecordFree; break;
+
+        /* 0x0B: Objects */
+        case 0xb001000: func = (void*)&DK_ObjectClose; break;
+        case 0xb002000: func = (void*)&DK_ObjectReference; break;
+        case 0xb003000: /* ObjectDereference */ break;
+
+        /* 0x0C: Cache */
+        case 0xc001000: func = (void*)&DK_InstructionCacheFlush; break;
+        case 0xc002000: /* EventSet */ func = (void*)&DK_EventSet; break;
+        case 0xc003000: /* EventClear */ func = (void*)&DK_EventClear; break;
+        case 0xc004000: /* EventPeek */ func = (void*)&DK_EventPeek; break;
+
+        /* 0x0D: Enclave */
+        case 0xd001000: /* EnclaveAttest */ break;
+
+        /* 0x0E: Extended */
+        case 0xe001000: /* ThreadInterrupt */ func = (void*)&DK_ThreadInterrupt; break;
+        case 0xe002000: /* ThreadSetAffinity */ func = (void*)&DK_ThreadSetAffinity; break;
+        case 0xe003000: /* ThreadAssertAffinity */ break;
+
+        /* 0x0F: Stream extended */
+        case 0xf001000: case 0xf002000: case 0xf003000:
+        case 0xf004000: case 0xf005000: case 0xf006000:
+        case 0xf007000: break;
+
+        /* 0x10: Async */
+        case 0x10001000: /* AsyncPoll */ break;
+        case 0x10002000: /* AsyncCancel */ break;
+
+        /* 0x11: Stream v2 */
+        case 0x11001000: case 0x11003000: case 0x11005000:
+        case 0x11007000: case 0x11008000: case 0x11009000:
+        case 0x1100b000: case 0x1100c000: case 0x1100d000:
+        case 0x1100f000: case 0x11010000: break;
+
+        /* 0x12: Memory v2 */
+        case 0x12001000: func = (void*)&DK_VirtualMemoryAllocate; break;
+        case 0x12002000: func = (void*)&DK_VirtualMemoryFree; break;
+        case 0x12003000: func = (void*)&DK_VirtualMemoryProtect; break;
+
+        /* 0x13: Random */
+        case 0x13001000: func = (void*)&DK_RandomBitsRead; break;
         }
-        fprintf(stderr, " -> 1\n");
+
+        /* Write function pointer to output buffer */
+        if (out_buf && out_size >= 8) {
+            *(uint64_t*)out_buf = (uint64_t)func;
+        } else if (out_buf && out_size >= 4) {
+            *(uint32_t*)out_buf = (uint32_t)(uintptr_t)func;
+        }
+
+        static int call_count = 0;
+        call_count++;
+        if (call_count <= 83) {
+            fprintf(stderr, "[DK] GetFunction(0x%07x) -> %p\n", func_id, func);
+        }
         return 0;
     }
 

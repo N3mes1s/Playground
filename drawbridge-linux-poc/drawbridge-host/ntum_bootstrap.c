@@ -92,6 +92,16 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
         *pal_params = (uint64_t)params;  /* Full params pointer as context */
         *abi_call = (uint64_t)&DK_AbiDispatcher;
 
+        /* Patch the PAL call thunk to skip the boot flag check.
+         * At 0x1802046e5: int3 + jmp loop → nop nop nop
+         * This check fires every time the NTUM calls a PAL function,
+         * and the flag gets cleared by the NTUM init code. */
+        volatile uint8_t *thunk_patch = (uint8_t*)0x1802046e5ULL;
+        thunk_patch[0] = 0x90;  /* nop (was int3) */
+        thunk_patch[1] = 0x90;  /* nop (was jmp) */
+        thunk_patch[2] = 0x90;  /* nop (was -3 offset) */
+
+        printf("[BOOT] Patched PAL thunk at 0x1802046e5 (int3 -> nop)\n");
         printf("[BOOT] Patched NTUM data section:\n");
         printf("  [0x18063f8c0] = 1 (boot ready flag)\n");
         printf("  [0x18063f8c8] = %p (PAL dispatch)\n", (void*)(uintptr_t)*dispatch_fn);
