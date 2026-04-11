@@ -340,6 +340,12 @@ static void *boot_thread_fn(void *arg) {
 extern void drawbridge_enter_ntum(void *entry, void *stack, void *params);
     fprintf(stderr, "[BOOT] Byte at 0x1803a05d5: 0x%02x (expect 0x90)\n", *(volatile uint8_t*)0x1803a05d5ULL);
     ntum_patch_rcx_to_global(); ntum_patch_abi_call();
+    /* Disable CFG in PE header */
+    { uint8_t *pe_base = (uint8_t*)0x180000000ULL;
+      uint32_t pe_off = *(uint32_t*)(pe_base + 60);
+      uint16_t *dc = (uint16_t*)(pe_base + pe_off + 24 + 70);
+      *dc &= ~0x4000;
+      fprintf(stderr, "[BOOT] Disabled CFG (0x%04x)\n", *dc); }
 
     /* RE-APPLY all data section patches right before trampoline.
      * Demand-paging might have overwritten them. */
