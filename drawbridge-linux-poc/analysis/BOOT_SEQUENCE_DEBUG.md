@@ -243,15 +243,70 @@ All must be re-armed on every dispatcher call.
 - **Second pass** (type 0x7001002): 89 functions, stores 64-bit function
   pointers. Version 1+ - must return callable function addresses.
 
+## ParameterBuffer Format (from PE RVA 0x204a37)
+
+The NTUM checks the ParameterBuffer header:
+```c
+if (ParameterBuffer[0] != 0x10 || ParameterBuffer[4] != 0x38) {
+    // Version mismatch - set error flag 0x20
+    log("Incompatible ABI parameters");
+} else {
+    callback = ParameterBuffer[8] ? ParameterBuffer[8] : default_0x208600;
+    store RuntimeCallbackState[0x18] = callback;
+}
+```
+
+There are TWO separate checks:
+1. `[0x180c00820]` → ptr → `[ptr] == 0x190` (WINDOWS_LIBOS_PARAMETERS size check)
+2. `ParameterBuffer[0:4:8]` = `{0x10, 0x38, callback}` (ABI header check)
+
+## TEB Thread Chain (from PE RVA 0x244cd0)
+
+The NTUM accesses the current thread state via:
+```c
+void* get_current_thread_state(void) {
+    void *teb = gs:0x30;              // TEB self-pointer
+    void *kthread = TEB[0x1838];      // NTUM kernel thread info
+    void *sched = kthread ? kthread[0x70] : NULL;  // Scheduling object
+    return sched ? sched + 0xF0 : NULL;             // Thread state
+}
+```
+
+This chain requires:
+- `gs:0x30` → valid TEB (set by NTUM during thread creation)
+- `TEB[0x1838]` → KTHREAD structure (created by NTUM kernel init)
+- `KTHREAD[0x70]` → scheduling object (created by thread scheduler)
+- `SCHED[0xF0]` → thread state for the caller
+
+Without working VirtualMemoryAllocate and ThreadCreate, these structures
+are never created, and the chain returns garbage (0x9d8).
+
+## Current Crash: rcx=0x9d8 at RVA 0x387809
+
+Stack trace:
+```
+0x180387809  ← crash: [rcx+0xc] where rcx=0x9d8
+0x18024c2d9  ← caller: calls get_current_thread_state(), gets garbage
+0x18043a494  ← .rdata string "DrtlDelayCurrentThreadExecut..."
+```
+
+The crash happens in the NTUM's DrtlDelayCurrentThreadExecute function,
+which tries to access the current thread's scheduling state. The chain
+returns 0x9d8 because TEB[0x1838] was set during NTUM init but the
+KTHREAD structure it points to wasn't fully initialized.
+
 ## Next Steps
 
-1. **Fix thread context initialization**: The NTUM's init code should write
-   to the thread context area. Need to understand what config/init step
-   populates `[stack_frame + 0x4f0 + 0x10]`.
+1. **The NTUM needs WORKING VirtualMemoryAllocate** to allocate its internal
+   structures (KTHREAD, scheduling objects, etc.). Our current implementation
+   may not be returning memory in the right address range.
 
-2. **Implement proper DK_ThreadCreate**: When the NTUM calls DK_ThreadCreate,
-   we need to set up thread structures compatible with the switcher.
+2. **The NTUM needs WORKING NotificationEventCreate** to create synchronization
+   events for its thread scheduler.
 
-3. **Handle the exception dispatch loop**: KiUserExceptionDispatcher = thread
-   switcher. Exceptions forwarded there crash because no thread context exists.
-   May need to NOT forward to it until thread context is initialized.
+3. **DK_ThreadCreate** will be called once the NTUM's kernel init progresses
+   past the current crash. It needs to create threads with proper TEB setup.
+
+4. **Consider: the NTUM may need us to handle the init config calls differently**.
+   The config call at 0x18063af70 with data_size=0x31 might need to return
+   specific data for the NTUM's internal thread pool initialization.
