@@ -406,6 +406,25 @@ extern void drawbridge_enter_ntum(void *entry, void *stack, void *params);
         *(uint64_t*)(teb + 0x10) = ntum_stack - 0x100000;
         /* Set GS base to our TEB */
         syscall(SYS_arch_prctl, ARCH_SET_GS, (unsigned long)teb);
+
+        /* CRITICAL: Store thread_state at fs:-8 (glibc TLS - 8).
+         * The NTUM's signal handler reads thread_state from here:
+         *   *in_FS_OFFSET + (-8) = thread_state pointer
+         * fs:0 is the glibc thread control block. */
+        {
+            unsigned long fs_base;
+            syscall(SYS_arch_prctl, ARCH_GET_FS, &fs_base);
+            /* Allocate thread_state (0xaa0 bytes per ThreadCreate decompilation) */
+            static uint8_t boot_thread_state[0x1000] __attribute__((aligned(64)));
+            memset(boot_thread_state, 0, sizeof(boot_thread_state));
+            /* Store at fs:-8 */
+            *(uint64_t*)(fs_base - 8) = (uint64_t)boot_thread_state;
+            /* Also store a self-pointer at thread_state + 0x58 (the thread back-pointer) */
+            *(uint64_t*)(boot_thread_state + 0x58) = (uint64_t)boot_thread_state;
+            fprintf(stderr, "[BOOT] thread_state at %p stored at fs:-8 (0x%lx)\n",
+                    boot_thread_state, (unsigned long)(fs_base - 8));
+        }
+
         fprintf(stderr, "[BOOT] TEB at %p (gs:0x30 = self)\n", teb);
     }
 
