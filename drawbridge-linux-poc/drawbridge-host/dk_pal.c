@@ -959,10 +959,16 @@ uint64_t pool_allocator_fn(void *pool_obj, uint64_t alloc_size,
     if (alloc_size == 0) alloc_size = 0x1000;
     size_t aligned = (alloc_size + 0xFFF) & ~0xFFFULL;
 
-    /* Allocate extra space for a stack descriptor at +0x10 */
+    /* Allocate in LibOS address range. The NTUM expects all kernel
+     * allocations to be within 0x10000 - 0x400000000000.
+     * Use the kernel heap at 0x300000000 for pool allocations. */
     size_t total = aligned < 0x1000 ? 0x1000 : aligned;
-    void *result = mmap(NULL, total, PROT_READ | PROT_WRITE,
-                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    /* Allocate within the kernel heap (0x300000000, already MAP_NORESERVE).
+     * Use MAP_FIXED to commit pages within the reserved range. */
+    static uint64_t pool_heap_next = LIBOS_KERNEL_HEAP + 0x10000000ULL; /* Start at +256MB */
+    uint64_t alloc_addr = __atomic_fetch_add(&pool_heap_next, total, __ATOMIC_SEQ_CST);
+    void *result = mmap((void*)alloc_addr, total, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
     if (result == MAP_FAILED) return 0;
 
     /* Pre-fill a stack descriptor at offset +0x10 of the allocation.

@@ -19,6 +19,15 @@
    writes each field, what function creates each structure, and what the
    real initialization sequence looks like.
 
+5. **No fallbacks or workarounds**. Write real implementations that match
+   the decompiled code. If you don't know what the right value is, fail
+   fast and log it clearly. Don't paper over NULLs with dummy values
+   that waste debugging time later.
+
+6. **Use structures from drawbridge_types.h**. All PE parsing, memory
+   layout, and kernel structures should use proper typed structs, not
+   raw pointer arithmetic. Keep the code clean and production-quality.
+
 ## Project Overview
 Reimplementation of Microsoft's Drawbridge architecture (Library OS) on Linux.
 The real NTUM kernel (sqlpal.dll from MSSQL Server) runs Windows PE executables

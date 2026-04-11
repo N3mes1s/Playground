@@ -173,12 +173,11 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
          * compares gs:0x30 with this value and asserts if they don't match.
          * Pre-allocate a 64KB TEB in LibOS space (filled with 0xb0 sentinel
          * like the real host's FUN_001fa9c0 does). */
-        void *ntum_teb = mmap((void*)0x300000100000ULL, 0x10000,
+        /* TEB must be in LibOS thread environment area.
+         * Use MAP_FIXED within the pre-reserved LIBOS_THREAD_ENV range. */
+        void *ntum_teb = mmap((void*)(LIBOS_THREAD_ENV + 0x10000), 0x10000,
                               PROT_READ | PROT_WRITE,
-                              MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-        if (ntum_teb == MAP_FAILED)
-            ntum_teb = mmap(NULL, 0x10000, PROT_READ|PROT_WRITE,
-                            MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+                              MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
         if (ntum_teb != MAP_FAILED) {
             memset(ntum_teb, 0, 0x10000);
             /* TEB self-pointer at +0x30 */
@@ -252,8 +251,15 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
          * +0x10: stack_base (top of stack)
          * +0x18: stack_limit (bottom of stack)
          */
-        *(volatile uint64_t*)0x18063b228ULL = NTUM_STACK_TOP + 0x200000;  /* stack_base */
-        *(volatile uint64_t*)0x18063b230ULL = NTUM_STACK_BASE;            /* stack_limit */
+        /* Default thread block at [0x63b220] - setup matching FUN_0020ff2c.
+         * The function sets: [0]=magic, [0x10]=stack_top, [0x18]=stack_base,
+         * [0x48]=current_sp, [0x4090]=top, [0x4098]=[0x40a0]=base.
+         * The thread switcher reads [rdx+0x10] and [rdx+0x18] as fallback. */
+        uint8_t *dtb = (uint8_t*)0x18063b220ULL;
+        *(uint64_t*)(dtb + 0x00) = 0x53647268546c6150ULL;  /* "PalThrds" magic */
+        *(uint64_t*)(dtb + 0x10) = NTUM_STACK_TOP + 0x4000; /* stack_top */
+        *(uint64_t*)(dtb + 0x18) = NTUM_STACK_BASE + 0x90;  /* stack_base */
+        *(uint64_t*)(dtb + 0x28) = NTUM_STACK_TOP + 0x200000;
 
         /* Thread context area at 0x63ac10 - the thread switcher at RVA 0x3a0650
          * reads [rsp+0x4f0] as the context pointer when rsp is at ~0x18063a720.
@@ -358,6 +364,25 @@ static void *boot_thread_fn(void *arg) {
     mlock((void*)0x180600000ULL, 0x70000);  /* .data */
     mlock((void*)0x180a00000ULL, 0x1000);   /* .00cfg */
     mlock((void*)0x180c00000ULL, 0x2000);   /* .roafter */
+
+    /* Write stack descriptors into the NTUM stack frame area.
+     * The thread switcher at RVA 0x3a0650 reads [rsp+0x4f0+0x10] as stack_info.
+     * The NTUM stack is at 0x180637000-0x18063b000. The entry sets rsp=0x18063b000.
+     * We need valid stack_info pointers at multiple offsets in the stack frame
+     * because the exact rsp+0x4f0 offset depends on call depth. */
+    {
+        static uint8_t ntum_stack_desc[256] __attribute__((aligned(64)));
+        *(uint64_t*)(ntum_stack_desc + 0x30) = NTUM_STACK_TOP;
+        *(uint64_t*)(ntum_stack_desc + 0x90) = 0x18021ff10ULL;
+
+        /* Fill stack frame area with stack descriptor pointers at +0x10 offsets */
+        for (uint64_t addr = 0x180639800ULL; addr < 0x18063b000ULL; addr += 8) {
+            /* Only write to +0x10 aligned positions */
+            if ((addr & 0xF) == 0x0) {
+                *(volatile uint64_t*)addr = (uint64_t)ntum_stack_desc;
+            }
+        }
+    }
 
     /* Re-arm .data globals (demand-paging might have overwritten) */
     *(volatile uint32_t*)0x18063f8c0ULL = 1;
@@ -499,7 +524,12 @@ static void *boot_thread_fn(void *arg) {
         static uint8_t boot_thread_state[0x2000] __attribute__((aligned(4096)));
         memset(boot_thread_state, 0, sizeof(boot_thread_state));
 
-        /* Self-references and thread state linkage */
+        /* Thread state linkage and stack info.
+         * The thread switcher fallback at RVA 0x3a06cc reads [rdx+0x10]
+         * as stack_base when the primary context has NULL stack_info.
+         * rdx = this thread_state. [+0x10] must be valid stack address. */
+        *(uint64_t*)(boot_thread_state + 0x10) = NTUM_STACK_TOP + 0x4000;
+        *(uint64_t*)(boot_thread_state + 0x18) = NTUM_STACK_BASE;
         *(uint64_t*)(boot_thread_state + 0x58) = (uint64_t)boot_thread_state;
         *(uint64_t*)(boot_thread_state + 0x68) = (uint64_t)boot_thread_state;
         *(uint64_t*)(boot_thread_state + 0x88) = (uint64_t)teb + 0x08;

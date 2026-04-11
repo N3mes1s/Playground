@@ -356,10 +356,32 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
         if (handle_libos_fault(fault_addr, uc))
             return;
 
-        /* Don't forward SIGSEGV to NTUM exception dispatcher during boot.
-         * The dispatcher IS the thread switcher (0x3a0664) and crashes if
-         * thread context is not initialized. Only forward after thread pool
-         * is set up. For now, let demand-paging or crash handler deal with it. */
+        /* Special handling for thread switcher NULL dereference at RVA 0x3a0674:
+         * [rcx+0x10] = NULL (stack_info not set). Instead of crashing, redirect
+         * to the fallback path at 0x3a06c9 which uses [rdx+0x10] (thread block
+         * stack_base) instead. This simulates what would happen if the comparison
+         * at 0x3a067c failed (r9 < r10). */
+        if (rip == (PE_IMAGE_START + 0x3a0674) && (uintptr_t)fault_addr < 0x1000) {
+            /* Thread switcher NULL dereference. Log the state for analysis.
+             * rcx = context frame, [rcx+0x10] = NULL stack_info.
+             * Check what the TEB has at offset 0x1478. */
+            uint64_t teb_global = *(volatile uint64_t*)0x1806092c0ULL;
+            uint64_t teb_1478 = 0;
+            if (teb_global) teb_1478 = *(uint64_t*)((uint8_t*)teb_global + 0x1478);
+            uint64_t gs_val = 0;
+            __asm__ volatile("mov %%gs:(0x30), %0" : "=r"(gs_val));
+            uint64_t gs_1478 = 0;
+            if (gs_val) gs_1478 = *(uint64_t*)((uint8_t*)gs_val + 0x1478);
+            fprintf(stderr, "[SIGNAL] Thread switcher NULL at 0x3a0674\n"
+                    "  rcx=%p [rcx+0x10]=0x%lx\n"
+                    "  gs:0x30=0x%lx [gs+0x1478]=0x%lx\n"
+                    "  [0x6092c0]=0x%lx [teb+0x1478]=0x%lx\n",
+                    (void*)uc->uc_mcontext.gregs[REG_RCX],
+                    *(uint64_t*)((uint8_t*)uc->uc_mcontext.gregs[REG_RCX] + 0x10),
+                    (unsigned long)gs_val, (unsigned long)gs_1478,
+                    (unsigned long)teb_global, (unsigned long)teb_1478);
+            _exit(139);
+        }
     }
 
     /* ---- SIGTRAP: Boot sync + exception forwarding for int3 callbacks ---- */
