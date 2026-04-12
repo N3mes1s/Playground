@@ -183,6 +183,17 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
         /* Pre-store pointer for 0x190 size check at RVA 0x20e51d */
         *(volatile uint64_t*)0x180c00820ULL = (uint64_t)s_libos_size_buf;
 
+        /* Wave-36: [0x180c00880] is the boot-params-echo pointer that
+         * FUN_0x26fcb4 null-checks (fastfail if NULL), and [0x180c00888]
+         * is its companion count (fastfail if zero). The real init is
+         * done by PE RVA 0x20486a during boot, but if FUN_0x26fcb4 is
+         * reached before that init, the null-check trips.
+         * Seed both with sentinels now so the check always passes. */
+        *(volatile uint64_t*)0x180c00880ULL = (uint64_t)s_libos_size_buf;
+        *(volatile uint32_t*)0x180c00888ULL = 1;
+        fprintf(stderr, "[BOOT] wave-36: seeded [0x180c00880]=%p [0x180c00888]=1\n",
+                (void*)*(volatile uint64_t*)0x180c00880ULL);
+
         /* ALSO write memory limit directly in case [0x180c00820] gets
          * redirected. The PE at RVA 0x378c55 reads [0x180c00820] → ptr,
          * then [ptr+0x34] for the memory limit. If ptr changes, the limit

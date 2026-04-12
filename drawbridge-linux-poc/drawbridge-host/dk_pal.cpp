@@ -938,6 +938,20 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
         (uint64_t)&DK_AbiDispatcher;
     *(volatile uint32_t*)0x18063f5c0ULL = 2;  /* ABI version = 2 */
 
+    /* Wave-36: re-arm the boot-params-echo pointer + counter at
+     * [0x180c00880]/[+0x888]. FUN_0x26fcb4 null-checks these on
+     * boot path; the PE's own init at RVA 0x20486a tries to populate
+     * them but in our port the path isn't reached before the check
+     * so they stay 0 and fastfail. Keep them seeded every call so
+     * the check always passes. */
+    if (*(volatile uint64_t*)0x180c00880ULL == 0) {
+        uint64_t params_ptr = *(volatile uint64_t*)0x180c00820ULL;
+        if (params_ptr)
+            *(volatile uint64_t*)0x180c00880ULL = params_ptr;
+    }
+    if (*(volatile uint32_t*)0x180c00888ULL == 0)
+        *(volatile uint32_t*)0x180c00888ULL = 1;
+
     /* Re-arm global TEB pointer if it was cleared */
     if (*(volatile uint64_t*)0x1806092c0ULL == 0) {
         extern uint8_t g_runtime_callback_state[];
