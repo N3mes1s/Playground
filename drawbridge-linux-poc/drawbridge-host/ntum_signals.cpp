@@ -748,6 +748,62 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
                 return;
             }
         }
+        if (rip == 0x18037aa09ULL) {
+            /* Wave-28: CONFLICTING_ADDRESSES site. rbx points to the
+             * descriptor whose [+0x80] != 2. Log state and fall
+             * through to crash so we can inspect. */
+            uint64_t rbx_v = (uint64_t)uc->uc_mcontext.gregs[REG_RBX];
+            uint64_t rdi_v = (uint64_t)uc->uc_mcontext.gregs[REG_RDI];
+            uint64_t r12_v = (uint64_t)uc->uc_mcontext.gregs[REG_R12];
+            fprintf(stderr,
+                "[WAVE-28] FUN_37a8d0 CONFLICTING site: rbx=0x%lx rdi(lookup_key)=0x%lx r12=0x%lx\n",
+                (unsigned long)rbx_v, (unsigned long)rdi_v, (unsigned long)r12_v);
+            if (rbx_v && rbx_v > 0x100000000ULL) {
+                const uint64_t *d = (const uint64_t*)rbx_v;
+                fprintf(stderr,
+                    "[WAVE-28] descriptor bytes [+0x00..+0xa0]:\n"
+                    "  +00=%016lx +08=%016lx +10=%016lx +18=%016lx\n"
+                    "  +20=%016lx +28=%016lx +30=%016lx +38=%016lx\n"
+                    "  +40=%016lx +48=%016lx +50=%016lx +58=%016lx\n"
+                    "  +60=%016lx +68=%016lx +70=%016lx +78=%016lx\n"
+                    "  +80=%016lx +88=%016lx +90=%016lx +98=%016lx\n",
+                    d[0], d[1], d[2], d[3],
+                    d[4], d[5], d[6], d[7],
+                    d[8], d[9], d[10], d[11],
+                    d[12], d[13], d[14], d[15],
+                    d[16], d[17], d[18], d[19]);
+            }
+            /* Also dump [rbp+0x48] and [rbp+0x50] -- the in/out args
+             * passed to 0x3804b8. These are the shadow-home slots
+             * for FUN_37a8d0's arg2/arg3 (the lookup key and an
+             * outer r15 value). */
+            uint64_t rbp_v = (uint64_t)uc->uc_mcontext.gregs[REG_RBP];
+            fprintf(stderr,
+                "[WAVE-28] rbp=0x%lx [rbp+0x48]=0x%lx [rbp+0x50]=0x%lx "
+                "[rbp+0x58]=0x%lx\n",
+                (unsigned long)rbp_v,
+                (unsigned long)*(uint64_t*)(rbp_v + 0x48),
+                (unsigned long)*(uint64_t*)(rbp_v + 0x50),
+                (unsigned long)*(uint64_t*)(rbp_v + 0x58));
+
+            /* VmModuleState dump too */
+            uint64_t *vms = (uint64_t*)0x180c00878ULL;
+            uint64_t vms_ptr = *vms;
+            if (vms_ptr) {
+                const uint64_t *v = (const uint64_t*)vms_ptr;
+                fprintf(stderr,
+                    "[WAVE-28] VmModuleState @0x%lx:\n"
+                    "  +00=%016lx +08=%016lx +10=%016lx +18=%016lx\n"
+                    "  +20=%016lx +28=%016lx +30=%016lx +38=%016lx\n"
+                    "  +80=%016lx +88=%016lx +a0=%016lx +d8=%016lx\n",
+                    (unsigned long)vms_ptr,
+                    v[0], v[1], v[2], v[3],
+                    v[4], v[5], v[6], v[7],
+                    v[16], v[17], v[20], v[27]);
+            }
+            /* Fall through to the generic crash dump by not returning. */
+            _exit(200);
+        }
         if (rip == 0x1802962a8ULL) {
             /* RtlDispatchException entry */
             static int disp_count = 0;

@@ -997,20 +997,30 @@ static void *boot_thread_fn(void *arg) {
      * hot path looks like without the raise storm.
      */
     {
-        /* Wave-24: trap the panic_unsupported_abi function at RVA
-         * 0x213dc0 with ud2 so we capture exact caller, version,
-         * and function-name args. String decoded from hang stack:
-         * "Unsupported ABI version: 4212976 for function: DkVirtualMemoryProtect"
-         * where 4212976 = 0x4048F0 = our DK_ObjectsWaitAny addr.
-         * Need to understand who's interpreting a function pointer
-         * as a version number. */
+        /* Wave-24: panic_unsupported_abi trap retired -- wave-24/25/26
+         * fixed the root protocol issue. Leave the entry alone now. */
         volatile uint8_t *p_panic = (uint8_t*)0x180213dc0ULL;
-        if (p_panic[0] == 0x48 && p_panic[1] == 0x81) {
-            p_panic[0] = 0x0f;  /* ud2 */
-            p_panic[1] = 0x0b;
+        fprintf(stderr,
+            "[BOOT] wave-27: panic_unsupported_abi entry=[%02x %02x]\n",
+            p_panic[0], p_panic[1]);
+    }
+
+    {
+        /* Wave-28: trap the fastfail `call 0x3a0880` at RVA 0x37aa09
+         * with ud2. The real failing path is:
+         *   37a9f4: call 0x3804b8      ; some VM fn, returns 0xc0000018
+         *   37a9fd: mov r14d, eax      ; r14d = ~0xc0000018~ (actual)
+         *   37aa04: test r14d, r14d
+         *   37aa07: jns skip
+         *   37aa09: call 0x3a0880      ; our trap: SIGILL handler logs regs
+         * Bytes at 0x37aa09 = e8 72 5e 02 00 (5 bytes). Overwrite first
+         * two to 0f 0b (ud2); remaining 3 bytes become dead tail. */
+        volatile uint8_t *p_ff = (uint8_t*)0x18037aa09ULL;
+        if (p_ff[0] == 0xe8) {
+            p_ff[0] = 0x0f;
+            p_ff[1] = 0x0b;
             fprintf(stderr,
-                "[BOOT] wave-24: trapped panic_unsupported_abi @0x213dc0 "
-                "with ud2\n");
+                "[BOOT] wave-28: trapped fastfail call @0x37aa09\n");
         }
     }
 
