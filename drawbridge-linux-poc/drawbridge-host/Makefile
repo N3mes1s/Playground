@@ -16,6 +16,8 @@ SRCS += pal_kobj.c pal_teb.c pal_object.c
 # Agent F (C3/C4) landed pal_vm.c (split of VM from dk_pal.c).
 # Precede dk_pal.c so its DK_VirtualMemory* strong symbols win.
 SRCS += pal_vm.c
+# Agent G (C1 loader split from main.c)
+SRCS += pe_loader.c
 # Original host files
 SRCS += main.c ntum_bootstrap.c dk_pal.c ntum_signals.c
 # New per-subsystem translations of the ELF host (M1 scaffolding)
