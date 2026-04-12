@@ -30,6 +30,12 @@ SRCS += pal_cpu.cpp
 # pal_net.cpp (Component C17 / M11) owns the DK_Socket* strong symbols
 # and must precede dk_pal.cpp for the same first-seen link rule.
 SRCS += pal_net.cpp
+# C14 (pal_aio.cpp) + C15 (pal_scheduler.cpp) own the strong copies of
+# pal_io_create_completion_port, pal_scheduler_register,
+# pal_aio_callback_register and pal_aio_callback.  They MUST precede
+# dk_pal.cpp, pal_thread.cpp and pal_io.cpp so first-seen wins under
+# -Wl,--allow-multiple-definition.
+SRCS += pal_aio.cpp pal_scheduler.cpp
 SRCS += main.cpp ntum_bootstrap.cpp dk_pal.cpp ntum_signals.cpp
 SRCS += pal_boot.cpp pal_thread.cpp pal_abi.cpp pal_io.cpp pe_init_replicas.cpp
 SRCS += pal_stubs.cpp
@@ -48,7 +54,8 @@ ASM_SRCS = trampoline.S cfg_passthrough.S
 HDRS = ntum_bootstrap.h pal_internal.h pal_sync.h drawbridge_types.h \
        pe_loader.h pal_boot.h pal_sys.h pal_cpu.h pal_net.h \
        pal_crypto.h pal_krb.h \
-       pal_ldap_odbc.h pal_eval.h
+       pal_ldap_odbc.h pal_eval.h \
+       pal_aio.h pal_scheduler.h
 
 all: drawbridge-host
 

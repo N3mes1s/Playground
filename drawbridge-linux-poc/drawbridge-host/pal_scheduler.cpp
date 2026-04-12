@@ -31,6 +31,8 @@
 #include <pthread.h>
 #include <errno.h>
 #include <unistd.h>
+#include <sys/syscall.h>
+#include <time.h>
 #include <atomic>
 #include <mutex>
 
@@ -135,6 +137,9 @@ private:
     static void *worker_main(void *self_) noexcept
     {
         auto *self = static_cast<PalScheduler *>(self_);
+#ifndef SYS_gettid
+#define SYS_gettid __NR_gettid
+#endif
         fprintf(stderr, "[PAL-SCHED] worker started (tid=%ld)\n",
                 (long)syscall(SYS_gettid));
         while (!self->shutdown_.load(std::memory_order_acquire)) {
