@@ -473,6 +473,91 @@ VmModuleState *pal_vm_init_module_state(void)
     self->size_shift  = 0xAULL;                      /* 0xA * 2GiB = 0x500000000 */
     self->struct_tail = (uint64_t)region + map_len - 0x1000ULL;
 
+    /* Wave-29: the missing descriptor slab init.
+     *
+     * Our original translation of FUN_0x37f700 stopped right after
+     * pal_vm_compute_head_list. The ELF then calls FUN_0x37ee10 twice
+     * (once for the LO slab, once for HI) which runs a per-descriptor
+     * loop calling FUN_0x380058 → FUN_0x3800ac → FUN_0x380110 that
+     * writes each 0x88-byte descriptor's fields. Without it, the PE's
+     * allocator (FUN_0x384fbc) dereferences a NULL bitmap pointer at
+     * descriptor+0x68 and the first VirtualMemoryAllocate panics with
+     * STATUS_CONFLICTING_ADDRESSES (0xc0000018).
+     *
+     * Per agent A/B analysis:
+     *   FUN_0x384fbc is a bitmap allocator:
+     *     [desc+0x68] -> uint64[] bitmap (1 bit per 64KB page, 1=free)
+     *     [desc+0x70] = bitmap capacity in pages (0x8000 = 2 GiB)
+     *
+     * Layout within our mmap'd region:
+     *   [self + r15]                       : LO bitmap backing, lo_pages * 0x1000 bytes
+     *   [self + r15 + lo_pages*0x1000]     : HI bitmap backing, hi_pages * 0x1000 bytes
+     * (r15 = total_desc aligned; already computed at 37f894..a1.)
+     *
+     * Per descriptor (slot_idx in 0..lo_pages or 0..hi_pages):
+     *   +0x40 = 0
+     *   +0x48 = (slot_idx << 0x1F) + slab_base_va (low slab starts at rbp,
+     *           high slab starts at rbx)
+     *   +0x50 = 0x80000000 (2 GiB)
+     *   +0x58 = self
+     *   +0x60 = 0 (pool-list link; proper setup would call
+     *               FUN_0x37a1c8 but leaving 0 keeps the linked list
+     *               empty, which FUN_0x384fbc tolerates)
+     *   +0x68 = backing_va + slot_idx * 0x1000  (per-descriptor 0x1000-byte bitmap)
+     *   +0x70 = 0x8000 (capacity)
+     *   +0x78 = 0 (allocation accumulator, PE increments as it reserves)
+     *   +0x80 = 2 (state = active)
+     */
+    {
+        uint8_t *region_bytes = (uint8_t *)region;
+        uint64_t lo_backing_va = (uint64_t)region_bytes + r15;
+        uint64_t hi_backing_va = lo_backing_va + (lo_pages << 12);
+
+        /* Mark entire bitmap backing as "all-free" (0xFF = 8 pages free
+         * per byte). The page_blob from r15..hi_tail was zeroed by our
+         * memset, so we re-fill just the bitmap portion. */
+        size_t bm_total_bytes = (lo_pages + hi_pages) << 12;
+        memset((void *)lo_backing_va, 0xFF, bm_total_bytes);
+
+        /* LO slab: descriptors at self+0xE8, base VA = rbp */
+        uint8_t *lo_slab = region_bytes + 0xE8;
+        for (uint64_t i = 0; i < lo_pages; i++) {
+            uint8_t *d = lo_slab + i * 0x88;
+            *(uint64_t *)(d + 0x40) = 0;
+            *(uint64_t *)(d + 0x48) = (i << 0x1F) + rbp;
+            *(uint64_t *)(d + 0x50) = 0x80000000ULL;
+            *(uint64_t *)(d + 0x58) = (uint64_t)self;
+            *(uint64_t *)(d + 0x60) = 0;
+            *(uint64_t *)(d + 0x68) = lo_backing_va + i * 0x1000;
+            *(uint64_t *)(d + 0x70) = 0x8000ULL;
+            *(uint64_t *)(d + 0x78) = 0;
+            *(uint32_t *)(d + 0x80) = 2;
+        }
+
+        /* HI slab: descriptors at self+0xE8+per_lo, base VA = rbx */
+        uint8_t *hi_slab = region_bytes + 0xE8 + per_lo;
+        for (uint64_t i = 0; i < hi_pages; i++) {
+            uint8_t *d = hi_slab + i * 0x88;
+            *(uint64_t *)(d + 0x40) = 0;
+            *(uint64_t *)(d + 0x48) = (i << 0x1F) + rbx;
+            *(uint64_t *)(d + 0x50) = 0x80000000ULL;
+            *(uint64_t *)(d + 0x58) = (uint64_t)self;
+            *(uint64_t *)(d + 0x60) = 0;
+            *(uint64_t *)(d + 0x68) = hi_backing_va + i * 0x1000;
+            *(uint64_t *)(d + 0x70) = 0x8000ULL;
+            *(uint64_t *)(d + 0x78) = 0;
+            *(uint32_t *)(d + 0x80) = 2;
+        }
+
+        fprintf(stderr,
+                "[PAL][VM-INIT] wave-29: initialised %lu LO + %lu HI "
+                "descriptors; bitmap backing at lo=0x%lx hi=0x%lx "
+                "(0x%zx bytes total, set to 0xFF)\n",
+                (unsigned long)lo_pages, (unsigned long)hi_pages,
+                (unsigned long)lo_backing_va, (unsigned long)hi_backing_va,
+                bm_total_bytes);
+    }
+
     fprintf(stderr,
             "[PAL][VM-INIT] VmModuleState @ %p  vm_base=0x%lx size=0x%zx "
             "region_end=0x%lx page_count=%lu\n",

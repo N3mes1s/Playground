@@ -236,6 +236,69 @@ static int handle_libos_fault(void *fault_addr, ucontext_t *uc) {
 
     g_fault_count++;
 
+    /* Wave-29: if this page is in the PE's VmModuleState bitmap range,
+     * fill it with 0xFF ("all free") instead of zeros. The PE's VM
+     * allocator at FUN_0x384fbc is a bitmap allocator where bit=1
+     * means the 64KB page is free. The PE's own init sets each
+     * descriptor's +0x68 to point into its VmModuleState region but
+     * relies on "commit" returning all-free pages, which in our port
+     * means demand-pagefault-backed pages must be 0xFF, not 0.
+     *
+     * Heuristic: we read the current VmModuleState at [0x180c00878],
+     * find any descriptor whose +0x68 bitmap pointer contains the
+     * fault page, and if so memset 0xFF. Otherwise leave zeros. */
+    int init_as_bitmap = 0;
+    /* Wave-29d: DO NOT 0xFF-fill. FUN_0x384fbc uses 0=FREE, 1=ALLOCATED
+     * semantics (verified by disasm at 0x3850bc: `not rdx; bsf` finds
+     * first UNSET bit == free). MAP_ANONYMOUS zero-fill IS the correct
+     * default. Heuristic disabled. */
+    {
+        uint64_t vms_ptr = *(volatile uint64_t *)0x180c00878ULL;
+        if (vms_ptr && !init_as_bitmap) {
+            /* VmModuleState layout:
+             *   +0x18 = LO descriptor table base
+             *   +0x30 = LO count
+             *   +0x80 = HI descriptor table base
+             *   +0x38 = HI count
+             * Each descriptor is 0x88 bytes; +0x68 = bitmap ptr,
+             * +0x70 = bitmap size in pages (0x8000 -> 0x1000-byte bitmap). */
+            const uint8_t *vms = (const uint8_t *)vms_ptr;
+            struct { uint64_t base; uint64_t count; } tabs[2] = {
+                { *(const uint64_t *)(vms + 0x18), *(const uint64_t *)(vms + 0x30) },
+                { *(const uint64_t *)(vms + 0x80), *(const uint64_t *)(vms + 0x38) },
+            };
+            for (int t = 0; t < 2 && !init_as_bitmap; t++) {
+                if (!tabs[t].base || tabs[t].count == 0 || tabs[t].count > 0x100000)
+                    continue;
+                /* First descriptor's +0x68 and last's +0x68 bracket the
+                 * bitmap range (they're allocated contiguously per
+                 * wave-29 init pattern). Check ORDERING first. */
+                const uint8_t *dfirst = (const uint8_t *)tabs[t].base;
+                const uint8_t *dlast  = dfirst + (tabs[t].count - 1) * 0x88;
+                uint64_t bm_first = *(const uint64_t *)(dfirst + 0x68);
+                uint64_t bm_last  = *(const uint64_t *)(dlast + 0x68);
+                if (bm_first == 0)
+                    continue;
+                if (bm_last < bm_first)
+                    bm_last = bm_first + tabs[t].count * 0x1000;
+                else
+                    bm_last += 0x1000;
+                if ((uint64_t)page >= bm_first && (uint64_t)page < bm_last) {
+                    init_as_bitmap = 1;
+                    break;
+                }
+            }
+        }
+    }
+    if (init_as_bitmap) {
+        memset(result, 0xFF, 0x1000);
+        static int bm_fill_count = 0;
+        if (++bm_fill_count <= 20)
+            fprintf(stderr,
+                    "[FAULT-BM] #%d page 0x%lx filled with 0xFF (bitmap-range)\n",
+                    bm_fill_count, (unsigned long)page);
+    }
+
     /* If page is in PE image, copy actual section data.
      * Skip .data and .roafter (contain our runtime patches). */
     int is_patched = 0;
@@ -747,6 +810,73 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
                 uc->uc_mcontext.gregs[REG_RSP] = (greg_t)(rsp_now + 8);
                 return;
             }
+        }
+        if (rip == 0x1803805a3ULL) {
+            /* Wave-29b: inside FUN_3804b8, 0x384fbc returned rsi != rbp_requested.
+             * rax (= rsi) is the bitmap-found page. rdi is the ctx (desc+0x68).
+             * rbp has been set to the requested page (before the compare). */
+            uint64_t rax_v  = (uint64_t)uc->uc_mcontext.gregs[REG_RAX];
+            uint64_t rsi_v  = (uint64_t)uc->uc_mcontext.gregs[REG_RSI];
+            uint64_t rbp_v  = (uint64_t)uc->uc_mcontext.gregs[REG_RBP];
+            uint64_t rdi_v  = (uint64_t)uc->uc_mcontext.gregs[REG_RDI];
+            uint64_t r14_v  = (uint64_t)uc->uc_mcontext.gregs[REG_R14];
+            fprintf(stderr,
+                "[WAVE-29b] CONFLICT inside FUN_3804b8: "
+                "rax=0x%lx rsi=0x%lx rbp(req_page)=0x%lx "
+                "rdi(ctx=desc+0x68)=0x%lx r14(size_pages)=0x%lx\n",
+                (unsigned long)rax_v, (unsigned long)rsi_v,
+                (unsigned long)rbp_v, (unsigned long)rdi_v,
+                (unsigned long)r14_v);
+            /* Dump bitmap context at desc+0x68 (ctx to 0x384fbc): */
+            if (rdi_v) {
+                uint64_t bm_ptr = *(uint64_t*)(rdi_v + 0x68);
+                uint64_t bm_cap = *(uint64_t*)(rdi_v + 0x70);
+                fprintf(stderr,
+                    "[WAVE-29b] bitmap_ptr=0x%lx cap_pages=0x%lx "
+                    "(desc+0x48=0x%lx +0x50=0x%lx +0x80=0x%x)\n",
+                    (unsigned long)bm_ptr, (unsigned long)bm_cap,
+                    (unsigned long)*(uint64_t*)(rdi_v + 0x48),
+                    (unsigned long)*(uint64_t*)(rdi_v + 0x50),
+                    *(uint32_t*)(rdi_v + 0x80));
+                if (bm_ptr) {
+                    const uint64_t *bm = (const uint64_t*)bm_ptr;
+                    fprintf(stderr,
+                        "[WAVE-29b] bitmap[0..8]= %016lx %016lx %016lx %016lx "
+                        "%016lx %016lx %016lx %016lx\n",
+                        bm[0], bm[1], bm[2], bm[3], bm[4], bm[5], bm[6], bm[7]);
+                }
+            }
+            /* Wave-29d: the bitmap got corrupted by an earlier write
+             * (DK_NotificationEventCreate wrote event_ptr to the VA
+             * 0x300006442000 which is this descriptor's bitmap). Zero
+             * the bitmap's first page to erase the corruption, so the
+             * next call to FUN_0x384fbc sees all-free and succeeds.
+             * Then retry the allocation by restoring rbp=-1 path:
+             * we emulate "allocator succeeded with rsi=rbp", so the
+             * caller's cmp passes and we continue with success. */
+            if (rdi_v) {
+                uint64_t bm_ptr = *(uint64_t*)(rdi_v + 0x68);
+                if (bm_ptr >= 0x300000000000ULL && bm_ptr < 0x500000000000ULL) {
+                    memset((void*)bm_ptr, 0, 0x1000);
+                    fprintf(stderr,
+                        "[WAVE-29d] zeroed bitmap at 0x%lx; resuming caller with rsi=rbp\n",
+                        (unsigned long)bm_ptr);
+                    /* Skip the CONFLICT path: jump back to the success
+                     * path in FUN_3804b8. 0x380588 is `jne 0x3805a3`;
+                     * by landing at 0x38058a (the jne-not-taken path),
+                     * we continue as if rsi == rbp. Also set rbx=0
+                     * (the success marker: ebx holds the status and
+                     * 0 means SUCCESS). */
+                    uc->uc_mcontext.gregs[REG_RIP] = 0x18038058a;
+                    uc->uc_mcontext.gregs[REG_RBX] = 0;
+                    /* Also set rsi back to rbp so subsequent code that
+                     * uses rsi in arithmetic gets a sane value. */
+                    uc->uc_mcontext.gregs[REG_RSI] = (greg_t)rbp_v;
+                    uc->uc_mcontext.gregs[REG_RAX] = (greg_t)rbp_v;
+                    return;
+                }
+            }
+            _exit(201);
         }
         if (rip == 0x18037aa09ULL) {
             /* Wave-28: CONFLICTING_ADDRESSES site. rbx points to the

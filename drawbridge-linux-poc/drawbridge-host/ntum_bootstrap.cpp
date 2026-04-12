@@ -1006,6 +1006,22 @@ static void *boot_thread_fn(void *arg) {
     }
 
     {
+        /* Wave-29b: trap the specific CONFLICTING_ADDRESSES path INSIDE
+         * FUN_0x3804b8 at RVA 0x3805a3 (mov ebx, 0xc0000018 after the
+         * jne-from-0x380588 that means "0x384fbc returned rsi != requested").
+         * Original bytes: `bb 18 00 00 c0`. Patch first two to ud2 so
+         * we see rsi (rax return from 0x384fbc), the bitmap state at
+         * descriptor+0x68, and what the allocator found. */
+        volatile uint8_t *p_bf = (uint8_t*)0x1803805a3ULL;
+        if (p_bf[0] == 0xbb && p_bf[1] == 0x18) {
+            p_bf[0] = 0x0f;
+            p_bf[1] = 0x0b;
+            fprintf(stderr,
+                "[BOOT] wave-29b: trapped FUN_3804b8 CONFLICT path @0x3805a3\n");
+        }
+    }
+
+    {
         /* Wave-28: trap the fastfail `call 0x3a0880` at RVA 0x37aa09
          * with ud2. The real failing path is:
          *   37a9f4: call 0x3804b8      ; some VM fn, returns 0xc0000018
