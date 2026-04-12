@@ -1130,7 +1130,15 @@ static void *boot_thread_fn(void *arg) {
      * in the PE image and LibOS heap ranges. Replace with 0 so the
      * caching path falls through to the (working) allocation branch
      * the next time the slot is read. */
-    {
+    /* Wave-22: Scrubber thread DISABLED. It was introduced in Wave-3
+     * to clear NTSTATUS-shaped qwords from the PE .data / LibOS heap
+     * because the allocator chain could persist 0xC0000002 into
+     * cache slots. Since Wave-19 we return 0 from the VM validator
+     * at source, so no NTSTATUS ever enters those cache slots. The
+     * scrubber thread was now spinning indefinitely scanning several
+     * hundred MB of LibOS heap pages per pass, wasting CPU and
+     * preventing the main boot path from running cleanly. */
+    if (0) {
         pthread_t scrub;
         pthread_create(&scrub, NULL, [](void*) -> void* {
             for (;;) {
