@@ -812,6 +812,36 @@ static void *boot_thread_fn(void *arg) {
     }
 #endif
 
+    /* SRW-lock waiter-anchor janitor thread.
+     * The PE's 0x240ea0 constructor writes sentinel 0x12345678deaddead
+     * at [+0x10] of embedded kernel lock objects in .data, plus self-refs
+     * at [+0x18] and [+0x28], but forgets the Flink at [+0x20]. The
+     * first RtlpWakeSRWLockExclusive (RVA 0x226ad3) then livelocks on
+     * the zero Flink. Scan the PE .data continuously and stamp missing
+     * Flinks. See /tmp/deadlock_rca.md. */
+    {
+        pthread_t janitor;
+        pthread_create(&janitor, NULL, [](void*) -> void* {
+            for (;;) {
+                for (uint64_t addr = 0x180600000ULL; addr < 0x180700000ULL; addr += 8) {
+                    volatile uint64_t *p = (volatile uint64_t*)addr;
+                    if (p[2] == 0x12345678deaddeadULL  /* [+0x10] sentinel */
+                        && p[4] == 0                    /* [+0x20] missing */
+                        && p[3] == addr) {              /* [+0x18] self-ref confirms anchor */
+                        p[4] = addr;                    /* [+0x20] Flink -> self */
+                        fprintf(stderr, "[JANITOR] stamped SRW waiter Flink at 0x%lx\n",
+                                (unsigned long)addr);
+                    }
+                }
+                struct timespec ts = { 0, 500000 };  /* 0.5 ms */
+                nanosleep(&ts, NULL);
+            }
+            return NULL;
+        }, NULL);
+        pthread_detach(janitor);
+        fprintf(stderr, "[BOOT] SRW waiter-anchor janitor thread started\n");
+    }
+
     fprintf(stderr, "[BOOT] Calling REAL entry point at %p (no hacks!)\n",
             args->entry_point);
     fprintf(stderr, "[BOOT] rcx = rdx = %p (params)\n", args->params);

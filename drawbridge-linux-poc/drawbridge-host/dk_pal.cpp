@@ -1106,9 +1106,49 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
         return DK_STATUS_SUCCESS;
     }
 
-    /* Config calls: type is a .data address pointing to config structure.
-     * These are NOT indirect function calls (the .data contains line numbers
-     * and config data, not function pointers). Just return SUCCESS. */
+    /* Config calls: type is a .data address pointing to an embedded
+     * kernel object the PE wants initialised. The PE's own constructor
+     * at RVA 0x240ea0 writes [+0], [+8], and [+0x10]=sentinel
+     * 0x12345678deaddead, but DOES NOT initialise the SRW-lock waiter
+     * anchor LIST_ENTRY at [+0x18]/[+0x20]. Without that self-ref, the
+     * first `RtlpWakeSRWLockExclusive` at PE RVA 0x226ad3 walks a half-
+     * initialised chain and deadlocks forever on [+0x20]==0 — the exact
+     * hang we observe at DK call #234 on .data 0x1806679d0.
+     *
+     * Root-cause and evidence: /tmp/deadlock_rca.md.
+     * ELF source: /tmp/sqlpal_full.txt lines 74286-74321 (0x240ea0 body),
+     *             /tmp/sqlpal_full.txt lines 44219-44245 (226aa8 wake path).
+     *
+     * Fix: when the config-call target lies inside PE .data and the
+     * constructor sentinel is present but the LIST_ENTRY Flink is still
+     * zero, stamp the self-referencing waiter anchor the PE forgot. */
+    /* PostRes in the 0x1806xxxxx range: the PE's 0x240ea0 constructor
+     * writes sentinel 0x12345678deaddead at [+0x10] of every "waiter
+     * anchor" kernel object in PE .data, but forgets to self-ref the
+     * LIST_ENTRY at [+0x18]/[+0x20]. Walk the whole .data BSS range
+     * each config call and stamp any newly-initialised anchor. */
+    if (call_type >= 0x180600000ULL && call_type < 0x180700000ULL) {
+        static int scan_count = 0;
+        int stamped_now = 0;
+        for (uint64_t addr = 0x180600000ULL; addr < 0x180700000ULL; addr += 8) {
+            volatile uint64_t *p = (volatile uint64_t*)addr;
+            /* Detect sentinel @ p[+2] */
+            if (p[2] == 0x12345678deaddeadULL
+                && p[4] == 0                      /* Flink still zero */
+                && p[3] != (addr + 0x18)) {        /* not already stamped */
+                p[3] = addr + 0x18;                /* +0x18 Blink -> &link */
+                p[4] = addr + 0x18;                /* +0x20 Flink -> &link */
+                stamped_now++;
+                if (scan_count < 5 && stamped_now < 10) {
+                    fprintf(stderr,
+                        "[DK] stamped SRW waiter-anchor at 0x%lx\n",
+                        (unsigned long)addr);
+                }
+            }
+        }
+        scan_count++;
+    }
+
     static int post_count = 0;
     post_count++;
     if (post_count <= 50) {
