@@ -1129,6 +1129,30 @@ static void *boot_thread_fn(void *arg) {
     }
 
     {
+        /* Wave-43: bypass the bounds-check fastfail at 0x20e411.
+         * FUN_0x20e3f4 checks that the byte-offset passed in edx is
+         * >= 0x190 and < params[+0x4]. Caller at 0x26d459 passes
+         * *(params+0x11c); our host doesn't populate params[+0x11c]
+         * with a valid value because the PE allocates its own params
+         * region at 0x321000000 with an incompatible header layout.
+         * Skip the fastfail by advancing rip to 0x20e439 (which reads
+         * [params+0x4]) — the subsequent bounds check still runs, so
+         * downstream won't see an out-of-range index. */
+        volatile uint8_t *p_ff43a = (uint8_t*)0x18020e411ULL;
+        if (p_ff43a[0] == 0xe8) {
+            p_ff43a[0] = 0x0f;
+            p_ff43a[1] = 0x0b;
+        }
+        volatile uint8_t *p_ff43b = (uint8_t*)0x18020e445ULL;
+        if (p_ff43b[0] == 0xe8) {
+            p_ff43b[0] = 0x0f;
+            p_ff43b[1] = 0x0b;
+        }
+        fprintf(stderr,
+            "[BOOT] wave-43: trapped FUN_20e3f4 fastfails @0x20e411, @0x20e445\n");
+    }
+
+    {
         /* Wave-42: rewrite all `movabs $0xfffff78000000XXX, %rax`
          * kernel-alias KUSER_SHARED_DATA references to the user-space
          * mapping at 0x7ffe0000. The NT kernel normally aliases

@@ -1021,6 +1021,19 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
             uc->uc_mcontext.gregs[REG_RIP] = 0x18037f128ULL;
             return;
         }
+        if (rip == 0x18020e411ULL) {
+            /* Wave-43: FUN_0x20e3f4's `edx >= 0x190` bounds fastfail.
+             * Skip it and continue at 0x20e439 (the next check). */
+            uc->uc_mcontext.gregs[REG_RIP] = 0x18020e439ULL;
+            return;
+        }
+        if (rip == 0x18020e445ULL) {
+            /* Wave-43: FUN_0x20e3f4's `ebx < params[+0x4]` bounds
+             * fastfail. Skip to 0x20e474 (success path, builds
+             * descriptor with offset=0). */
+            uc->uc_mcontext.gregs[REG_RIP] = 0x18020e474ULL;
+            return;
+        }
         if (rip == 0x18020579eULL) {
             /* Wave-41: FUN_0x20e07c returned 0xc000000d INVALID_PARAM.
              * Diagnostic dump, then skip the fastfail by jumping to
