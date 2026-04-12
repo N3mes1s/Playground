@@ -934,6 +934,83 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
             /* Fall through to the generic crash dump by not returning. */
             _exit(200);
         }
+        if (rip == 0x18037d073ULL) {
+            /* Wave-39 diagnostic: trap post-FUN_0x37f128 return. rax =
+             * slot returned by allocator; scope was [vms+0xa8]. Dump
+             * everything so we can diagnose why slot->state != 2. */
+            uint64_t rax_v = (uint64_t)uc->uc_mcontext.gregs[REG_RAX];
+            uint64_t r13_v = (uint64_t)uc->uc_mcontext.gregs[REG_R13];
+            uint64_t rbp_v = (uint64_t)uc->uc_mcontext.gregs[REG_RBP];
+            fprintf(stderr,
+                "[WAVE-39] POST-37f128 trap: rax(slot)=0x%lx r13(vms)=0x%lx "
+                "rbp=0x%lx\n",
+                (unsigned long)rax_v, (unsigned long)r13_v,
+                (unsigned long)rbp_v);
+
+            /* Dump slot (descriptor) fields */
+            if (rax_v && rax_v > 0x100000000ULL) {
+                const uint64_t *d = (const uint64_t*)rax_v;
+                fprintf(stderr,
+                    "[WAVE-39] slot bytes [+0x00..+0xa0]:\n"
+                    "  +00=%016lx +08=%016lx +10=%016lx +18=%016lx\n"
+                    "  +20=%016lx +28=%016lx +30=%016lx +38=%016lx\n"
+                    "  +40=%016lx +48=%016lx +50=%016lx +58=%016lx\n"
+                    "  +60=%016lx +68=%016lx +70=%016lx +78=%016lx\n"
+                    "  +80=%016lx +88=%016lx +90=%016lx +98=%016lx\n",
+                    d[0], d[1], d[2], d[3],
+                    d[4], d[5], d[6], d[7],
+                    d[8], d[9], d[10], d[11],
+                    d[12], d[13], d[14], d[15],
+                    d[16], d[17], d[18], d[19]);
+            }
+
+            /* Dump scope = [vms+0xa8] */
+            if (r13_v && r13_v > 0x100000000ULL) {
+                uint64_t scope_ptr = *(uint64_t*)(r13_v + 0xa8);
+                fprintf(stderr,
+                    "[WAVE-39] vms+0xa8 (scope ptr) = 0x%lx\n",
+                    (unsigned long)scope_ptr);
+                if (scope_ptr > 0x100000000ULL) {
+                    const uint64_t *s = (const uint64_t*)scope_ptr;
+                    fprintf(stderr,
+                        "[WAVE-39] scope bytes [+0x00..+0x60]:\n"
+                        "  +00=%016lx +08=%016lx +10=%016lx +18=%016lx\n"
+                        "  +20=%016lx +28=%016lx +30=%016lx +38=%016lx\n"
+                        "  +40=%016lx +48=%016lx +50=%016lx +58=%016lx\n",
+                        s[0], s[1], s[2], s[3],
+                        s[4], s[5], s[6], s[7],
+                        s[8], s[9], s[10], s[11]);
+                }
+                /* Dump around vms+0xa0..+0xd0 for context */
+                const uint64_t *v = (const uint64_t*)r13_v;
+                fprintf(stderr,
+                    "[WAVE-39] vms [+0x00..+0xe0]:\n"
+                    "  +00=%016lx +08=%016lx +10=%016lx +18=%016lx\n"
+                    "  +20=%016lx +28=%016lx +30=%016lx +38=%016lx\n"
+                    "  +40=%016lx +48=%016lx +50=%016lx +58=%016lx\n"
+                    "  +60=%016lx +68=%016lx +70=%016lx +78=%016lx\n"
+                    "  +80=%016lx +88=%016lx +90=%016lx +98=%016lx\n"
+                    "  +a0=%016lx +a8=%016lx +b0=%016lx +b8=%016lx\n"
+                    "  +c0=%016lx +c8=%016lx +d0=%016lx +d8=%016lx\n"
+                    "  +e0=%016lx +e8=%016lx\n",
+                    v[0], v[1], v[2], v[3],
+                    v[4], v[5], v[6], v[7],
+                    v[8], v[9], v[10], v[11],
+                    v[12], v[13], v[14], v[15],
+                    v[16], v[17], v[18], v[19],
+                    v[20], v[21], v[22], v[23],
+                    v[24], v[25], v[26], v[27],
+                    v[28], v[29]);
+            }
+
+            /* Dump input args [rbp+0x50]=reserve_base, [rbp+0x58]=aligned_size */
+            fprintf(stderr,
+                "[WAVE-39] rbp dump: [+0x50]=0x%lx (req_base) [+0x58]=0x%lx (size)\n",
+                (unsigned long)*(uint64_t*)(rbp_v + 0x50),
+                (unsigned long)*(uint64_t*)(rbp_v + 0x58));
+
+            _exit(210);
+        }
         if (rip == 0x1802962a8ULL) {
             /* RtlDispatchException entry */
             static int disp_count = 0;

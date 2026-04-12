@@ -1079,6 +1079,31 @@ static void *boot_thread_fn(void *arg) {
     }
 
     {
+        /* Wave-39 diagnostic: trap right after FUN_0x37f128 returns,
+         * at 0x37d073. Sequence:
+         *   37d05d: mov 0xa8(%r13), %rcx   ; rcx = [vms+0xa8] (scope)
+         *   37d064: mov %r13, %rdx          ; rdx = vms
+         *   37d067: call 0x37f128            ; allocator, returns slot in rax
+         *   37d06c: mov %rax, %rdi          ; rdi saves slot
+         *   37d06f: mov %rax, -0x28(%rbp)
+         *   37d073: cmpl $0x2, 0x80(%rax)   ; CHECK: slot->state == 2 ?
+         *   37d07a: je  0x37d084
+         *   37d07c: mov $0xc0000018, %r15d  ; CONFLICT path
+         *
+         * Bytes at 0x37d073 are `83 b8 80 00 00 00 02` (7 bytes). Replace
+         * first two with `0f 0b` (ud2); remaining 5 bytes are dead tail.
+         * Our SIGILL handler logs slot fields, scope fields, vms fields,
+         * then _exit so we get a clean dump. */
+        volatile uint8_t *p_cmp = (uint8_t*)0x18037d073ULL;
+        if (p_cmp[0] == 0x83 && p_cmp[1] == 0xb8) {
+            p_cmp[0] = 0x0f;
+            p_cmp[1] = 0x0b;
+            fprintf(stderr,
+                "[BOOT] wave-39: trapped post-37f128 @0x37d073 (cmpl 2, state)\n");
+        }
+    }
+
+    {
         /* Wave-21: seed [0x180662d28] with a zero-count table so the
          * loop at RVA 0x20e694 (`mov (%rax), %r9d; cmp 1, r9d; jbe
          * skip`) reads count=0 and skips the iteration. Without the
