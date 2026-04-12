@@ -903,6 +903,69 @@ static void *boot_thread_fn(void *arg) {
         }
     }
 
+    /* Wave-13 probe: the PE's RtlDispatchException walks the runtime
+     * module list at [0x180645510]/[0x180645518] to resolve .pdata for
+     * the faulting RIP. If that list is empty every fault returns
+     * "unhandled" and the dispatcher falls through with 0xC0000025
+     * (STATUS_NONCONTINUABLE_EXCEPTION), causing the RtlRaiseStatus
+     * recursion we observe as stack overflow.
+     *
+     * Per /tmp/wave12_globals.md Agent B: "smallest test is to set
+     * 0x1806472bf = 1 by hand." That byte is a guard checked by
+     * FUN_180204754 (writer at RVA 0x204826); non-zero lets the
+     * per-image .pdata lookup take the initialised path. We also
+     * stamp a non-zero sentinel into the two runtime-module-table
+     * head slots so the initial walk sees a valid (but empty-list)
+     * anchor rather than NULL. */
+    {
+        volatile uint8_t  *b_472bf = (uint8_t*) 0x1806472bfULL;
+        volatile uint64_t *m_45510 = (uint64_t*)0x180645510ULL;
+        volatile uint64_t *m_45518 = (uint64_t*)0x180645518ULL;
+        if (*b_472bf == 0) {
+            *b_472bf = 1;
+            fprintf(stderr,
+                "[BOOT] wave-13: set [0x1806472bf]=1 (replica-init guard)\n");
+        }
+        if (*m_45510 == 0 && *m_45518 == 0) {
+            /* LIST_ENTRY-style self-referencing head so RtlLookupModule
+             * can walk without dereferencing NULL. Points at itself. */
+            *m_45510 = (uint64_t)m_45510;
+            *m_45518 = (uint64_t)m_45510;
+            fprintf(stderr,
+                "[BOOT] wave-13: seeded runtime module list heads "
+                "[0x180645510/18]=&self\n");
+        }
+    }
+
+    /* Wave-12: RtlRaiseStatus (FUN_002a84f8) recursion trap.
+     *
+     * Per /tmp/wave12_rca_a84f8.md + /tmp/wave12_caller.md: the PE's
+     * 0x2a84f8 is a NORETURN raise thunk ending with `call 0x2a84f8`
+     * at RVA 0x2a855a as MSVC's dead-code NORETURN idiom. On real
+     * Windows RtlDispatchException / RtlUnwindEx never return, so
+     * the self-call is unreachable. In our port our unwinder
+     * (0x23da04) sometimes returns, making the self-call live and
+     * producing the stack-overflow loop we were chasing.
+     *
+     * Patch 0x2a855a (`e8 XX XX XX XX` = call rel32, 5 bytes) to
+     * `0f 0b` (ud2) + 3 nops. This converts the dead-code retry
+     * into an immediate SIGILL. Our signal handler logs the exact
+     * NTSTATUS value (in ECX at entry to 0x2a84f8) + stack context,
+     * so we can identify WHICH raise site was first hit. */
+    {
+        volatile uint8_t *p_855a = (uint8_t*)0x1802a855aULL;
+        if (p_855a[0] == 0xe8) {
+            p_855a[0] = 0x0f;
+            p_855a[1] = 0x0b;
+            p_855a[2] = 0x90;
+            p_855a[3] = 0x90;
+            p_855a[4] = 0x90;
+            fprintf(stderr,
+                "[BOOT] patched PE RVA 0x2a855a call→ud2 "
+                "(RtlRaiseStatus retry now crashes cleanly)\n");
+        }
+    }
+
     /* NTSTATUS-as-pointer cache scrubber.
      *
      * FUN_002661bc caches an object pointer at [rcx+0x9d8] via
