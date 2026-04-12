@@ -493,6 +493,24 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
             (void)rcx_val;
         }
 
+        /* Wave-7b: RVA 0x219132 — `mov 0x10(%rax), %rcx` with rax=small.
+         *
+         * FUN_002190e4 calls 0x27bde4 (large allocator). When the
+         * allocator's pool state is under-initialised (our case),
+         * [pool & ~0x1fff] is small enough that the subsequent page-
+         * aligned chain reads bad fields. The function already has a
+         * safe skip: `test %rdi, %rdi; je 0x219162` at 0x21910f. When
+         * the interior deref faults we advance to the same epilogue
+         * at 0x219162 (restore saved rbx, pop rdi, ret) so the caller
+         * sees rax = allocator return (could be bogus but at least
+         * not SIGSEGV). Matches what the PE does when rdi==0. */
+        if (rip == 0x180219132ULL) {
+            uc->uc_mcontext.gregs[REG_RIP] = 0x180219162;
+            fprintf(stderr,
+                "[FIXUP] RIP=0x180219132 → 0x219162 (epilogue skip)\n");
+            return;
+        }
+
         /* Try demand-paging */
         if (handle_libos_fault(fault_addr, uc))
             return;
