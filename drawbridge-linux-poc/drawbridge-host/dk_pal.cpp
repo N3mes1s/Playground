@@ -800,6 +800,61 @@ DK_API uint64_t DK_RandomBitsRead(void *buffer, uint64_t length) {
                                     : DK_STATUS_INVALID_PARAM;
 }
 
+/* Wave-35: DkSystem_CpuUtilizationQuery_v1 (DK id 0xe003000).
+ * Per PE enter-tag "DkSystem_CpuUtilizationQuery_v1:enter kernelTime
+ * userTime thread" — signature with dispatcher trace-ctx is
+ * (trace_ctx, thread_handle, *out_user, *out_kernel).
+ * Stub returns zeros; a real implementation would use
+ * clock_gettime(CLOCK_THREAD_CPUTIME_ID). */
+DK_API uint64_t DK_SystemCpuUtilizationQueryV1(void *trace_ctx,
+                                                DK_HANDLE thread,
+                                                uint64_t *user_time,
+                                                uint64_t *kernel_time) {
+    (void)trace_ctx; (void)thread;
+    static int count = 0;
+    ++count;
+    if (count <= 5)
+        fprintf(stderr,
+            "[DK-CpuUtil] #%d thread=0x%lx out_u=%p out_k=%p\n",
+            count, (unsigned long)thread,
+            (void*)user_time, (void*)kernel_time);
+    /* Validate out-pointers: reject bogus values like 1. */
+    auto ok = [](void *p) {
+        uintptr_t v = (uintptr_t)p;
+        return v > 0x1000 && (v & 0x7) == 0;
+    };
+    if (ok(user_time))   *user_time   = 0;
+    if (ok(kernel_time)) *kernel_time = 0;
+    return DK_STATUS_SUCCESS;
+}
+
+/* Wave-35: DkSystemTimeQuery dispatcher-adapted signature.
+ * Our legacy DK_SystemTimeQuery takes (clock_type, *out_time) but the
+ * 0xe002 dispatcher passes (trace_ctx, clock_type, *out_time, 0) -- a
+ * trace-context is injected as arg1. Use this adapter for the 0xe002
+ * path; the legacy 0x8001 mapping keeps its 2-arg signature. */
+DK_API uint64_t DK_SystemTimeQueryV2(void *trace_ctx,
+                                     uint64_t clock_type,
+                                     uint64_t *time_val,
+                                     uint64_t extra) {
+    (void)trace_ctx; (void)extra;
+    static int count = 0;
+    ++count;
+    if (count <= 5)
+        fprintf(stderr,
+            "[DK-StqV2] #%d clock=%lu out=%p\n",
+            count, (unsigned long)clock_type, (void*)time_val);
+    struct timespec ts;
+    clockid_t clk = (clock_type == 0) ? CLOCK_REALTIME : CLOCK_MONOTONIC;
+    clock_gettime(clk, &ts);
+    uint64_t ft = ((uint64_t)ts.tv_sec + 11644473600ULL) * 10000000ULL
+                  + (uint64_t)ts.tv_nsec / 100;
+    uintptr_t v = (uintptr_t)time_val;
+    if (v > 0x1000 && (v & 0x7) == 0)
+        *time_val = ft;
+    return DK_STATUS_SUCCESS;
+}
+
 /* ================================================================
  * Console
  * ================================================================ */
@@ -1115,10 +1170,27 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
             func = (original_version == 0) ? (void*)1 : (void*)&DK_EventPeek;
             is_stub=0; break;
 
-        /* Extended threading (category 0x0E) */
-        case 0xe001000: func = (void*)&DK_ThreadInterrupt; is_stub=0; break;
-        case 0xe002000: func = (void*)&DK_ThreadSetAffinity; is_stub=0; break;
-        case 0xe003000: func = (void*)&DK_ThreadSetAffinity; is_stub=0; break; /* AssertAffinity */
+        /* Wave-35 (agent-A analysis /tmp/wave35_e00_map.md): category 0xe
+         * is System Utilities, NOT "extended threading" as our comment
+         * previously claimed. Confirmed via resolver-loop trace at RVA
+         * 0x213318+ and enter-tag strings:
+         *   0xe001000 = DkInstructionCacheFlush
+         *                 (enter-tag at 0x43cf30 "DKInstructionCacheFlush:enter
+         *                  baseAddress length")
+         *   0xe002000 = DkSystemTimeQuery
+         *                 (enter-tag at 0x43cdd8 "DKSystemTimeQuery:enter
+         *                  clockType=%I64x")
+         *   0xe003000 = DkSystem_CpuUtilizationQuery_v1
+         *                 (enter-tag at 0x43ce10)
+         * Previously bound to DK_ThreadInterrupt / DK_ThreadSetAffinity
+         * which caused FUN_0x21698c to receive INVALID_PARAMETER and
+         * fastfail at RAX=0xc000000d.
+         *
+         * DK_SystemCpuUtilizationQueryV1 is a new stub that returns zeros
+         * (real impl would clock_gettime(CLOCK_THREAD_CPUTIME_ID)). */
+        case 0xe001000: func = (void*)&DK_InstructionCacheFlush; is_stub=0; break;
+        case 0xe002000: func = (void*)&DK_SystemTimeQueryV2;     is_stub=0; break;
+        case 0xe003000: func = (void*)&DK_SystemCpuUtilizationQueryV1; is_stub=0; break;
 
         /* Stream extended (category 0x0F):
          * First pass (version 0, func_id ends in 000) = feature flags.
