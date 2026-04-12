@@ -846,26 +846,28 @@ static void *boot_thread_fn(void *arg) {
      * the zero Flink. Scan the PE .data continuously and stamp missing
      * Flinks. See /tmp/deadlock_rca.md. */
     {
-        pthread_t janitor;
-        pthread_create(&janitor, NULL, [](void*) -> void* {
-            for (;;) {
-                for (uint64_t addr = 0x180600000ULL; addr < 0x180700000ULL; addr += 8) {
-                    volatile uint64_t *p = (volatile uint64_t*)addr;
-                    if (p[2] == 0x12345678deaddeadULL  /* [+0x10] sentinel */
-                        && p[4] == 0                    /* [+0x20] missing */
-                        && p[3] == addr) {              /* [+0x18] self-ref confirms anchor */
-                        p[4] = addr;                    /* [+0x20] Flink -> self */
-                        fprintf(stderr, "[JANITOR] stamped SRW waiter Flink at 0x%lx\n",
-                                (unsigned long)addr);
-                    }
-                }
-                struct timespec ts = { 0, 500000 };  /* 0.5 ms */
-                nanosleep(&ts, NULL);
+        /* Wave-6b: one-shot scan, no loop.
+         *
+         * The continuous janitor re-stamping was a Wave-3 band-aid that
+         * now contributes to a livelock: post-Wave-6a the PE advances
+         * into the SRW acquire path at RVA ~0x226a50 and the repeated
+         * Flink writes keep the lock in an unstable state. A single
+         * boot-time pass is sufficient to unblock the initial release
+         * path; subsequent contention is handled by the RVA 0x226ada/
+         * 0x226af2 nops that force the release to fall through to
+         * `call 0x226994` (no-waiter wake). */
+        int stamps = 0;
+        for (uint64_t addr = 0x180600000ULL; addr < 0x180700000ULL; addr += 8) {
+            volatile uint64_t *p = (volatile uint64_t*)addr;
+            if (p[2] == 0x12345678deaddeadULL
+                && p[4] == 0
+                && p[3] == addr) {
+                p[4] = addr;
+                stamps++;
             }
-            return NULL;
-        }, NULL);
-        pthread_detach(janitor);
-        fprintf(stderr, "[BOOT] SRW waiter-anchor janitor thread started\n");
+        }
+        fprintf(stderr, "[BOOT] SRW waiter-anchor one-shot scan: %d stamps\n",
+                stamps);
     }
 
     /* SRW-lock release livelock breaker.
@@ -910,21 +912,37 @@ static void *boot_thread_fn(void *arg) {
         pthread_create(&scrub, NULL, [](void*) -> void* {
             for (;;) {
                 /* PE image range — scrub any NTSTATUS-shaped qword
-                 * (0xC0000000..0xC0010000). */
+                 * (0xC0000000..0xC0010000). This range is fully mapped
+                 * by the PE loader so no fault-storms here. */
                 for (uint64_t addr = 0x180600000ULL; addr < 0x180700000ULL; addr += 8) {
                     volatile uint64_t *p = (volatile uint64_t*)addr;
                     uint64_t v = *p;
                     if (v >= 0xC0000000ULL && v < 0xC0010000ULL) *p = 0;
                 }
-                /* LibOS heap range — scan all of 0x300000000..0x400000000
-                 * (4GB window). Memory outside our mapped range is skipped
-                 * via SIGSEGV handler (faults auto-mapped as RW zero). */
-                for (uint64_t addr = 0x300000000ULL; addr < 0x400000000ULL; addr += 8) {
-                    volatile uint64_t *p = (volatile uint64_t*)addr;
-                    uint64_t v = *p;
-                    if (v >= 0xC0000000ULL && v < 0xC0010000ULL) *p = 0;
+                /* LibOS heap range — use /proc/self/maps to only scan
+                 * currently mapped pages. Reading from unmapped pages
+                 * triggers SIGSEGV storms through our demand-paging
+                 * handler which then auto-maps them (wasting memory and
+                 * CPU). Parse the map file each pass. */
+                FILE *fp = fopen("/proc/self/maps", "r");
+                if (fp) {
+                    char line[256];
+                    while (fgets(line, sizeof(line), fp)) {
+                        uint64_t start, end;
+                        if (sscanf(line, "%lx-%lx", &start, &end) != 2) continue;
+                        if (end <= 0x300000000ULL) continue;
+                        if (start >= 0x400000000ULL) break;
+                        uint64_t scan_lo = start < 0x300000000ULL ? 0x300000000ULL : start;
+                        uint64_t scan_hi = end   > 0x400000000ULL ? 0x400000000ULL : end;
+                        for (uint64_t addr = scan_lo; addr < scan_hi; addr += 8) {
+                            volatile uint64_t *p = (volatile uint64_t*)addr;
+                            uint64_t v = *p;
+                            if (v >= 0xC0000000ULL && v < 0xC0010000ULL) *p = 0;
+                        }
+                    }
+                    fclose(fp);
                 }
-                struct timespec ts = { 0, 200000 };  /* 0.2 ms */
+                struct timespec ts = { 0, 500000 };  /* 0.5 ms */
                 nanosleep(&ts, NULL);
             }
             return NULL;

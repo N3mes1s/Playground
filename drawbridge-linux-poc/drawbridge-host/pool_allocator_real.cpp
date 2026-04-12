@@ -64,6 +64,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <errno.h>
 
 #include "drawbridge_types.h"
 
@@ -111,9 +112,22 @@ static uint64_t pool_allocator_fn_impl(void *pool_obj, uint64_t alloc_size,
                         PROT_READ | PROT_WRITE,
                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
     if (result == MAP_FAILED) {
-        fprintf(stderr, "[POOL-REAL] mmap failed for size=0x%lx at 0x%lx\n",
-                (unsigned long)total, (unsigned long)addr);
-        return 0;
+        int e = errno;
+        static int rate_limit = 0;
+        if (rate_limit++ < 5) {
+            fprintf(stderr, "[POOL-REAL] mmap failed for size=0x%lx at 0x%lx "
+                            "errno=%d (%s)\n",
+                    (unsigned long)total, (unsigned long)addr, e, strerror(e));
+        }
+        /* Fall back to kernel-picked address. Consumers don't actually
+         * need the specific VA — they just need a valid pointer. */
+        result = mmap(nullptr, total, PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (result == MAP_FAILED) {
+            fprintf(stderr, "[POOL-REAL] fallback mmap also failed errno=%d\n",
+                    errno);
+            return 0;
+        }
     }
 
     /* Zero the payload explicitly — MAP_ANONYMOUS already gives zeros
