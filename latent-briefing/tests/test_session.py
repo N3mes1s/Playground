@@ -124,7 +124,7 @@ class TestSessionPrefixReuse(unittest.TestCase):
         lbm.tokenizer._lookup["t1"] = ids1
         sess.set_orchestrator_trajectory("t1")
         fresh1 = self._prefill(ids1)
-        ok, diff = _kv_close(sess.orchestrator.full_cache, fresh1)
+        ok, diff = _kv_close(sess.orchestrator.full_cache, fresh1, atol=1e-5)
         self.assertTrue(ok, f"fresh set diverged: max_abs_diff={diff}")
 
         # Scenario 2: extend the trajectory (ids1 is a prefix of ids2)
@@ -133,7 +133,9 @@ class TestSessionPrefixReuse(unittest.TestCase):
         lbm.tokenizer._lookup["t2"] = ids2
         sess.set_orchestrator_trajectory("t2")
         fresh2 = self._prefill(ids2)
-        ok, diff = _kv_close(sess.orchestrator.full_cache, fresh2, atol=1e-4)
+        ok, diff = _kv_close(sess.orchestrator.full_cache, fresh2, atol=1e-6)
+        # Incremental should differ from fresh by float32 rounding at most
+        # (~1e-7 in my measurements on CPU eager attention).
         self.assertTrue(ok, f"extend diverged: max_abs_diff={diff}")
         self.assertEqual(cache_token_count(sess.orchestrator.full_cache), 18)
 
@@ -142,13 +144,13 @@ class TestSessionPrefixReuse(unittest.TestCase):
         lbm.tokenizer._lookup["t3"] = branch
         sess.set_orchestrator_trajectory("t3")
         fresh3 = self._prefill(branch)
-        ok, diff = _kv_close(sess.orchestrator.full_cache, fresh3, atol=1e-4)
+        ok, diff = _kv_close(sess.orchestrator.full_cache, fresh3, atol=1e-6)
         self.assertTrue(ok, f"branch diverged: max_abs_diff={diff}")
 
         # Scenario 4: setting same trajectory twice -- delta should be 0
         delta, total = sess.set_orchestrator_trajectory("t3")
         self.assertEqual(delta, 0)
-        ok, diff = _kv_close(sess.orchestrator.full_cache, fresh3, atol=1e-4)
+        ok, diff = _kv_close(sess.orchestrator.full_cache, fresh3, atol=1e-6)
         self.assertTrue(ok, f"no-op set diverged: max_abs_diff={diff}")
 
         # Scenario 5: shrinking (new shorter than old with shared prefix)
@@ -157,8 +159,16 @@ class TestSessionPrefixReuse(unittest.TestCase):
         sess.set_orchestrator_trajectory("t4")
         fresh4 = self._prefill(short)
         self.assertEqual(cache_token_count(sess.orchestrator.full_cache), 6)
-        ok, diff = _kv_close(sess.orchestrator.full_cache, fresh4, atol=1e-4)
+        ok, diff = _kv_close(sess.orchestrator.full_cache, fresh4, atol=1e-6)
         self.assertTrue(ok, f"shrink diverged: max_abs_diff={diff}")
+
+        # Scenario 6: grow-shrink-grow-diverge oscillation (stale state regression).
+        grow = torch.cat([short, torch.randint(3, V, (1, 8))], dim=-1)
+        lbm.tokenizer._lookup["t5"] = grow
+        sess.set_orchestrator_trajectory("t5")
+        fresh5 = self._prefill(grow)
+        ok, diff = _kv_close(sess.orchestrator.full_cache, fresh5, atol=1e-6)
+        self.assertTrue(ok, f"grow-after-shrink diverged: max_abs_diff={diff}")
 
     def test_set_trajectory_reports_delta_correctly(self):
         lbm, sess = self._make_session()

@@ -36,7 +36,6 @@ class OrchestratorState:
     """Accumulated orchestrator trajectory, token-level."""
     input_ids: Optional[torch.Tensor] = None  # [1, T]
     full_cache: Optional[object] = None       # DynamicCache of the trajectory
-    last_prefix_len: int = 0                  # prefix already in full_cache
 
     @property
     def token_count(self) -> int:
@@ -100,7 +99,6 @@ class OrchestratorWorkerSession:
 
         self.orchestrator.input_ids = new_ids
         self.orchestrator.full_cache = cache
-        self.orchestrator.last_prefix_len = int(new_ids.shape[-1])
         return int(delta_ids.shape[-1]), int(new_ids.shape[-1])
 
     def append_to_orchestrator(self, extra_text: str) -> Tuple[int, int]:
