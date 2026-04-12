@@ -1246,7 +1246,8 @@ DK_API uint64_t DK_AbiGetFunction(uint64_t abi_id, void **func_ptr) {
  * Exception / Cache
  * ================================================================ */
 
-DK_API uint64_t DK_ExceptionRecordFree(void *record) {
+/* Weak fallback — real implementation lives in pal_except.c (C9). */
+__attribute__((weak)) DK_API uint64_t DK_ExceptionRecordFree(void *record) {
     DK_TRACE_ENTRY("DK_ExceptionRecordFree", record, 0, 0, 0);
     (void)record;
     return DK_STATUS_SUCCESS;

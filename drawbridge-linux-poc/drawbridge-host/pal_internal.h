@@ -19,6 +19,7 @@
 
 #include <stdint.h>
 #include "drawbridge_types.h"
+#include "pal_thread.h"    /* C6: thread/fiber public API */
 
 /* ============================================================
  * pal_boot.c — to be filled in M2
@@ -33,22 +34,8 @@ void pal_init_abi_table(WINDOWS_LIBOS_PARAMETERS *params);
 void pal_init_libos_params(WINDOWS_LIBOS_PARAMETERS *params);
 
 /* ============================================================
- * pal_thread.c — to be filled in M3
+ * pal_thread.c — see pal_thread.h (included above)
  * ============================================================ */
-/* Source: ELF FUN_001fa9c0 @ analysis/sqlservr_FULL.c:61607 */
-ntum_teb_t *pal_alloc_teb(void);
-
-/* Source: ELF FUN_00252c90 @ analysis/sqlservr_FULL.c:123383 */
-int  pal_set_thread_gs_base(void *teb);
-
-/* Source: ELF FUN_00252e60 @ analysis/sqlservr_FULL.c:123466 */
-ntum_kthread_t *pal_thread_create(void *entry, void *arg);
-
-/* Source: ELF FUN_00253350 @ analysis/sqlservr_FULL.c:123665 */
-void pal_thread_entry_thunk(ntum_kthread_t *kt);
-
-/* Source: ELF FUN_002890a0 @ analysis/sqlservr_FULL.c:156863 */
-void pal_thread_subsystem_init(void);
 
 /* ============================================================
  * pal_abi.c — to be filled in M4
