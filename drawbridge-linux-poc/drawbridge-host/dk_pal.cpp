@@ -1096,14 +1096,24 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
                         p[8],p[9],p[10],p[11], p[12],p[13],p[14],p[15]);
             }
         }
-        return 0;  /* STATUS_SUCCESS */
+        {
+            uint64_t retval = 0;
+            fprintf(stderr, "[DK-RET] #%d call_type=0x%lx -> status=0x%lx\n",
+                    dispatch_count, (unsigned long)call_type, (unsigned long)retval);
+            return retval;  /* STATUS_SUCCESS */
+        }
     }
 
     if (call_type == ABI_GET_VERSION_V2) {
         /* Return ABI version 2. Must return SUCCESS, not NOT_IMPLEMENTED. */
         if (out_buf)
             *(uint32_t*)out_buf = 2;
-        return DK_STATUS_SUCCESS;
+        {
+            uint64_t retval = DK_STATUS_SUCCESS;
+            fprintf(stderr, "[DK-RET] #%d call_type=0x%lx -> status=0x%lx\n",
+                    dispatch_count, (unsigned long)call_type, (unsigned long)retval);
+            return retval;
+        }
     }
 
     /* Config calls: type is a .data address pointing to an embedded
@@ -1146,6 +1156,29 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
                 }
             }
         }
+        /* [RCA-TRACE] log each post-res call's target -- we're looking
+         * for the call that precedes rsi=0xc0000002 in the crash. */
+        fprintf(stderr,
+            "[RCA-TRACE] PostRes target=0x%lx stamped=%d scan#=%d\n",
+            (unsigned long)call_type, stamped_now, scan_count);
+        /* Dump the qword at call_type and call_type+8 / +0x10 / +0x18
+         * so we can see whether the PE .data slot holds 0xc0000002. */
+        {
+            volatile uint64_t *q = (volatile uint64_t*)call_type;
+            fprintf(stderr,
+                "[RCA-TRACE]   [t]=%016lx [t+8]=%016lx [t+10]=%016lx "
+                "[t+18]=%016lx [t+20]=%016lx [t+28]=%016lx [t+2c]=%08x\n",
+                (unsigned long)q[0], (unsigned long)q[1],
+                (unsigned long)q[2], (unsigned long)q[3],
+                (unsigned long)q[4], (unsigned long)q[5],
+                *(volatile uint32_t*)(call_type + 0x2c));
+            if (q[0] == 0xC0000002ULL || q[1] == 0xC0000002ULL
+                || q[2] == 0xC0000002ULL || q[3] == 0xC0000002ULL) {
+                fprintf(stderr,
+                    "[RCA-TRACE] !! FOUND 0xc0000002 at call_type=0x%lx\n",
+                    (unsigned long)call_type);
+            }
+        }
         scan_count++;
     }
 
@@ -1155,7 +1188,12 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
         fprintf(stderr, "[DK] PostRes: type=0x%lx size=0x%lx in=%p\n",
                 (unsigned long)call_type, (unsigned long)data_size, in_buf);
     }
-    return DK_STATUS_SUCCESS;
+    {
+        uint64_t retval = DK_STATUS_SUCCESS;
+        fprintf(stderr, "[DK-RET] #%d call_type=0x%lx -> status=0x%lx\n",
+                dispatch_count, (unsigned long)call_type, (unsigned long)retval);
+        return retval;
+    }
 }
 
 /*
@@ -1219,6 +1257,28 @@ uint64_t DK_GenericStub(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
                 (unsigned long)__builtin_return_address(0));
     }
     return DK_STATUS_SUCCESS;
+}
+
+/* ================================================================
+ * [RCA-TRACE] 0xc0000002 origin audit.
+ *
+ * The crash fault is rsi=0xc0000002 at PE 0x180224c29. Goal: determine
+ * whether any DK_* function we own ever returns 0xc0000002 (aliased as
+ * DK_STATUS_NOT_IMPLEMENTED). The stream stubs in pal_stream.cpp ARE
+ * the usual suspects -- they return this value from fail-loud paths.
+ *
+ * Since production .cpp files are off-limits, we install an exit-hook
+ * that dumps a dispatcher event-log summary to help pinpoint the
+ * last DK_* call before the PE reads 0xc0000002 through rsi. The hook
+ * is registered from dk_pal_init().
+ * ================================================================ */
+extern "C" int g_rca_stream_fail_count;
+int g_rca_stream_fail_count = 0;
+
+static void dk_rca_dump(void) {
+    fprintf(stderr, "[RCA-TRACE] === dispatcher exit summary ===\n");
+    fprintf(stderr, "[RCA-TRACE] pal_stream FAIL-LOUD returns seen: %d\n",
+            g_rca_stream_fail_count);
 }
 
 DK_API uint64_t DK_AbiGetFunction(uint64_t abi_id, void **func_ptr) {

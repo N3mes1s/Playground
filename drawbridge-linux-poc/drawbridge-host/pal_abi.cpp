@@ -136,6 +136,12 @@ static uint32_t pal_abi_lookup_function(void *registry_base,
                                         uint32_t func_id,
                                         void **out_fn)
 {
+    /* Always zero-init out_fn on ALL paths. Callers consuming the
+     * returned pointer while ignoring the status (documented pattern
+     * in several PE paths) must NEVER see stale memory or the NTSTATUS
+     * value itself leaked through out_fn. Ref RCA3/RCA5 audits. */
+    if (out_fn) *out_fn = NULL;
+
     uint8_t *base = (uint8_t *)registry_base;
 
     uint32_t version_idx = (func_id >> 0x18) - 1u;
@@ -256,6 +262,20 @@ void *pal_abi_get_function_v2(uint32_t function_id, uint32_t version)
     void *fn = NULL;
     uint32_t status = pal_abi_lookup_function(&g_abi_function_registry,
                                               function_id, &fn);
+
+    /* Fallback: g_abi_function_registry is not yet populated (the
+     * ELF's DAT_00369f40 static initializer is untranslated, see
+     * TODO @ pal_abi.cpp:74). Route the lookup through the
+     * hand-written DK_AbiGetFunction table in dk_pal.cpp so the
+     * PE doesn't consume STATUS_OBJECT_NAME_NOT_FOUND as a
+     * pointer (ref /tmp/deadlock_rca.md, RCA5 audit). */
+    if (status != 0 || fn == NULL) {
+        /* already inside extern "C" block so plain extern decl is fine */
+        extern uint64_t DK_AbiGetFunction(uint64_t abi_id, void **func_ptr);
+        if (DK_AbiGetFunction((uint64_t)function_id, &fn) == 0 && fn) {
+            status = 0;
+        }
+    }
 
     uint8_t result[PAL_RESULT_SIZE];
     pal_result_set(result, status, "abis/Abi_GetFunction_v2.cpp", 0x18);

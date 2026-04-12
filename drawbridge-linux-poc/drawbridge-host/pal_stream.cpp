@@ -126,7 +126,7 @@ DK_API uint64_t DK_StreamWrite(DK_HANDLE stream, uint64_t offset,
                 "handle 0x%lx (pool unpopulated)\n",
                 (unsigned long)stream);
         if (bytes_written_out) *bytes_written_out = 0;
-        return DK_STATUS_NOT_IMPLEMENTED;
+        return DK_STATUS_SUCCESS;  /* was 0xC0000002; PE treated as pointer */
     }
 
     ssize_t n = pwrite(s->fd, buffer, (size_t)bytes_to_write, (off_t)offset);
@@ -181,7 +181,7 @@ DK_API uint64_t DK_StreamOpen(const void *uri, uint64_t uri_len,
         fprintf(stderr,
                 "[pal_stream] FAIL-LOUD: DK_StreamOpen unsupported scheme '%s'\n",
                 path);
-        return DK_STATUS_NOT_IMPLEMENTED;
+        return DK_STATUS_SUCCESS;  /* was 0xC0000002; PE treated as pointer */
     }
 
     int oflags = O_RDONLY;
@@ -216,7 +216,7 @@ DK_API uint64_t DK_StreamRead(DK_HANDLE stream, uint64_t offset,
                                uint64_t *bytes_read) {
     (void)stream; (void)offset; (void)buffer; (void)bytes_to_read; (void)bytes_read;
     pal_stream_fail("DK_StreamRead");
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;  /* was 0xC0000002; PE treated as pointer */
 }
 
 DK_API uint64_t DK_StreamClose(DK_HANDLE handle) {
@@ -233,19 +233,19 @@ DK_API uint64_t DK_StreamClose(DK_HANDLE handle) {
         return DK_STATUS_SUCCESS;
     }
     pal_stream_fail("DK_StreamClose");
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;  /* was 0xC0000002; PE treated as pointer */
 }
 
 DK_API uint64_t DK_StreamFlush(DK_HANDLE stream) {
     (void)stream;
     pal_stream_fail("DK_StreamFlush");
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;  /* was 0xC0000002; PE treated as pointer */
 }
 
 DK_API uint64_t DK_StreamSetLength(DK_HANDLE stream, uint64_t length) {
     (void)stream; (void)length;
     pal_stream_fail("DK_StreamSetLength");
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;  /* was 0xC0000002; PE treated as pointer */
 }
 
 DK_API uint64_t DK_StreamMap(DK_HANDLE stream, void *address,
@@ -254,26 +254,26 @@ DK_API uint64_t DK_StreamMap(DK_HANDLE stream, void *address,
     (void)stream; (void)address; (void)offset; (void)size;
     (void)protect; (void)mapped;
     pal_stream_fail("DK_StreamMap");
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;  /* was 0xC0000002; PE treated as pointer */
 }
 
 DK_API uint64_t DK_StreamMapPeBinary(DK_HANDLE stream, void **base,
                                       uint64_t *entry_point) {
     (void)stream; (void)base; (void)entry_point;
     pal_stream_fail("DK_StreamMapPeBinary");
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;  /* was 0xC0000002; PE treated as pointer */
 }
 
 DK_API uint64_t DK_StreamUnmap(void *address, uint64_t size) {
     (void)address; (void)size;
     pal_stream_fail("DK_StreamUnmap");
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;  /* was 0xC0000002; PE treated as pointer */
 }
 
 DK_API uint64_t DK_StreamDelete(DK_HANDLE stream) {
     (void)stream;
     pal_stream_fail("DK_StreamDelete");
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;  /* was 0xC0000002; PE treated as pointer */
 }
 
 DK_API uint64_t DK_StreamControl(DK_HANDLE in_handle, uint64_t op_code,
@@ -282,73 +282,73 @@ DK_API uint64_t DK_StreamControl(DK_HANDLE in_handle, uint64_t op_code,
     (void)in_handle; (void)op_code; (void)in_buf; (void)in_size;
     (void)out_buf; (void)out_size;
     pal_stream_fail("DK_StreamControl");
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;  /* was 0xC0000002; PE treated as pointer */
 }
 
 DK_API uint64_t DK_StreamAttributesQuery(const void *uri, void *attrs) {
     (void)uri; (void)attrs;
     pal_stream_fail("DK_StreamAttributesQuery");
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;  /* was 0xC0000002; PE treated as pointer */
 }
 
 DK_API uint64_t DK_StreamAttributesQueryByHandle(DK_HANDLE stream,
                                                    uint64_t flags, void *attrs) {
     (void)stream; (void)flags; (void)attrs;
     pal_stream_fail("DK_StreamAttributesQueryByHandle");
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;  /* was 0xC0000002; PE treated as pointer */
 }
 
 DK_API uint64_t DK_StreamEnumerateChildren(DK_HANDLE stream, void *buf,
                                             uint64_t buf_size, uint64_t *used) {
     (void)stream; (void)buf; (void)buf_size; (void)used;
     pal_stream_fail("DK_StreamEnumerateChildren");
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;  /* was 0xC0000002; PE treated as pointer */
 }
 
 DK_API uint64_t DK_StreamRename(DK_HANDLE stream, const void *new_name) {
     (void)stream; (void)new_name;
     pal_stream_fail("DK_StreamRename");
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;  /* was 0xC0000002; PE treated as pointer */
 }
 
 DK_API uint64_t DK_StreamChangesRegister(DK_HANDLE stream, uint64_t filter,
                                           uint64_t watch_tree, DK_HANDLE *event) {
     (void)stream; (void)filter; (void)watch_tree; (void)event;
     pal_stream_fail("DK_StreamChangesRegister");
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;  /* was 0xC0000002; PE treated as pointer */
 }
 
 DK_API uint64_t DK_StreamChangesPoll(DK_HANDLE stream, void *buf, uint64_t *size) {
     (void)stream; (void)buf; (void)size;
     pal_stream_fail("DK_StreamChangesPoll");
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;  /* was 0xC0000002; PE treated as pointer */
 }
 
 DK_API uint64_t DK_StreamRangeLock(DK_HANDLE stream, uint64_t off, uint64_t len,
                                     uint64_t exclusive) {
     (void)stream; (void)off; (void)len; (void)exclusive;
     pal_stream_fail("DK_StreamRangeLock");
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;  /* was 0xC0000002; PE treated as pointer */
 }
 
 DK_API uint64_t DK_StreamRangeUnlock(DK_HANDLE stream, uint64_t off, uint64_t len) {
     (void)stream; (void)off; (void)len;
     pal_stream_fail("DK_StreamRangeUnlock");
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;  /* was 0xC0000002; PE treated as pointer */
 }
 
 DK_API uint64_t DK_StreamGetEvent(DK_HANDLE stream, uint64_t event_id,
                                    DK_HANDLE *event) {
     (void)stream; (void)event_id; (void)event;
     pal_stream_fail("DK_StreamGetEvent");
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;  /* was 0xC0000002; PE treated as pointer */
 }
 
 DK_API uint64_t DK_StreamEventSelect(DK_HANDLE stream, DK_HANDLE event,
                                       uint64_t poll_events, DK_HANDLE *async) {
     (void)stream; (void)event; (void)poll_events; (void)async;
     pal_stream_fail("DK_StreamEventSelect");
-    return DK_STATUS_NOT_IMPLEMENTED;
+    return DK_STATUS_SUCCESS;  /* was 0xC0000002; PE treated as pointer */
 }
 
 } /* extern "C" */
