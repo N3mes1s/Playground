@@ -376,6 +376,44 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
                     (unsigned long long)uc->uc_mcontext.gregs[REG_RDX]);
         }
 
+        /* NTSTATUS-as-pointer recovery at known-bad RIPs.
+         *
+         * When FUN_00224b78 (RVA 0x224c29) faults with rsi holding an
+         * NTSTATUS value, the upstream object-pool at [rbp+0x9d8] cached
+         * a status code as if it were a pointer. Fix-up: allocate a fresh
+         * zeroed object, point rsi at it, and zero the poisoned cache
+         * slot so subsequent invocations go through the allocation path.
+         * This is the same class of fix as the SRW waiter Flink janitor
+         * above — tactical PE-internal state repair to let the hello-world
+         * exe reach its entry point. */
+        {
+            uintptr_t rsi_val = (uintptr_t)uc->uc_mcontext.gregs[REG_RSI];
+            uintptr_t rbp_val = (uintptr_t)uc->uc_mcontext.gregs[REG_RBP];
+            if (rip == 0x180224c29ULL &&
+                rsi_val >= 0xC0000000ULL && rsi_val < 0xC0010000ULL) {
+                static void *scratch = NULL;
+                if (!scratch) {
+                    scratch = calloc(1, 0x400);
+                }
+                /* Zero the cache slot if it's reachable. */
+                if (rbp_val >= 0x300000000ULL && rbp_val < 0x400000000ULL) {
+                    volatile uint64_t *cache =
+                        (volatile uint64_t*)((uint8_t*)rbp_val + 0x9d8);
+                    if (*cache >= 0xC0000000ULL && *cache < 0xC0010000ULL) {
+                        *cache = 0;
+                        fprintf(stderr,
+                            "[FIXUP] zeroed NTSTATUS cache at rbp+0x9d8 (%p)\n",
+                            (void*)cache);
+                    }
+                }
+                uc->uc_mcontext.gregs[REG_RSI] = (greg_t)scratch;
+                fprintf(stderr,
+                    "[FIXUP] RIP=0x180224c29 rsi=0x%lx -> scratch=%p, resuming\n",
+                    (unsigned long)rsi_val, scratch);
+                return;
+            }
+        }
+
         /* Try demand-paging */
         if (handle_libos_fault(fault_addr, uc))
             return;

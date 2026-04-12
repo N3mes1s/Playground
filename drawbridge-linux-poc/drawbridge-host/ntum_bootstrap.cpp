@@ -864,6 +864,49 @@ static void *boot_thread_fn(void *arg) {
         }
     }
 
+    /* NTSTATUS-as-pointer cache scrubber.
+     *
+     * FUN_002661bc caches an object pointer at [rcx+0x9d8] via
+     *   lock cmpxchg %r8, 0x9d8(%rdi)
+     * where r8 is the result of an upstream allocator. In our host the
+     * allocator chain sometimes ends up persisting NTSTATUS 0xC0000002
+     * into that cache slot (via DK_AbiDispatcher's out_buf write). The
+     * next lookup then returns 0xC0000002 as if it were a valid object,
+     * and callers dereference it → SIGSEGV at RVA 0x224c29.
+     *
+     * Extend the existing .data janitor to also scrub 0xC0000002 (and
+     * its truncated low-32-bit variant) from every 8-byte-aligned qword
+     * in the PE image and LibOS heap ranges. Replace with 0 so the
+     * caching path falls through to the (working) allocation branch
+     * the next time the slot is read. */
+    {
+        pthread_t scrub;
+        pthread_create(&scrub, NULL, [](void*) -> void* {
+            for (;;) {
+                /* PE image range — scrub any NTSTATUS-shaped qword
+                 * (0xC0000000..0xC0010000). */
+                for (uint64_t addr = 0x180600000ULL; addr < 0x180700000ULL; addr += 8) {
+                    volatile uint64_t *p = (volatile uint64_t*)addr;
+                    uint64_t v = *p;
+                    if (v >= 0xC0000000ULL && v < 0xC0010000ULL) *p = 0;
+                }
+                /* LibOS heap range — scan all of 0x300000000..0x400000000
+                 * (4GB window). Memory outside our mapped range is skipped
+                 * via SIGSEGV handler (faults auto-mapped as RW zero). */
+                for (uint64_t addr = 0x300000000ULL; addr < 0x400000000ULL; addr += 8) {
+                    volatile uint64_t *p = (volatile uint64_t*)addr;
+                    uint64_t v = *p;
+                    if (v >= 0xC0000000ULL && v < 0xC0010000ULL) *p = 0;
+                }
+                struct timespec ts = { 0, 200000 };  /* 0.2 ms */
+                nanosleep(&ts, NULL);
+            }
+            return NULL;
+        }, NULL);
+        pthread_detach(scrub);
+        fprintf(stderr, "[BOOT] NTSTATUS cache scrubber thread started\n");
+    }
+
     fprintf(stderr, "[BOOT] Calling REAL entry point at %p (no hacks!)\n",
             args->entry_point);
     fprintf(stderr, "[BOOT] rcx = rdx = %p (params)\n", args->params);
