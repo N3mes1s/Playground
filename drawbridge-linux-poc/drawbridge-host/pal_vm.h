@@ -30,4 +30,26 @@ DK_API uint64_t DK_VirtualMemoryProtect(void *address, uint64_t size,
                                         uint64_t new_protect,
                                         uint64_t *old_protect);
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* ------------------------------------------------------------------
+ * VM subsystem initializer — populates [0x180c00878] with a
+ * VmModuleState so that the PE's consumer at RVA 0x24c3f6 doesn't
+ * NULL-deref.
+ *
+ * Translations:
+ *   pal_vm_init_module_state  <-  FUN_0037f700 (ELF 437482..437753)
+ *   pal_vm_init_wrapper       <-  FUN_00378c00 (ELF 430096..430099)
+ *   pal_vm_compute_head_list  <-  FUN_00379c14 (ELF 431235..431280)
+ * ------------------------------------------------------------------ */
+VmModuleState *pal_vm_init_module_state(void);
+void           pal_vm_init_wrapper(void);
+VmModuleState *pal_vm_compute_head_list(VmModuleState *self);
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif /* PAL_VM_H */

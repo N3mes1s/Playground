@@ -480,6 +480,15 @@ extern "C" int pal_boot_init(void)
     /* Step 22: log kernel version. */
     pal_kernel_version_log();
 
+    /* Step 22b (Wave 4 C4 expansion): populate the VM module global at
+     * [0x180c00878] so the PE consumer at RVA 0x24c3f6 doesn't NULL-
+     * deref.  Translated from ELF FUN_0037f700 / FUN_00378c00 /
+     * FUN_00379c14 — see pal_vm.cpp for the body. */
+    {
+        extern VmModuleState *pal_vm_init_module_state(void);
+        (void)pal_vm_init_module_state();
+    }
+
     return 0;
 }
 

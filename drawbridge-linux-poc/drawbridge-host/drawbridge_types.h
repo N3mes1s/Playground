@@ -760,4 +760,81 @@ typedef struct {
     int               num_exports;
 } win32_shim_dll_t;
 
+/* ================================================================
+ * VmModuleState — global VM subsystem descriptor stored at
+ * [0x180c00878] (DAT_00c00878). Populated by FUN_0037f700 from the
+ * LIBOS_PARAMETERS at [0x180c00820].
+ *
+ * Reverse-engineered from:
+ *   FUN_0037f700  @ /tmp/sqlpal_full.txt:437482..437753  (constructor)
+ *   FUN_00378c00  @ /tmp/sqlpal_full.txt:430096..430099  (wrapper)
+ *   FUN_00379c14  @ /tmp/sqlpal_full.txt:431235..431280  (field-0 init)
+ *   Consumer     @ /tmp/sqlpal_full.txt:87660..87671    (RVA 0x24c3ef+)
+ *
+ * Field offsets observed (all referenced in the decomp above):
+ *   +0x00  head_ptr      — return of FUN_00379c14, self-ref linked list
+ *                          (written at RVA 0x37f9a3 = ELF 37f9a3)
+ *   +0x08  list_next     — self-referencing list (379c3a)
+ *   +0x10  list_prev_0   — zero (379c3e+0x10)
+ *   +0x18  _r0           — zero (379c1a)
+ *   +0x20  _r1           — zero (379c2f)
+ *   +0x28  free_list     — sub-list header { size=0x10, 0, 0, 0 } (379cae)
+ *   +0x48  list_head_48  — self-referencing head (379c3a / 379c27)
+ *   +0x60  list_head_60  — self-referencing head (379c45)
+ *   +0x78  list_head_78  — self-referencing head (379c58)
+ *   +0x88  vm_base       — base of managed VM region (consumer 24c3f6)
+ *   +0x90  list_head_90  — self-referencing head (379c6e)
+ *   +0xa0  size_shift    — shifted by 0x1f to get span (consumer 24c402)
+ *   +0xa8  slot_ptr      — = [c00878] + 8 + r9*0x68 (379c9b)
+ *   +0xb0  flag32        — zero (379cc0)
+ *   +0xd0  struct_tail   — offset-0xd0 stash (read at RVA 0x37f9c1)
+ *   +0xd8  page_count    — r12 (= params->+0x10 value, at 37f997)
+ *   +0xe0  region_end    — base + adjusted size (at 37f990)
+ * ================================================================ */
+
+#pragma pack(push, 1)
+typedef struct VmModuleState {
+    struct VmModuleState *head_ptr;      /* +0x00: set by pal_vm_compute_head_list */
+    uint64_t              list_next;     /* +0x08 */
+    uint64_t              list_prev_0;   /* +0x10 */
+    uint64_t              _r18;          /* +0x18 */
+    uint64_t              _r20;          /* +0x20 */
+    uint32_t              free_list_mark;/* +0x28: 0x10 marker */
+    uint32_t              _pad2c;        /* +0x2C */
+    uint64_t              free_list_a;   /* +0x30 */
+    uint64_t              free_list_b;   /* +0x38 */
+    uint64_t              free_list_c;   /* +0x40 */
+    uint64_t              list48_flink;  /* +0x48 */
+    uint64_t              list48_blink;  /* +0x50 */
+    uint64_t              list48_tail;   /* +0x58 */
+    uint64_t              list60_flink;  /* +0x60 */
+    uint64_t              list60_blink;  /* +0x68 */
+    uint64_t              list60_tail;   /* +0x70 */
+    uint64_t              list78_flink;  /* +0x78 */
+    uint64_t              list78_blink;  /* +0x80 */
+    uint64_t              vm_base;       /* +0x88: managed region base */
+    uint64_t              list90_flink;  /* +0x90 */
+    uint64_t              list90_blink;  /* +0x98 */
+    uint64_t              size_shift;    /* +0xA0: shift-by-0x1f for span */
+    uint64_t              slot_ptr;      /* +0xA8 */
+    uint32_t              flag32;        /* +0xB0 */
+    uint32_t              _padb4;        /* +0xB4 */
+    uint8_t               _gap[0x18];    /* +0xB8..+0xCF */
+    uint64_t              struct_tail;   /* +0xD0 */
+    uint64_t              page_count;    /* +0xD8: r12 from LIBOS_PARAMETERS */
+    uint64_t              region_end;    /* +0xE0: base + adjusted size */
+} VmModuleState;
+#pragma pack(pop)
+
+#ifdef __cplusplus
+static_assert(offsetof(VmModuleState, vm_base)    == 0x88, "vm_base @ 0x88");
+static_assert(offsetof(VmModuleState, size_shift) == 0xA0, "size_shift @ 0xA0");
+static_assert(offsetof(VmModuleState, struct_tail)== 0xD0, "struct_tail @ 0xD0");
+static_assert(offsetof(VmModuleState, page_count) == 0xD8, "page_count @ 0xD8");
+static_assert(offsetof(VmModuleState, region_end) == 0xE0, "region_end @ 0xE0");
+#endif
+
+/* Global slot at [0x180c00878] that FUN_0037f700 writes. */
+#define NTUM_VM_MODULE_STATE_ADDR   0x180c00878ULL
+
 #endif /* DRAWBRIDGE_TYPES_H */
