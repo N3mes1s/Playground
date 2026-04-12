@@ -29,6 +29,7 @@ from briefing.model import LatentBriefingModel
 from briefing.probe import align_probe_to_kv_heads
 from compaction import (
     cache_token_count,
+    clone_cache,
     compact_dynamic_cache,
     random_baseline,
     recent_window_baseline,
@@ -58,6 +59,9 @@ def held_out_nll(
     Measuring the held-out target (rather than the probe itself) makes this
     a fair evaluation: AM is optimised against the probe's attention, so
     scoring probe NLL would be gamed. The target is unseen by AM.
+
+    Caller's ``cache`` is not mutated (HF's DynamicCache.update() is in-place,
+    so we clone before the forward).
     """
     probe_ids = lbm.tokenizer(probe, return_tensors="pt").input_ids.to(lbm.device)
     target_ids = lbm.tokenizer(target, return_tensors="pt", add_special_tokens=False
@@ -65,6 +69,7 @@ def held_out_nll(
 
     # Feed probe + target jointly; the cache is read-only for our NLL purposes.
     full_ids = torch.cat([probe_ids, target_ids], dim=-1)
+    cache = clone_cache(cache) if cache is not None else None
     with torch.no_grad():
         out = lbm.model(input_ids=full_ids, past_key_values=cache,
                         use_cache=True, return_dict=True)

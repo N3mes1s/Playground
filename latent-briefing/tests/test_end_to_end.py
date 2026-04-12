@@ -90,6 +90,44 @@ class TestEndToEndLlama(unittest.TestCase):
         self.assertEqual(n_mid, n_before, "generate() mutated past_cache (1st call)")
         self.assertEqual(n_after, n_before, "generate() mutated past_cache (2nd call)")
 
+    def test_held_out_nll_does_not_mutate_cache(self):
+        """demo.held_out_nll must also clone before forward, since HF's
+        DynamicCache.update() is in-place. Regression for the
+        benchmark-contamination bug."""
+        from demo import held_out_nll
+        from briefing.model import LatentBriefingModel
+        from compaction import cache_token_count
+
+        cfg, inner = self._build()
+        lbm = object.__new__(LatentBriefingModel)
+        lbm.model = inner
+        lbm.device = "cpu"
+        lbm.dtype = torch.float32
+        lbm._num_kv_heads = cfg.num_key_value_heads
+
+        class _Tok:
+            pad_token = "[PAD]"; eos_token = None; eos_token_id = 2
+            def __call__(self, text, return_tensors=None, add_special_tokens=True):
+                torch.manual_seed(abs(hash(text)) % (2 ** 31))
+                T = 4 + (abs(hash(text)) % 4)
+                class R: pass
+                r = R(); r.input_ids = torch.randint(3, cfg.vocab_size, (1, T))
+                return r
+        lbm.tokenizer = _Tok()
+
+        ctx = torch.randint(3, cfg.vocab_size, (1, 20))
+        with torch.no_grad():
+            cache = inner(ctx, use_cache=True).past_key_values
+        n_before = cache_token_count(cache)
+
+        # Two successive held_out_nll calls should not grow the cache.
+        held_out_nll(lbm, cache, "probe a", " target one")
+        self.assertEqual(cache_token_count(cache), n_before,
+                         "held_out_nll mutated cache (1st call)")
+        held_out_nll(lbm, cache, "probe b", " target two")
+        self.assertEqual(cache_token_count(cache), n_before,
+                         "held_out_nll mutated cache (2nd call)")
+
     def test_rope_pipeline_runs_and_compacts(self):
         from briefing.probe import ProbeCapture, align_probe_to_kv_heads
 

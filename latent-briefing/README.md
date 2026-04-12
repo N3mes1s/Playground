@@ -15,7 +15,7 @@ latent-briefing/
 │   ├── probe.py                      Per-layer post-RoPE Q capture via hooks
 │   ├── model.py                      LatentBriefingModel wrapper
 │   └── session.py                    OrchestratorWorkerSession with prefix reuse
-├── tests/                            16 unit tests, no network required
+├── tests/                            17 unit tests, no network required
 │   ├── test_attention_matching.py    AM correctness on synthetic tensors
 │   ├── test_cache.py                 DynamicCache round-trip
 │   ├── test_probe.py                 Probe Q matches model-internal Q bit-exact
@@ -93,13 +93,14 @@ Given a cache `K, V` of shape `[num_heads, n, head_dim]` and a probe `Q` of shap
 
 **Harness invariants:**
 - `generate()` does not mutate the caller's `past_cache` (regression test — HF's DynamicCache updates are in-place, so we clone before stepping).
+- `demo.held_out_nll()` does not mutate the caller's cache either (regression test — same root cause, different call site).
 
 **Real-model end-to-end** (not in the test suite — run via `demo.py` / `/tmp/verify_*.py`):
 - SmolLM2-135M (Llama, 30 layers, GQA 3:1): full pipeline runs, 30/30 layers post-RoPE, AM at 80% savings generates "Alexander the Great" correctly where recent/random produce garbage.
 - Qwen2.5-0.5B (Qwen2, 24 layers, GQA 7:1): full pipeline runs, 24/24 layers post-RoPE, AM at 80% savings ΔNLL=-0.003 (actually slightly lower than full cache) and generates the correct answer; recent/random ΔNLL around +7.
 
 ```
-Ran 16 tests in ~7s. OK.
+Ran 17 tests in ~9s. OK.
 ```
 
 ## What IS NOT verified
@@ -181,13 +182,33 @@ via the per-layer `used_rope` flag from `ProbeCapture`.
   exact attention output. This helps on focused factoid questions; on
   open-ended generation the full cache will generally still win.
 
-### Small-model sanity benchmark (distilgpt2, 4 items, 5 seeds)
+### Small-model benchmark (distilgpt2, 4 items, 5 seeds for random)
 
 `python benchmark.py --model distilgpt2 --ratios 0.2 0.3 0.5 --random-seeds 5`
-is included as a reproducible smoke-test (runs in under a minute on CPU).
-On distilgpt2 the differences between methods are small and noise-dominated
-because distilgpt2 has weak attention structure; it's useful as a pipeline
-test, not a quality benchmark.
+runs in under a minute on CPU:
+
+```
+ratio=0.2 (20% KV kept)
+method     tok_keep   NLL mean    ±std     ΔNLL    acc
+full           100%     1.7723       —   0.0000   50.0%
+AM            19.8%     4.6516  0.7954  +2.8793   25.0%
+recent        19.8%     7.5565  3.2353  +5.7842    0.0%
+random        19.8%     6.0086  1.2891  +4.2363    0.0%
+
+ratio=0.3 (30% KV kept)
+AM            30.4%     3.5781  0.6390  +1.8058   25.0%
+recent        30.4%     5.2238  2.8874  +3.4515    0.0%
+random        30.4%     5.5215  1.6710  +3.7492    0.0%
+
+ratio=0.5 (50% KV kept)
+AM            50.2%     2.8995  0.7620  +1.1272   25.0%
+recent        50.2%     3.8720  2.8410  +2.0997   25.0%
+random        50.2%     3.9591  1.9039  +2.1868   15.0%
+```
+
+On distilgpt2 AM wins NLL at every ratio by margins well outside one sigma of the
+random baseline, and matches or beats the baselines on answer accuracy (though
+n=4 items is not enough for a rigorous accuracy test).
 
 ## Reproducing the paper
 
