@@ -982,12 +982,37 @@ static void *boot_thread_fn(void *arg) {
          * end (above 0x18066a2a8) but still inside the mapped PE region.
          *   new_offset = (0x1806b0000 - 0x180637000) = 0x79000
          * This gives 0xb0000 = 704KB of stack (room = new_top - .data_end). */
-        const uint64_t NEW_STACK_OFFSET = 0x79000;   /* → RSP = 0x1806b0000 */
-        *(volatile uint64_t*)0x180413480ULL = NEW_STACK_OFFSET;
-        fprintf(stderr, "[BOOT] Patched [0x180413480] = 0x%lx (RSP=0x%lx, %luKB stack above .data)\n",
-                (unsigned long)NEW_STACK_OFFSET,
-                (unsigned long)(0x180637000ULL + NEW_STACK_OFFSET),
-                (unsigned long)((0x180637000ULL + NEW_STACK_OFFSET - 0x18066a2a8ULL) / 1024));
+        /* Allocate a dedicated boot stack OUTSIDE PE .data so growth
+         * can never collide with session objects in PE .data (cache
+         * slot at 0x180669788 in particular). This mirrors the ELF's
+         * Phase-5 per-thread-stack allocation pattern
+         * (REAL_BOOT_SEQUENCE.c) but applied to the boot thread too.
+         *
+         * Layout: 2 MB of RW memory at 0x500000000 (far from PE image
+         * at 0x180000000 and LibOS heap at 0x300000000). Top of stack
+         * = 0x500200000; PE entry computes
+         *     RSP = 0x180637000 + [0x180413480]
+         * so we set [0x180413480] = 0x500200000 - 0x180637000 to get
+         * RSP = 0x500200000 on entry. Stack grows DOWN from there. */
+        const uint64_t BOOT_STACK_TOP = 0x500200000ULL;
+        const size_t   BOOT_STACK_SZ  = 0x200000;   /* 2 MB */
+        void *stk = mmap((void*)(BOOT_STACK_TOP - BOOT_STACK_SZ),
+                         BOOT_STACK_SZ,
+                         PROT_READ | PROT_WRITE,
+                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+        if (stk == MAP_FAILED) {
+            fprintf(stderr, "[BOOT] boot-stack mmap FAILED, falling back to default\n");
+        } else {
+            uint64_t new_offset = BOOT_STACK_TOP - 0x180637000ULL;
+            *(volatile uint64_t*)0x180413480ULL = new_offset;
+            fprintf(stderr,
+                "[BOOT] Dedicated boot stack mapped: "
+                "base=%p top=0x%lx size=%zuKB; [0x180413480]=0x%lx "
+                "(outside PE .data, no cache-slot collision)\n",
+                stk, (unsigned long)BOOT_STACK_TOP,
+                (size_t)(BOOT_STACK_SZ / 1024),
+                (unsigned long)new_offset);
+        }
         /* Verify .00cfg is intact */
         uint64_t gc = *(volatile uint64_t*)0x180a00000ULL;
         uint64_t gd = *(volatile uint64_t*)0x180a00008ULL;
