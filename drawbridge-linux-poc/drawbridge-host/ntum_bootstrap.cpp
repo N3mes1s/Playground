@@ -997,6 +997,48 @@ static void *boot_thread_fn(void *arg) {
      * hot path looks like without the raise storm.
      */
     {
+        /* Wave-21: seed [0x180662d28] with a zero-count table so the
+         * loop at RVA 0x20e694 (`mov (%rax), %r9d; cmp 1, r9d; jbe
+         * skip`) reads count=0 and skips the iteration. Without the
+         * seed, the pointer is NULL and the mov faults.
+         * Uses a process-global static bss region so we don't need
+         * to free it. Only writes if slot is still NULL. */
+        static uint64_t wave21_zero_table[8] = {0};
+        volatile uint64_t *p_662d28 = (uint64_t*)0x180662d28ULL;
+        if (*p_662d28 == 0) {
+            *p_662d28 = (uint64_t)&wave21_zero_table[0];
+            fprintf(stderr,
+                "[BOOT] wave-21: seeded [0x180662d28] -> zero-count table @%p\n",
+                (void*)&wave21_zero_table[0]);
+        }
+    }
+
+    {
+        /* Wave-20: stamp [0x1806472bc] = 1 to skip the "debug assert
+         * + fallback FUN_247910" path at RVA 0x208202.
+         * Disasm at 0x208202:
+         *   test r15b, r15b
+         *   je  0x20821f              ; skip if r15b==0
+         *   cmpb 0, [0x6472bc]
+         *   jne 0x20821f              ; skip if byte != 0
+         *   int3                      ; assert: byte should be 1
+         *   cmpb 0, [0x6472bc]
+         *   jne 0x20821f
+         *   call 0x247910             ; fallback invokes raise path
+         * Our SIGTRAP handler patches the int3 to nop, so we re-
+         * check the byte; if it's still 0, we fall into FUN_247910
+         * which is the chain that reached FUN_3877f0 and raised
+         * 0xc0000008. Setting the byte to 1 forces the je/jne to
+         * take the skip branches and avoid 0x247910 entirely. */
+        volatile uint8_t *b_472bc = (uint8_t*)0x1806472bcULL;
+        uint8_t pre = *b_472bc;
+        *b_472bc = 1;
+        fprintf(stderr,
+            "[BOOT] wave-20: [0x1806472bc] %u -> 1 (skips raise-bearing "
+            "fallback at 0x208202)\n", pre);
+    }
+
+    {
         /* Wave-19: patch VM-object validator FUN_0024c38c to always
          * return 0 (success). This is the function that returns
          * STATUS_INVALID_HANDLE (0xc0000008) at default-entry, which

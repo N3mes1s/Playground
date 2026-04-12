@@ -332,9 +332,17 @@ static pal_kevent_t *pal_sync_from_handle(DK_HANDLE h)
 {
     if (h == 0)
         return NULL;
-    pal_kevent_t *ev = (pal_kevent_t *)(uintptr_t)h;
-    if (((uintptr_t)ev & 0x7) != 0)   /* pointer must be 8-byte aligned */
+    uintptr_t hv = (uintptr_t)h;
+    /* Range-check: a real kevent pointer lives in the LibOS kernel
+     * heap. Values outside that range are not valid objects -- some
+     * callers pass raw NTSTATUS or small integers (e.g. 0x90) as
+     * "handles" and the previous version dereferenced ev->magic,
+     * faulting on a random unmapped address. */
+    if (hv < 0x300000000ULL || hv >= 0x400000000ULL)
         return NULL;
+    if ((hv & 0x7) != 0)
+        return NULL;
+    pal_kevent_t *ev = (pal_kevent_t *)hv;
     if (ev->magic != PAL_KEVENT_MAGIC)
         return NULL;
     return ev;

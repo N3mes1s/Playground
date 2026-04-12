@@ -459,6 +459,40 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
              * normal happy path at 0x387858). Preserves legitimate
              * callers of 0x3877f0 since we only redirect when rcx is
              * an NTSTATUS. */
+            /* Wave-20: FUN_0027c304's crash at RVA 0x27c331 with rdx=NULL.
+             * The function is called in loops over session handler
+             * arrays [rbx+0x8a8+N*8]; some slots are NULL. Emulate
+             * a clean return: unwind the 0x398-byte prologue and
+             * jump to the caller's return address. Only fires when
+             * rdx is 0 (the defining feature of this crash). */
+            if (rip == 0x18027c331ULL &&
+                uc->uc_mcontext.gregs[REG_RDX] == 0) {
+                uintptr_t rsp_crash = (uintptr_t)uc->uc_mcontext.gregs[REG_RSP];
+                uintptr_t rsp_in = rsp_crash + 0x398;
+                if (rsp_in >= 0x500000000ULL && rsp_in < 0x501000000ULL) {
+                    uint64_t ret_addr = *(volatile uint64_t*)rsp_in;
+                    uint64_t saved_rbx = *(volatile uint64_t*)(rsp_in + 0x18);
+                    uint64_t saved_rdi = *(volatile uint64_t*)(rsp_in - 0x18);
+                    uint64_t saved_rsi = *(volatile uint64_t*)(rsp_in - 0x10);
+                    uint64_t saved_rbp = *(volatile uint64_t*)(rsp_in - 0x08);
+                    if (ret_addr >= 0x180200000ULL && ret_addr < 0x1803a9aa8ULL) {
+                        static int fix20 = 0;
+                        if (fix20++ < 20)
+                            fprintf(stderr,
+                                "[FIXUP-20] #%d FUN_27c304(rdx=NULL) ret=0x%lx\n",
+                                fix20, (unsigned long)ret_addr);
+                        uc->uc_mcontext.gregs[REG_RIP] = (greg_t)ret_addr;
+                        uc->uc_mcontext.gregs[REG_RSP] = (greg_t)(rsp_in + 8);
+                        uc->uc_mcontext.gregs[REG_RAX] = 0;
+                        uc->uc_mcontext.gregs[REG_RBX] = (greg_t)saved_rbx;
+                        uc->uc_mcontext.gregs[REG_RDI] = (greg_t)saved_rdi;
+                        uc->uc_mcontext.gregs[REG_RSI] = (greg_t)saved_rsi;
+                        uc->uc_mcontext.gregs[REG_RBP] = (greg_t)saved_rbp;
+                        return;
+                    }
+                }
+            }
+
             /* Wave-17: RIP landed in LibOS kernel-heap range (not code).
              * Someone loaded a vtable slot that was stomped with a
              * data-pointer (often pool+0x9d8 cache slot holding an
