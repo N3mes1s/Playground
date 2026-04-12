@@ -12,6 +12,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdio.h>
 #include "pal_internal.h"
 
 /* ============================================================
@@ -337,6 +338,100 @@ extern "C" void pal_init_libos_params(WINDOWS_LIBOS_PARAMETERS *params)
 }
 
 /* ============================================================
+ * pal_boot_write_module_globals
+ *
+ * Translation of the "module-globals init" prologue inside the PE's
+ * boot orchestrator body FUN_00204754 (called from FUN_00204680 via
+ * the trampoline at 0x180204ad0).  Reverse-engineered line-by-line
+ * from /tmp/sqlpal_full.txt:7111..7284 (PE RVAs 0x204754..0x204a62).
+ *
+ * On entry the PE sees rcx=rdx=params.  The six relevant writes and
+ * their decomp RVAs:
+ *
+ *   0x204784: mov %rdx, 0xc00008            -> params
+ *   0x2047a5: mov %r8,  0xc00010            -> *rcx = params->Size
+ *   0x2047d2: mov %rax, 0xc00820            -> *(rdx+0x48) = ParameterBuffer
+ *   0x20486a: mov %rsi, 0xc00880            -> *(rdi+0x60) = ProcessorInfo
+ *   0x204886: mov %ebx, 0xc00888  (u32)     -> *(rdi+0x68) = NumaNodeCount
+ *   0x204a62: mov %rax, 0xc00018            -> ABI callback (HostAbiTable[1]
+ *                                              when the {0x10, 0x38}
+ *                                              header validates, else
+ *                                              the PE-internal default
+ *                                              stub at 0x180208600)
+ *
+ * All writes go through the NTUM_MOD_*_ADDR typed #defines instead
+ * of raw hex so future refactors can move the globals without
+ * scavenging call sites.
+ * ============================================================ */
+#include <stdio.h>   /* for fprintf in the body below */
+
+extern "C" void pal_boot_write_module_globals(WINDOWS_LIBOS_PARAMETERS *params)
+{
+    if (params == NULL) {
+        fprintf(stderr, "[PAL-BOOT] write_module_globals: params=NULL, "
+                        "refusing to populate .data2 fields\n");
+        return;
+    }
+
+    /* RVA 0x204784 — mov %rdx, 0xc00008.  The PE stashes the params
+     * pointer itself so later subsystems can walk the header without
+     * threading it through every call chain. */
+    *(volatile WINDOWS_LIBOS_PARAMETERS **)NTUM_MOD_PARAMS_PTR_ADDR = params;
+
+    /* RVA 0x2047a5 — mov %r8, 0xc00010 where %r8 = *(rcx) and rcx =
+     * params at entry, so this is effectively params->Size (first
+     * qword of the struct).  The PE only performs this store when
+     * rcx is non-null; since we gated the whole function on params
+     * already, the check collapses. */
+    *(volatile uint64_t *)NTUM_MOD_PARAMS_SIZE_ADDR = params->Size;
+
+    /* RVA 0x2047d2 — mov %rax, 0xc00820 where %rax = *(rdx+0x48) =
+     * params->ParameterBuffer.  Every downstream path reaches
+     * params via this global (pal_vm, state-mode enum init, etc.). */
+    *(volatile void **)NTUM_MOD_PARAM_BUFFER_ADDR = params->ParameterBuffer;
+
+    /* RVA 0x20486a — mov %rsi, 0xc00880 where %rsi = *(rdi+0x60) =
+     * params->ProcessorInfo (the host-provided processor-topology
+     * descriptor). */
+    *(volatile void **)NTUM_MOD_PROCESSOR_INFO_ADDR = params->ProcessorInfo;
+
+    /* RVA 0x204886 — mov %ebx, 0xc00888 (32-bit store).  The PE
+     * reads params->NumaNodeCount via `mov 0x68(%rdi), %ebx`. */
+    *(volatile uint32_t *)NTUM_MOD_NUMA_NODE_COUNT_ADDR =
+        params->NumaNodeCount;
+
+    /* RVA 0x204a37..0x204a62 — ABI-callback validation and store.
+     * The PE reads rcx = params->HostAbiTable, checks the
+     * {0x10, 0x38} size/sub-size pair and whether HostAbiTable[8]
+     * is non-null.  Happy path: c00018 = HostAbiTable[8].  Fallback
+     * path: c00018 = 0x180208600 (PE-internal stub). */
+    uint64_t callback_val = NTUM_ABI_CALLBACK_DEFAULT_ADDR;
+    uint32_t *hdr = (uint32_t *)params->HostAbiTable;
+    if (hdr != NULL
+        && hdr[0] == NTUM_ABI_HEADER_SIZE_EXPECT
+        && hdr[1] == NTUM_ABI_HEADER_SUBSIZE_EXPECT) {
+        uint64_t slot8 = *(uint64_t *)((uint8_t *)hdr + 8);
+        if (slot8 != 0) {
+            callback_val = slot8;
+        }
+    }
+    *(volatile uint64_t *)NTUM_MOD_ABI_CALLBACK_ADDR = callback_val;
+
+    fprintf(stderr, "[PAL-BOOT] write_module_globals:\n");
+    fprintf(stderr, "  [c00008] = %p (params)\n", (void *)params);
+    fprintf(stderr, "  [c00010] = 0x%lx (params->Size)\n",
+            (unsigned long)params->Size);
+    fprintf(stderr, "  [c00018] = 0x%lx (ABI callback)\n",
+            (unsigned long)callback_val);
+    fprintf(stderr, "  [c00820] = %p (params->ParameterBuffer)\n",
+            params->ParameterBuffer);
+    fprintf(stderr, "  [c00880] = %p (params->ProcessorInfo)\n",
+            params->ProcessorInfo);
+    fprintf(stderr, "  [c00888] = 0x%x (params->NumaNodeCount)\n",
+            params->NumaNodeCount);
+}
+
+/* ============================================================
  * pal_boot_init  (FUN_00204680 @ analysis/sqlservr_FULL.c:69308-69503)
  *
  * The 22-step PAL boot sequence. Guarded by g_pal_boot_done — runs
@@ -489,7 +584,147 @@ extern "C" int pal_boot_init(void)
         (void)pal_vm_init_module_state();
     }
 
+    /* Step 22c (Wave 5a C2 expansion): populate the image-mode enum
+     * global at [0x180c00868] used by 23 downstream readers.
+     * Depends on [0x180c00820] being initialized (already the case
+     * after ntum_bootstrap + step 22b/pal_vm_init_module_state). */
+    {
+        extern void pal_init_image_mode_state(void);
+        pal_init_image_mode_state();
+    }
+
     return 0;
+}
+
+/* ============================================================
+ * pal_init_image_mode_state  —  translated verbatim from
+ * FUN_0020e4e4 @ ELF RVA 0x20e4e4 (sqlpal_full.txt line 17598).
+ *
+ * Argument signature: () — the function is invoked with no arguments;
+ * its input is the global LIBOS_PARAMETERS pointer at [0x180c00820].
+ *
+ * What it computes: the "image mode" (u32 enum) stored at
+ * [0x180c00868].  Source value is derived from the wide-character
+ * image/OS name embedded in the LIBOS_PARAMETERS structure at
+ * field +0x11c (byte offset of name) / +0x120 (name length in bytes).
+ * The ELF compares the name against the literal wide strings
+ * L"Linux" (length>=10) and L"Windows" (length>=14):
+ *
+ *    c00868 = 1   if name == L"Linux"
+ *    c00868 = 2   if name == L"Windows"
+ *    c00868 = 0   otherwise  (left unchanged — initial .data value)
+ *
+ * After storing c00868 the ELF also performs three suffix operations:
+ *   (a) call FUN_0020e898 — name-formatting into a scratch buffer;
+ *       result ignored except for error-logging (does NOT affect
+ *       c00868).  Out of scope for this wave (logging only).
+ *   (b) call FUN_0020ecd8 twice — the c00890 / c008a0 list-head
+ *       lazy initializer.  The wave4 globals survey marks this
+ *       already-lazy on first read (cmpq $0 guard), so a proactive
+ *       call is harmless but also unnecessary.  Left out of this
+ *       wave; the first c00890/c008a0 reader will initialize them.
+ *   (c) call FUN_0020e6d4 — reloc-table walker populating static
+ *       aggregator fields at 0x662d28+.  Unrelated to c00868; will
+ *       be translated as part of its own wave.
+ *
+ * DK/PAL calls: none.  Every memory access is a plain load from
+ * [0x180c00820]+offset — no DK_* primitive is invoked.
+ * ============================================================ */
+extern "C" void pal_init_image_mode_state(void)
+{
+    /* 20e4ea: mov 0x9f232f(%rip),%rcx   # 0xc00820 */
+    WINDOWS_LIBOS_PARAMETERS *params =
+        *(WINDOWS_LIBOS_PARAMETERS * volatile *)0x180c00820ULL;
+
+    /* 20e4f3/f6: test %rcx,%rcx ; jne 0x20e51d
+     * The NULL branch in the ELF calls a debug-print helper
+     * (FUN_002046d8) and then reloads [c00820].  In our host
+     * [0x180c00820] is populated by ntum_bootstrap before
+     * pal_boot_init runs; if it is NULL here that is a hard
+     * precondition violation, so log and bail. */
+    if (params == nullptr) {
+        fprintf(stderr,
+                "[PAL][IMODE] [0xc00820] is NULL — LIBOS_PARAMETERS "
+                "not staged; leaving [0xc00868] at its current value.\n");
+        return;
+    }
+
+    /* 20e51d..528: mov (%rcx),%r8d ; cmp $0x190,%r8d ; je 0x20e53d
+     * The mismatch branch calls the assertion-logger FUN_002084d0
+     * and continues (non-fatal). */
+    uint32_t params_size = *(uint32_t *)params;
+    if (params_size != 0x190) {
+        fprintf(stderr,
+                "[PAL][IMODE] LIBOS_PARAMETERS[0] = 0x%x (expected 0x190); "
+                "continuing (ELF logs and proceeds).\n",
+                (unsigned)params_size);
+    }
+
+    /* 20e53d..549: mov 0x8(%rcx),%r8d ; cmp $0x1f,%r8d ; je 0x20e55e */
+    uint32_t params_sub = *(uint32_t *)((uint8_t *)params + 8);
+    if (params_sub != 0x1f) {
+        fprintf(stderr,
+                "[PAL][IMODE] LIBOS_PARAMETERS[8] = 0x%x (expected 0x1f); "
+                "continuing (ELF logs and proceeds).\n",
+                (unsigned)params_sub);
+    }
+
+    /* 20e55e: mov 0x120(%rcx),%eax   — name length in bytes
+     * 20e564: mov 0x11c(%rcx),%r8d   — name offset (relative to rcx)
+     * 20e56b: shr $1,%rax            — byte length / 2 = wchar count
+     * 20e56e: add %rcx,%r8           — absolute name pointer
+     * 20e571: cmp $5,%rax ; jb 0x20e59a */
+    uint32_t name_len_bytes = *(uint32_t *)((uint8_t *)params + 0x120);
+    uint32_t name_off       = *(uint32_t *)((uint8_t *)params + 0x11c);
+    uint64_t wchar_count    = (uint64_t)name_len_bytes >> 1;
+    const uint8_t *name_ptr = (const uint8_t *)params + (uint64_t)name_off;
+
+    if (wchar_count >= 5) {
+        /* 20e577..584: movabs $0x75006e0069004c,%rdx ; cmp %rdx,(%r8)
+         * 0x75006e0069004c (LE bytes) = wchar 'L','i','n','u'. */
+        const uint64_t kLinuLE = 0x75006e0069004cULL;
+        /* 20e586/58c: cmpw $0x78,0x8(%r8) — wchar 'x' */
+        if (*(const uint64_t *)name_ptr == kLinuLE &&
+            *(const uint16_t *)(name_ptr + 8) == 0x78) {
+            /* 20e58e: movl $0x1, 0xc00868 */
+            *(volatile uint32_t *)0x180c00868ULL = 1;
+            return;   /* 20e598: jmp 0x20e5e9 — fall through past suffix */
+        }
+    }
+
+    if (wchar_count >= 7) {
+        /* 20e5a0..5b0: movabs $0x64006e00690057,%rax ; sub %rax,(%r8)
+         * 0x64006e00690057 (LE bytes) = wchar 'W','i','n','d'. */
+        const uint64_t kWindLE = 0x64006e00690057ULL;
+        uint64_t w0 = *(const uint64_t *)name_ptr;
+        uint64_t rdx = w0 - kWindLE;
+
+        /* 20e5b2..be: mov 0x8(%r8),%edx ; sub $0x77006f,%rdx
+         * 0x77006f (LE) = wchar 'o','w'. */
+        if (rdx == 0) {
+            uint32_t w4 = *(const uint32_t *)(name_ptr + 8);
+            rdx = (uint64_t)w4 - 0x77006fULL;
+            if (rdx == 0) {
+                /* 20e5c0..cd: movzwl 0xc(%r8),%edx ; sub $0x73,%rdx
+                 * 0x73 = wchar 's'. */
+                uint32_t w6 = *(const uint16_t *)(name_ptr + 12);
+                rdx = (uint64_t)w6 - 0x73ULL;
+            }
+        }
+
+        /* 20e5d0..e3: eax = [c00868]
+         *             test %rdx,%rdx
+         *             cmove %r8d(=2),%eax
+         *             mov %eax, [c00868]
+         * Semantics: if rdx==0 (match), write 2; otherwise re-write
+         * the current value (idempotent no-op).  A write still
+         * happens unconditionally. */
+        uint32_t cur = *(volatile uint32_t *)0x180c00868ULL;
+        if (rdx == 0) cur = 2;
+        *(volatile uint32_t *)0x180c00868ULL = cur;
+    }
+
+    /* Suffix (20e5e9..6d1) intentionally omitted — see header comment. */
 }
 
 /* ============================================================

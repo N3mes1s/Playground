@@ -837,4 +837,59 @@ static_assert(offsetof(VmModuleState, region_end) == 0xE0, "region_end @ 0xE0");
 /* Global slot at [0x180c00878] that FUN_0037f700 writes. */
 #define NTUM_VM_MODULE_STATE_ADDR   0x180c00878ULL
 
+/* ================================================================
+ * NtumImageMode — u32 enum stored at [0x180c00868].
+ *
+ * Written by FUN_0020e4e4 based on the wide-character name embedded
+ * in the LIBOS_PARAMETERS buffer at [0x180c00820] (fields +0x11c /
+ * +0x120).  Read by 23 sites across the PE (cmpl $1 / cmpl $2).
+ *
+ *   0 = unknown / other        (default: no match)
+ *   1 = Linux    (L"Linux"  matched at +0x11c, length >= 10 bytes)
+ *   2 = Windows  (L"Windows" matched, length >= 14 bytes)
+ * ================================================================ */
+typedef enum {
+    NTUM_IMAGE_MODE_UNKNOWN = 0,
+    NTUM_IMAGE_MODE_LINUX   = 1,
+    NTUM_IMAGE_MODE_WINDOWS = 2,
+} NtumImageMode;
+
+/* Global slot at [0x180c00868] that FUN_0020e4e4 writes. */
+#define NTUM_IMAGE_MODE_ADDR        0x180c00868ULL
+
+/* ================================================================
+ * Module-globals written by the PE's boot orchestrator body
+ * FUN_00204754 (called from FUN_00204680's trampoline at 0x204ad0).
+ *
+ * Reverse-engineered from /tmp/sqlpal_full.txt:7111..7284 (PE RVAs
+ * 0x204754..0x204a62).  The orchestrator receives (rcx=params,
+ * rdx=params) and writes six .data2 fields that every downstream
+ * subsystem then reads.  Semantic summary (one line per field):
+ *
+ *   [c00008] = params pointer                 (rdx at entry)
+ *   [c00010] = params->Size snapshot          (*(rcx) when rcx nonnull)
+ *   [c00018] = params->HostAbiTable[1]        (callback slot, or fallback)
+ *   [c00820] = params->ParameterBuffer        (*(rdx+0x48))
+ *   [c00880] = params->ProcessorInfo          (*(rdx+0x60))
+ *   [c00888] = params->NumaNodeCount          (*(rdx+0x68), u32)
+ * ================================================================ */
+
+#define NTUM_MOD_PARAMS_PTR_ADDR       0x180c00008ULL  /* c00008 */
+#define NTUM_MOD_PARAMS_SIZE_ADDR      0x180c00010ULL  /* c00010 */
+#define NTUM_MOD_ABI_CALLBACK_ADDR     0x180c00018ULL  /* c00018 */
+#define NTUM_MOD_PARAM_BUFFER_ADDR     0x180c00820ULL  /* c00820 */
+#define NTUM_MOD_PROCESSOR_INFO_ADDR   0x180c00880ULL  /* c00880 */
+#define NTUM_MOD_NUMA_NODE_COUNT_ADDR  0x180c00888ULL  /* c00888, u32 */
+
+/* HostAbiTable ABI-header layout the orchestrator validates at
+ * PE RVA 0x204a37..0x204a62 before trusting the callback slot:
+ *   HostAbiTable[0]  == 0x10  (size)
+ *   HostAbiTable[4]  == 0x38  (sub-size)
+ *   HostAbiTable[8]  != 0     -> used as c00018 callback
+ * If any check fails, c00018 falls back to a PE-internal default
+ * stub (RVA 0x208600, absolute 0x180208600). */
+#define NTUM_ABI_HEADER_SIZE_EXPECT     0x10u
+#define NTUM_ABI_HEADER_SUBSIZE_EXPECT  0x38u
+#define NTUM_ABI_CALLBACK_DEFAULT_ADDR  0x180208600ULL
+
 #endif /* DRAWBRIDGE_TYPES_H */
