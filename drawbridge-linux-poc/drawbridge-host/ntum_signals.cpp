@@ -934,82 +934,92 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
             /* Fall through to the generic crash dump by not returning. */
             _exit(200);
         }
-        if (rip == 0x18037d073ULL) {
-            /* Wave-39 diagnostic: trap post-FUN_0x37f128 return. rax =
-             * slot returned by allocator; scope was [vms+0xa8]. Dump
-             * everything so we can diagnose why slot->state != 2. */
-            uint64_t rax_v = (uint64_t)uc->uc_mcontext.gregs[REG_RAX];
-            uint64_t r13_v = (uint64_t)uc->uc_mcontext.gregs[REG_R13];
+        if (rip == 0x18037d067ULL) {
+            /* Wave-40: allocator-call intercept. The PE's
+             * FUN_0x37f128 is an intra-scope slot allocator; it works
+             * correctly for the kernel-heap scope at [vms+0xa8] but
+             * produces wrong slot[+0x48] for the PE image range which
+             * must be registered against a different scope.
+             *
+             * Strategy: if the caller's request is for the PE image
+             * range (indicated by req_base at [rbp+0x50] == PE base),
+             * return a pre-built host-owned descriptor whose fields
+             * satisfy all downstream checks. Otherwise, re-invoke the
+             * real allocator so kernel-heap allocations still work.
+             *
+             * Request args at this trap (inside 37cf68's frame):
+             *   rcx = [vms+0xa8] scope
+             *   rdx = vms (r13)
+             * Local frame holds:
+             *   [rbp+0x50] = requested base VA (input rdx to 37cf68)
+             *   [rbp+0x58] = aligned size (set at 37cf9c)
+             * After this "call", the code continues at 0x37d06c:
+             *   37d06c: mov %rax, %rdi       ; rdi = slot
+             *   37d06f: mov %rax, -0x28(%rbp)
+             *   37d073: cmpl $0x2, 0x80(%rax) ; requires slot[+0x80]=2
+             *   37d084: ... call 0x3804b8(desc, &reqbase, &size)
+             */
             uint64_t rbp_v = (uint64_t)uc->uc_mcontext.gregs[REG_RBP];
-            fprintf(stderr,
-                "[WAVE-39] POST-37f128 trap: rax(slot)=0x%lx r13(vms)=0x%lx "
-                "rbp=0x%lx\n",
-                (unsigned long)rax_v, (unsigned long)r13_v,
-                (unsigned long)rbp_v);
+            uint64_t rcx_v = (uint64_t)uc->uc_mcontext.gregs[REG_RCX];
+            uint64_t rdx_v = (uint64_t)uc->uc_mcontext.gregs[REG_RDX];
+            uint64_t req_base = *(uint64_t*)(rbp_v + 0x50);
+            uint64_t req_size = *(uint64_t*)(rbp_v + 0x58);
 
-            /* Dump slot (descriptor) fields */
-            if (rax_v && rax_v > 0x100000000ULL) {
-                const uint64_t *d = (const uint64_t*)rax_v;
+            static bool pe_desc_logged = false;
+            if (!pe_desc_logged) {
                 fprintf(stderr,
-                    "[WAVE-39] slot bytes [+0x00..+0xa0]:\n"
-                    "  +00=%016lx +08=%016lx +10=%016lx +18=%016lx\n"
-                    "  +20=%016lx +28=%016lx +30=%016lx +38=%016lx\n"
-                    "  +40=%016lx +48=%016lx +50=%016lx +58=%016lx\n"
-                    "  +60=%016lx +68=%016lx +70=%016lx +78=%016lx\n"
-                    "  +80=%016lx +88=%016lx +90=%016lx +98=%016lx\n",
-                    d[0], d[1], d[2], d[3],
-                    d[4], d[5], d[6], d[7],
-                    d[8], d[9], d[10], d[11],
-                    d[12], d[13], d[14], d[15],
-                    d[16], d[17], d[18], d[19]);
+                    "[WAVE-40] 37d067 trap: scope(rcx)=0x%lx vms(rdx)=0x%lx "
+                    "req_base=0x%lx req_size=0x%lx\n",
+                    (unsigned long)rcx_v, (unsigned long)rdx_v,
+                    (unsigned long)req_base, (unsigned long)req_size);
+                pe_desc_logged = true;
             }
 
-            /* Dump scope = [vms+0xa8] */
-            if (r13_v && r13_v > 0x100000000ULL) {
-                uint64_t scope_ptr = *(uint64_t*)(r13_v + 0xa8);
-                fprintf(stderr,
-                    "[WAVE-39] vms+0xa8 (scope ptr) = 0x%lx\n",
-                    (unsigned long)scope_ptr);
-                if (scope_ptr > 0x100000000ULL) {
-                    const uint64_t *s = (const uint64_t*)scope_ptr;
+            if (req_base == 0x180000000ULL) {
+                /* Build/return PE-image descriptor.
+                 * FUN_0x3804b8 expects:
+                 *   desc[+0x48] = base (<= req_base)
+                 *   desc[+0x50] = size (req_end must fit)
+                 *   desc[+0x58] = self-ref
+                 *   desc[+0x60] = vms back-ref
+                 *   desc[+0x68] = bitmap ptr (zeroed = all free)
+                 *   desc[+0x70] = 0x8000 (cap pages)
+                 *   desc[+0x78] = used pages counter
+                 *   desc[+0x80] = 2 (state=reserved)
+                 * After 3804b8 succeeds, used_pages is incremented. */
+                static uint8_t pe_img_desc[0x100]
+                    __attribute__((aligned(16))) = {0};
+                static uint64_t pe_img_bitmap[0x200]
+                    __attribute__((aligned(16))) = {0};
+                if (*(uint32_t*)(pe_img_desc + 0x80) == 0) {
+                    *(uint64_t*)(pe_img_desc + 0x48) = 0x180000000ULL;
+                    *(uint64_t*)(pe_img_desc + 0x50) = 0x80000000ULL;
+                    *(uint64_t*)(pe_img_desc + 0x58) = (uint64_t)pe_img_desc;
+                    *(uint64_t*)(pe_img_desc + 0x60) = rdx_v;  /* vms */
+                    *(uint64_t*)(pe_img_desc + 0x68) = (uint64_t)pe_img_bitmap;
+                    *(uint64_t*)(pe_img_desc + 0x70) = 0x8000ULL;
+                    *(uint32_t*)(pe_img_desc + 0x80) = 2;
                     fprintf(stderr,
-                        "[WAVE-39] scope bytes [+0x00..+0x60]:\n"
-                        "  +00=%016lx +08=%016lx +10=%016lx +18=%016lx\n"
-                        "  +20=%016lx +28=%016lx +30=%016lx +38=%016lx\n"
-                        "  +40=%016lx +48=%016lx +50=%016lx +58=%016lx\n",
-                        s[0], s[1], s[2], s[3],
-                        s[4], s[5], s[6], s[7],
-                        s[8], s[9], s[10], s[11]);
+                        "[WAVE-40] built PE-image descriptor @%p "
+                        "covering [0x180000000, +0x80000000)\n",
+                        (void*)pe_img_desc);
                 }
-                /* Dump around vms+0xa0..+0xd0 for context */
-                const uint64_t *v = (const uint64_t*)r13_v;
-                fprintf(stderr,
-                    "[WAVE-39] vms [+0x00..+0xe0]:\n"
-                    "  +00=%016lx +08=%016lx +10=%016lx +18=%016lx\n"
-                    "  +20=%016lx +28=%016lx +30=%016lx +38=%016lx\n"
-                    "  +40=%016lx +48=%016lx +50=%016lx +58=%016lx\n"
-                    "  +60=%016lx +68=%016lx +70=%016lx +78=%016lx\n"
-                    "  +80=%016lx +88=%016lx +90=%016lx +98=%016lx\n"
-                    "  +a0=%016lx +a8=%016lx +b0=%016lx +b8=%016lx\n"
-                    "  +c0=%016lx +c8=%016lx +d0=%016lx +d8=%016lx\n"
-                    "  +e0=%016lx +e8=%016lx\n",
-                    v[0], v[1], v[2], v[3],
-                    v[4], v[5], v[6], v[7],
-                    v[8], v[9], v[10], v[11],
-                    v[12], v[13], v[14], v[15],
-                    v[16], v[17], v[18], v[19],
-                    v[20], v[21], v[22], v[23],
-                    v[24], v[25], v[26], v[27],
-                    v[28], v[29]);
+                /* Set rax = &pe_img_desc and skip past the 5-byte call. */
+                uc->uc_mcontext.gregs[REG_RAX] = (greg_t)(uint64_t)pe_img_desc;
+                uc->uc_mcontext.gregs[REG_RIP] = 0x18037d06cULL;
+                return;
             }
 
-            /* Dump input args [rbp+0x50]=reserve_base, [rbp+0x58]=aligned_size */
-            fprintf(stderr,
-                "[WAVE-39] rbp dump: [+0x50]=0x%lx (req_base) [+0x58]=0x%lx (size)\n",
-                (unsigned long)*(uint64_t*)(rbp_v + 0x50),
-                (unsigned long)*(uint64_t*)(rbp_v + 0x58));
-
-            _exit(210);
+            /* Non-PE request: forward to real FUN_0x37f128.
+             * Emulate `call 0x37f128` by pushing return addr 0x37d06c
+             * and setting rip = 0x37f128. Args (rcx, rdx) are already
+             * in place per ABI. */
+            uint64_t rsp_now = (uint64_t)uc->uc_mcontext.gregs[REG_RSP];
+            rsp_now -= 8;
+            *(uint64_t*)rsp_now = 0x18037d06cULL;
+            uc->uc_mcontext.gregs[REG_RSP] = (greg_t)rsp_now;
+            uc->uc_mcontext.gregs[REG_RIP] = 0x18037f128ULL;
+            return;
         }
         if (rip == 0x1802962a8ULL) {
             /* RtlDispatchException entry */

@@ -1079,27 +1079,35 @@ static void *boot_thread_fn(void *arg) {
     }
 
     {
-        /* Wave-39 diagnostic: trap right after FUN_0x37f128 returns,
-         * at 0x37d073. Sequence:
-         *   37d05d: mov 0xa8(%r13), %rcx   ; rcx = [vms+0xa8] (scope)
-         *   37d064: mov %r13, %rdx          ; rdx = vms
-         *   37d067: call 0x37f128            ; allocator, returns slot in rax
-         *   37d06c: mov %rax, %rdi          ; rdi saves slot
-         *   37d06f: mov %rax, -0x28(%rbp)
-         *   37d073: cmpl $0x2, 0x80(%rax)   ; CHECK: slot->state == 2 ?
-         *   37d07a: je  0x37d084
-         *   37d07c: mov $0xc0000018, %r15d  ; CONFLICT path
+        /* Wave-40: intercept the allocator call at 0x37d067 with ud2.
+         * Wave-39's diagnostic established:
+         *   - [vms+0xa8] is a KERNEL HEAP scope (va_base=0x300000000000),
+         *     never contains the PE image range [0x180000000,+0x01000000).
+         *   - FUN_0x37f128 is a descriptor allocator that reads
+         *     scope[+0x18] and produces slot[+0x48] = index<<0x1f + scope[+0x18].
+         *   - For a PE-image request the allocator returns slot[+0x48]
+         *     = 0x3fff80000000 (wrong) → FUN_0x3804b8 fails 0xc0000018.
+         * Fix: instead of calling the PE's allocator for the PE-image
+         * range, supply a pre-built host-side descriptor whose [+0x48]
+         * really does cover [0x180000000, +0x01000000). The SIGILL
+         * handler emulates the call by:
+         *   - checking rdx (= vms from caller) and the request at
+         *     [rbp+0x50]=0x180000000,
+         *   - returning rax = &pe_image_descriptor,
+         *   - advancing rip past the 5-byte call (to 0x37d06c).
+         * For any other request (e.g. kernel heap), we DO want the
+         * real allocator — the handler forwards: do the call manually
+         * by setting rip to FUN_0x37f128 entry and pushing the return
+         * address 0x37d06c on the stack.
          *
-         * Bytes at 0x37d073 are `83 b8 80 00 00 00 02` (7 bytes). Replace
-         * first two with `0f 0b` (ud2); remaining 5 bytes are dead tail.
-         * Our SIGILL handler logs slot fields, scope fields, vms fields,
-         * then _exit so we get a clean dump. */
-        volatile uint8_t *p_cmp = (uint8_t*)0x18037d073ULL;
-        if (p_cmp[0] == 0x83 && p_cmp[1] == 0xb8) {
-            p_cmp[0] = 0x0f;
-            p_cmp[1] = 0x0b;
+         * Bytes at 0x37d067 are `e8 bc 20 00 00` (5 bytes, call rel32).
+         * Replace first two with `0f 0b` (ud2). */
+        volatile uint8_t *p_call = (uint8_t*)0x18037d067ULL;
+        if (p_call[0] == 0xe8) {
+            p_call[0] = 0x0f;
+            p_call[1] = 0x0b;
             fprintf(stderr,
-                "[BOOT] wave-39: trapped post-37f128 @0x37d073 (cmpl 2, state)\n");
+                "[BOOT] wave-40: trapped allocator call @0x37d067\n");
         }
     }
 
