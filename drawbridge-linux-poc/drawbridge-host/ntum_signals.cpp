@@ -392,8 +392,16 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
             uintptr_t rbp_val = (uintptr_t)uc->uc_mcontext.gregs[REG_RBP];
             if (rip == 0x180224c29ULL &&
                 rsi_val >= 0xC0000000ULL && rsi_val < 0xC0010000ULL) {
-                /* Async-signal-unsafe to calloc here; use static BSS. */
-                static uint8_t scratch_buf[0x400] = {0};
+                /* Async-signal-unsafe to calloc here; use static BSS.
+                 * Size increased to 0x10000 because the PE's FUN_00224b78
+                 * continues past our fixup and uses rsi as a pool base:
+                 *   rdi = ((r15+rdx) << 6) + rsi
+                 * With a 0x400 buffer only 16 slots were reachable; at
+                 * 0x10000 we cover 1024 slots — enough for typical boot-
+                 * time pool indices. Still zero-initialised so the PE
+                 * finds NULL LIST_ENTRY and returns through the
+                 * je 0x224cb7 early-exit path. */
+                static uint8_t scratch_buf[0x10000] = {0};
                 void *scratch = scratch_buf;
                 /* Zero the cache slot if it's reachable. */
                 if (rbp_val >= 0x300000000ULL && rbp_val < 0x400000000ULL) {
