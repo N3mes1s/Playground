@@ -155,28 +155,60 @@ static uint64_t pool_allocator_fn_impl(void *pool_obj, uint64_t alloc_size,
 
     uint8_t *r = (uint8_t*)result;
 
-    /* Stack-descriptor sentinel at +0x10 (same as dk_pal.c).  The PE
-     * reads this as the owning thread's stack descriptor when it treats
-     * the allocation as a KTHREAD-like object. */
+    /* Stack-descriptor sentinel at +0x10 (legacy from dk_pal.c) was
+     * overwritten by Wave-19: the PE's object validator at RVA
+     * 0x24c38c checks:
+     *   cmpl $0xdb64db64, (rbx+0x10)
+     * as the "valid VM object" magic header (low 32 bits of the qword
+     * at +0x10). Stamping the stack descriptor broke this for every
+     * pool object and made the validator return STATUS_INVALID_HANDLE
+     * (0xc0000008) from the wait primitive at FUN_387650 -> first
+     * RtlRaiseStatus fires with that NTSTATUS, which is the head of
+     * the whole raise-recursion cascade.
+     *
+     * Fix: stamp magic 0xDB64DB64 at [r+0x10] (low 32 bits) and put
+     * the stack descriptor pointer at [r+0x14] (high 32 bits of the
+     * qword) -- a consumer that reads the full qword still gets a
+     * recognisable-looking composite; one that only reads the low 32
+     * (like 0x24c38c) now sees the magic. Kernel-stack desc prev init
+     * retained so any +0x30 consumer still finds NTUM_STACK_TOP. */
     uint8_t *sd = (uint8_t*)POOL_STACK_DESC_ADDR;
     if (*(uint64_t*)(sd + 0x30) == 0) {
         *(uint64_t*)(sd + 0x30) = NTUM_STACK_TOP;
     }
-    *(uint64_t*)(r + POOL_STACK_DESC_OFF) = (uint64_t)sd;
+    /* Keep it simple: just stamp the 32-bit magic (high 32 = 0).
+     * If any consumer treats the qword as a pointer and dereferences
+     * it, we'll find that separately. The validator only reads the
+     * low 32 bits via `cmpl`. */
+    (void)sd;
+    *(uint64_t*)(r + POOL_STACK_DESC_OFF) = 0xDB64DB64ULL;
 
-    /* Self-referencing LIST_ENTRY heads.  Only do this if the request
-     * is large enough to actually contain the two list heads (each is
-     * two pointers wide, so we need at least 0x30 bytes of payload).
-     * For the tiny (size==2) chained-node requests there is nothing
-     * to initialise beyond the zero fill. */
-    if (aligned >= (POOL_LIST_HEAD_B_OFF + 0x10)) {
-        uint64_t *lh_a = (uint64_t*)(r + POOL_LIST_HEAD_A_OFF);
-        uint64_t *lh_b = (uint64_t*)(r + POOL_LIST_HEAD_B_OFF);
-        lh_a[0] = (uint64_t)lh_a;   /* Flink -> self */
-        lh_a[1] = (uint64_t)lh_a;   /* Blink -> self */
-        lh_b[0] = (uint64_t)lh_b;   /* Flink -> self */
-        lh_b[1] = (uint64_t)lh_b;   /* Blink -> self */
-    }
+    /* Wave-19: DO NOT self-reference [r+0x18]/[r+0x28].
+     *
+     * Original Wave-6 rationale said 0x1d0-class objects use these
+     * offsets as LIST_ENTRY anchors and leaving them NULL caused the
+     * Flink/Blink walker at 0x180226ad3 to deadlock.
+     *
+     * Newer observation (Wave-19, from reverse-engineering
+     * FUN_00387650 / FUN_0024c38c): [r+0x18] is a secondary-object
+     * pointer, and the wait primitive at 0x387650 EXPECTS it to be 0
+     * on first use so it can call FUN_388350 to perform proper
+     * sub-object allocation with correct DB64DB64 magic. Our self-ref
+     * stamp bypassed that initialiser path: the PE then fed pool+0x18
+     * into the VM validator at 0x24c38c, which checks
+     *   cmpl 0xdb64db64, (rbx+0x10)
+     * Since [pool+0x28] was also self-ref (pool+0x28 address, low 32
+     * just a pool offset), the magic check failed and the validator
+     * returned STATUS_INVALID_HANDLE (0xc0000008) -- the head of the
+     * whole raise-recursion cascade.
+     *
+     * Leave both offsets at their zero-fill default so FUN_387650
+     * performs its proper allocation flow. If anything actually
+     * needed the waiter-list anchors at +0x18/+0x28, we'll see it as
+     * a new, different crash rather than this synthetic validator
+     * failure.
+     */
+    (void)aligned;
 
     /* TODO(unk_vtable): the ELF allocator is suspected to also stamp a
      * type-registry vtable pointer at +0x00 for pool objects produced

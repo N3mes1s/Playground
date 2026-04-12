@@ -459,6 +459,67 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
              * normal happy path at 0x387858). Preserves legitimate
              * callers of 0x3877f0 since we only redirect when rcx is
              * an NTSTATUS. */
+            /* Wave-17: RIP landed in LibOS kernel-heap range (not code).
+             * Someone loaded a vtable slot that was stomped with a
+             * data-pointer (often pool+0x9d8 cache slot holding an
+             * object pointer rather than a function pointer). Emulate
+             * a "return 0" from the indirect call: pop the saved
+             * return address from the stack into RIP, advance RSP by
+             * 8, zero RAX. Log the caller for later analysis. */
+            if (rip >= 0x300000000ULL && rip < 0x400000000ULL) {
+                uintptr_t rsp_now = (uintptr_t)uc->uc_mcontext.gregs[REG_RSP];
+                /* Scan forward in the boot stack for the first PE-range
+                 * return address. Sometimes [RSP] itself is 0 because
+                 * the indirect call was via jmp (tail-call) or the
+                 * caller allocated locals before calling. */
+                uint64_t saved_ret = 0;
+                uintptr_t ret_at = 0;
+                /* Scan for a return address that (a) is PE-range, (b)
+                 * is preceded by a 0xe8 call-rel32 opcode (i.e. is
+                 * actually a post-CALL return slot not stale data),
+                 * and (c) is OUTSIDE the broken FUN_3877f0 body
+                 * (0x180387700..0x180387a00) so we unwind past the
+                 * entire stuck function rather than back into its
+                 * inner loop. */
+                if (rsp_now >= 0x500000000ULL && rsp_now < 0x501000000ULL) {
+                    for (uintptr_t p = rsp_now; p < rsp_now + 0x800 &&
+                         p < 0x501000000ULL; p += 8) {
+                        uint64_t v = *(volatile uint64_t*)p;
+                        if (v < 0x180200000ULL || v >= 0x1803a9aa8ULL)
+                            continue;
+                        /* Skip anything inside FUN_3877f0 body -- that
+                         * function is the one we're escaping. */
+                        if (v >= 0x180387700ULL && v < 0x180387a00ULL)
+                            continue;
+                        /* Verify call-rel32 precedes: byte at (v-5)
+                         * should be 0xe8. */
+                        uint8_t pre = *(volatile uint8_t*)(v - 5);
+                        if (pre != 0xe8)
+                            continue;
+                        saved_ret = v;
+                        ret_at = p;
+                        break;
+                    }
+                }
+                static int fix17 = 0;
+                if (fix17++ < 30) {
+                    fprintf(stderr,
+                        "[FIXUP-17] #%d indirect-call-into-heap RIP=0x%lx "
+                        "RSP=0x%lx -> found retaddr 0x%lx at [rsp+0x%lx]\n",
+                        fix17, (unsigned long)rip,
+                        (unsigned long)rsp_now,
+                        (unsigned long)saved_ret,
+                        (unsigned long)(ret_at - rsp_now));
+                }
+                if (saved_ret) {
+                    uc->uc_mcontext.gregs[REG_RIP] = (greg_t)saved_ret;
+                    uc->uc_mcontext.gregs[REG_RSP] = (greg_t)(ret_at + 8);
+                    uc->uc_mcontext.gregs[REG_RAX] = 0;
+                    return;
+                }
+                /* Can't locate caller; fall through to crash. */
+            }
+
             if (rip == 0x180387809ULL &&
                 rcx_val >= 0xC0000000ULL && rcx_val < 0xC0010000ULL) {
                 uc->uc_mcontext.gregs[REG_RIP] = 0x180387858;
@@ -599,6 +660,51 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
                     gs_val ? (unsigned long)*(uint64_t*)((uint8_t*)gs_val + 0x1478) : 0,
                     (unsigned long)*(volatile uint64_t*)0x18063b218ULL);
         }
+    }
+
+    /* ---- SIGILL: wave-18 ud2 traps at RtlRaiseStatus/RtlDispatchException entry.
+     * Log the NTSTATUS (ECX) and caller return address, then emulate
+     * a return. For RtlDispatchException, return al=1 (pretend
+     * handled). For RtlRaiseStatus, return with rax unchanged. */
+    if (sig == SIGILL) {
+        uintptr_t rsp_now = (uintptr_t)uc->uc_mcontext.gregs[REG_RSP];
+        uint64_t caller = 0;
+        if (rsp_now >= 0x500000000ULL && rsp_now < 0x501000000ULL)
+            caller = *(volatile uint64_t*)rsp_now;
+
+        if (rip == 0x1802962a8ULL) {
+            /* RtlDispatchException entry */
+            static int disp_count = 0;
+            if (disp_count++ < 10)
+                fprintf(stderr,
+                    "[WAVE-18] #%d RtlDispatchException at ud2; "
+                    "caller=0x%lx rcx=0x%lx rdx=0x%lx\n",
+                    disp_count, (unsigned long)caller,
+                    (unsigned long)uc->uc_mcontext.gregs[REG_RCX],
+                    (unsigned long)uc->uc_mcontext.gregs[REG_RDX]);
+            uc->uc_mcontext.gregs[REG_RAX] = 1;  /* handled */
+            uc->uc_mcontext.gregs[REG_RIP] = (greg_t)caller;
+            uc->uc_mcontext.gregs[REG_RSP] = (greg_t)(rsp_now + 8);
+            return;
+        }
+        if (rip == 0x1802a84f8ULL) {
+            /* RtlRaiseStatus entry — ECX = NTSTATUS */
+            static int raise_count = 0;
+            if (raise_count++ < 20) {
+                fprintf(stderr,
+                    "[WAVE-18] #%d RtlRaiseStatus(NTSTATUS=0x%lx) "
+                    "caller=0x%lx rdx=0x%lx r8=0x%lx\n",
+                    raise_count,
+                    (unsigned long)uc->uc_mcontext.gregs[REG_RCX] & 0xffffffffUL,
+                    (unsigned long)caller,
+                    (unsigned long)uc->uc_mcontext.gregs[REG_RDX],
+                    (unsigned long)uc->uc_mcontext.gregs[REG_R8]);
+            }
+            uc->uc_mcontext.gregs[REG_RIP] = (greg_t)caller;
+            uc->uc_mcontext.gregs[REG_RSP] = (greg_t)(rsp_now + 8);
+            return;
+        }
+        /* Fall through to default crash dump below. */
     }
 
     /* ---- SIGTRAP: Boot sync + exception forwarding for int3 callbacks ---- */

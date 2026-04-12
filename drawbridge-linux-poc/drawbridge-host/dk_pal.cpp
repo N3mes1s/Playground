@@ -1372,13 +1372,28 @@ uint64_t pool_allocator_fn(void *pool_obj, uint64_t alloc_size,
                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
     if (result == MAP_FAILED) return 0;
 
-    /* Pre-fill a stack descriptor at offset +0x10 of the allocation.
-     * The stack descriptor MUST be in LibOS space.
-     * Use the boot stack descriptor from our LibOS structs. */
+    /* Wave-19: stamp VM-object magic 0xDB64DB64 at [result+0x10].
+     *
+     * The PE's VM-object validator at RVA 0x24c38c checks:
+     *   cmpl $0xdb64db64, (rbx+0x10)
+     * and returns STATUS_INVALID_HANDLE (0xc0000008) if the low 32
+     * bits of [obj+0x10] don't match. Before this fix, we stamped a
+     * stack-descriptor pointer at +0x10 whose low 32 bits were a PE
+     * address, never 0xDB64DB64. The validator always returned
+     * 0xc0000008, which FUN_387650 (a wait primitive) propagated into
+     * RtlRaiseStatus -- the head of the raise-recursion cascade that
+     * we've been chasing for many waves.
+     *
+     * Previously the kernel-stack descriptor at BOOT_STRUCTS_ADDR +
+     * 0x16000 was initialised here as a side-effect (setting
+     * [sd+0x30] = NTUM_STACK_TOP). Keep that init but write the
+     * magic to [result+0x10]. If any consumer actually needs a
+     * stack-descriptor value at that offset, we'll surface the new
+     * crash and move the descriptor to a different slot. */
     uint8_t *sd = (uint8_t*)(BOOT_STRUCTS_ADDR + 0x16000);
     if (*(uint64_t*)(sd + 0x30) == 0)
         *(uint64_t*)(sd + 0x30) = NTUM_STACK_TOP;
-    *(uint64_t*)((uint8_t*)result + 0x10) = (uint64_t)sd;
+    *(uint64_t*)((uint8_t*)result + 0x10) = 0xDB64DB64ULL;
 
     static int pool_count = 0;
     pool_count++;

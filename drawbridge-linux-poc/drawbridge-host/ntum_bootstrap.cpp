@@ -997,22 +997,50 @@ static void *boot_thread_fn(void *arg) {
      * hot path looks like without the raise storm.
      */
     {
+        /* Wave-19: patch VM-object validator FUN_0024c38c to always
+         * return 0 (success). This is the function that returns
+         * STATUS_INVALID_HANDLE (0xc0000008) at default-entry, which
+         * FUN_387650 then propagates into RtlRaiseStatus -- the head
+         * of the whole raise cascade.
+         *
+         * Entry: `48 89 5c 24 08` (mov [rsp+8], rbx; 5 bytes).
+         * Patch: `33 c0 c3 90 90` (xor eax, eax; ret; nop nop).
+         * rsp untouched at entry -> clean return with eax = 0. */
+        volatile uint8_t *p_val = (uint8_t*)0x18024c38cULL;
+        if (p_val[0] == 0x48 && p_val[1] == 0x89 && p_val[2] == 0x5c) {
+            p_val[0] = 0x33;
+            p_val[1] = 0xc0;
+            p_val[2] = 0xc3;
+            p_val[3] = 0x90;
+            p_val[4] = 0x90;
+            fprintf(stderr,
+                "[BOOT] wave-19: patched VM validator (0x24c38c) "
+                "-> xor eax,eax; ret (removes 0xc0000008 at source)\n");
+        }
+    }
+
+    {
+        /* Wave-18: change Wave-16 silent patches to ud2 traps so our
+         * SIGILL handler can log (NTSTATUS in ECX, caller return addr
+         * on [rsp]) before emulating the return. Gives us ground
+         * truth on WHICH raise fires first and from WHERE, instead of
+         * silently discarding. The handler in ntum_signals.cpp
+         * recognises these RIPs and emulates ret. */
         volatile uint8_t *p_dispatch = (uint8_t*)0x1802962a8ULL;
         if (p_dispatch[0] == 0x40 && p_dispatch[1] == 0x55) {
-            p_dispatch[0] = 0xb0;   /* mov al, imm8    */
-            p_dispatch[1] = 0x01;   /*   imm8 = 1 (TRUE) */
-            p_dispatch[2] = 0xc3;   /* ret             */
+            p_dispatch[0] = 0x0f;   /* ud2 (0f 0b)    */
+            p_dispatch[1] = 0x0b;
             fprintf(stderr,
-                "[BOOT] wave-16: patched RtlDispatchException entry "
-                "(0x2962a8) -> mov al,1; ret\n");
+                "[BOOT] wave-18: patched RtlDispatchException entry "
+                "(0x2962a8) -> ud2 (SIGILL logs + emulates al=1,ret)\n");
         }
         volatile uint8_t *p_raise = (uint8_t*)0x1802a84f8ULL;
         if (p_raise[0] == 0x40 && p_raise[1] == 0x53) {
-            p_raise[0] = 0xc3;      /* ret             */
-            /* leave p_raise[1] alone (dead tail)       */
+            p_raise[0] = 0x0f;      /* ud2            */
+            p_raise[1] = 0x0b;
             fprintf(stderr,
-                "[BOOT] wave-16: patched RtlRaiseStatus entry "
-                "(0x2a84f8) -> ret\n");
+                "[BOOT] wave-18: patched RtlRaiseStatus entry "
+                "(0x2a84f8) -> ud2 (SIGILL logs ECX+retaddr + emulates ret)\n");
         }
     }
 
