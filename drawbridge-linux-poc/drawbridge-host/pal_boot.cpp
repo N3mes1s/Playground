@@ -672,14 +672,18 @@ void pal_post_boot_init_3(void)
     fprintf(stderr, "[PAL-BOOT] post_boot_init_3: skipped (no-op)\n");
 }
 
-/* ---- FUN_00353a90 @ 314352 ----  setrlimit wrapper.  Call sites
- * (FUN_00204680 lines 69413/69414) pass (1,4,0x400) & (2,4,0x400). */
+/* ---- FUN_00353a90 @ 314352 ----  raw-syscall wrapper.  Call sites
+ * (FUN_00204680 lines 69413/69414) pass (1,4,0x400) & (2,4,0x400).
+ * These args map to a Linux syscall whose identity we have not yet
+ * fully decoded — NOT a direct `setrlimit(resource, &rlim)` call
+ * because RLIMIT_FSIZE=1 with soft=4 bytes would make the first
+ * fprintf trigger SIGXFSZ (and it did, bug-for-bug).  Until
+ * FUN_003533e0 is fully traced, treat as a logged no-op so the
+ * host process is usable. TODO(C2): decode the exact syscall. */
 int pal_setrlimit(int which, int soft, int hard)
 {
-    struct rlimit r;
-    r.rlim_cur = (rlim_t)soft;
-    r.rlim_max = (rlim_t)hard;
-    if (setrlimit(which, &r) != 0) return errno;
+    fprintf(stderr, "[PAL-BOOT] setrlimit-wrapper skipped (which=%d soft=%d hard=0x%x)\n",
+            which, soft, hard);
     return 0;
 }
 
