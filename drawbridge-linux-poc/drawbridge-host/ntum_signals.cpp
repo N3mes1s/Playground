@@ -522,6 +522,47 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
              * normal happy path at 0x387858). Preserves legitimate
              * callers of 0x3877f0 since we only redirect when rcx is
              * an NTSTATUS. */
+            /* Wave-44: SEGV at 0x374800 `mov (%rsi), %eax` with rsi
+             * being an invalid small pointer (typically 0x10). This is
+             * a try-lock entry where rsi = r15+0x10 and r15 came out
+             * as 0 because r12[+0x40]=0 and the shift input was 0.
+             * The subsequent block 0x374800..0x374837 is "acquire
+             * lock; on contention call helper". We skip to 0x374837
+             * which tests rdi (timing-bookkeeping pointer) and
+             * continues with the non-lock-acquired branch. This is
+             * tactical: the lock wasn't actually needed because our
+             * wave-40 descriptor doesn't need inter-thread arbitration
+             * (single-threaded boot). */
+            if (rip == 0x180374800ULL && rsi_val == 0x10) {
+                static int fix44a = 0;
+                if (fix44a++ < 10)
+                    fprintf(stderr,
+                        "[FIXUP-44] #%d 0x374800 SEGV rsi=0x10 -> skip lock to 0x37485c\n",
+                        fix44a);
+                /* Skip directly to 0x37485c; the rdi-timing block at
+                 * 0x37483c..0x37485b is conditional on rdi != 0, and
+                 * rdi is 0 in this fault path. */
+                uc->uc_mcontext.gregs[REG_RIP] = 0x18037485cULL;
+                return;
+            }
+            /* Wave-44b: same function, r15=0 at 0x37485c `mov (%r15),%rbx`.
+             * Fake the read as 0 (would be "no entry"), advance rip
+             * past the mov to 0x37485f, set rbx=0 so je at 374869
+             * takes the je-taken path jumping to 0x37488e. */
+            if (rip == 0x18037485cULL) {
+                uint64_t r15_val = (uint64_t)uc->uc_mcontext.gregs[REG_R15];
+                if (r15_val == 0) {
+                    static int fix44b = 0;
+                    if (fix44b++ < 10)
+                        fprintf(stderr,
+                            "[FIXUP-44b] #%d 0x37485c SEGV r15=0 -> fake rbx=0 and advance\n",
+                            fix44b);
+                    uc->uc_mcontext.gregs[REG_RBX] = 0;
+                    uc->uc_mcontext.gregs[REG_RIP] = 0x18037485fULL;
+                    return;
+                }
+            }
+
             /* Wave-20: FUN_0027c304's crash at RVA 0x27c331 with rdx=NULL.
              * The function is called in loops over session handler
              * arrays [rbx+0x8a8+N*8]; some slots are NULL. Emulate
