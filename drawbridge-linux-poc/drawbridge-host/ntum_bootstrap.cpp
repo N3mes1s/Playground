@@ -1129,6 +1129,55 @@ static void *boot_thread_fn(void *arg) {
     }
 
     {
+        /* Wave-42: rewrite all `movabs $0xfffff78000000XXX, %rax`
+         * kernel-alias KUSER_SHARED_DATA references to the user-space
+         * mapping at 0x7ffe0000. The NT kernel normally aliases
+         * KUSER_SHARED_DATA at both 0x7ffe0000 (user) and
+         * 0xfffff78000000000 (kernel), but Linux userspace cannot map
+         * addresses above 0x7fff_ffffffff, so the kernel-alias reads
+         * would SEGV.
+         *
+         * Encoding of the instruction: `48 b8 LL LL LL LL 00 00 80 f7
+         * ff ff` (10 bytes) = movabs $0xfffff78000000LLLL, %rax.
+         * We change the upper 4 bytes of the 8-byte immediate from
+         * `00 00 80 f7 ff ff`-prefixed to `00 00 00 00`, effectively
+         * truncating to low 32 bits, then set bytes 4-5 to `fe 7f`
+         * to produce 0x7ffe_XXXX. Only the lower 16 bits vary in
+         * practice (all refs are offsets within the 4 KB shared page).
+         *
+         * We scan the PE .text range and patch every occurrence. */
+        extern uint32_t pe_text_rva;
+        extern uint32_t pe_text_size;
+        uint8_t *text = (uint8_t*)(0x180000000ULL + 0x200000);
+        size_t   text_sz = 0x1a9aa8;  /* .text VSize from PE header */
+        int patches = 0;
+        for (size_t i = 0; i + 10 <= text_sz; ++i) {
+            /* movabs $0xfffff78000000XXX, %rax encoding:
+             *   48 b8 LL LL 00 00 80 f7 ff ff   (10 bytes)
+             * Imm bytes (little-endian): LL LL 00 00 80 f7 ff ff
+             * = 0xfffff78000000LLLL
+             * We rewrite bytes 4-9 to 7f fe 00 00 00 00 so imm becomes
+             * 0x000000007ffeLLLL = 0x7ffe_XXXX (user KUSER_SHARED_DATA). */
+            if (text[i] == 0x48 && text[i+1] == 0xb8 &&
+                text[i+4] == 0x00 && text[i+5] == 0x00 &&
+                text[i+6] == 0x80 && text[i+7] == 0xf7 &&
+                text[i+8] == 0xff && text[i+9] == 0xff) {
+                text[i+4] = 0xfe;
+                text[i+5] = 0x7f;
+                text[i+6] = 0x00;
+                text[i+7] = 0x00;
+                text[i+8] = 0x00;
+                text[i+9] = 0x00;
+                ++patches;
+                i += 9;  /* skip past patched imm (loop adds 1) */
+            }
+        }
+        fprintf(stderr,
+            "[BOOT] wave-42: rewrote %d KUSER_SHARED_DATA kernel-alias "
+            "movabs references to 0x7ffe0000 base\n", patches);
+    }
+
+    {
         /* Wave-21: seed [0x180662d28] with a zero-count table so the
          * loop at RVA 0x20e694 (`mov (%rax), %r9d; cmp 1, r9d; jbe
          * skip`) reads count=0 and skips the iteration. Without the
