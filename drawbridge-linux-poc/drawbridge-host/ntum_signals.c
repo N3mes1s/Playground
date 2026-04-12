@@ -459,6 +459,24 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
                 (unsigned long)params_ptr,
                 params_ptr ? *(volatile uint32_t*)params_ptr : 0xDEAD,
                 params_ptr ? *(volatile uint32_t*)(params_ptr + 0x34) : 0xDEAD);
+        /* Kernel object type registry [0x648c00] -> type_table (set by init at RVA 0x2bd0a6).
+         * If equal to 0x1806472c0, the type registry init ran normally.
+         * If != 0, it's either our stub sys_obj or something else. */
+        uint64_t type_reg = *(volatile uint64_t*)0x180648c00ULL;
+        uint64_t type_reg2 = *(volatile uint64_t*)0x1806475d0ULL;
+        fprintf(stderr, "[CRASH-DATA] type_reg [0x648c00]=0x%lx (real=0x1806472c0)\n"
+                        "             type_reg2 [0x6475d0]=0x%lx\n"
+                        "             [0x645b78]=0x%lx (allocator)\n"
+                        "             [0x6456e8]=0x%lx (pool)\n",
+                (unsigned long)type_reg,
+                (unsigned long)type_reg2,
+                (unsigned long)*(volatile uint64_t*)0x180645b78ULL,
+                (unsigned long)*(volatile uint64_t*)0x1806456e8ULL);
+        if (type_reg) {
+            fprintf(stderr, "             type_reg+0x18=0x%lx type_reg+0x10=0x%x\n",
+                    (unsigned long)*(volatile uint64_t*)(type_reg + 0x18),
+                    *(volatile uint16_t*)(type_reg + 0x10));
+        }
     }
     uint64_t rsp_val = (uint64_t)uc->uc_mcontext.gregs[REG_RSP];
     char msg[1024];
@@ -503,6 +521,34 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
     }
     ssize_t wr = write(STDERR_FILENO, msg, len);
     (void)wr;
+    /* Dump exec_ctx contents at RSI (PE at 0x319e94 does `mov %rdx,%rsi` so RSI = param1) */
+    uint64_t rsi_val = (uint64_t)uc->uc_mcontext.gregs[REG_RSI];
+    if (rsi_val >= 0x180000000ULL && rsi_val < 0x181000000ULL) {
+        fprintf(stderr,
+            "[CRASH-EXECCTX] @0x%lx:\n"
+            "  [+0]=%016lx [+8]=%016lx [+10]=%016lx [+18]=%016lx\n"
+            "  [+20]=%016lx [+28]=%016lx [+30]=%016lx [+38]=%016lx\n",
+            (unsigned long)rsi_val,
+            (unsigned long)*(uint64_t*)rsi_val,
+            (unsigned long)*(uint64_t*)(rsi_val+0x08),
+            (unsigned long)*(uint64_t*)(rsi_val+0x10),
+            (unsigned long)*(uint64_t*)(rsi_val+0x18),
+            (unsigned long)*(uint64_t*)(rsi_val+0x20),
+            (unsigned long)*(uint64_t*)(rsi_val+0x28),
+            (unsigned long)*(uint64_t*)(rsi_val+0x30),
+            (unsigned long)*(uint64_t*)(rsi_val+0x38));
+    }
+    /* Look above RSP for return addresses (call stack reconstruction).
+     * The crashing function has prologue `sub rsp,0x2f8; push rdi; ...`.
+     * Stack frame search for any PE text-range return addresses. */
+    fprintf(stderr, "[CRASH-STACK] PE-range returns:\n");
+    for (uint64_t off = 0; off < 0x400; off += 8) {
+        uint64_t v = *(uint64_t*)(rsp_val + off);
+        if (v >= 0x180200000ULL && v < 0x1803a9aa8ULL) {
+            fprintf(stderr, "  RSP+0x%03lx = 0x%lx\n",
+                (unsigned long)off, (unsigned long)v);
+        }
+    }
     _exit(128 + sig);
 }
 

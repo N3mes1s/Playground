@@ -522,18 +522,55 @@ static void *boot_thread_fn(void *arg) {
             *(uint64_t*)(sd + 0x30) = NTUM_STACK_TOP;
         *(volatile uint64_t*)0x18063b218ULL = (uint64_t)sd;
     }
-    /* Init kernel object manager global at [0x648c00].
-     * Written by init command at RVA 0x2bd0a6. Read at RVA 0x31a602.
-     * Points to a system object with [+0x18] = next and [+0x10] = type. */
-    if (*(volatile uint64_t*)0x180648c00ULL == 0) {
-        static uint8_t *sys_obj = NULL;
-        if (!sys_obj) {
-            sys_obj = (uint8_t*)mmap(
-                (void*)(LIBOS_KERNEL_HEAP + 0x28000000ULL), 0x1000,
+    /* Replicate PE init FUN_0x2bcf9c at RVA 0x2bd09d-0x2bd0a6:
+     *     lea rcx, [0x6472c0]
+     *     mov [0x648c00], rcx        ; global type registry
+     *
+     * The real PE points [0x648c00] to a STATIC .data address 0x1806472c0
+     * which is a KernelObjectTypeRegistry header (already in PE .data,
+     * zero-initialized from the image). The registry layout is:
+     *   [0x1806472c0 + 0x10]  uint16  size (number of type entries)
+     *   [0x1806472c0 + 0x18]  void*   pointer to type dispatch table
+     *                                 (indexed by exec_ctx[0:2] type code)
+     *   [0x1806472c0 + 0x28]  uint16  alt size (for case 2)
+     *   [0x1806472c0 + 0x30]  void*   alt table (for case 2)
+     *
+     * Reader at FUN_0x31a58c:
+     *   case 1: rbx = [[0x648c00]+0x18];  eax = word[[0x648c00]+0x10]
+     *   case 2: rbx = [[0x648c00]+0x30];  eax = word[[0x648c00]+0x28]
+     *
+     * Caller at FUN_0x319e74 then does:  mov (%rax,%rbx,8), %rbx
+     * indexing the table with exec_ctx[0:2] (a type code up to ~0x40).
+     * The loaded value is only used if exec_ctx[+8] != 0; otherwise
+     * the `je` branch discards it. But the load itself must not fault,
+     * so the table needs to be readable at index*8. */
+    {
+        /* The real table is PE .data at 0x1806472c0 (zero-initialized in image).
+         * It's within the mapped .data section (0x180600000-0x180636000)
+         * and writable since we mapped with PROT_READ|PROT_WRITE. */
+        const uint64_t TYPE_REGISTRY = 0x1806472c0ULL;
+        static uint8_t *dispatch_table = NULL;
+        if (!dispatch_table) {
+            /* Allocate 64 KB dispatch table in LibOS space (room for 8K entries).
+             * PE indexes via `mov (%rax,%rbx,8),%rbx` with rbx up to ~0x40.
+             * Each entry is 8 bytes. 64 KB = 8192 entries, generous. */
+            dispatch_table = (uint8_t*)mmap(
+                (void*)(LIBOS_KERNEL_HEAP + 0x28000000ULL), 0x10000,
                 PROT_READ | PROT_WRITE,
                 MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+            if (dispatch_table == MAP_FAILED) {
+                fprintf(stderr, "[BOOT] FATAL: dispatch_table mmap failed\n");
+                _exit(1);
+            }
+            memset(dispatch_table, 0, 0x10000);
         }
-        *(volatile uint64_t*)0x180648c00ULL = (uint64_t)sys_obj;
+        *(volatile uint16_t*)(TYPE_REGISTRY + 0x10) = 0x2000;   /* size */
+        *(volatile uint64_t*)(TYPE_REGISTRY + 0x18) = (uint64_t)dispatch_table;
+        *(volatile uint16_t*)(TYPE_REGISTRY + 0x28) = 0x2000;   /* alt size */
+        *(volatile uint64_t*)(TYPE_REGISTRY + 0x30) = (uint64_t)dispatch_table;
+        *(volatile uint64_t*)0x180648c00ULL = TYPE_REGISTRY;
+        /* Mirror for [0x6475d0] (case 3/4 dispatch uses same structure). */
+        *(volatile uint64_t*)0x1806475d0ULL = TYPE_REGISTRY;
     }
 
     /* Re-arm pool and KTHREAD pointers (all in LibOS space now) */
