@@ -226,6 +226,32 @@ static int setup_libos_memory(void) {
     mmap((void*)LIBOS_THREAD_ENV, LIBOS_THREAD_ENV_SZ, PROT_READ|PROT_WRITE,
          MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED_NOREPLACE, -1, 0);
 
+    /* KUSER_SHARED_DATA at 0x7ffe0000.
+     * The PE (sqlpal.dll) RVA 0x211650 allocates this via DK PAL
+     * (VirtualAllocate through FUN_0x378c10). Multiple PE init
+     * functions (RVA 0x276bd5, 0x277fc, 0x27840b, 0x25ca63...)
+     * READ from 0x7ffe0008/0x7ffe0014/0x7ffe0030 before the
+     * allocation runs in our boot order. Pre-map the page with
+     * zero content so those early reads succeed — the PE's own
+     * allocator will still run later and MAP_FIXED_NOREPLACE
+     * falls through to mprotect in DK_VirtualMemoryAllocate. */
+    p = mmap((void*)0x7ffe0000ULL, 4096, PROT_READ|PROT_WRITE,
+             MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED_NOREPLACE, -1, 0);
+    if (p == MAP_FAILED) { printf("  [WARN] KUSER_SHARED_DATA 0x7ffe0000 failed\n"); }
+    else {
+        printf("  0x7ffe0000: KUSER_SHARED_DATA page OK\n");
+        /* Populate a few known fields of KUSER_SHARED_DATA that the PE reads.
+         * Layout from Windows Research Kernel / public headers:
+         *   +0x00  uint32  TickCountLowDeprecated
+         *   +0x04  uint32  TickCountMultiplier  (e.g. 0x0fa00000)
+         *   +0x08  uint64  InterruptTime       (100ns units)
+         *   +0x14  uint64  SystemTime          (100ns since 1601-01-01)
+         *   +0x20  uint64  TimeZoneBias
+         *   +0x30  ???     Various
+         * Leave mostly zero; fill the ones the PE loads right at startup. */
+        *(volatile uint32_t*)(0x7ffe0000ULL + 0x04) = 0x0fa00000; /* multiplier */
+    }
+
     printf("  All memory regions configured\n\n");
     return 0;
 }
