@@ -921,11 +921,21 @@ static void *boot_thread_fn(void *arg) {
         volatile uint8_t  *b_472bf = (uint8_t*) 0x1806472bfULL;
         volatile uint64_t *m_45510 = (uint64_t*)0x180645510ULL;
         volatile uint64_t *m_45518 = (uint64_t*)0x180645518ULL;
-        if (*b_472bf == 0) {
-            *b_472bf = 1;
-            fprintf(stderr,
-                "[BOOT] wave-13: set [0x1806472bf]=1 (replica-init guard)\n");
-        }
+        /* Wave-15 REVERT of Wave-13 b_472bf=1 stomp.
+         *
+         * Agent B claimed "set [0x1806472bf]=1 is the smallest test"
+         * per /tmp/wave12_globals.md, but direct disassembly shows:
+         *   23da9b:  cmp %sil, [0x6472bf]   ; sil=0 from prior xor
+         *   23daa2:  je  0x23daa5           ; take normal path if 0
+         *   23daa4:  int3                   ; assert: byte must be 0
+         * i.e. the byte must be ZERO for normal flow. Writing 1 fires
+         * the int3 during unwind, compounding the recursion chain we
+         * observe at RIP=0x1802962f1. Leave the byte at its PE-mapped
+         * default (0) — our earlier stomp was actively harmful. */
+        fprintf(stderr,
+            "[BOOT] wave-15: [0x1806472bf]=%u (leaving at PE default; "
+            "disasm at 0x23da9b requires 0 for normal unwind path)\n",
+            (unsigned)*b_472bf);
         if (*m_45510 == 0 && *m_45518 == 0) {
             /* LIST_ENTRY-style self-referencing head so RtlLookupModule
              * can walk without dereferencing NULL. Points at itself. */
