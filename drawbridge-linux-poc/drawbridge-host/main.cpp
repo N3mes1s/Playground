@@ -19,80 +19,12 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
-#include <libgen.h>
-#include <errno.h>
 
 #include "drawbridge_types.h"
 #include "pe_loader.h"
 #include "ntum_bootstrap.h"
 #include "dk_pal.h"
 #include "ntum_signals.h"
-
-/* ========================================================================
- * Working default path: delegate to ntum-builder/drawbridge-run.
- *
- * drawbridge-host was designed to boot the real sqlpal.dll NTUM kernel
- * (the "real-ntum" path) and invoke a Windows PE through it. That path
- * depends on ~300 NTUM initialisation functions — many of them still
- * un-translated — and remains blocked on progressively deeper crashes
- * (see /root/.claude/plans/hashed-sparking-lake.md Wave-6/7 history).
- *
- * Meanwhile, ntum-builder/drawbridge-run is a standalone Win32-stub
- * PE loader that runs hello_drawbridge.exe end-to-end today. To give
- * drawbridge-host a working default (so
- *   `./drawbridge-host <any.exe>`
- * actually executes the target), we exec drawbridge-run when no
- * opt-in flag for the real-NTUM path is present.
- *
- * Opt-in to the original NTUM boot path with `--real-ntum`.
- * ======================================================================== */
-static int exec_ntum_builder(int argc, char **argv, const char *self_path)
-{
-    /* Resolve ntum-builder/drawbridge-run relative to our own location
-     * so the host binary is relocatable inside the repo layout. */
-    char host_copy[1024];
-    strncpy(host_copy, self_path, sizeof(host_copy) - 1);
-    host_copy[sizeof(host_copy) - 1] = '\0';
-    char *host_dir = dirname(host_copy);
-
-    char runner[1024];
-    snprintf(runner, sizeof(runner),
-             "%s/../ntum-builder/drawbridge-run", host_dir);
-
-    struct stat st;
-    if (stat(runner, &st) != 0) {
-        /* Try absolute repo-root fallback. */
-        snprintf(runner, sizeof(runner),
-                 "/home/user/Playground/drawbridge-linux-poc/"
-                 "ntum-builder/drawbridge-run");
-        if (stat(runner, &st) != 0) {
-            fprintf(stderr,
-                "[HOST] Cannot locate ntum-builder/drawbridge-run; "
-                "build it with `make -C ntum-builder` then retry, or "
-                "pass --real-ntum to boot sqlpal.dll instead.\n");
-            return 2;
-        }
-    }
-
-    printf("[HOST] Delegating to %s\n\n", runner);
-
-    /* Build the argv for the runner: runner <exe> [extra passthrough] */
-    char **new_argv = (char**)calloc(argc + 2, sizeof(char*));
-    new_argv[0] = runner;
-    int j = 1;
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--real-ntum") == 0) continue;
-        if (strcmp(argv[i], "--sfp-dir")   == 0) { i++; continue; }
-        new_argv[j++] = argv[i];
-    }
-    new_argv[j] = NULL;
-
-    execv(runner, new_argv);
-    fprintf(stderr, "[HOST] execv failed: %s\n", strerror(errno));
-    free(new_argv);
-    return 3;
-}
 
 int main(int argc, char **argv)
 {
@@ -103,29 +35,10 @@ int main(int argc, char **argv)
            "Reimplemented from SQLPAL reverse engineering\n\n");
 
     if (argc < 2) {
-        fprintf(stderr,
-            "Usage: %s <windows.exe> [--real-ntum] [--sfp-dir <path>]\n"
-            "\n"
-            "  Default path: delegate to ntum-builder/drawbridge-run\n"
-            "                (working standalone Win32-stub PE loader).\n"
-            "  --real-ntum:  boot the real sqlpal.dll NTUM kernel\n"
-            "                (under active translation; see plan).\n",
-            argv[0]);
+        fprintf(stderr, "Usage: %s <windows.exe> [--sfp-dir <path>]\n", argv[0]);
         return 1;
     }
 
-    int use_real_ntum = 0;
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--real-ntum") == 0) use_real_ntum = 1;
-    }
-
-    if (!use_real_ntum) {
-        /* Exec into the working standalone loader. This replaces our
-         * process image, so control does not return. */
-        return exec_ntum_builder(argc, argv, argv[0]);
-    }
-
-    /* Real-NTUM path: full sqlpal.dll boot (in-development). */
     const char *target_exe = argv[1];
     const char *sfp_dir    = NULL;
     for (int i = 2; i < argc; i++) {
