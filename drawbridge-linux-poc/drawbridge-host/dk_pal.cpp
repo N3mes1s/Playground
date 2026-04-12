@@ -1189,6 +1189,86 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
                 (unsigned long)call_type, (unsigned long)data_size, in_buf, out_buf);
     }
 
+    /* [DK-FACTORY] Minimal descriptor -> kernel-object factory.
+     *
+     * When call_type is a PE .data descriptor pointer, the PE expects us
+     * to allocate a kernel-object shaped by that descriptor and hand the
+     * pointer back via *out_buf. The ELF's real path (FUN_00249418) does
+     * exactly this — without it, the PE reads a NULL/NTSTATUS slot and
+     * dereferences garbage (the 0x180224c29 crash). */
+    if (call_type >= 0x180600000ULL && call_type < 0x180700000ULL) {
+        volatile uint64_t *desc = (volatile uint64_t*)call_type;
+        uint64_t hdr0  = desc[0];   /* +0x00 vtable or tag */
+        uint64_t hdr1  = desc[1];   /* +0x08 flags or size */
+        uint64_t hdr2  = desc[2];   /* +0x10 sentinel or data */
+        uint64_t hdr3  = desc[3];   /* +0x18 */
+
+        /* Derive object size: descriptor[+0x08] sometimes encodes size
+         * in the low 16 bits. Clamp to a sane range; default 0x200. */
+        uint64_t obj_size = 0x200;
+        uint64_t maybe_sz = hdr1 & 0xFFFFULL;
+        if (maybe_sz >= 0x40 && maybe_sz <= 0x1000) {
+            obj_size = (maybe_sz + 0xF) & ~0xFULL;
+        }
+
+        /* Detect vtable pointer at [+0x00]: PE code range. */
+        int has_vtable = (hdr0 >= 0x180000000ULL && hdr0 < 0x181000000ULL);
+
+        /* Allocate zero-init kernel-object buffer. calloc lives in the
+         * host heap — the NTUM accepts this range as "kernel" memory
+         * for these slot-writes. */
+        void *new_obj = calloc(1, obj_size);
+        if (new_obj) {
+            volatile uint64_t *obj = (volatile uint64_t*)new_obj;
+            /* [+0x00] vtable (or copy of tag). */
+            obj[0] = has_vtable ? hdr0 : hdr0;
+            /* [+0x08] flags/size echo. */
+            obj[1] = hdr1;
+            /* [+0x10] sentinel the PE's 0x240ea0 ctor also writes. */
+            obj[2] = 0x12345678deaddeadULL;
+            /* [+0x18]/[+0x20]/[+0x28] LIST_ENTRY self-refs (same
+             * pattern as the SRW waiter anchor above). */
+            uint64_t link = (uint64_t)&obj[3];   /* &obj[+0x18] */
+            obj[3] = link;                        /* +0x18 Blink */
+            obj[4] = link;                        /* +0x20 Flink */
+            obj[5] = link;                        /* +0x28 */
+
+            /* Log construction. */
+            fprintf(stderr,
+                "[DK-FACTORY] desc=0x%lx size=0x%lx -> obj=%p "
+                "hdr=[%016lx %016lx %016lx %016lx] vtbl=%d\n",
+                (unsigned long)call_type, (unsigned long)obj_size,
+                new_obj, (unsigned long)hdr0, (unsigned long)hdr1,
+                (unsigned long)hdr2, (unsigned long)hdr3, has_vtable);
+
+            /* Write into *out_buf ONLY when out_buf is a real pointer
+             * (PE .data or LibOS range) — not the 0x42-style tiny tag
+             * values some ABI calls use. */
+            if (out_buf) {
+                uint64_t ob = (uint64_t)out_buf;
+                int in_pe_data = (ob >= 0x180000000ULL && ob < 0x181000000ULL);
+                int in_libos   = (ob >= 0x100000000ULL && ob < 0x800000000ULL);
+                if (in_pe_data || in_libos) {
+                    volatile uint64_t *slot = (volatile uint64_t*)out_buf;
+                    /* Preserve valid existing pointer; only overwrite
+                     * NULL or the pre-stamped STATUS_NOT_IMPLEMENTED. */
+                    uint64_t cur = *slot;
+                    if (cur == 0 || cur == 0xC0000002ULL ||
+                        (cur & 0xFFFFFFFFULL) == 0xC0000002ULL) {
+                        *slot = (uint64_t)new_obj;
+                        fprintf(stderr,
+                            "[DK-FACTORY] wrote obj=%p into *out_buf=%p\n",
+                            new_obj, out_buf);
+                    }
+                }
+            }
+        } else {
+            fprintf(stderr,
+                "[DK-FACTORY] desc=0x%lx alloc FAILED size=0x%lx\n",
+                (unsigned long)call_type, (unsigned long)obj_size);
+        }
+    }
+
     /* RCA2 fix: the PE pre-stamps DK_STATUS_NOT_IMPLEMENTED (0xC0000002)
      * in its output slot before calling us. When we return SUCCESS but
      * don't write the slot, the PE later reads that NTSTATUS as if it
