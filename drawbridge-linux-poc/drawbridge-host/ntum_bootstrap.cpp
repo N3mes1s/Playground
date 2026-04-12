@@ -997,6 +997,24 @@ static void *boot_thread_fn(void *arg) {
      * hot path looks like without the raise storm.
      */
     {
+        /* Wave-24: trap the panic_unsupported_abi function at RVA
+         * 0x213dc0 with ud2 so we capture exact caller, version,
+         * and function-name args. String decoded from hang stack:
+         * "Unsupported ABI version: 4212976 for function: DkVirtualMemoryProtect"
+         * where 4212976 = 0x4048F0 = our DK_ObjectsWaitAny addr.
+         * Need to understand who's interpreting a function pointer
+         * as a version number. */
+        volatile uint8_t *p_panic = (uint8_t*)0x180213dc0ULL;
+        if (p_panic[0] == 0x48 && p_panic[1] == 0x81) {
+            p_panic[0] = 0x0f;  /* ud2 */
+            p_panic[1] = 0x0b;
+            fprintf(stderr,
+                "[BOOT] wave-24: trapped panic_unsupported_abi @0x213dc0 "
+                "with ud2\n");
+        }
+    }
+
+    {
         /* Wave-21: seed [0x180662d28] with a zero-count table so the
          * loop at RVA 0x20e694 (`mov (%rax), %r9d; cmp 1, r9d; jbe
          * skip`) reads count=0 and skips the iteration. Without the

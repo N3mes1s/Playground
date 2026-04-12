@@ -900,11 +900,38 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
                 (unsigned long)call_type);
     }
 
-    /* Handle ALL ABI function resolution variants:
-     * 0x7002002 = GetFunction_v2 (first pass, version 0)
-     * 0x7001002 = GetFunction version 2 (second pass, called by second resolver)
-     * The second resolver at PE RVA 0x213ea4 calls with type=0x7001002
-     * and stores the output buffer value at critical .data addresses. */
+    /* Wave-24: HANDLE 0x7002002 (GetVersion_v2) SEPARATELY.
+     *
+     * The PE has TWO resolver functions:
+     *   - FUN_00213ea4 (GetFunction_v2): calls with type=0x7001002, expects
+     *     the output slot to be populated with a FUNCTION POINTER.
+     *   - FUN_00213e0c (GetVersion_v2):  calls with type=0x7002002, expects
+     *     the output slot to be populated with a VERSION NUMBER (integer).
+     *
+     * Previously we handled both identically and wrote the fn ptr for each.
+     * The version-check consumer at PE RVA 0x21458c reads [0x63f878] expecting
+     * value 2, but instead found the function pointer 0x4048F0 (our DK
+     * function addr) -> panic "Unsupported ABI version: 4212976 for function:
+     * DkVirtualMemoryProtect" at RVA 0x213e06.
+     *
+     * Fix: route 0x7002002 to a separate branch that writes the version (2)
+     * for every function id. */
+    if (call_type == 0x7002002) {
+        if (out_buf) {
+            uint64_t *result_ptr = *(uint64_t**)out_buf;
+            if (result_ptr) {
+                *(uint32_t*)result_ptr = 2;  /* DK ABI version = 2 */
+            }
+        }
+        uint64_t retval = DK_STATUS_SUCCESS;
+        if (dispatch_count <= 500)
+            fprintf(stderr, "[DK-RET] #%d call_type=0x7002002 (GetVersion) -> status=0x%lx (ver=2)\n",
+                    dispatch_count, (unsigned long)retval);
+        return retval;
+    }
+
+    /* Handle ABI function resolution:
+     * 0x7001002 = GetFunction_v2 (PE resolver FUN_00213ea4, stores fn ptr) */
     if (call_type == ABI_GET_FUNCTION_V2 || call_type == 0x7001002) {
         uint32_t *in = (uint32_t*)in_buf;
         uint32_t func_id = in ? in[0] : 0;

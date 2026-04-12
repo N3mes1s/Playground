@@ -706,6 +706,48 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
         if (rsp_now >= 0x500000000ULL && rsp_now < 0x501000000ULL)
             caller = *(volatile uint64_t*)rsp_now;
 
+        if (rip == 0x180213dc0ULL) {
+            /* Wave-24: panic_unsupported_abi entry. Args:
+             *   rcx = function name (wchar_t*)
+             *   edx = unsupported version number
+             * Caller retaddr at [rsp]. */
+            uintptr_t rsp_now = (uintptr_t)uc->uc_mcontext.gregs[REG_RSP];
+            uint64_t caller = 0;
+            if (rsp_now >= 0x500000000ULL && rsp_now < 0x501000000ULL)
+                caller = *(volatile uint64_t*)rsp_now;
+            uint64_t rcx_v = (uint64_t)uc->uc_mcontext.gregs[REG_RCX];
+            uint32_t edx_v = (uint32_t)uc->uc_mcontext.gregs[REG_RDX];
+            uint64_t r8_v = (uint64_t)uc->uc_mcontext.gregs[REG_R8];
+            uint64_t r9_v = (uint64_t)uc->uc_mcontext.gregs[REG_R9];
+            fprintf(stderr,
+                "[WAVE-24] panic_unsupported_abi: version=%u (0x%x) "
+                "name_wstr=0x%lx r8=0x%lx r9=0x%lx caller=0x%lx\n",
+                edx_v, edx_v, (unsigned long)rcx_v,
+                (unsigned long)r8_v, (unsigned long)r9_v,
+                (unsigned long)caller);
+            /* Dump the name string (wide, null-terminated) */
+            if (rcx_v >= 0x180000000ULL && rcx_v < 0x181000000ULL) {
+                const uint16_t *ws = (const uint16_t*)rcx_v;
+                char name[128] = {0};
+                for (int i = 0; i < 127 && ws[i]; i++)
+                    name[i] = (char)ws[i];
+                fprintf(stderr, "[WAVE-24] name='%s'\n", name);
+            }
+            /* Dump caller context -- bytes before the return address */
+            if (caller >= 0x180200000ULL && caller < 0x1803a9aa8ULL) {
+                const uint8_t *c = (const uint8_t*)(caller - 32);
+                fprintf(stderr, "[WAVE-24] caller-32..caller:");
+                for (int i = 0; i < 32; i++) fprintf(stderr, " %02x", c[i]);
+                fprintf(stderr, "\n");
+            }
+            /* Emulate "just return" to let boot limp along and see
+             * if downstream reveals more crashes. */
+            if (caller) {
+                uc->uc_mcontext.gregs[REG_RIP] = (greg_t)caller;
+                uc->uc_mcontext.gregs[REG_RSP] = (greg_t)(rsp_now + 8);
+                return;
+            }
+        }
         if (rip == 0x1802962a8ULL) {
             /* RtlDispatchException entry */
             static int disp_count = 0;
