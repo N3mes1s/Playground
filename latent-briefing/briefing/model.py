@@ -159,6 +159,9 @@ class LatentBriefingModel:
         When ``past_cache`` is provided, the prompt is treated as a
         continuation: only the prompt tokens are fed through, and attention
         is conditioned on the (possibly compacted) cache.
+
+        Caller's ``past_cache`` is NOT mutated -- we clone before stepping
+        so repeated calls with the same cache produce identical results.
         """
         prompt_ids = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
 
@@ -166,7 +169,7 @@ class LatentBriefingModel:
         # consistently attach a pre-existing past_cache (stock generate()
         # sometimes re-prefills from scratch depending on version).
         generated = prompt_ids
-        cache = past_cache
+        cache = clone_cache(past_cache) if past_cache is not None else None
         for step in range(max_new_tokens):
             if step == 0:
                 step_ids = prompt_ids

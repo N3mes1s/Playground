@@ -38,6 +38,58 @@ class TestEndToEndLlama(unittest.TestCase):
         torch.manual_seed(0)
         return cfg, LlamaForCausalLM(cfg).eval()
 
+    def test_generate_does_not_mutate_past_cache(self):
+        """Regression: generate() must not extend the caller's past_cache.
+
+        The HF cache's update() is in-place; calling the model with
+        past_key_values=cache, use_cache=True will append the new K/V to
+        the passed cache object. generate() clones internally to prevent
+        this contaminating subsequent calls.
+        """
+        from briefing.model import LatentBriefingModel
+        from compaction import cache_token_count
+
+        # Build a tiny Llama LM and wrap it directly (skip from_pretrained).
+        cfg, inner = self._build()
+        lbm = object.__new__(LatentBriefingModel)
+        lbm.model = inner
+        lbm.device = "cpu"
+        lbm.dtype = torch.float32
+        lbm._num_kv_heads = cfg.num_key_value_heads
+        from transformers import AutoTokenizer
+        # Use a mock tokenizer: we don't need a real one since we'll feed ids.
+        class _Tok:
+            pad_token = "[PAD]"
+            eos_token = None
+            eos_token_id = 2
+            def __call__(self, text, return_tensors=None, add_special_tokens=True):
+                # Just produce a random but deterministic id tensor per text.
+                torch.manual_seed(abs(hash(text)) % (2 ** 31))
+                T = 5 + (abs(hash(text)) % 5)
+                class R: pass
+                r = R()
+                r.input_ids = torch.randint(3, cfg.vocab_size, (1, T))
+                return r
+            def decode(self, ids, skip_special_tokens=False):
+                return "x" * ids.shape[-1]
+        lbm.tokenizer = _Tok()
+
+        # Prefill a context.
+        ctx_ids = torch.randint(3, cfg.vocab_size, (1, 24))
+        with torch.no_grad():
+            out = inner(ctx_ids, use_cache=True)
+        cache = out.past_key_values
+        n_before = cache_token_count(cache)
+        self.assertEqual(n_before, 24)
+
+        # Two successive generates from the *same* cache should not grow it.
+        lbm.generate("hello", past_cache=cache, max_new_tokens=3)
+        n_mid = cache_token_count(cache)
+        lbm.generate("world", past_cache=cache, max_new_tokens=3)
+        n_after = cache_token_count(cache)
+        self.assertEqual(n_mid, n_before, "generate() mutated past_cache (1st call)")
+        self.assertEqual(n_after, n_before, "generate() mutated past_cache (2nd call)")
+
     def test_rope_pipeline_runs_and_compacts(self):
         from briefing.probe import ProbeCapture, align_probe_to_kv_heads
 
