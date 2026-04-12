@@ -575,6 +575,18 @@ extern "C" int pal_boot_init(void)
     /* Step 22: log kernel version. */
     pal_kernel_version_log();
 
+    /* Step 22a (Wave 5 C2): translate FUN_00204754's module-globals
+     * prologue.  Populates [c00008/010/018/820/880/888] from the
+     * WINDOWS_LIBOS_PARAMETERS the PE would normally receive via
+     * rcx=rdx at entry.  Must run BEFORE pal_vm_init_module_state
+     * because the VM constructor at FUN_0037f700 reads [c00820]
+     * (params->ParameterBuffer) to size its managed region. */
+    {
+        WINDOWS_LIBOS_PARAMETERS *params =
+            *(WINDOWS_LIBOS_PARAMETERS * volatile *)NTUM_MOD_PARAMS_PTR_ADDR;
+        pal_boot_write_module_globals(params);
+    }
+
     /* Step 22b (Wave 4 C4 expansion): populate the VM module global at
      * [0x180c00878] so the PE consumer at RVA 0x24c3f6 doesn't NULL-
      * deref.  Translated from ELF FUN_0037f700 / FUN_00378c00 /

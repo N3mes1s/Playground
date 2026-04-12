@@ -23,10 +23,18 @@
 #define PAL_BOOT_H
 
 #include <stdint.h>
+#include "drawbridge_types.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* FUN_00204754 module-globals prologue (Wave 5 C2).  Populates the
+ * six .data2 fields at [0x180c00008 / 010 / 018 / 820 / 880 / 888]
+ * from the supplied WINDOWS_LIBOS_PARAMETERS, matching the PE's
+ * own orchestrator body byte-for-byte.  See pal_boot.cpp for the
+ * full RVA-by-RVA translation. */
+void pal_boot_write_module_globals(WINDOWS_LIBOS_PARAMETERS *params);
 
 /* FUN_00354250 / FUN_00354260 — setrlimit wrapper chain that caps the
  * host's resource limits before boot.  In the ELF these are tiny
