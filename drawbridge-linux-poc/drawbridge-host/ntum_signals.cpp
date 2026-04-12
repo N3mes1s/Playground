@@ -399,7 +399,60 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
                  * fixup path is dead code. */
                 static uint8_t scratch_buf[0x400] = {0};
                 void *scratch = scratch_buf;
-                /* Zero the cache slot if it's reachable. */
+                /* Walk the stack frame to find the cache-owner object
+                 * (FUN_00249848's rcx, saved as rbp at its call site).
+                 *
+                 * FUN_00224b78 frame layout at 0x224c29:
+                 *   [RSP_crash + 0x68] = saved caller rbp = FUN_00249848's rbp
+                 *   FUN_00249848 did `mov %rcx, %rbp` at 0x249874 so
+                 *   its rbp is its rcx — the object whose [+0x9d8]
+                 *   is the poisoned cache that FUN_002661bc read.
+                 *
+                 * Zero that slot so subsequent invocations take the
+                 * non-cached alloc branch rather than re-reading
+                 * NTSTATUS. This is the same mechanism as the PE's
+                 * own cmpxchg at RVA 0x2661ff — we do it from the
+                 * fault handler because we can't intercept the read. */
+                uintptr_t rsp_val = (uintptr_t)uc->uc_mcontext.gregs[REG_RSP];
+                uintptr_t cache_owner = 0;
+                if (rsp_val >= 0x180000000ULL && rsp_val < 0x200000000ULL) {
+                    cache_owner = *(volatile uintptr_t*)(rsp_val + 0x68);
+                    fprintf(stderr,
+                        "[FIXUP-DIAG] rsp=%p [rsp+0x68]=0x%lx "
+                        "(candidate cache_owner); rbp=0x%lx\n",
+                        (void*)rsp_val, (unsigned long)cache_owner,
+                        (unsigned long)rbp_val);
+                    if (cache_owner >= 0x300000000ULL &&
+                        cache_owner < 0x400000000ULL) {
+                        uint64_t cv = *(volatile uint64_t*)
+                            ((uint8_t*)cache_owner + 0x9d8);
+                        fprintf(stderr,
+                            "[FIXUP-DIAG] [cache_owner+0x9d8]=0x%lx\n",
+                            (unsigned long)cv);
+                    }
+                }
+                /* cache_owner may live in PE .data (when SCHED[+0x970]
+                 * sentinel 0x180668db0 is the session pointer) or in
+                 * LibOS heap range. Accept both. */
+                int owner_ok = (cache_owner >= 0x180000000ULL &&
+                                cache_owner < 0x181000000ULL) ||
+                               (cache_owner >= 0x300000000ULL &&
+                                cache_owner < 0x400000000ULL);
+                if (owner_ok) {
+                    volatile uint64_t *slot =
+                        (volatile uint64_t*)((uint8_t*)cache_owner + 0x9d8);
+                    uint64_t v = *slot;
+                    if (v >= 0xC0000000ULL && v < 0xC0010000ULL) {
+                        *slot = 0;
+                        fprintf(stderr,
+                            "[FIXUP] cleared NTSTATUS 0x%lx at "
+                            "cache_owner=%p [+0x9d8]=%p\n",
+                            (unsigned long)v, (void*)cache_owner,
+                            (void*)slot);
+                    }
+                }
+                /* Legacy rbp+0x9d8 cleanup kept as a belt-and-
+                 * suspenders in case the frame walk mis-locates. */
                 if (rbp_val >= 0x300000000ULL && rbp_val < 0x400000000ULL) {
                     volatile uint64_t *cache =
                         (volatile uint64_t*)((uint8_t*)rbp_val + 0x9d8);
@@ -410,10 +463,30 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
                             (void*)cache);
                     }
                 }
-                uc->uc_mcontext.gregs[REG_RSI] = (greg_t)scratch;
+                /* Wave-7 alternative: advance RIP directly to the
+                 * function's early-exit at 0x224db5 instead of using
+                 * a scratch pool. This matches the behaviour of the
+                 * `jne 0x224db5` branch at 0x224c2d (the instruction
+                 * right after our fixup entry): the ELF's own code
+                 * takes that branch when the flag bit is set. We take
+                 * it unconditionally so the function returns 0 (early
+                 * exit via rbx=0 set at 0x224c27). The caller
+                 * (FUN_00249848 at 0x249902) sees rax=0 and takes its
+                 * error path: sets esi=0xC000009A and returns cleanly
+                 * — no fastfail, no scratch-pool side effects. */
+                uc->uc_mcontext.gregs[REG_RIP] = 0x180224db5;
+                /* Keep rbx = 0 (already zeroed at 0x224c27 per the
+                 * PE's own prologue; scrub to be safe since we
+                 * entered via the fixup before that xor ran). */
+                uc->uc_mcontext.gregs[REG_RBX] = 0;
+                /* Prevent the `add %dx, 0x1e4(%rbp)` at 0x224dba from
+                 * dereferencing an unknown pointer. Zero rbp so the
+                 * `test %rbp, %rbp; je 0x224dc1` branch taken. */
+                uc->uc_mcontext.gregs[REG_RBP] = 0;
+                (void)scratch;  /* unused in this path */
                 fprintf(stderr,
-                    "[FIXUP] RIP=0x180224c29 rsi=0x%lx -> scratch=%p, resuming\n",
-                    (unsigned long)rsi_val, scratch);
+                    "[FIXUP] RIP=0x180224c29 rsi=NTSTATUS → jump to "
+                    "early-exit 0x224db5 (rax=0)\n");
                 return;
             }
 
