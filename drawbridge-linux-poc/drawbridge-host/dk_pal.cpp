@@ -1583,6 +1583,47 @@ uint64_t DK_VmIdentityEcho(void *trace_ctx, uint64_t va_start,
             echo_count, (unsigned long)va_start, (unsigned long)va_end,
             region_kind, index,
             (void*)out_va_start, (void*)out_va_end);
+
+    /* Wave-38: satisfy "Register Initial Module" by populating an
+     * auxiliary ModuleDescriptor at [VmModuleState+0xa8] that
+     * covers the PE image range. Agent C traced the crash to:
+     *   FUN_0x37cf68 VmModuleState::ReservePeImageRange
+     *     -> reads [vms+0xa8] as the module-descriptor head
+     *     -> FUN_0x3804b8 checks desc->+0x48 <= request_va < desc->+0x48+desc->+0x50
+     *     -> our DK_VmIdentityEcho echoes vaStart/vaEnd but never
+     *        creates a descriptor covering the PE image at
+     *        [0x180000000, +0x01000000).
+     *
+     * Stamp a minimal descriptor:
+     *   [+0x48] = va_start  [+0x50] = va_end (size)  [+0x68] = bitmap
+     *   [+0x70] = 0x8000 (cap pages)  [+0x80] = 2 (valid)
+     * The bitmap page gets demand-paged by our handler and zero-filled
+     * (0=FREE per wave-29 semantics). Link: [vms+0xa8] -> this desc. */
+    static uint8_t aux_descriptor[0x100]
+        __attribute__((aligned(16))) = {0};
+    static uint64_t aux_bitmap[0x200]
+        __attribute__((aligned(16))) = {0};  /* 0x1000 bytes, 0x8000 pages */
+    uint64_t vms_ptr = *(volatile uint64_t*)0x180c00878ULL;
+    if (vms_ptr && *(volatile uint64_t*)(vms_ptr + 0xa8) == 0) {
+        /* Seed a descriptor covering the PE image range (not the
+         * incoming VM-ECHO range). The PE's ReservePeImageRange at
+         * FUN_0x37cf68 reads [vms+0xa8] and expects a descriptor whose
+         * [+0x48, +0x48+0x50) bracket the PE image at 0x180000000
+         * with size 0x01000000 (16 MB). */
+        uint8_t *d = aux_descriptor;
+        *(uint64_t*)(d + 0x48) = 0x180000000ULL;  /* PE image base */
+        *(uint64_t*)(d + 0x50) = 0x01000000ULL;   /* 16 MB size */
+        *(uint64_t*)(d + 0x58) = (uint64_t)d;     /* self-ptr */
+        *(uint64_t*)(d + 0x68) = (uint64_t)aux_bitmap;
+        *(uint64_t*)(d + 0x70) = 0x8000;          /* 32k pages */
+        *(uint32_t*)(d + 0x80) = 2;               /* state = valid */
+        *(volatile uint64_t*)(vms_ptr + 0xa8) = (uint64_t)d;
+        fprintf(stderr,
+            "[VM-ECHO] stamped aux module descriptor at vms+0xa8=%p "
+            "covering PE image [0x180000000, +0x01000000) bitmap=%p\n",
+            (void*)d, (void*)aux_bitmap);
+    }
+
     if (out_va_start) *out_va_start = va_start;
     if (out_va_end)   *out_va_end   = va_end;
     return DK_STATUS_SUCCESS;
