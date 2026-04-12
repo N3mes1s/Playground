@@ -641,8 +641,11 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
     /* Dump key .data values at crash time */
     {
         uint64_t params_ptr = *(volatile uint64_t*)0x180c00820ULL;
-        fprintf(stderr, "[CRASH-DATA] [0x6092c0]=0x%lx [0x63f8c0]=0x%x [0x63f5c0]=0x%x\n"
+        fprintf(stderr, "[CRASH-DATA] [0x63f5b4]=0x%x [0x63f790]=0x%lx\n"
+                "[CRASH-DATA] [0x6092c0]=0x%lx [0x63f8c0]=0x%x [0x63f5c0]=0x%x\n"
                 "  [0xc00820]=0x%lx [ptr+0]=0x%x [ptr+34]=0x%x\n",
+                *(volatile uint32_t*)0x18063f5b4ULL,
+                (unsigned long)*(volatile uint64_t*)0x18063f790ULL,
                 (unsigned long)*(volatile uint64_t*)0x1806092c0ULL,
                 *(volatile uint32_t*)0x18063f8c0ULL,
                 *(volatile uint32_t*)0x18063f5c0ULL,

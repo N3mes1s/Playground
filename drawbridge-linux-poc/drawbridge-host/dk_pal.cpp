@@ -999,11 +999,31 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
         case 0xb002000: func = (void*)&DK_ObjectReference; is_stub=0; break;
         case 0xb003000: func = (void*)&DK_ObjectReference; is_stub=0; break; /* Dereference = same as Reference for now */
 
-        /* Cache/Events (category 0x0C) */
-        case 0xc001000: func = (void*)&DK_InstructionCacheFlush; is_stub=0; break;
-        case 0xc002000: func = (void*)&DK_EventSet; is_stub=0; break;
-        case 0xc003000: func = (void*)&DK_EventClear; is_stub=0; break;
-        case 0xc004000: func = (void*)&DK_EventPeek; is_stub=0; break;
+        /* Cache/Events (category 0x0C)
+         * v0 = feature flag (must return 1 — the PE's init resolution loop
+         *      writes this to .data globals the fatal-error handler checks
+         *      as `cmp $1, edi; jne fatal_path`).
+         * v1+ = actual function pointer. */
+        /* Two-phase resolution (id-bit-based, matching pattern used
+         * for category 0xf):
+         *   base_id (original_version==0) → feature flag value 1
+         *     stored at [0x63f...] globals; fatal-error handler does
+         *     `cmp $1, edi; jne fatal` on these slots.
+         *   base_id+1 (original_version==1) → real function pointer
+         *     stored at separate globals; PE calls them via
+         *     `call *[..]` so they must be valid callable addresses. */
+        case 0xc001000:
+            func = (original_version == 0) ? (void*)1 : (void*)&DK_InstructionCacheFlush;
+            is_stub=0; break;
+        case 0xc002000:
+            func = (original_version == 0) ? (void*)1 : (void*)&DK_EventSet;
+            is_stub=0; break;
+        case 0xc003000:
+            func = (original_version == 0) ? (void*)1 : (void*)&DK_EventClear;
+            is_stub=0; break;
+        case 0xc004000:
+            func = (original_version == 0) ? (void*)1 : (void*)&DK_EventPeek;
+            is_stub=0; break;
 
         /* Extended threading (category 0x0E) */
         case 0xe001000: func = (void*)&DK_ThreadInterrupt; is_stub=0; break;
@@ -1041,9 +1061,10 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
         }
 
         /* Log stub vs real resolution */
-        if (dispatch_count <= 100) {
-            fprintf(stderr, "[DK] Resolve 0x%x v%u → %p %s\n",
-                    func_id, version, func, is_stub ? "(STUB)" : "(impl)");
+        if (dispatch_count <= 500) {
+            fprintf(stderr, "[DK] Resolve 0x%x v%u → %p %s (orig_v=%u)\n",
+                    func_id, version, func,
+                    is_stub ? "(STUB)" : "(impl)", original_version);
         }
 
         /* Write function pointer to output via double-deref.
