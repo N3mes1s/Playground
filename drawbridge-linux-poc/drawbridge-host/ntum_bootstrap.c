@@ -626,62 +626,19 @@ static void *boot_thread_fn(void *arg) {
         for (size_t i = 0; i < 0x200/sizeof(void*); i++)
             pool_vtable[i] = (void*)&pool_allocator_fn;
 
-        /* Special-case vtable slot +0x30.  PE RVA 0x276e11 calls it to
-         * fetch a "ProcessorObject" — the returned pointer is stored in
-         * object[+0xac0 + idx*8] and later walked as a linked list via
-         * [+0x18] next / [+0x20] data / [+0x28] prev (PE RVA 0x180226ad3).
-         * If the vtable returns a raw pool allocation with garbage at
-         * +0x20, the PE infinite-spins looking for a non-zero +0x20.
-         *
-         * Allocate a single static ProcessorObject with self-referencing
-         * list links and +0x20 = non-zero ("ready"), then install a
-         * 2-insn thunk that loads its address into rax and returns. */
-        extern uint8_t processor_info_stub_thunk[];
-        static uint64_t s_processor_object[0x40] __attribute__((aligned(64)));
-        s_processor_object[0x00] = (uint64_t)&s_processor_object[0]; /* +0x00 vtable self */
-        s_processor_object[0x03] = (uint64_t)&s_processor_object[0]; /* +0x18 next = self */
-        s_processor_object[0x04] = 1;                                 /* +0x20 = "ready" */
-        s_processor_object[0x05] = (uint64_t)&s_processor_object[0]; /* +0x28 prev = self */
-        /* pool_vtable[+0x30 / 8 = 6] = address-of-stub returning
-         * &s_processor_object. The PE CFG dispatch does `jmp *rax`
-         * so the caller ends up with rax = &s_processor_object. */
-        static uint8_t s_proc_info_thunk[32] __attribute__((aligned(64)));
-        /* mov rax, imm64 ; ret  — encode at runtime. */
-        s_proc_info_thunk[0] = 0x48;    /* REX.W */
-        s_proc_info_thunk[1] = 0xB8;    /* mov rax, imm64 */
-        *(uint64_t*)&s_proc_info_thunk[2] = (uint64_t)&s_processor_object[0];
-        s_proc_info_thunk[10] = 0xC3;   /* ret */
-        /* Make the thunk executable. */
-        extern int mprotect(void *, size_t, int);
-        mprotect((void*)((uintptr_t)s_proc_info_thunk & ~0xFFFULL), 0x1000, 7);
-        pool_vtable[6] = s_proc_info_thunk;   /* +0x30 = 6 * 8 */
-
         sub_inner[0] = (void*)&pool_allocator_fn; /* called via guard_dispatch */
         sub_alloc[0] = sub_inner;
         pool_obj->vtable        = pool_vtable;
         pool_obj->sub_allocator = sub_alloc;
         *(volatile uint64_t*)NTUM_POOL_OBJ_ADDR = (uint64_t)pool_obj;
 
-        /* Pre-seed the PE's waiter-list anchor at .data 0x1806679d0.
-         * Live GDB attach during the DK#234 hang showed RDX pointing
-         * there with [+0x08] = pool allocation, [+0x10] = sentinel
-         * 0x12345678deaddead, [+0x18]/[+0x28] = self-refs (empty list),
-         * and [+0x20] = 0.  The PE's lock-release waiter walker at
-         * RVA 0x226ad3 spins forever because it reads [+0x20] while
-         * walking self-referenced entries.  Pre-set [+0x20] = 1 so
-         * that walker sees a non-zero "ready" marker and exits.
-         * TODO: trace which PE function constructs this object and
-         * replicate its full init instead of patching +0x20. */
-        *(volatile uint64_t*)0x1806679f0ULL = 1;
-
-        /* NOTE: attempted PE text-patch at RVA 0x226ada (je→nop) to
-         * bypass the empty-waiter-list spin; it moved the hang one
-         * instruction to the CAS at 0x226aee (same underlying cause:
-         * the lock is in a contended-but-empty state). Reverted —
-         * per CLAUDE.md rule "no int3 patches, no fastfail patches".
-         * The real fix lives upstream in whichever PE init routine
-         * puts the lock into that inconsistent state. TODO(M6c):
-         * trace who constructs lock at 0x1806679d0 with bit-0 set. */
+        /* NOTE: various .data pre-seed hacks were tried here during
+         * M6b iteration (waiter-list anchor at 0x1806679d0, PE text
+         * patches at RVA 0x226ada, processor_info thunk at vtable+0x30).
+         * All removed per "no fallbacks" rule. The DK #234 futex wait
+         * is a PE-internal lock inconsistency that will be resolved by
+         * making the appropriate DK PAL function(s) return real values
+         * instead of DK_GenericStub no-ops. */
         /* Also expose pool_obj as the kernel processor_info so
          * PE RVA 0x276e04..0x276e15 vtable dispatch lands on
          * pool_allocator_fn (returns a valid allocation). */
