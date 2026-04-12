@@ -266,39 +266,141 @@ typedef struct {
 #define MAX_PE_SECTIONS 16
 
 /* ================================================================
- * Thread Block (0xAA0 = 2720 bytes)
+ * NTUM Kernel Structures (clean typed access)
  *
- * Allocated by the NTUM for each managed thread.
- * From decompiled thread creation in sqlservr_boot.c:
- *   Block allocated at 0xAA0 bytes
- *   +0x00: Thread ID (sequential)
- *   +0x04: Thread number (DAT_003b21c0)
- *   +0x0B: Start routine address
- *   +0x0C: Parameter (rcx in Win64)
- *   +0x0D: Stack pointer base
- *   +0x13: All-threads list head
- *   +0x14: Previous thread pointer
- *   +0x15: Thread procedure function
- *   +0x58: TEB pointer reference
+ * These are the KTHREAD/scheduler/TEB layouts the PE expects.
+ * Fields are documented with their discovery source (RVA / function).
  * ================================================================ */
 
-#define THREAD_BLOCK_SIZE 0xAA0
+#define THREAD_BLOCK_SIZE         0xAA0
+#define KTHREAD_BLOCK_SIZE        0x4200   /* full KTHREAD w/ +0x40b0 thread_local ref */
+#define SCHED_BLOCK_SIZE          0x1000
+#define THREAD_LOCAL_BLOCK_SIZE   0x5000
+#define STACK_DESC_SIZE           0x100
+#define POOL_OBJ_SIZE             0x1000
+
+/* NTUM KTHREAD - Windows-style kernel thread block.
+ * Layout from decompiled FUN_00020f03c and PE accesses at various RVAs. */
+typedef struct ntum_kthread {
+    uint8_t   _pre[0x20];                      /* 0x000: headers / locks */
+    struct { uint64_t flink, blink; } list1;   /* 0x020: self-referencing list */
+    uint64_t  ref_count;                       /* 0x030: initially 1 */
+    uint8_t   _pad1[0x08];                     /* 0x038 */
+    void     *teb;                             /* 0x040: -> ntum_teb */
+    uint8_t   _pad2[0x18];                     /* 0x048 */
+    struct { uint64_t flink, blink; } list2;   /* 0x060: self-referencing list */
+    void     *sched_block;                     /* 0x070: -> ntum_sched_block */
+    uint8_t   _pad3[0x4038];                   /* 0x078-0x40AF */
+    void     *thread_local_alt;                /* 0x40B0: alt thread-local ptr */
+    uint8_t   _pad4[0x108];                    /* 0x40B8-0x41BF */
+    void     *thread_local;                    /* 0x41C0: -> thread_local_block */
+    uint8_t   _tail[0x38];                     /* 0x41C8-0x41FF */
+} ntum_kthread_t;
+
+/* NTUM Scheduler Block (linked from KTHREAD+0x70).
+ * The PE's FUN_00276b68 reads [+0x948] (affinity mask) and [+0x950] (CPU id). */
+typedef struct ntum_sched_block {
+    uint8_t   _pre[0xF0];                      /* 0x000: schedulable fields */
+    uint8_t   sched_info[0x858];               /* 0x0F0: scheduler substructure */
+    uint64_t  affinity_mask;                   /* 0x948: CPU bitmap (popcount input) */
+    uint16_t  preferred_cpu;                   /* 0x950: preferred CPU id */
+    uint8_t   _tail[0x6AE];                    /* 0x952-0x0FFF */
+} ntum_sched_block_t;
+
+/* Stack descriptor - referenced from TEB[0x1478] and pool allocations.
+ * Field at +0x30 must be a valid stack top pointer. */
+typedef struct ntum_stack_desc {
+    uint8_t   _pre[0x30];                      /* 0x00: header */
+    uint64_t  stack_top;                       /* 0x30: top of stack (required) */
+    uint8_t   _mid[0x58];                      /* 0x38-0x8F */
+    uint64_t  stack_handler;                   /* 0x90: 0x18021ff10 (guard_check) */
+    uint8_t   _tail[0x68];                     /* 0x98-0xFF */
+} ntum_stack_desc_t;
+
+/* Pool allocator object (at [0x1806456e8]).
+ * Fields discovered from PE vtable dispatches. */
+typedef struct ntum_pool_obj {
+    void     *vtable;                          /* 0x000: vtable ptr (2KB of func ptrs) */
+    uint8_t   _pad1[0x38];                     /* 0x008-0x03F */
+    void     *sub_allocator;                   /* 0x040: sub-allocator object */
+    uint8_t   _pad2[0x210];                    /* 0x048-0x257 */
+    uint32_t  flags;                           /* 0x258: flags */
+    uint8_t   _tail[0xDA4];                    /* 0x25C-0xFFF */
+} ntum_pool_obj_t;
+
+/* Kernel Object Type Registry at PE .data 0x1806472c0.
+ * PE FUN_0x2bcf9c sets [0x180648c00] = &type_registry.
+ * Reader FUN_0x31a58c dispatches based on exec_ctx[+4]:
+ *   case 1: (size, dispatch) from [+0x10, +0x18]
+ *   case 2: (size, dispatch) from [+0x28, +0x30] */
+typedef struct ntum_type_registry {
+    uint8_t   _pre[0x10];                      /* 0x00: header */
+    uint16_t  size1;                           /* 0x10: size for case 1 */
+    uint8_t   _pad1[0x06];                     /* 0x12 */
+    void     *dispatch1;                       /* 0x18: dispatch table for case 1 */
+    uint8_t   _pad2[0x08];                     /* 0x20 */
+    uint16_t  size2;                           /* 0x28: size for case 2 */
+    uint8_t   _pad3[0x06];                     /* 0x2A */
+    void     *dispatch2;                       /* 0x30: dispatch table for case 2 */
+    uint8_t   _tail[0x10];                     /* 0x38-0x47 (registry itself ends ~here) */
+    /* NOTE: actual type entries live at a SEPARATE .data address
+     * (0x180648c48), not inside this struct. They are 64 entries of
+     * 0x58 bytes initialized by FUN_0x31a348 in a loop. */
+} ntum_type_registry_t;
+
+/* KUSER_SHARED_DATA at 0x7ffe0000 (Windows-standard).
+ * sqlpal.dll has code at PE RVA 0x211650 that VirtualAllocates this page.
+ * Many PE init functions read specific fields before that runs. */
+typedef struct kuser_shared_data {
+    uint32_t TickCountLowDeprecated;           /* 0x00 */
+    uint32_t TickCountMultiplier;              /* 0x04: e.g. 0x0fa00000 */
+    uint64_t InterruptTime;                    /* 0x08: 100ns units (read at 0x276bd5) */
+    uint32_t _pad0;                            /* 0x10 */
+    uint64_t SystemTime;                       /* 0x14: 100ns since 1601 (read at 0x257b27) */
+    uint32_t _pad1;                            /* 0x1C */
+    uint64_t TimeZoneBias;                     /* 0x20 (read at 0x26c655) */
+    uint8_t  _rest[0x1000 - 0x28];
+} kuser_shared_data_t;
+
+#define KUSER_SHARED_DATA_ADDR    0x7ffe0000ULL
+
+/* NTUM .data kernel globals */
+#define NTUM_TYPE_REGISTRY_ADDR   0x1806472c0ULL   /* static type_registry */
+#define NTUM_TYPE_GLOBAL_ADDR     0x180648c00ULL   /* → type_registry ptr */
+#define NTUM_TYPE_GLOBAL2_ADDR    0x1806475d0ULL   /* → alt type_registry ptr */
+#define NTUM_POOL_OBJ_ADDR        0x1806456e8ULL   /* → pool_obj */
+#define NTUM_GLOBAL_TEB_ADDR      0x1806092c0ULL   /* → TEB */
+#define NTUM_STACK_DESC_ADDR      0x18063b218ULL   /* → stack_desc */
 
 /* ================================================================
- * Thread Environment Block (TEB)
+ * Thread Environment Block (TEB) - Windows-style, gs:0x30 points here.
  *
- * The NTUM reads gs:0x30 to get the TEB self-pointer.
- * Key offsets:
- *   +0x08: StackBase
- *   +0x10: StackLimit
- *   +0x30: Self-pointer (gs:0x30 -> &TEB)
- *   +0x58: Thread state pointer (self-referencing)
+ * The NTUM reads gs:0x30 to get the TEB self-pointer. It then follows
+ * TEB[0x1838] -> KTHREAD to get scheduler state.
  * ================================================================ */
 
 #define TEB_STACK_BASE_OFFSET   0x08
 #define TEB_STACK_LIMIT_OFFSET  0x10
 #define TEB_SELF_OFFSET         0x30
 #define TEB_THREAD_STATE_OFFSET 0x58
+
+typedef struct ntum_teb {
+    uint8_t   _pre0[0x08];                     /* 0x000: ExceptionList (32-bit), Nt_Tib */
+    uint64_t  StackBase;                       /* 0x008: top of stack */
+    uint64_t  StackLimit;                      /* 0x010: bottom of stack */
+    uint8_t   _pre1[0x18];                     /* 0x018 */
+    struct ntum_teb *Self;                     /* 0x030: self-pointer (gs:0x30) */
+    uint8_t   _pre2[0x20];                     /* 0x038 */
+    uint64_t  ThreadState;                     /* 0x058: often self-ref */
+    uint8_t   _pad[0x1418];                    /* 0x060-0x1477 */
+    void     *StackDesc;                       /* 0x1478: -> ntum_stack_desc */
+    uint8_t   _gap[0x3B8];                     /* 0x1480-0x1837 */
+    /* Windows TEB has KThread pointer at 0x1838 in Drawbridge extension */
+    void     *KThread;                         /* 0x1838: -> ntum_kthread */
+    uint8_t   _after_kt[0x28];                 /* 0x1840-0x1867 */
+    void     *PalObject;                       /* 0x1868: PAL object handle */
+    uint8_t   _tail[0xE790];                   /* 0x1870-0xFFFF */
+} ntum_teb_t;
 
 /* NTUM stack addresses (from entry point disassembly):
  *   lea rsp, [rip+0x296b29] -> 0x180637000

@@ -227,6 +227,18 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
              *   +0x17600: sub-inner (0x200 bytes)
              *   +0x17800: thread state / TCB (0x2000 bytes)
              */
+            /* Allocate boot structs in LibOS kernel heap. Layout:
+             *   +0x00000: ntum_kthread_t (0x4200 bytes)
+             *   +0x10000: ntum_sched_block_t (0x1000 bytes)
+             *   +0x11000: thread-local block (0x5000 bytes)
+             *   +0x16000: ntum_stack_desc_t — TEB stack desc (0x100 bytes)
+             *   +0x16100: ntum_stack_desc_t — sched stack desc (0x100 bytes)
+             *   +0x16200: ntum_pool_obj_t (0x1000 bytes)
+             *   +0x17200: pool vtable (0x200 bytes)
+             *   +0x17400: sub-allocator (0x200 bytes)
+             *   +0x17600: sub-inner (0x200 bytes)
+             *   +0x17800: thread state / TCB (0x2000 bytes)
+             */
             uint8_t *bs = (uint8_t*)mmap((void*)BOOT_STRUCTS_ADDR, BOOT_STRUCTS_SIZE,
                             PROT_READ | PROT_WRITE,
                             MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
@@ -236,28 +248,27 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
             }
             memset(bs, 0, BOOT_STRUCTS_SIZE);
 
-            uint8_t *boot_kthread      = bs + 0x00000;
-            uint8_t *boot_sched        = bs + 0x10000;
-            uint8_t *boot_thread_local = bs + 0x11000;
-            uint8_t *boot_stack_block  = bs + 0x16000;
+            ntum_kthread_t     *boot_kthread      = (ntum_kthread_t*)    (bs + 0x00000);
+            ntum_sched_block_t *boot_sched        = (ntum_sched_block_t*)(bs + 0x10000);
+            uint8_t            *boot_thread_local =                      (bs + 0x11000);
+            ntum_stack_desc_t  *boot_stack_desc   = (ntum_stack_desc_t*) (bs + 0x16000);
 
-            /* KTHREAD init (from FUN_00020f03c) */
-            *(uint64_t*)(boot_kthread + 0x20) = (uint64_t)(boot_kthread + 0x20);
-            *(uint64_t*)(boot_kthread + 0x28) = (uint64_t)(boot_kthread + 0x20);
-            *(uint64_t*)(boot_kthread + 0x30) = 1;  /* ref_count */
-            *(uint64_t*)(boot_kthread + 0x60) = (uint64_t)(boot_kthread + 0x60);
-            *(uint64_t*)(boot_kthread + 0x68) = (uint64_t)(boot_kthread + 0x60);
-            *(uint64_t*)(boot_kthread + 0x70) = (uint64_t)boot_sched;
-            *(uint64_t*)(boot_kthread + 0x40) = (uint64_t)ntum_teb;
-            *(uint64_t*)(boot_kthread + 0x41c0) = (uint64_t)boot_thread_local;
-            *(uint64_t*)(boot_kthread + 0x40b0) = (uint64_t)boot_thread_local;
+            /* KTHREAD init — replicates FUN_00020f03c behavior.
+             * Uses typed struct fields instead of raw offsets. */
+            boot_kthread->list1.flink = (uint64_t)&boot_kthread->list1;
+            boot_kthread->list1.blink = (uint64_t)&boot_kthread->list1;
+            boot_kthread->ref_count  = 1;
+            boot_kthread->list2.flink = (uint64_t)&boot_kthread->list2;
+            boot_kthread->list2.blink = (uint64_t)&boot_kthread->list2;
+            boot_kthread->sched_block      = boot_sched;
+            boot_kthread->teb              = ntum_teb;
+            boot_kthread->thread_local     = boot_thread_local;
+            boot_kthread->thread_local_alt = boot_thread_local;
 
-            /* Scheduler block processor affinity bitmap.
-             * PE RVA 0x27672c does SWAR popcount on [sched+0x948]
-             * then divides by the popcount. A zero bitmap causes SIGFPE.
-             * Set bit 0 = single-processor affinity (CPU 0 only). */
-            *(uint64_t*)(boot_sched + 0x948) = 1;     /* affinity mask */
-            *(uint16_t*)(boot_sched + 0x950) = 0;     /* preferred CPU ID */
+            /* Scheduler block — PE RVA 0x27672c does SWAR popcount on
+             * affinity_mask then divides by the result. Bit 0 = CPU 0. */
+            boot_sched->affinity_mask = 1;
+            boot_sched->preferred_cpu = 0;
             /* Thread-local block[0x250] = execution context sub-object.
              * RVA 0x3336dd reads [thread_local+0x250] then [+0xe88] as a lock.
              * Allocate a sub-object with room for the lock at +0xe88. */
@@ -322,17 +333,21 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
             }
             *(uint64_t*)(tl_sched_state + 0xa20) = (uint64_t)sched_proc_counters;
 
-            /* Link into TEB */
-            *(uint64_t*)((uint8_t*)ntum_teb + 0x1838) = (uint64_t)boot_kthread;
-            *(uint64_t*)((uint8_t*)ntum_teb + 0x1868) = 0;
-            /* TEB[0x1478] = stack descriptor (read by FUN_020f4d4 → context frame) */
-            *(uint64_t*)(boot_stack_block + 0x30) = NTUM_STACK_TOP;
-            *(uint64_t*)(boot_stack_block + 0x90) = 0x18021ff10ULL;
-            *(uint64_t*)((uint8_t*)ntum_teb + 0x1478) = (uint64_t)boot_stack_block;
+            /* Link into TEB — stack descriptor and kernel thread pointer.
+             * The thread switcher (RVA 0x020f4d4) uses TEB->StackDesc as
+             * the context frame's stack_info. StackDesc->stack_handler
+             * is the NTUM's guard_check_icall (RVA 0x18021ff10). */
+            boot_stack_desc->stack_top      = NTUM_STACK_TOP;
+            boot_stack_desc->stack_handler  = NTUM_GUARD_CHECK_RVA;
+            ntum_teb_t *teb_struct = (ntum_teb_t*)ntum_teb;
+            teb_struct->KThread   = boot_kthread;
+            teb_struct->PalObject = NULL;
+            teb_struct->StackDesc = boot_stack_desc;
 
-            printf("  [0x1806092c0] = %p (boot TEB in LibOS)\n", ntum_teb);
-            printf("  TEB[0x1838] = %p (KTHREAD in LibOS)\n", (void*)boot_kthread);
-            printf("  KTHREAD[0x70] = %p (sched in LibOS)\n", (void*)boot_sched);
+            printf("  [%p] global TEB = %p (in LibOS)\n",
+                   (void*)NTUM_GLOBAL_TEB_ADDR, ntum_teb);
+            printf("  TEB->KThread  = %p\n", (void*)boot_kthread);
+            printf("  KTHREAD->sched_block = %p\n", (void*)boot_sched);
         }
 
         /* Default thread block at [0x63b220] - used by thread switcher at
@@ -533,35 +548,18 @@ static void *boot_thread_fn(void *arg) {
      *     lea rcx, [0x6472c0]
      *     mov [0x648c00], rcx        ; global type registry
      *
-     * The real PE points [0x648c00] to a STATIC .data address 0x1806472c0
-     * which is a KernelObjectTypeRegistry header (already in PE .data,
-     * zero-initialized from the image). The registry layout is:
-     *   [0x1806472c0 + 0x10]  uint16  size (number of type entries)
-     *   [0x1806472c0 + 0x18]  void*   pointer to type dispatch table
-     *                                 (indexed by exec_ctx[0:2] type code)
-     *   [0x1806472c0 + 0x28]  uint16  alt size (for case 2)
-     *   [0x1806472c0 + 0x30]  void*   alt table (for case 2)
-     *
-     * Reader at FUN_0x31a58c:
-     *   case 1: rbx = [[0x648c00]+0x18];  eax = word[[0x648c00]+0x10]
-     *   case 2: rbx = [[0x648c00]+0x30];  eax = word[[0x648c00]+0x28]
-     *
-     * Caller at FUN_0x319e74 then does:  mov (%rax,%rbx,8), %rbx
-     * indexing the table with exec_ctx[0:2] (a type code up to ~0x40).
-     * The loaded value is only used if exec_ctx[+8] != 0; otherwise
-     * the `je` branch discards it. But the load itself must not fault,
-     * so the table needs to be readable at index*8. */
+     * Reader FUN_0x31a58c dispatches on exec_ctx[+4]:
+     *   case 1: rbx = registry->dispatch1;  size = registry->size1
+     *   case 2: rbx = registry->dispatch2;  size = registry->size2
+     * Caller FUN_0x319e74 then does `mov (%rax,%rbx,8), %rbx` where
+     * rbx is the exec_ctx type code (observed up to ~0x40). */
     {
-        /* The real table is PE .data at 0x1806472c0 (zero-initialized in image).
-         * It's within the mapped .data section (0x180600000-0x180636000)
-         * and writable since we mapped with PROT_READ|PROT_WRITE. */
-        const uint64_t TYPE_REGISTRY = 0x1806472c0ULL;
-        static uint8_t *dispatch_table = NULL;
+        ntum_type_registry_t *registry =
+            (ntum_type_registry_t*)NTUM_TYPE_REGISTRY_ADDR;
+        static void *dispatch_table = NULL;
         if (!dispatch_table) {
-            /* Allocate 64 KB dispatch table in LibOS space (room for 8K entries).
-             * PE indexes via `mov (%rax,%rbx,8),%rbx` with rbx up to ~0x40.
-             * Each entry is 8 bytes. 64 KB = 8192 entries, generous. */
-            dispatch_table = (uint8_t*)mmap(
+            /* 64KB table = 8192 entries. Generous for type codes up to ~0x40. */
+            dispatch_table = mmap(
                 (void*)(LIBOS_KERNEL_HEAP + 0x28000000ULL), 0x10000,
                 PROT_READ | PROT_WRITE,
                 MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
@@ -571,13 +569,12 @@ static void *boot_thread_fn(void *arg) {
             }
             memset(dispatch_table, 0, 0x10000);
         }
-        *(volatile uint16_t*)(TYPE_REGISTRY + 0x10) = 0x2000;   /* size */
-        *(volatile uint64_t*)(TYPE_REGISTRY + 0x18) = (uint64_t)dispatch_table;
-        *(volatile uint16_t*)(TYPE_REGISTRY + 0x28) = 0x2000;   /* alt size */
-        *(volatile uint64_t*)(TYPE_REGISTRY + 0x30) = (uint64_t)dispatch_table;
-        *(volatile uint64_t*)0x180648c00ULL = TYPE_REGISTRY;
-        /* Mirror for [0x6475d0] (case 3/4 dispatch uses same structure). */
-        *(volatile uint64_t*)0x1806475d0ULL = TYPE_REGISTRY;
+        registry->size1     = 0x2000;
+        registry->dispatch1 = dispatch_table;
+        registry->size2     = 0x2000;
+        registry->dispatch2 = dispatch_table;
+        *(volatile uint64_t*)NTUM_TYPE_GLOBAL_ADDR  = (uint64_t)registry;
+        *(volatile uint64_t*)NTUM_TYPE_GLOBAL2_ADDR = (uint64_t)registry;
     }
 
     /* Re-arm pool and KTHREAD pointers (all in LibOS space now) */
@@ -594,48 +591,35 @@ static void *boot_thread_fn(void *arg) {
         }
     }
 
-    /* Pre-create kernel pool object at [0x6456e8].
-     * The pool allocator at RVA 0x2c2a00 normally creates this during
-     * init command 0xe46. The code at 0x218f43 reads [0x6456e8] and
-     * passes it to 0x2bc3b8 which dereferences [rdx] and [rdx+0x258].
-     * Without it, the kernel init crashes with RDX=0 at 0x2bc3c7. */
+    /* Pre-create kernel pool object at [0x1806456e8].
+     * The pool allocator (PE RVA 0x2c2a00) normally creates this during
+     * init command 0xe46. Code at 0x218f43 reads [0x6456e8] and passes it
+     * to 0x2bc3b8 which dereferences pool_obj->vtable and pool_obj->flags.
+     * Without this, kernel init crashes with RDX=0 at 0x2bc3c7.
+     *
+     * Uses typed ntum_pool_obj_t struct from drawbridge_types.h. */
     {
-        uint8_t *boot_pool_obj    = (uint8_t*)(BOOT_STRUCTS_ADDR + 0x16200);
-        uint8_t *boot_pool_vtable = (uint8_t*)(BOOT_STRUCTS_ADDR + 0x17200);
-        /* Pool object vtable: [+0x50] = VirtualAlloc function pointer.
-         * The PE reads pool_obj[0] as vtable, then [vtable+0x50] as
-         * the allocator function, calls it via guard_dispatch. */
-        /* Pool allocator function - different signature from DK_VirtualMemoryAllocate.
-         * Called via vtable as: pool_alloc(pool_obj, size, ...)
-         * Allocates memory and returns pointer in rax. */
-        extern uint64_t pool_allocator_fn(void*, uint64_t, uint64_t, void*, uint64_t, void*) __attribute__((ms_abi));
-        /* Fill ENTIRE vtable with pool_allocator_fn.
-         * The PE calls many different vtable offsets (0x50, 0xe8, 0xf0, etc.)
-         * via guard_dispatch. If any entry is 0, guard_dispatch returns 0
-         * and the caller treats it as allocation failure → crash.
-         * By filling all entries, any vtable call reaches our allocator. */
-        for (int i = 0; i < 0x200; i += 8) {
-            *(uint64_t*)(boot_pool_vtable + i) = (uint64_t)&pool_allocator_fn;
-        }
-        /* Set vtable pointer as first field of pool object */
-        *(uint64_t*)boot_pool_obj = (uint64_t)boot_pool_vtable;
-        /* Pool object fields discovered from PE code:
-         * [+0x00] = vtable pointer
-         * [+0x40] = sub-allocator pointer (read at RVA 0x219199)
-         *           → [sub+0x00] → another object → [+0x00] = function ptr
-         *           Called via guard_dispatch for sub-allocation
-         * [+0x258] = flags (read at RVA 0x387809)
-         */
-        /* Create a sub-allocator with our pool function */
-        uint8_t *boot_sub_alloc = (uint8_t*)(BOOT_STRUCTS_ADDR + 0x17400);
-        uint8_t *boot_sub_inner = (uint8_t*)(BOOT_STRUCTS_ADDR + 0x17600);
-        /* sub_inner[0] = pool_allocator_fn (called via guard_dispatch) */
-        *(uint64_t*)boot_sub_inner = (uint64_t)&pool_allocator_fn;
-        /* sub_alloc[0] = pointer to sub_inner */
-        *(uint64_t*)boot_sub_alloc = (uint64_t)boot_sub_inner;
-        /* pool_obj[0x40] = sub_alloc */
-        *(uint64_t*)(boot_pool_obj + 0x40) = (uint64_t)boot_sub_alloc;
-        *(volatile uint64_t*)0x1806456e8ULL = (uint64_t)boot_pool_obj;
+        ntum_pool_obj_t *pool_obj    = (ntum_pool_obj_t*)(BOOT_STRUCTS_ADDR + 0x16200);
+        void           **pool_vtable = (void**)           (BOOT_STRUCTS_ADDR + 0x17200);
+        void           **sub_alloc   = (void**)           (BOOT_STRUCTS_ADDR + 0x17400);
+        void           **sub_inner   = (void**)           (BOOT_STRUCTS_ADDR + 0x17600);
+
+        extern uint64_t pool_allocator_fn(void*, uint64_t, uint64_t, void*,
+                                          uint64_t, void*) __attribute__((ms_abi));
+
+        /* Fill full 0x200-byte vtable with pool_allocator_fn. The PE calls
+         * many vtable offsets (0x50 VirtualAlloc, 0xe8, 0xf0, etc.) via
+         * guard_dispatch. Any zero slot would be treated as allocation
+         * failure by the caller. Filling every slot routes all dispatches
+         * to our single allocator. */
+        for (size_t i = 0; i < 0x200/sizeof(void*); i++)
+            pool_vtable[i] = (void*)&pool_allocator_fn;
+
+        sub_inner[0] = (void*)&pool_allocator_fn; /* called via guard_dispatch */
+        sub_alloc[0] = sub_inner;
+        pool_obj->vtable        = pool_vtable;
+        pool_obj->sub_allocator = sub_alloc;
+        *(volatile uint64_t*)NTUM_POOL_OBJ_ADDR = (uint64_t)pool_obj;
     }
     /* Re-arm TEB global (might have been overwritten by demand-paging) */
     {
