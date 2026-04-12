@@ -251,6 +251,13 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
             *(uint64_t*)(boot_kthread + 0x40) = (uint64_t)ntum_teb;
             *(uint64_t*)(boot_kthread + 0x41c0) = (uint64_t)boot_thread_local;
             *(uint64_t*)(boot_kthread + 0x40b0) = (uint64_t)boot_thread_local;
+
+            /* Scheduler block processor affinity bitmap.
+             * PE RVA 0x27672c does SWAR popcount on [sched+0x948]
+             * then divides by the popcount. A zero bitmap causes SIGFPE.
+             * Set bit 0 = single-processor affinity (CPU 0 only). */
+            *(uint64_t*)(boot_sched + 0x948) = 1;     /* affinity mask */
+            *(uint16_t*)(boot_sched + 0x950) = 0;     /* preferred CPU ID */
             /* Thread-local block[0x250] = execution context sub-object.
              * RVA 0x3336dd reads [thread_local+0x250] then [+0xe88] as a lock.
              * Allocate a sub-object with room for the lock at +0xe88. */
@@ -791,10 +798,33 @@ static void *boot_thread_fn(void *arg) {
         fprintf(stderr, "[BOOT] Entry bytes: %02x %02x %02x %02x %02x %02x %02x\n",
                 ep[0], ep[1], ep[2], ep[3], ep[4], ep[5], ep[6]);
         fprintf(stderr, "[BOOT] Expected:    48 8d 25 29 6b 29 00 (lea rsp, [rip+...])\n");
-        /* Verify .rdata stack adj is accessible */
+        /* Patch stack size offset.
+         * PE entry at 0x3a04d0 computes: RSP = 0x180637000 + [0x180413480].
+         * The default 0x4000 gives only 0x3b000 (236KB) of stack before
+         * underflowing into .data and corrupting the security cookie at
+         * 0x180600000. The real ELF host's FUN_00252e60 allocates a 2MB+
+         * thread stack; we provide equivalent headroom by moving RSP above
+         * the end of .data VSize (0x6a2a8 from 0x180600000 = 0x18066a2a8).
+         *
+         * Set [0x180413480] so that RSP lands at LibOS kernel heap space,
+         * giving 2MB of stack that cannot collide with .data at all.
+         * LIBOS_KERNEL_HEAP is at 0x300000000; reserve a stack slice there.
+         */
         uint64_t stack_adj = *(volatile uint64_t*)0x180413480ULL;
         fprintf(stderr, "[BOOT] Stack adj [0x180413480] = 0x%lx (expect 0x4000)\n",
                 (unsigned long)stack_adj);
+        /* Map a dedicated 2MB stack at a fixed LibOS address.
+         * RSP top = 0x18063b000 currently; we extend the PE image-resident
+         * stack region by patching the offset so RSP lands just past .data
+         * end (above 0x18066a2a8) but still inside the mapped PE region.
+         *   new_offset = (0x1806b0000 - 0x180637000) = 0x79000
+         * This gives 0xb0000 = 704KB of stack (room = new_top - .data_end). */
+        const uint64_t NEW_STACK_OFFSET = 0x79000;   /* → RSP = 0x1806b0000 */
+        *(volatile uint64_t*)0x180413480ULL = NEW_STACK_OFFSET;
+        fprintf(stderr, "[BOOT] Patched [0x180413480] = 0x%lx (RSP=0x%lx, %luKB stack above .data)\n",
+                (unsigned long)NEW_STACK_OFFSET,
+                (unsigned long)(0x180637000ULL + NEW_STACK_OFFSET),
+                (unsigned long)((0x180637000ULL + NEW_STACK_OFFSET - 0x18066a2a8ULL) / 1024));
         /* Verify .00cfg is intact */
         uint64_t gc = *(volatile uint64_t*)0x180a00000ULL;
         uint64_t gd = *(volatile uint64_t*)0x180a00008ULL;
