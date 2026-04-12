@@ -566,6 +566,7 @@ DK_API uint64_t DK_EventSet(DK_HANDLE event) {
 }
 
 DK_API uint64_t DK_EventClear(DK_HANDLE event) {
+    DK_TRACE_ENTRY("DK_EventClear", event, 0, 0, 0);
     if (event >= MAX_HANDLES || g_handles[event].type != HANDLE_EVENT)
         return DK_STATUS_INVALID_PARAM;
     uint64_t val;
@@ -575,6 +576,7 @@ DK_API uint64_t DK_EventClear(DK_HANDLE event) {
 }
 
 DK_API uint64_t DK_EventPeek(DK_HANDLE event, uint64_t *signaled) {
+    DK_TRACE_ENTRY("DK_EventPeek", event, signaled, 0, 0);
     if (event >= MAX_HANDLES || g_handles[event].type != HANDLE_EVENT)
         return DK_STATUS_INVALID_PARAM;
     struct pollfd pfd = { .fd = g_handles[event].eventfd, .events = POLLIN };
@@ -585,6 +587,7 @@ DK_API uint64_t DK_EventPeek(DK_HANDLE event, uint64_t *signaled) {
 
 DK_API uint64_t DK_ObjectsWaitAny(uint64_t count, DK_HANDLE *objects,
                                    uint64_t timeout, uint64_t *index) {
+    DK_TRACE_ENTRY("DK_ObjectsWaitAny", count, objects, timeout, index);
     (void)count; (void)objects; (void)timeout;
     if (index) *index = 0;
     usleep(1000);
@@ -596,6 +599,7 @@ DK_API uint64_t DK_ObjectsWaitAny(uint64_t count, DK_HANDLE *objects,
  * ================================================================ */
 
 DK_API uint64_t DK_ObjectClose(DK_HANDLE handle) {
+    DK_TRACE_ENTRY("DK_ObjectClose", handle, 0, 0, 0);
     if (handle >= MAX_HANDLES) return DK_STATUS_INVALID_PARAM;
     handle_entry_t *e = &g_handles[handle];
     switch (e->type) {
@@ -610,6 +614,7 @@ DK_API uint64_t DK_ObjectClose(DK_HANDLE handle) {
 }
 
 DK_API uint64_t DK_ObjectReference(DK_HANDLE handle) {
+    DK_TRACE_ENTRY("DK_ObjectReference", handle, 0, 0, 0);
     (void)handle;
     return DK_STATUS_SUCCESS;
 }
@@ -619,22 +624,26 @@ DK_API uint64_t DK_ObjectReference(DK_HANDLE handle) {
  * ================================================================ */
 
 DK_API uint64_t DK_ProcessCreate(void *params, DK_HANDLE *process) {
+    DK_TRACE_ENTRY("DK_ProcessCreate", params, process, 0, 0);
     (void)params; (void)process;
     return DK_STATUS_SUCCESS;
 }
 
 DK_API void DK_ProcessExit(uint64_t exit_code) {
+    DK_TRACE_ENTRY("DK_ProcessExit", exit_code, 0, 0, 0);
     _exit((int)exit_code);
 }
 
 DK_API uint64_t DK_ProcessTerminate(DK_HANDLE process,
                                      uint64_t exit_code) {
+    DK_TRACE_ENTRY("DK_ProcessTerminate", process, exit_code, 0, 0);
     (void)process; (void)exit_code;
     return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_ProcessGetExitCode(DK_HANDLE process,
                                        uint64_t *exit_code) {
+    DK_TRACE_ENTRY("DK_ProcessGetExitCode", process, exit_code, 0, 0);
     (void)process;
     if (exit_code) *exit_code = 0;
     return DK_STATUS_SUCCESS;
@@ -646,6 +655,7 @@ DK_API uint64_t DK_ProcessGetExitCode(DK_HANDLE process,
 
 DK_API uint64_t DK_SystemTimeQuery(uint64_t clock_type,
                                     uint64_t *time_val) {
+    DK_TRACE_ENTRY("DK_SystemTimeQuery", clock_type, time_val, 0, 0);
     struct timespec ts;
     clockid_t clk = (clock_type == 0) ? CLOCK_REALTIME : CLOCK_MONOTONIC;
     clock_gettime(clk, &ts);
@@ -658,6 +668,7 @@ DK_API uint64_t DK_SystemTimeQuery(uint64_t clock_type,
 }
 
 DK_API uint64_t DK_RandomBitsRead(void *buffer, uint64_t length) {
+    DK_TRACE_ENTRY("DK_RandomBitsRead", buffer, length, 0, 0);
     ssize_t ret = getrandom(buffer, length, 0);
     return (ret == (ssize_t)length) ? DK_STATUS_SUCCESS
                                     : DK_STATUS_INVALID_PARAM;
@@ -668,6 +679,7 @@ DK_API uint64_t DK_RandomBitsRead(void *buffer, uint64_t length) {
  * ================================================================ */
 
 DK_API uint64_t DK_ConsoleCreate(DK_HANDLE *console) {
+    DK_TRACE_ENTRY("DK_ConsoleCreate", console, 0, 0, 0);
     /* Create a console handle backed by our stdin/stdout */
     DK_HANDLE h = alloc_handle();
     g_handles[h].type = HANDLE_FD;
@@ -686,6 +698,7 @@ DK_API uint64_t DK_ConsoleCreate(DK_HANDLE *console) {
 
 DK_API uint64_t DK_SystemInfoQuery(uint64_t info_class, void *buffer,
                                     uint64_t buffer_size, uint64_t *result_size) {
+    DK_TRACE_ENTRY("DK_SystemInfoQuery", info_class, buffer, buffer_size, result_size);
     (void)info_class;
     if (buffer && buffer_size >= 48) {
         /* Fill a basic SYSTEM_INFO-like structure */
@@ -708,6 +721,7 @@ DK_API uint64_t DK_SystemInfoQuery(uint64_t info_class, void *buffer,
  * ================================================================ */
 
 DK_API uint64_t DK_ProcessGetId(uint64_t *pid) {
+    DK_TRACE_ENTRY("DK_ProcessGetId", pid, 0, 0, 0);
     if (pid) *pid = (uint64_t)getpid();
     return DK_STATUS_SUCCESS;
 }
@@ -728,6 +742,7 @@ DK_API __attribute__((force_align_arg_pointer))
 uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
                            uint64_t data_size, void *in_buf,
                            uint64_t out_size, void *out_buf) {
+    DK_TRACE_ENTRY("DK_AbiDispatcher", context, call_type, data_size, in_buf);
     (void)context; (void)out_size;
 
     /* Re-arm ALL critical .data globals on EVERY dispatcher call.
@@ -1007,6 +1022,7 @@ DK_API __attribute__((force_align_arg_pointer))
 uint64_t pool_allocator_fn(void *pool_obj, uint64_t alloc_size,
                             uint64_t flags, void *param4,
                             uint64_t param5, void *param6) {
+    DK_TRACE_ENTRY("pool_allocator_fn", pool_obj, alloc_size, flags, param4);
     (void)pool_obj; (void)flags; (void)param4; (void)param5; (void)param6;
 
     if (alloc_size == 0) alloc_size = 0x1000;
@@ -1044,6 +1060,7 @@ uint64_t pool_allocator_fn(void *pool_obj, uint64_t alloc_size,
 /* Generic PAL stub - returns success for unimplemented functions */
 DK_API __attribute__((force_align_arg_pointer))
 uint64_t DK_GenericStub(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+    DK_TRACE_ENTRY("DK_GenericStub", a, b, c, d);
     static int stub_count = 0;
     stub_count++;
     if (stub_count <= 100) {
@@ -1056,6 +1073,7 @@ uint64_t DK_GenericStub(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
 }
 
 DK_API uint64_t DK_AbiGetFunction(uint64_t abi_id, void **func_ptr) {
+    DK_TRACE_ENTRY("DK_AbiGetFunction", abi_id, func_ptr, 0, 0);
     void *result = (void*)&DK_GenericStub;
 
     switch (abi_id) {
@@ -1120,11 +1138,13 @@ DK_API uint64_t DK_AbiGetFunction(uint64_t abi_id, void **func_ptr) {
  * ================================================================ */
 
 DK_API uint64_t DK_ExceptionRecordFree(void *record) {
+    DK_TRACE_ENTRY("DK_ExceptionRecordFree", record, 0, 0, 0);
     (void)record;
     return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_InstructionCacheFlush(void *base, uint64_t length) {
+    DK_TRACE_ENTRY("DK_InstructionCacheFlush", base, length, 0, 0);
     __builtin___clear_cache(base, (char*)base + length);
     return DK_STATUS_SUCCESS;
 }
