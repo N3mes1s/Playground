@@ -1,0 +1,6 @@
+# Playground-local deps. Upstream deps come from upstream/compaction/requirements.txt
+# and are installed by setup.sh.
+torch>=2.3
+transformers>=4.44
+accelerate>=0.33
+datasets>=2.20

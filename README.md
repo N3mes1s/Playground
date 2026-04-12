@@ -31,6 +31,7 @@ While this is primarily a coding agent workspace, contributions and suggestions 
 |-----------|-------------|
 | [`vulnllm-analyzer/`](vulnllm-analyzer/) | Automated vulnerability analysis for GitHub repos using [VulnLLM-R-7B](https://github.com/ucsb-mlsec/VulnLLM-R) on Modal GPUs |
 | [recursive-lm-security-audit](./recursive-lm-security-audit/) | Automated codebase security scanner using DSPy's Recursive Language Model (RLM) module. Accepts a GitHub repo URL or local path and produces a vulnerability report for ~$0.87. |
+| [`latent-briefing/`](latent-briefing/) | Replication scaffold for Ramp Labs' [Latent Briefing](https://x.com/RampLabs/status/2042660310851449223): KV-cache compaction (Attention Matching) for efficient memory sharing between multi-agent workers. Wraps [adamzweiger/compaction](https://github.com/adamzweiger/compaction). |
 
 ## Note
 
