@@ -507,13 +507,12 @@ ntum_kthread_t *pal_thread_create(void *entry, void *arg)
  * ================================================================== */
 
 /* ---- extern stubs (all weak in pal_stubs.c) ---- */
-extern void     pal_pal_thread_starting(void *x);               /* FUN_00207280 */
-extern void    *pal_thread_local_alloc(void);                   /* FUN_003553f0 */
+/* pal_pal_thread_starting / pal_thread_local_alloc / pal_gettid are
+ * translated below and override the weak stubs. */
 extern int      pal_thread_state_setup(void *tl, void *out);    /* FUN_00355400 */
 extern int      pal_thread_state_stack(void *state, long *base_out,
                                        long *len_out);           /* FUN_00355410 */
 extern int      pal_thread_state_finalize(void *state);         /* FUN_003553e0 */
-extern uint32_t pal_gettid(void);                                /* FUN_00354170 */
 extern int      pal_teb_register(void *teb_desc, int flag);      /* FUN_00355420 */
 extern void     pal_sigalt_init(void *ctx);                      /* FUN_00355430 */
 extern void     pal_sigalt_set_signo(void *ctx, int sig);        /* FUN_00355440 */
@@ -525,6 +524,73 @@ extern void     pal_invoke_guest_entry(void *entry, void *stack,
                                         void *tcb_slot, void *arg) /* FUN_001ae6e0 */
                     __attribute__((noreturn));
 extern void     pal_abort(void) __attribute__((noreturn));       /* FUN_00354060 */
+
+
+/* ==================================================================
+ * Translated helpers for pal_thread_entry_thunk
+ *
+ * These three were fail-loud stubs in pal_stubs.cpp; real bodies live
+ * here so pal_thread_entry_thunk can actually run.
+ *
+ *   FUN_00207280 @ sqlservr_FULL.c:71829 → pal_pal_thread_starting
+ *   FUN_003553f0 @ sqlservr_FULL.c:318818 → pal_thread_local_alloc
+ *   FUN_00354170 @ sqlservr_FULL.c:315562 → pal_gettid
+ *
+ * The ELF decompiler shows 003553f0 / 00354170 as PLT trampolines
+ * (single tail-call into FUN_003533e0, the shared dynamic-resolver
+ * stub) because these are libc imports. We translate to the obvious
+ * Linux semantics: `syscall(SYS_gettid)` for pal_gettid and a
+ * zero-init 4 KiB slab for the per-thread TLS area.
+ *
+ * FUN_00207280 is a tiny PAL trace emitter that calls FUN_00354170
+ * (gettid) then FUN_00354310 with two qwords pulled from
+ * param_1[0xd8] / param_1[0xe0]. Those qwords are null on the
+ * g_pal_instance+0x18 sink during early boot, so the trace is a
+ * semantic no-op — we translate it as such.
+ * ================================================================== */
+} /* end extern "C" opened at top of file */
+
+static inline void pal_cpp_pal_thread_starting(void * /*pal_instance_plus_0x18*/)
+{
+    /* FUN_00207280: gettid + trace-emit via FUN_00354310.
+     * Param sink at g_pal_instance+0x18 has trace-target qwords at
+     * +0xd8/+0xe0 that are NULL during boot → emit nothing. */
+}
+
+static inline void *pal_cpp_thread_local_alloc(void)
+{
+    /* FUN_003553f0: libc trampoline. Task-spec simplest body —
+     * 4 KiB zero-initialized per-thread slab. */
+    return new uint8_t[0x1000]{};
+}
+
+static inline uint32_t pal_cpp_gettid(void)
+{
+    /* FUN_00354170: libc trampoline. Direct Linux gettid syscall. */
+    return (uint32_t)syscall(SYS_gettid);
+}
+
+extern "C" {
+
+void  pal_pal_thread_starting(void *pal_instance_plus_0x18)
+{
+    pal_cpp_pal_thread_starting(pal_instance_plus_0x18);
+}
+
+void *pal_thread_local_alloc(void)
+{
+    return pal_cpp_thread_local_alloc();
+}
+
+uint32_t pal_gettid(void)
+{
+    return pal_cpp_gettid();
+}
+
+} /* end extern "C" wrapper for the three translated helpers */
+
+extern "C" {
+/* Re-open extern "C" so the rest of the file keeps C linkage. */
 
 /* Reading/writing fs:-0x08 / fs:-0x10 via the canonical glibc TLS slot. */
 static inline void pal_fs_tcb_link_neg10(void *val)

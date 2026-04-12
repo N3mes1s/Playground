@@ -387,20 +387,22 @@ extern "C" {
 extern void pal_runtime_params_init(void);          /* FUN_00354250 */
 extern void pal_runtime_params_commit(void);        /* FUN_00354260 */
 extern void pal_logging_init(uint8_t debug_flag);   /* FUN_00279cd0 */
-extern void pal_debugger_setup(void);               /* FUN_0027a2f0 */
-extern char pal_threading_needed(void *image);      /* FUN_001bd660 */
-extern int  pal_logger_thread_create(void);         /* FUN_00204bb0 */
-extern void pal_dynlink_init(void);                 /* FUN_0021a7d0 */
-extern int  pal_module_loader_init(void);           /* FUN_0021d1c0 */
-extern void pal_library_init(void);                 /* FUN_0021a750 */
-extern int  pal_setrlimit(int which, int soft, int hard); /* FUN_00353a90 */
-extern int  pal_fd_limit_get(int resource, void *out); /* FUN_00354270 */
-extern int  pal_fd_limit_set(int resource, const void *in); /* FUN_00354280 */
-extern void pal_post_boot_init_1(void *ctx);        /* FUN_002285a0 */
-extern void pal_post_boot_init_2(void);             /* FUN_00235a80 */
-extern void pal_post_boot_init_3(void);             /* FUN_00244790 */
-extern void pal_io_finalize(void);                  /* FUN_00279f10 */
-extern void pal_kernel_version_log(void);           /* FUN_00204da0 */
+/* Forward declarations for helpers defined inline below in the
+ * strong-translations block (so pal_boot_init can call them). */
+void pal_debugger_setup(void);
+char pal_threading_needed(void *image);
+int  pal_logger_thread_create(void);
+void pal_dynlink_init(void);
+int  pal_module_loader_init(void);
+void pal_library_init(void);
+int  pal_setrlimit(int which, int soft, int hard);
+int  pal_fd_limit_get(int resource, void *out);
+int  pal_fd_limit_set(int resource, const void *in);
+void pal_post_boot_init_1(void *ctx);
+void pal_post_boot_init_2(void);
+void pal_post_boot_init_3(void);
+void pal_io_finalize(void);
+void pal_kernel_version_log(void);
 } /* extern "C" */
 
 /* PAL instance byte offsets (TODO: promote to a typed struct). */
@@ -634,6 +636,41 @@ int pal_module_loader_init(void) { return 0; }
 /* ---- FUN_0021a750 ----  library init pass.  No-op (compiler handles
  * global ctors).  See REAL_BOOT_SEQUENCE.c step 8. */
 void pal_library_init(void) { /* no-op */ }
+
+/* ---- FUN_00204bb0 ----  logger/watchdog thread create.  For the
+ * hello_world host we don't need a background logger thread; return 0
+ * ("no logger thread") to skip. TODO: wire real thread later. */
+int pal_logger_thread_create(void)
+{
+    fprintf(stderr, "[PAL-BOOT] logger_thread_create: skipped (no-op)\n");
+    return 0;
+}
+
+/* ---- FUN_0027a2f0 ----  debugger attach hook.  No-op for hello_world. */
+void pal_debugger_setup(void)
+{
+    fprintf(stderr, "[PAL-BOOT] debugger_setup: skipped (no-op)\n");
+}
+
+/* ---- FUN_002285a0 ----  post-boot init #1 (MSSQL secrets path).
+ * Not needed for hello_world; no-op. */
+void pal_post_boot_init_1(void *ctx)
+{
+    (void)ctx;
+    fprintf(stderr, "[PAL-BOOT] post_boot_init_1: skipped (no-op)\n");
+}
+
+/* ---- FUN_00235a80 ----  post-boot init #2 (LDAPS).  No-op. */
+void pal_post_boot_init_2(void)
+{
+    fprintf(stderr, "[PAL-BOOT] post_boot_init_2: skipped (no-op)\n");
+}
+
+/* ---- FUN_00244790 ----  post-boot init #3 (Kerberos cache).  No-op. */
+void pal_post_boot_init_3(void)
+{
+    fprintf(stderr, "[PAL-BOOT] post_boot_init_3: skipped (no-op)\n");
+}
 
 /* ---- FUN_00353a90 @ 314352 ----  setrlimit wrapper.  Call sites
  * (FUN_00204680 lines 69413/69414) pass (1,4,0x400) & (2,4,0x400). */

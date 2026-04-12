@@ -7,9 +7,14 @@ SRCS  = pal_sync.cpp
 SRCS += pal_kobj.cpp pal_teb.cpp pal_object.cpp
 SRCS += pal_vm.cpp
 SRCS += pe_loader.cpp pal_sys.cpp
+# pal_stream.cpp and pal_console.cpp MUST precede dk_pal.cpp so that
+# their strong DK_StreamWrite / DK_StreamOpen / DK_ConsoleCreate
+# definitions win under -Wl,--allow-multiple-definition (first-seen).
+SRCS += pal_stream.cpp pal_console.cpp
 SRCS += main.cpp ntum_bootstrap.cpp dk_pal.cpp ntum_signals.cpp
 SRCS += pal_boot.cpp pal_thread.cpp pal_abi.cpp pal_io.cpp pe_init_replicas.cpp
 SRCS += pal_stubs.cpp
+SRCS += pal_except.cpp
 SRCS += pool_allocator_real.cpp
 
 ASM_SRCS = trampoline.S cfg_passthrough.S
