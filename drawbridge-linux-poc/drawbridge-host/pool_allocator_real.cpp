@@ -106,8 +106,23 @@ static uint64_t pool_allocator_fn_impl(void *pool_obj, uint64_t alloc_size,
     size_t aligned = (alloc_size + 0xFFFULL) & ~0xFFFULL;
     size_t total   = aligned < 0x1000 ? 0x1000 : aligned;
 
+    /* Guard: refuse further pool allocations past an upper bound to
+     * avoid VM-address-space exhaustion when the PE enters an alloc
+     * retry loop. Wave-6d observed 1.36M pool requests in 5 s after
+     * the 0x224c29 scratch extension. 1 GiB cap = 256k * 4 KiB. */
+    const uint64_t kPoolCap = LIBOS_KERNEL_HEAP_SZ * 2ULL;  /* 2 GiB */
     uint64_t addr = __atomic_fetch_add(&pool_heap_next_real, total,
                                        __ATOMIC_SEQ_CST);
+    if (addr > LIBOS_KERNEL_HEAP + 0x40000000ULL + kPoolCap) {
+        static int cap_log = 0;
+        if (cap_log++ < 3) {
+            fprintf(stderr,
+                "[POOL-REAL] allocator cap reached at 0x%lx (cap=0x%lx); "
+                "returning 0 to signal OOM to caller\n",
+                (unsigned long)addr, (unsigned long)kPoolCap);
+        }
+        return 0;
+    }
     void *result = mmap((void*)addr, total,
                         PROT_READ | PROT_WRITE,
                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
@@ -124,8 +139,12 @@ static uint64_t pool_allocator_fn_impl(void *pool_obj, uint64_t alloc_size,
         result = mmap(nullptr, total, PROT_READ | PROT_WRITE,
                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (result == MAP_FAILED) {
-            fprintf(stderr, "[POOL-REAL] fallback mmap also failed errno=%d\n",
+            static int fb_log = 0;
+            if (fb_log++ < 3) {
+                fprintf(stderr,
+                    "[POOL-REAL] fallback mmap also failed errno=%d\n",
                     errno);
+            }
             return 0;
         }
     }

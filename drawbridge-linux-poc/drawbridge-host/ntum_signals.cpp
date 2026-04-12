@@ -393,14 +393,10 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
             if (rip == 0x180224c29ULL &&
                 rsi_val >= 0xC0000000ULL && rsi_val < 0xC0010000ULL) {
                 /* Async-signal-unsafe to calloc here; use static BSS.
-                 * 0x400 bytes: sized to match the original calloc that
-                 * prevented glibc-malloc assertion corruption. Enlarging
-                 * this to 0x2000/0x10000 let the PE's FUN_00224b78 treat
-                 * rsi as a real pool base and enter a runaway alloc
-                 * loop → OS OOM. The 0x400 size lets the PE crash-fast
-                 * at RVA 0x224c96 with NULL deref; the proper fix is
-                 * Wave-6c — translate sub_24c38c so we don't enter the
-                 * fixup at all. */
+                 * 0x400 keeps the PE crashing deterministically rather
+                 * than entering a runaway pool alloc loop. The proper
+                 * fix is Wave-6e — translate sub_24c38c fully so the
+                 * fixup path is dead code. */
                 static uint8_t scratch_buf[0x400] = {0};
                 void *scratch = scratch_buf;
                 /* Zero the cache slot if it's reachable. */
