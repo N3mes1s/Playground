@@ -307,24 +307,57 @@ int pal_sync_wait_any(uint64_t count, pal_kevent_t **events,
 DK_API uint64_t DK_NotificationEventCreate(uint64_t initial_state,
                                            DK_HANDLE *event)
 {
+    static int nev_trace = 0;
+    ++nev_trace;
+    fprintf(stderr,
+        "[EVT-IN] NotifyEv #%d init=%lu out_ptr=%p\n",
+        nev_trace, (unsigned long)initial_state, (void*)event);
+
+    /* Wave-32 experiment: runtime log shows the PE calls this with
+     * init_state=0x90 (not 0/1) and out_ptr pointing INTO the
+     * VmModuleState region (0x300000000000, 0x300000442000,
+     * 0x300006442000 etc.). This strongly suggests 0x5001000 is NOT
+     * NotificationEventCreate -- our DK id mapping is wrong. Skip
+     * writing to *event when the OUT pointer is inside the PE's
+     * VM-manager range, to avoid corrupting bitmap/descriptor state.
+     * Just return success so the PE can proceed. */
     pal_kevent_t *ev = pal_sync_kevent_create(PAL_KEVENT_TYPE_NOTIFICATION,
                                               (uint8_t)(initial_state & 1));
     if (!ev)
         return DK_STATUS_NO_MEMORY;
-    if (event)
+
+    uintptr_t ev_ptr = (uintptr_t)event;
+    int suppress_write =
+        ev_ptr >= 0x300000000000ULL && ev_ptr < 0x400000000000ULL;
+
+    if (event && !suppress_write)
         *event = (DK_HANDLE)(uintptr_t)ev;
+
+    fprintf(stderr,
+        "[EVT-OUT] NotifyEv #%d ev=%p -> %s *out_ptr=0x%lx\n",
+        nev_trace, (void*)ev,
+        suppress_write ? "SUPPRESSED write (VM range);" : "wrote",
+        (unsigned long)(suppress_write ? 0 : (uintptr_t)ev));
     return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_SynchronizationEventCreate(uint64_t initial_state,
                                               DK_HANDLE *event)
 {
+    static int sev_trace = 0;
+    fprintf(stderr,
+        "[EVT-IN] SyncEv #%d init=%lu out_ptr=%p\n",
+        ++sev_trace, (unsigned long)initial_state, (void*)event);
     pal_kevent_t *ev = pal_sync_kevent_create(PAL_KEVENT_TYPE_SYNCHRONIZATION,
                                               (uint8_t)(initial_state & 1));
     if (!ev)
         return DK_STATUS_NO_MEMORY;
     if (event)
         *event = (DK_HANDLE)(uintptr_t)ev;
+    fprintf(stderr,
+        "[EVT-OUT] SyncEv #%d ev=%p -> *out_ptr=0x%lx\n",
+        sev_trace, (void*)ev,
+        event ? (unsigned long)(uintptr_t)ev : 0UL);
     return DK_STATUS_SUCCESS;
 }
 

@@ -72,6 +72,19 @@ DK_API uint64_t DK_VirtualMemoryAllocate(void **address, uint64_t *size,
 {
     DK_TRACE_ENTRY("DK_VirtualMemoryAllocate", address, size, alloc_type, protect);
 
+    /* Wave-32 instrumentation: log every VA alloc call with inputs
+     * (hint, requested size, type/protect) and the returned VA.
+     * Goal: reconstruct the VA lifecycle so we can see when/where
+     * 0x300006442000 becomes a "free" VA the PE gives to
+     * DK_NotificationEventCreate. */
+    static int va_trace = 0;
+    uint64_t in_hint = address ? (uint64_t)*address : 0;
+    uint64_t in_size = size    ? *size               : 0;
+    fprintf(stderr,
+        "[VA-IN] #%d hint=0x%lx size=0x%lx type=0x%lx prot=0x%lx\n",
+        ++va_trace, (unsigned long)in_hint, (unsigned long)in_size,
+        (unsigned long)alloc_type, (unsigned long)protect);
+
     /* Mirror ELF locals. */
     uint64_t local_88 = 0;        /* LocalBaseAddress */
     uint32_t uVar7;               /* effective protect */
@@ -156,6 +169,10 @@ DK_API uint64_t DK_VirtualMemoryAllocate(void **address, uint64_t *size,
         if (prot_linux_final == 0) prot_linux_final = PROT_READ | PROT_WRITE;
         mprotect((void*)(uintptr_t)local_88, uVar8, prot_linux_final);
     }
+
+    fprintf(stderr,
+        "[VA-OUT] #%d returned_addr=0x%lx size=0x%lx status=SUCCESS\n",
+        va_trace, (unsigned long)local_88, (unsigned long)uVar8);
 
     return DK_STATUS_SUCCESS;
 }

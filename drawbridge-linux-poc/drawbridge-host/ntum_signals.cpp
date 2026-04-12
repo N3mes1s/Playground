@@ -248,11 +248,11 @@ static int handle_libos_fault(void *fault_addr, ucontext_t *uc) {
      * find any descriptor whose +0x68 bitmap pointer contains the
      * fault page, and if so memset 0xFF. Otherwise leave zeros. */
     int init_as_bitmap = 0;
-    /* Wave-29d: DO NOT 0xFF-fill. FUN_0x384fbc uses 0=FREE, 1=ALLOCATED
-     * semantics (verified by disasm at 0x3850bc: `not rdx; bsf` finds
-     * first UNSET bit == free). MAP_ANONYMOUS zero-fill IS the correct
-     * default. Heuristic disabled. */
-    {
+    /* Wave-32: 0=FREE, 1=ALLOCATED (verified by disasm at 0x3850bc).
+     * MAP_ANONYMOUS zero-fill IS the correct default — any 0xFF fill
+     * would mark all pages allocated, defeating the allocator. Fully
+     * disabled. */
+    if (0 && init_as_bitmap) {
         uint64_t vms_ptr = *(volatile uint64_t *)0x180c00878ULL;
         if (vms_ptr && !init_as_bitmap) {
             /* VmModuleState layout:
