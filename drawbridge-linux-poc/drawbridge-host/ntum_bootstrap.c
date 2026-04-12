@@ -615,18 +615,17 @@ static void *boot_thread_fn(void *arg) {
         void           **sub_alloc   = (void**)           (BOOT_STRUCTS_ADDR + 0x17400);
         void           **sub_inner   = (void**)           (BOOT_STRUCTS_ADDR + 0x17600);
 
-        extern uint64_t pool_allocator_fn(void*, uint64_t, uint64_t, void*,
-                                          uint64_t, void*) __attribute__((ms_abi));
-
-        /* Fill full 0x200-byte vtable with pool_allocator_fn. The PE calls
-         * many vtable offsets (0x50 VirtualAlloc, 0xe8, 0xf0, etc.) via
-         * guard_dispatch. Any zero slot would be treated as allocation
-         * failure by the caller. Filling every slot routes all dispatches
-         * to our single allocator. */
+        /* Use pool_allocator_fn_real (strong symbol in pool_allocator_real.c)
+         * which produces zero-initialized memory with LIST_ENTRY self-refs —
+         * the layout the PE's kernel-object vtable paths expect. The older
+         * pool_allocator_fn in dk_pal.c (naive mmap + [+0x10]=stack_desc)
+         * was producing malformed nodes that deadlocked PE waiter walks. */
+        extern uint64_t pool_allocator_fn_real(void*, uint64_t, uint64_t, void*,
+                                               uint64_t, void*) __attribute__((ms_abi));
         for (size_t i = 0; i < 0x200/sizeof(void*); i++)
-            pool_vtable[i] = (void*)&pool_allocator_fn;
+            pool_vtable[i] = (void*)&pool_allocator_fn_real;
 
-        sub_inner[0] = (void*)&pool_allocator_fn; /* called via guard_dispatch */
+        sub_inner[0] = (void*)&pool_allocator_fn_real; /* called via guard_dispatch */
         sub_alloc[0] = sub_inner;
         pool_obj->vtable        = pool_vtable;
         pool_obj->sub_allocator = sub_alloc;
