@@ -968,6 +968,54 @@ static void *boot_thread_fn(void *arg) {
             (unsigned long)*veh_flink, (unsigned long)*veh_blink);
     }
 
+    /* Wave-16: short-circuit the raise/dispatch recursion.
+     *
+     * Observed recursion path: RtlRaiseException (0x2a8410) calls
+     * RtlDispatchException (0x2962a8); dispatch can't find a handler
+     * (module table empty, .pdata lookup fails for every RIP); falls
+     * through to RtlRaiseStatus (0x2a84f8) which calls dispatch again,
+     * then the unwinder, then self-recurses. Each raise frame burns
+     * 0x500+ bytes of stack; we exhaust the 16 MB boot stack in ~29k
+     * iterations and SIGSEGV inside dispatch's prologue at 0x2962f1.
+     *
+     * Our Wave-12 ud2 at 0x2a855a never fires because the stack
+     * overflow occurs earlier in the chain.
+     *
+     * Patch A: make RtlDispatchException return TRUE (handled) at
+     *   entry. 3-byte rewrite: b0 01 c3 (mov al,1; ret). Original
+     *   bytes at 0x2962a8 are `40 55` (rex push rbp); overwriting
+     *   with ret at entry means rsp is untouched -> caller's ret
+     *   address still at [rsp] -> clean return with al=1.
+     * Patch B: make RtlRaiseStatus return immediately. 1-byte
+     *   rewrite: c3 (ret). Original `40 53` (rex push rbx); same
+     *   argument -- rsp untouched at entry, ret pops caller addr.
+     *
+     * Consequence: the PE's internal exception propagation is
+     * silenced. Any caller that raises gets a "pretend it was
+     * handled" return. Crude, but unblocks the boot flow past the
+     * stack-exhausting recursion so we can see what the test exe's
+     * hot path looks like without the raise storm.
+     */
+    {
+        volatile uint8_t *p_dispatch = (uint8_t*)0x1802962a8ULL;
+        if (p_dispatch[0] == 0x40 && p_dispatch[1] == 0x55) {
+            p_dispatch[0] = 0xb0;   /* mov al, imm8    */
+            p_dispatch[1] = 0x01;   /*   imm8 = 1 (TRUE) */
+            p_dispatch[2] = 0xc3;   /* ret             */
+            fprintf(stderr,
+                "[BOOT] wave-16: patched RtlDispatchException entry "
+                "(0x2962a8) -> mov al,1; ret\n");
+        }
+        volatile uint8_t *p_raise = (uint8_t*)0x1802a84f8ULL;
+        if (p_raise[0] == 0x40 && p_raise[1] == 0x53) {
+            p_raise[0] = 0xc3;      /* ret             */
+            /* leave p_raise[1] alone (dead tail)       */
+            fprintf(stderr,
+                "[BOOT] wave-16: patched RtlRaiseStatus entry "
+                "(0x2a84f8) -> ret\n");
+        }
+    }
+
     /* Wave-12: RtlRaiseStatus (FUN_002a84f8) recursion trap.
      *
      * Per /tmp/wave12_rca_a84f8.md + /tmp/wave12_caller.md: the PE's

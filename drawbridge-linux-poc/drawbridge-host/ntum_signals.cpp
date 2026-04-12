@@ -440,6 +440,39 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
             uintptr_t rsi_val = (uintptr_t)uc->uc_mcontext.gregs[REG_RSI];
             uintptr_t rcx_val = (uintptr_t)uc->uc_mcontext.gregs[REG_RCX];
             uintptr_t rbp_val = (uintptr_t)uc->uc_mcontext.gregs[REG_RBP];
+
+            /* Wave-16b: NTSTATUS-as-pointer fault in FUN_3877f0
+             * (kernel-object refcount helper, called from ~100 sites).
+             * Wave-16 silenced the raise machinery; side-effect is
+             * that code which would have aborted now continues and
+             * passes the NTSTATUS value as a pointer to this helper.
+             * Crash site 0x180387809 is `cmp r14d, 0xc(rcx)` where
+             * rcx is our NTSTATUS. Redirect RIP to the function's
+             * zero-return epilogue at 0x387858..0x38786a which does:
+             *   xor eax, eax
+             *   mov rbx, [rsp+0x50]
+             *   mov rbp, [rsp+0x58]
+             *   add rsp, 0x30
+             *   pop r14
+             *   ret
+             * i.e. returns 0 (success sentinel used by the function's
+             * normal happy path at 0x387858). Preserves legitimate
+             * callers of 0x3877f0 since we only redirect when rcx is
+             * an NTSTATUS. */
+            if (rip == 0x180387809ULL &&
+                rcx_val >= 0xC0000000ULL && rcx_val < 0xC0010000ULL) {
+                uc->uc_mcontext.gregs[REG_RIP] = 0x180387858;
+                uc->uc_mcontext.gregs[REG_RAX] = 0;
+                static int fix16b = 0;
+                if (fix16b++ < 50) {
+                    fprintf(stderr,
+                        "[FIXUP-16b] #%d RIP=0x180387809 rcx=0x%lx "
+                        "-> 0x180387858 (xor eax,eax; epilogue)\n",
+                        fix16b, (unsigned long)rcx_val);
+                }
+                return;
+            }
+
             if (rip == 0x180224c29ULL &&
                 rsi_val >= 0xC0000000ULL && rsi_val < 0xC0010000ULL) {
                 /* Async-signal-unsafe to calloc here; use static BSS.
