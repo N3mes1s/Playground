@@ -75,6 +75,21 @@ class TestCachePlumbing(unittest.TestCase):
         self.assertEqual(float(orig.layers[0].keys[0, 0, 0, 0]), 0.0,
                          "clone_cache was shallow -- in-place edit leaked")
 
+    def test_batched_cache_raises_cleanly(self):
+        """Batched caches (batch > 1) should raise NotImplementedError, not silently produce wrong output."""
+        k = torch.randn(3, 4, 32, 8)  # batch=3
+        v = torch.randn(3, 4, 32, 8)
+        probe = torch.randn(3, 4, 3, 8)
+        with self.assertRaises(NotImplementedError):
+            compact_dynamic_cache([(k, v)], [probe], 0.3)
+
+    def test_probe_layer_count_mismatch_raises(self):
+        """Mismatched probe-list length vs cache layer count must raise."""
+        k = torch.randn(1, 4, 16, 8)
+        v = torch.randn(1, 4, 16, 8)
+        with self.assertRaises(ValueError):
+            compact_dynamic_cache([(k, v), (k, v)], [torch.randn(1, 4, 3, 8)], 0.3)
+
     def test_compact_dynamic_cache_roundtrip(self):
         """Compaction round-trips through a real DynamicCache (no model)."""
         try:

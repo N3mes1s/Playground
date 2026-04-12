@@ -56,8 +56,13 @@ def _resolve_target(target_size: float | int, n: int) -> int:
             raise ValueError(f"float target_size must be in (0, 1], got {target_size}")
         m = max(1, int(round(target_size * n)))
     else:
+        if target_size <= 0:
+            raise ValueError(
+                f"int target_size must be positive, got {target_size}; "
+                f"use a float in (0, 1] for a ratio"
+            )
         m = int(target_size)
-    return max(1, min(m, n))
+    return min(m, n)
 
 
 def attention_mass(
@@ -123,6 +128,11 @@ def attention_match(
     if Q_probe.shape[0] != K.shape[0] or Q_probe.shape[-1] != K.shape[-1]:
         raise ValueError(
             f"Q_probe shape {tuple(Q_probe.shape)} incompatible with K {tuple(K.shape)}"
+        )
+    if Q_probe.shape[1] == 0:
+        raise ValueError(
+            "Q_probe has 0 probe queries; attention-matching is undefined "
+            "without probe queries. Pass at least one probe token."
         )
 
     h, n, d = K.shape
