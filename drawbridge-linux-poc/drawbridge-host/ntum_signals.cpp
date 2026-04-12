@@ -1021,6 +1021,32 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
             uc->uc_mcontext.gregs[REG_RIP] = 0x18037f128ULL;
             return;
         }
+        if (rip == 0x18020579eULL) {
+            /* Wave-41: FUN_0x20e07c returned 0xc000000d INVALID_PARAM.
+             * Diagnostic dump, then skip the fastfail by jumping to
+             * 0x2057c4 (the success-continuation after fastfail's
+             * format-args block). edi holds the status but it's never
+             * consumed beyond the fastfail log path, so skipping is
+             * safe for subsequent execution. This is a TACTICAL skip
+             * while we iterate; real fix is to make 20e07c succeed. */
+            static int wave41_trap_count = 0;
+            if (wave41_trap_count < 5) {
+                uint64_t rax_v = (uint64_t)uc->uc_mcontext.gregs[REG_RAX];
+                uint64_t rdi_v = (uint64_t)uc->uc_mcontext.gregs[REG_RDI];
+                uint64_t rsi_v = (uint64_t)uc->uc_mcontext.gregs[REG_RSI];
+                uint64_t rbx_v = (uint64_t)uc->uc_mcontext.gregs[REG_RBX];
+                fprintf(stderr,
+                    "[WAVE-41] #%d 20579e trap: status=0x%lx rsi(img)=0x%lx rbx=0x%lx\n",
+                    ++wave41_trap_count, (unsigned long)rax_v,
+                    (unsigned long)rsi_v, (unsigned long)rbx_v);
+                (void)rdi_v;
+            }
+            /* Skip past fastfail block: 0x20579e..0x2057c3 is all the
+             * args-for-report + call; 0x2057c4 is the normal
+             * continuation. */
+            uc->uc_mcontext.gregs[REG_RIP] = 0x1802057c4ULL;
+            return;
+        }
         if (rip == 0x1802962a8ULL) {
             /* RtlDispatchException entry */
             static int disp_count = 0;

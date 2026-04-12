@@ -1112,6 +1112,23 @@ static void *boot_thread_fn(void *arg) {
     }
 
     {
+        /* Wave-41 diagnostic: after wave-40's 37d067 intercept, boot
+         * advances to 0x20579e where FUN_0x20e07c returned 0xc000000d
+         * (INVALID_PARAMETER) triggering fastfail. Trap at 0x20579e
+         * (the `call 0x3a0880` fastfail) with ud2 to dump state. The
+         * handler reads rax/rdi (the returned status) and dumps
+         * surrounding locals so we can find why 20e07c failed.
+         * Bytes at 0x20579e = `e8 dd b0 19 00` (5B). Replace first 2. */
+        volatile uint8_t *p_ff41 = (uint8_t*)0x18020579eULL;
+        if (p_ff41[0] == 0xe8) {
+            p_ff41[0] = 0x0f;
+            p_ff41[1] = 0x0b;
+            fprintf(stderr,
+                "[BOOT] wave-41: trapped fastfail call @0x20579e\n");
+        }
+    }
+
+    {
         /* Wave-21: seed [0x180662d28] with a zero-count table so the
          * loop at RVA 0x20e694 (`mov (%rax), %r9d; cmp 1, r9d; jbe
          * skip`) reads count=0 and skips the iteration. Without the
