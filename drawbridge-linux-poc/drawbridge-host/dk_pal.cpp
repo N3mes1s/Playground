@@ -538,7 +538,18 @@ DK_API uint64_t DK_VirtualMemoryProtect(void *address, uint64_t size,
                                          uint64_t new_protect,
                                          uint64_t *old_protect) {
     DK_TRACE_ENTRY("DK_VirtualMemoryProtect", address, size, new_protect, old_protect);
-    if (old_protect) *old_protect = WIN_PAGE_READWRITE;
+    /* Wave-26: per DKVirtualMemoryProtect:enter log format in sqlpal
+     * .rdata, this function has 3 args (baseAddress, regionLength,
+     * newProtect). Our 4th arg `old_protect` was speculative; callers
+     * pass garbage (observed r9=1) in that register. Validate the
+     * pointer before dereferencing -- only write if it lies in a
+     * reasonable kernel/user memory range, otherwise skip silently. */
+    uintptr_t opv = (uintptr_t)old_protect;
+    int op_valid = (opv != 0) &&
+                   ((opv & 0x7) == 0) &&
+                   ((opv >= 0x180000000ULL && opv < 0x180e00000ULL) ||
+                    (opv >= 0x300000000ULL && opv < 0x501000000ULL));
+    if (op_valid) *old_protect = WIN_PAGE_READWRITE;
     int prot = dk_prot_to_linux(new_protect);
     mprotect(address, size, prot);
     return DK_STATUS_SUCCESS;
@@ -932,9 +943,11 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
          * DkVirtualMemoryProtect (0x5003000) at RVA 0x2145c8,
          * and a few others TBD. Populate as they surface. */
         switch (dk_id & 0xFFFFF000) {
-        case 0x5003000:  /* DkVirtualMemoryProtect */
+        case 0x5003000:  /* DkVirtualMemoryProtect (verified via wave-24) */
             version = 2;
             break;
+        /* DkStreamAttributesQuery also reported by wave-24 panic.
+         * Its version slot is tied to a different DK id -- TBD. */
         default: break;
         }
 
@@ -1007,10 +1020,18 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
         case 0x4002000: func = (void*)&DK_ThreadExit; is_stub=0; break;
         case 0x4003000: func = (void*)&DK_ThreadYieldExecution; is_stub=0; break;
 
-        /* Synchronization (category 0x05) */
+        /* Wave-26: category 0x05 was mislabeled "Synchronization" -- the
+         * PE resolver actually queries DkVirtualMemoryProtect at
+         * 0x5003000 (verified via wave-24 capture: panic at RVA 0x21467b
+         * for function name at 0x43ba50 = "DkVirtualMemoryProtect" with
+         * version slot [0x63f878] populated via GetVersion(0x5003000)).
+         *
+         * The other 0x5xxx IDs remain tentatively mapped to sync
+         * primitives but this may also be wrong -- will verify as
+         * boot progresses and each function gets called. */
         case 0x5001000: func = (void*)&DK_NotificationEventCreate; is_stub=0; break;
         case 0x5002000: func = (void*)&DK_SynchronizationEventCreate; is_stub=0; break;
-        case 0x5003000: func = (void*)&DK_ObjectsWaitAny; is_stub=0; break;
+        case 0x5003000: func = (void*)&DK_VirtualMemoryProtect; is_stub=0; break;
 
         /* Console (category 0x06) */
         case 0x6001000: func = (void*)&DK_ConsoleCreate; is_stub=0; break;
