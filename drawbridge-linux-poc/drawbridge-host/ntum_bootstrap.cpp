@@ -1032,76 +1032,65 @@ static void *boot_thread_fn(void *arg) {
     }
 
     {
-        /* Wave-20: stamp [0x1806472bc] = 1 to skip the "debug assert
-         * + fallback FUN_247910" path at RVA 0x208202.
-         * Disasm at 0x208202:
-         *   test r15b, r15b
-         *   je  0x20821f              ; skip if r15b==0
-         *   cmpb 0, [0x6472bc]
-         *   jne 0x20821f              ; skip if byte != 0
-         *   int3                      ; assert: byte should be 1
-         *   cmpb 0, [0x6472bc]
-         *   jne 0x20821f
-         *   call 0x247910             ; fallback invokes raise path
-         * Our SIGTRAP handler patches the int3 to nop, so we re-
-         * check the byte; if it's still 0, we fall into FUN_247910
-         * which is the chain that reached FUN_3877f0 and raised
-         * 0xc0000008. Setting the byte to 1 forces the je/jne to
-         * take the skip branches and avoid 0x247910 entirely. */
+        /* Wave-27 observation: Wave-20's [0x1806472bc]=1 stomp cannot
+         * be removed yet. Without it, the assertion at RVA 0x208210
+         * fires, and the fallback at 0x208211 calls FUN_247910 which
+         * still hits an internal check (not the raise path we fixed
+         * in wave-19/25/26) and ends up in RtlDispatchException. That
+         * dispatcher then stack-overflows because our LibOS hasn't
+         * populated whatever state FUN_247910 expects.
+         * Keep the stomp until we can trace that exact state. */
         volatile uint8_t *b_472bc = (uint8_t*)0x1806472bcULL;
         uint8_t pre = *b_472bc;
         *b_472bc = 1;
         fprintf(stderr,
-            "[BOOT] wave-20: [0x1806472bc] %u -> 1 (skips raise-bearing "
-            "fallback at 0x208202)\n", pre);
+            "[BOOT] wave-20/27: [0x1806472bc] %u -> 1 (keep until we can "
+            "satisfy FUN_247910's state invariant)\n", pre);
     }
 
     {
-        /* Wave-19: patch VM-object validator FUN_0024c38c to always
-         * return 0 (success). This is the function that returns
-         * STATUS_INVALID_HANDLE (0xc0000008) at default-entry, which
-         * FUN_387650 then propagates into RtlRaiseStatus -- the head
-         * of the whole raise cascade.
+        /* Wave-27: Wave-19's PE patch on FUN_0024c38c is now REMOVED.
          *
-         * Entry: `48 89 5c 24 08` (mov [rsp+8], rbx; 5 bytes).
-         * Patch: `33 c0 c3 90 90` (xor eax, eax; ret; nop nop).
-         * rsp untouched at entry -> clean return with eax = 0. */
+         * The original justification was that the validator returned
+         * STATUS_INVALID_HANDLE (0xc0000008) because our pool objects
+         * didn't have the magic 0xDB64DB64 at [obj+0x10]. Wave-19 fixed
+         * the ROOT cause by having the pool allocator stamp that magic
+         * (dk_pal.cpp:pool_allocator_fn). With magic in place, the
+         * validator's `cmpl $0xdb64db64, (rbx+0x10)` check passes
+         * naturally on valid pool objects.
+         *
+         * Keeping the PE patch would bypass all of the validator's
+         * other legitimate checks (object in VM range, cache identity
+         * matches), which helped expose wave-24/25/26 crashes but now
+         * should be retired so the PE can reject genuinely-bad pointers.
+         */
         volatile uint8_t *p_val = (uint8_t*)0x18024c38cULL;
-        if (p_val[0] == 0x48 && p_val[1] == 0x89 && p_val[2] == 0x5c) {
-            p_val[0] = 0x33;
-            p_val[1] = 0xc0;
-            p_val[2] = 0xc3;
-            p_val[3] = 0x90;
-            p_val[4] = 0x90;
-            fprintf(stderr,
-                "[BOOT] wave-19: patched VM validator (0x24c38c) "
-                "-> xor eax,eax; ret (removes 0xc0000008 at source)\n");
-        }
+        fprintf(stderr,
+            "[BOOT] wave-27: FUN_0024c38c entry bytes are [%02x %02x %02x] "
+            "(expect 48 89 5c = original; we no longer patch)\n",
+            p_val[0], p_val[1], p_val[2]);
     }
 
     {
-        /* Wave-18: change Wave-16 silent patches to ud2 traps so our
-         * SIGILL handler can log (NTSTATUS in ECX, caller return addr
-         * on [rsp]) before emulating the return. Gives us ground
-         * truth on WHICH raise fires first and from WHERE, instead of
-         * silently discarding. The handler in ntum_signals.cpp
-         * recognises these RIPs and emulates ret. */
+        /* Wave-27: Wave-18 ud2 traps on RtlDispatchException /
+         * RtlRaiseStatus removed. Those traps existed to short-circuit
+         * a raise recursion that only fired because the VM validator
+         * (FUN_0024c38c) returned STATUS_INVALID_HANDLE on our pool
+         * objects. With the pool_allocator magic-stamp fix, the
+         * validator passes and no raise is emitted during normal
+         * boot. If a raise still fires, it now runs through the real
+         * dispatcher -- which is what we want for debugging.
+         *
+         * Wave-12's ud2 at 0x2a855a (the MSVC dead-code retry inside
+         * RtlRaiseStatus) stays in place: it's a belt-and-braces
+         * fail-fast for the NORETURN idiom, never reached on the
+         * happy path. */
         volatile uint8_t *p_dispatch = (uint8_t*)0x1802962a8ULL;
-        if (p_dispatch[0] == 0x40 && p_dispatch[1] == 0x55) {
-            p_dispatch[0] = 0x0f;   /* ud2 (0f 0b)    */
-            p_dispatch[1] = 0x0b;
-            fprintf(stderr,
-                "[BOOT] wave-18: patched RtlDispatchException entry "
-                "(0x2962a8) -> ud2 (SIGILL logs + emulates al=1,ret)\n");
-        }
-        volatile uint8_t *p_raise = (uint8_t*)0x1802a84f8ULL;
-        if (p_raise[0] == 0x40 && p_raise[1] == 0x53) {
-            p_raise[0] = 0x0f;      /* ud2            */
-            p_raise[1] = 0x0b;
-            fprintf(stderr,
-                "[BOOT] wave-18: patched RtlRaiseStatus entry "
-                "(0x2a84f8) -> ud2 (SIGILL logs ECX+retaddr + emulates ret)\n");
-        }
+        volatile uint8_t *p_raise    = (uint8_t*)0x1802a84f8ULL;
+        fprintf(stderr,
+            "[BOOT] wave-27: RtlDispatchException entry=[%02x %02x] "
+            "RtlRaiseStatus entry=[%02x %02x] (ud2 traps removed)\n",
+            p_dispatch[0], p_dispatch[1], p_raise[0], p_raise[1]);
     }
 
     /* Wave-12: RtlRaiseStatus (FUN_002a84f8) recursion trap.
