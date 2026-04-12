@@ -269,6 +269,17 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
              * affinity_mask then divides by the result. Bit 0 = CPU 0. */
             boot_sched->affinity_mask = 1;
             boot_sched->preferred_cpu = 0;
+            /* PE RVA 0x24410a writes $1 here; RVA 0x276ca0 validates
+             * [sched+0xbc0] == r14(=1). Pre-set to match. */
+            boot_sched->sequence_id   = 1;
+            /* PE RVA 0x276e04-0x276e15 reads:
+             *   rax = [rdi]             ; sched_block
+             *   rcx = [rax + 0xa98]     ; processor_info
+             *   rax = [rcx]             ; vtable
+             *   rax = [rax + 0x30]      ; vtable slot — called via CFG
+             * Point processor_info to the existing pool_obj so any
+             * vtable dispatch lands on pool_allocator_fn (returns a
+             * valid pool pointer). Set in the pool init block below. */
             /* Thread-local block[0x250] = execution context sub-object.
              * RVA 0x3336dd reads [thread_local+0x250] then [+0xe88] as a lock.
              * Allocate a sub-object with room for the lock at +0xe88. */
@@ -620,6 +631,14 @@ static void *boot_thread_fn(void *arg) {
         pool_obj->vtable        = pool_vtable;
         pool_obj->sub_allocator = sub_alloc;
         *(volatile uint64_t*)NTUM_POOL_OBJ_ADDR = (uint64_t)pool_obj;
+        /* Also expose pool_obj as the kernel processor_info so
+         * PE RVA 0x276e04..0x276e15 vtable dispatch lands on
+         * pool_allocator_fn (returns a valid allocation). */
+        {
+            ntum_sched_block_t *sched_ptr =
+                (ntum_sched_block_t*)(BOOT_STRUCTS_ADDR + 0x10000);
+            sched_ptr->processor_info = pool_obj;
+        }
     }
     /* Re-arm TEB global (might have been overwritten by demand-paging) */
     {

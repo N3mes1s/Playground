@@ -301,13 +301,25 @@ typedef struct ntum_kthread {
 } ntum_kthread_t;
 
 /* NTUM Scheduler Block (linked from KTHREAD+0x70).
- * The PE's FUN_00276b68 reads [+0x948] (affinity mask) and [+0x950] (CPU id). */
+ * Fields located through PE disassembly:
+ *   +0x948  affinity_mask   — SWAR popcount at RVA 0x27672c
+ *   +0x950  preferred_cpu   — read at RVA 0x27672c
+ *   +0xbc0  sequence_id     — PE RVA 0x24410a writes $1; RVA 0x276c97
+ *                             reads and compares against r14=1. Must
+ *                             be initialized to 1 before 0x276b68 runs.
+ */
 typedef struct ntum_sched_block {
     uint8_t   _pre[0xF0];                      /* 0x000: schedulable fields */
     uint8_t   sched_info[0x858];               /* 0x0F0: scheduler substructure */
     uint64_t  affinity_mask;                   /* 0x948: CPU bitmap (popcount input) */
     uint16_t  preferred_cpu;                   /* 0x950: preferred CPU id */
-    uint8_t   _tail[0x6AE];                    /* 0x952-0x0FFF */
+    uint8_t   _pad_to_a98[0x146];              /* 0x952-0x0A97 */
+    void     *processor_info;                  /* 0x0A98: kernel processor info obj
+                                                  (vtable at +0x00, func @ +0x30
+                                                  called at RVA 0x276e15) */
+    uint8_t   _pad_to_bc0[0x120];              /* 0x0AA0-0x0BBF */
+    uint64_t  sequence_id;                     /* 0x0BC0: validated at RVA 0x276ca0 */
+    uint8_t   _tail[0x438];                    /* 0x0BC8-0x0FFF */
 } ntum_sched_block_t;
 
 /* Stack descriptor - referenced from TEB[0x1478] and pool allocations.
