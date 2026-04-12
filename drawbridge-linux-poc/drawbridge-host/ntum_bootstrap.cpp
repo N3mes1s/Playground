@@ -273,6 +273,32 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
             /* PE RVA 0x24410a writes $1 here; RVA 0x276ca0 validates
              * [sched+0xbc0] == r14(=1). Pre-set to match. */
             boot_sched->sequence_id   = 1;
+
+            /* Wave-6a: SCHED[+0x970] session/resource context slot.
+             *
+             * FUN_00267294 @ RVA 0x267294 reads SCHED[+0x970] to return
+             * the per-thread session pointer. When the TEB chain
+             * (gs:0x30 → TEB[+0x1838] → KTHREAD[+0x70] → SCHED) is
+             * fully hooked up but SCHED[+0x970] is NULL, the function
+             * returns NULL, which propagates to sub_249a18's NULL
+             * assertion and fastfails via int $0x2c at RVA 0x3a0880.
+             *
+             * FUN_00243e94 (at RVA 0x243ed1: `mov %rdi, 0x970(%rbx)`)
+             * is the real writer — it sets this field during session
+             * binding from a freshly allocated object. Our boot path
+             * doesn't yet create full sessions, so we mirror the
+             * fallback the ELF's FUN_00267294 returns when the TEB
+             * chain is absent: `lea 0x180668db0, %rax` (a static
+             * default-session sentinel in PE .data). This keeps the
+             * ELF's own invariant — the returned value is non-NULL
+             * and points at a PE-owned data slot — without a fake
+             * host heap allocation.
+             *
+             * The offset 0x970 sits inside ntum_sched_block_t's
+             * `sched_info[0x858]` byte block (sched_info starts at
+             * 0xF0 → 0x970 - 0xF0 = 0x880 into sched_info). */
+            *(uint64_t*)((uint8_t*)boot_sched + 0x970) = 0x180668db0ULL;
+
             /* PE RVA 0x276e04-0x276e15 reads:
              *   rax = [rdi]             ; sched_block
              *   rcx = [rax + 0xa98]     ; processor_info

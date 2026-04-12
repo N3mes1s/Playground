@@ -388,13 +388,13 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
          * exe reach its entry point. */
         {
             uintptr_t rsi_val = (uintptr_t)uc->uc_mcontext.gregs[REG_RSI];
+            uintptr_t rcx_val = (uintptr_t)uc->uc_mcontext.gregs[REG_RCX];
             uintptr_t rbp_val = (uintptr_t)uc->uc_mcontext.gregs[REG_RBP];
             if (rip == 0x180224c29ULL &&
                 rsi_val >= 0xC0000000ULL && rsi_val < 0xC0010000ULL) {
-                static void *scratch = NULL;
-                if (!scratch) {
-                    scratch = calloc(1, 0x400);
-                }
+                /* Async-signal-unsafe to calloc here; use static BSS. */
+                static uint8_t scratch_buf[0x400] = {0};
+                void *scratch = scratch_buf;
                 /* Zero the cache slot if it's reachable. */
                 if (rbp_val >= 0x300000000ULL && rbp_val < 0x400000000ULL) {
                     volatile uint64_t *cache =
@@ -412,6 +412,8 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
                     (unsigned long)rsi_val, scratch);
                 return;
             }
+
+            (void)rcx_val;
         }
 
         /* Try demand-paging */
