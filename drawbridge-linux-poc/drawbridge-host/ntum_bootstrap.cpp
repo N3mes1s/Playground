@@ -121,6 +121,22 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
     *(uint32_t*)(s_libos_size_buf + 0x08) = 0x38;   /* SubSize */
     *(uint32_t*)(s_libos_size_buf + 0x34) = 512;    /* 512 * 6MB = 3GB max memory */
 
+    /* Wave-31 (per agent-C analysis): FUN_0x37f700 reads the managed
+     * VM window from [0x180c00820]+0x38 / +0x40. Set these to
+     * 0x300000000000 / 0x100000000000 so the PE's init derives a
+     * 16-TB low range matching the observed post-init vm_base /
+     * size_shift. Without this, FUN_0x37f700 uses whatever garbage
+     * was at those offsets (previously zeroed) and either fails or
+     * allocates at kernel-picked addresses that don't match our
+     * mmap'd regions.
+     *
+     * Agent C report: /tmp/wave29_37f700.md
+     * Observed runtime: VmModuleState->+0x88 = 0x300000000000 (vm_base)
+     *                   VmModuleState->+0xA0 = 0x2000 (size_shift,
+     *                                                   0x2000<<31 = 16 TB) */
+    *(uint64_t*)(s_libos_size_buf + 0x38) = 0x300000000000ULL;  /* VMBase */
+    *(uint64_t*)(s_libos_size_buf + 0x40) = 0x100000000000ULL;  /* VMSize 16 TB */
+
     /* Feature flags */
     uint32_t *flags = (uint32_t*)&params->FeatureFlags[0];
     *flags = FEATURE_BASE_PAL | FEATURE_TLS;
