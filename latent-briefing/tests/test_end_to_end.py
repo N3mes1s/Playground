@@ -151,6 +151,7 @@ class TestEndToEndLlama(unittest.TestCase):
         self.assertEqual(pc.rope_summary()["with_rope"], cfg.num_hidden_layers)
 
         # Align to KV heads (GQA: 4 query heads -> 2 KV heads).
+        # Default strategy is 'mean' -> probe length preserved.
         aligned = [align_probe_to_kv_heads(q, cfg.num_key_value_heads)
                    for q in pc.queries]
         self.assertEqual(aligned[0].shape, (1, cfg.num_key_value_heads, 6,

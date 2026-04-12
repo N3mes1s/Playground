@@ -210,16 +210,47 @@ class ProbeCapture:
 def align_probe_to_kv_heads(
     q_probe: torch.Tensor,
     num_kv_heads: int,
+    *,
+    strategy: str = "mean",
 ) -> torch.Tensor:
     """Reduce query-head count to KV-head count for GQA/MQA models.
 
-    Mean-pools heads within each KV group so the probe has one Q per KV head.
-    For non-GQA models (num_heads == num_kv_heads) this is a no-op.
+    In GQA each KV head is attended to by ``G = num_heads / num_kv_heads``
+    query heads, each producing its own attention output. AM operates
+    per-head, so it needs a single probe per KV head that represents the
+    attention behavior of the whole group.
+
+    Strategies:
+
+    * ``"mean"`` (default): mean-pool the G query heads into one. Produces a
+      probe of shape ``[B, num_kv_heads, q, head_dim]``.
+
+    * ``"concat"``: stack the G query heads along the time axis, producing
+      ``[B, num_kv_heads, G*q, head_dim]``. AM's LS solve then fits a single
+      (K', V') that reproduces attention outputs for all G query heads.
+
+    Empirically (on SmolLM2-135M G=3 and Qwen2.5-0.5B G=7, 4 QA items):
+
+      * Mean wins on target-NLL and answer accuracy at moderate ratios
+        (0.3-0.5): the averaged probe is closer to the actual next-token
+        query that generation will use.
+      * Concat wins at aggressive ratios (<= 0.1), where mean's single-Q
+        probe can't carry enough information to select good keys; concat's
+        over-determined LS solve provides regularisation.
+
+    No strategy is strictly dominant -- tune per model/ratio.
+
+    For non-GQA models (``num_heads == num_kv_heads``) this is a no-op.
     """
     b, h, q, d = q_probe.shape
     if h == num_kv_heads:
         return q_probe
     if h % num_kv_heads != 0:
         raise ValueError(f"num_heads {h} not divisible by num_kv_heads {num_kv_heads}")
-    group = h // num_kv_heads
-    return q_probe.view(b, num_kv_heads, group, q, d).mean(dim=2)
+    G = h // num_kv_heads
+    if strategy == "concat":
+        # [B, num_kv_heads, G, q, d] -> [B, num_kv_heads, G*q, d]
+        return q_probe.view(b, num_kv_heads, G, q, d).reshape(b, num_kv_heads, G * q, d)
+    if strategy == "mean":
+        return q_probe.view(b, num_kv_heads, G, q, d).mean(dim=2)
+    raise ValueError(f"unknown strategy {strategy!r}")

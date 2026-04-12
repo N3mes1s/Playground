@@ -15,10 +15,11 @@ latent-briefing/
 │   ├── probe.py                      Per-layer post-RoPE Q capture via hooks
 │   ├── model.py                      LatentBriefingModel wrapper
 │   └── session.py                    OrchestratorWorkerSession with prefix reuse
-├── tests/                            19 unit tests, no network required
+├── tests/                            23 unit tests, no network required
 │   ├── test_attention_matching.py    AM correctness on synthetic tensors
 │   ├── test_cache.py                 DynamicCache round-trip
 │   ├── test_probe.py                 Probe Q matches model-internal Q bit-exact
+│   ├── test_session.py               Incremental set_orchestrator_trajectory == fresh prefill
 │   └── test_end_to_end.py            Full pipeline on tiny Llama + cache immutability regression
 ├── examples/
 │   └── multi_agent.py                Orchestrator + 3 workers + append-update
@@ -96,14 +97,52 @@ Given a cache `K, V` of shape `[num_heads, n, head_dim]` and a probe `Q` of shap
 - `demo.held_out_nll()` does not mutate the caller's cache either (regression test — same root cause, different call site).
 - `clone_cache()` is verified truly deep: extending or in-place-editing the clone does not leak to the original.
 - `ProbeCapture` raises `RuntimeError` if it encounters a RoPE-using architecture where its `apply_rotary_pos_emb` call fails, rather than silently falling back to pre-RoPE Q (which would produce meaningless AM scores).
+- `OrchestratorWorkerSession.set_orchestrator_trajectory()`'s truncate+extend path produces a KV cache **bit-identical** to `prefill(text)` across fresh/extend/branch/no-op/shrink scenarios (tested against a random-weights Llama; max abs diff < 1e-4).
 
 **Real-model end-to-end** (not in the test suite — run via `demo.py` / `/tmp/verify_*.py`):
 - SmolLM2-135M (Llama, 30 layers, GQA 3:1): full pipeline runs, 30/30 layers post-RoPE, AM at 80% savings generates "Alexander the Great" correctly where recent/random produce garbage.
 - Qwen2.5-0.5B (Qwen2, 24 layers, GQA 7:1): full pipeline runs, 24/24 layers post-RoPE, AM at 80% savings ΔNLL=-0.003 (actually slightly lower than full cache) and generates the correct answer; recent/random ΔNLL around +7.
 
 ```
-Ran 19 tests in ~6s. OK.
+Ran 23 tests in ~9s. OK.
 ```
+
+### GQA head-alignment ablation (empirical, not a fixed default)
+
+For GQA models, AM needs to reduce the G query heads per group to a
+single probe per KV head. Two choices are implemented:
+
+- `align_probe_to_kv_heads(..., strategy="mean")` (default): mean-pool.
+- `align_probe_to_kv_heads(..., strategy="concat")`: stack along time axis.
+
+Per-strategy measurements on 4 QA items (target-NLL and answer accuracy;
+lower NLL is better):
+
+SmolLM2-135M (G=3):
+```
+ratio=0.5  mean: NLL=0.99 acc=50%   concat: NLL=1.42 acc=25%   better=mean
+ratio=0.3  mean: NLL=1.02 acc=100%  concat: NLL=2.18 acc=50%   better=mean
+ratio=0.2  mean: NLL=1.49 acc=75%   concat: NLL=2.08 acc=25%   better=mean
+ratio=0.1  mean: NLL=3.04 acc=25%   concat: NLL=1.10 acc=100%  better=concat
+```
+
+Qwen2.5-0.5B (G=7):
+```
+ratio=0.5  mean: NLL=0.65 acc=50%   concat: NLL=1.75 acc=75%   better=mean
+ratio=0.3  mean: NLL=0.78 acc=75%   concat: NLL=0.73 acc=75%   better=concat
+ratio=0.2  mean: NLL=1.48 acc=75%   concat: NLL=1.03 acc=75%   better=concat
+ratio=0.1  mean: NLL=7.13 acc=25%   concat: NLL=0.81 acc=75%   better=concat
+```
+
+Initial impulse was to default to `concat` based on a probe-attention
+reconstruction MSE ablation (which concat wins by 40-400000x). But
+probe-attention MSE does not predict downstream generation quality:
+mean wins on actual target-NLL and answer accuracy at moderate
+compression ratios, and concat only pulls ahead at aggressive ratios
+(≤ 0.2 on Qwen, ≤ 0.1 on SmolLM2). Neither strategy is dominant.
+`mean` is the default because it's usually better at the ratios the
+method targets; `concat` is available for aggressive-compression
+regimes where mean collapses.
 
 ## What IS NOT verified
 

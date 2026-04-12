@@ -100,6 +100,36 @@ class TestProbeCapture(unittest.TestCase):
             self.assertLess(max_abs, 1e-5,
                             f"layer {layer_idx} Q diverged by {max_abs} from model-internal")
 
+    def test_gqa_strategies_both_valid(self):
+        """Both 'mean' and 'concat' produce correctly-shaped probes for GQA.
+
+        Neither is strictly dominant on downstream generation quality (see
+        the ablation notes in align_probe_to_kv_heads docstring and
+        /tmp/gqa_real_eval.py). This test just verifies both run cleanly
+        and produce the expected shapes.
+        """
+        from briefing.probe import align_probe_to_kv_heads
+
+        cfg, _ = self._build_tiny_llama()  # H_q=4, H_kv=2, G=2
+        H_q, H_kv = cfg.num_attention_heads, cfg.num_key_value_heads
+        head_dim = cfg.hidden_size // H_q
+        G = H_q // H_kv
+
+        torch.manual_seed(11)
+        Q = torch.randn(1, H_q, 5, head_dim)
+        mean_probe = align_probe_to_kv_heads(Q, H_kv, strategy="mean")
+        self.assertEqual(mean_probe.shape, (1, H_kv, 5, head_dim))
+        concat_probe = align_probe_to_kv_heads(Q, H_kv, strategy="concat")
+        self.assertEqual(concat_probe.shape, (1, H_kv, G * 5, head_dim))
+
+        # No-op when H_q == H_kv (non-GQA).
+        Q2 = torch.randn(1, H_kv, 5, head_dim)
+        self.assertTrue(torch.equal(align_probe_to_kv_heads(Q2, H_kv), Q2))
+
+        # Unknown strategy errors
+        with self.assertRaises(ValueError):
+            align_probe_to_kv_heads(Q, H_kv, strategy="nonsense")
+
     def test_gpt2_path_still_works(self):
         """The GPT-2 (no-RoPE) branch should also run and mark used_rope=False."""
         try:
