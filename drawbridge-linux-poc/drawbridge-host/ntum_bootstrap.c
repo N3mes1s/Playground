@@ -791,6 +791,20 @@ static void *boot_thread_fn(void *arg) {
                 (unsigned long)*(volatile uint64_t*)(g_runtime_callback_state + 0x10));
     }
 
+    /* M6: run the translated 22-step PAL boot before entering the PE,
+     * matching the real ELF host's call order (FUN_00204680). Guarded
+     * by PAL_RUN_BOOT_INIT so regressions can be bisected without
+     * reverting the wire-up. The stub helpers are no-ops today; real
+     * behavior kicks in as later milestones translate each step. */
+#ifndef PAL_SKIP_BOOT_INIT
+    {
+        extern int pal_boot_init(void);   /* translated in pal_boot.c */
+        fprintf(stderr, "[BOOT] running pal_boot_init (FUN_00204680, 22 steps)\n");
+        int rc = pal_boot_init();
+        fprintf(stderr, "[BOOT] pal_boot_init returned %d\n", rc);
+    }
+#endif
+
     fprintf(stderr, "[BOOT] Calling REAL entry point at %p (no hacks!)\n",
             args->entry_point);
     fprintf(stderr, "[BOOT] rcx = rdx = %p (params)\n", args->params);

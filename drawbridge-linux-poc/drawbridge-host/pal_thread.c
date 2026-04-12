@@ -457,29 +457,200 @@ ntum_kthread_t *pal_thread_create(void *entry, void *arg)
 }
 
 /* ==================================================================
- * pal_thread_entry_thunk — FUN_00253350 @ line 123665 (TODO M3c)
+ * pal_thread_entry_thunk — FUN_00253350 @ sqlservr_FULL.c:123665-123755
  *
- * The host side of a freshly-created thread. Responsibilities per
- * REAL_BOOT_SEQUENCE.c Phase 5:
- *   1. Get thread-local memory
- *   2. Allocate and init stack
- *   3. thread[+0x18] = stack base; thread[+0x10] = stack top
- *   4. Call pal_alloc_teb(); store at thread[+0x88]
- *   5. Call pal_set_thread_gs_base() (arch_prctl SET_GS)
- *   6. Jump to thread entry (dispatch_thunk stored at KT_WORD_DISPATCH_THUNK)
+ * Host-side start routine for every pthread spawned by pal_thread_create.
+ * Called by pthread_create with param_1 = KTHREAD pointer. Performs
+ * the per-thread bring-up then invokes the guest entry:
+ *
+ *   1. FUN_00207280(g_pal_instance + 0x18)    — notify PAL "thread starting"
+ *   2. uVar5 = FUN_003553f0()                 — get thread-local memory
+ *   3. FUN_00355400(uVar5, &local_68)         — allocate per-thread state
+ *   4. FUN_00355410(&local_68, &stack_base,&stack_len) — compute stack bounds
+ *   5. KTHREAD[+0x18] = stack_base
+ *   6. KTHREAD[+0x10] = stack_base + stack_len       (stack_top)
+ *   7. KTHREAD[+0x08] = &local_1c0 (captured KTHREAD ptr — self-ref helper)
+ *   8. KTHREAD[+0x20] = uVar5 (thread-local)
+ *   9. KTHREAD[+0xb0] = FUN_00354170()        — pal_gettid
+ *  10. Assert KTHREAD[+0x08] != 0 ("t->thunk.pal_stack_top != 0")
+ *  11. [fs:-0x10] = KTHREAD (host TCB link)
+ *  12. pal_alloc_teb(param_1, 0x10000)        — allocate TEB at KTHREAD[+0x88]
+ *  13. local = {teb=KTHREAD[+0x88], 0, 0x10000}
+ *  14. FUN_00355420(&local, 0)                — register TEB with PAL
+ *  15. FUN_00355430/40/50(local_e8, 0x23)     — sigaltstack+sigprocmask
+ *  16. [fs:-8] = KTHREAD + 8
+ *  17. pal_set_thread_gs_base(KTHREAD + 0x78) — arch_prctl(SET_GS)
+ *      -> if failed, assert "Failed to set Gs/Fs base registers."
+ *  18. Log "Running thread start function %p(%p) on stack %p"
+ *  19. If KTHREAD[+0x80] == 0: FUN_0020d9e0(0, param_1, 0x10000)
+ *  20. FUN_00355460(local_1b8)                — maybe fork signal ctx
+ *  21. KTHREAD[+0x9f0] = local_1b8
+ *  22. FUN_001ae6e0(entry, stack, fs-8, arg) — JUMP to guest entry
+ *  23. FUN_00354060()                          — abort on return
+ *
+ * KTHREAD offsets used (raw because ntum_kthread_t doesn't yet name
+ * every field; TODO extend the struct later):
+ *   +0x08  thunk capture (self-ref to local KTHREAD*)
+ *   +0x10  stack_top
+ *   +0x18  stack_base
+ *   +0x20  thread-local pointer
+ *   +0x58  entry function (set by pal_thread_create)
+ *   +0x60  entry argument
+ *   +0x70  stack pointer handed to guest entry
+ *   +0x78  RegisterValues descriptor (passed to arch_prctl)
+ *   +0x80  "skip observer" flag (if zero we notify FUN_0020d9e0)
+ *   +0x88  TEB pointer (pal_alloc_teb result)
+ *   +0xb0  tid (FUN_00354170 result)
+ *   +0x9f0 signal/alt-stack context
  * ================================================================== */
+
+/* ---- extern stubs (all weak in pal_stubs.c) ---- */
+extern void     pal_pal_thread_starting(void *x);               /* FUN_00207280 */
+extern void    *pal_thread_local_alloc(void);                   /* FUN_003553f0 */
+extern int      pal_thread_state_setup(void *tl, void *out);    /* FUN_00355400 */
+extern int      pal_thread_state_stack(void *state, long *base_out,
+                                       long *len_out);           /* FUN_00355410 */
+extern int      pal_thread_state_finalize(void *state);         /* FUN_003553e0 */
+extern uint32_t pal_gettid(void);                                /* FUN_00354170 */
+extern int      pal_teb_register(void *teb_desc, int flag);      /* FUN_00355420 */
+extern void     pal_sigalt_init(void *ctx);                      /* FUN_00355430 */
+extern void     pal_sigalt_set_signo(void *ctx, int sig);        /* FUN_00355440 */
+extern int      pal_sigalt_install(int how, void *ctx, void *old); /* FUN_00355450 */
+extern void     pal_observer_notify(int flag, void *kthread, uint64_t sz); /* FUN_0020d9e0 */
+extern int      pal_signal_mask_fork(void *ctx);                 /* FUN_00355460 */
+extern void     pal_signal_mask_release(void *tl);               /* FUN_00355470 */
+extern void     pal_invoke_guest_entry(void *entry, void *stack,
+                                        void *tcb_slot, void *arg) /* FUN_001ae6e0 */
+                    __attribute__((noreturn));
+extern void     pal_abort(void) __attribute__((noreturn));       /* FUN_00354060 */
+
+/* Reading/writing fs:-0x08 / fs:-0x10 via the canonical glibc TLS slot. */
+static inline void pal_fs_tcb_link_neg10(void *val)
+{
+    /* *(long *)(fs + -0x10) = val;  — stored via %fs:-0x10 */
+    __asm__ __volatile__("mov %0, %%fs:-0x10" :: "r"(val) : "memory");
+}
+static inline void pal_fs_tcb_link_neg8(void *val)
+{
+    __asm__ __volatile__("mov %0, %%fs:-0x8"  :: "r"(val) : "memory");
+}
+
+/* g_pal_instance layout (DAT_0036f598 + 0x18 = "thread starting" sink). */
+#define PAL_INSTANCE_THREAD_START_SINK_OFF  0x18
+
 void pal_thread_entry_thunk(ntum_kthread_t *kt)
 {
-    (void)kt;
-    /* TODO(M3c): translate FUN_00253350 (stack alloc + TEB + GS set). */
+    if (kt == NULL) pal_abort();
+    uint64_t *kt_words = (uint64_t *)kt;
+
+    /* Step 1: notify PAL that a thread is starting. */
+    pal_pal_thread_starting((void *)(g_pal_instance + PAL_INSTANCE_THREAD_START_SINK_OFF));
+
+    /* Step 2-4: thread-local + per-thread state + stack bounds. */
+    void *tl = pal_thread_local_alloc();
+    uint8_t local_state[56];
+    if (pal_thread_state_setup(tl, local_state) != 0) pal_abort();
+
+    long stack_base = 0, stack_len = 0;
+    if (pal_thread_state_stack(local_state, &stack_base, &stack_len) != 0) pal_abort();
+
+    if (pal_thread_state_finalize(local_state) != 0) pal_abort();
+
+    /* Step 5-9: publish stack / thread-local / tid into KTHREAD words. */
+    kt_words[0x03] = (uint64_t)stack_base;                /* +0x18 stack_base */
+    kt_words[0x02] = (uint64_t)stack_base + (uint64_t)stack_len; /* +0x10 stack_top */
+    kt_words[0x01] = (uint64_t)&kt_words;                  /* +0x08 self-ref thunk */
+    kt_words[0x04] = (uint64_t)tl;                         /* +0x20 thread-local */
+    *(uint32_t *)((uint8_t *)kt_words + 0xb0) = pal_gettid(); /* +0xb0 tid */
+
+    /* Step 10: assert. */
+    if (kt_words[0x01] == 0) {
+        pal_abi_assert_fail("t->thunk.pal_stack_top != 0",
+                            *pal_abi_errno_location());
+    }
+
+    /* Step 11: write KTHREAD to fs:-0x10 for signal-handler lookup. */
+    pal_fs_tcb_link_neg10(kt_words);
+
+    /* Step 12: allocate TEB and store at KTHREAD[+0x88] (pal_alloc_teb
+     * in its public value-returning form — we assign to the offset
+     * ourselves to match the ELF's in-place behavior). */
+    ntum_teb_t *teb = pal_alloc_teb();
+    *(void **)((uint8_t *)kt_words + 0x88) = teb;
+
+    /* Step 13-14: register TEB with PAL. */
+    struct { void *teb; uint32_t flag; uint64_t size; } teb_desc = {
+        .teb = teb, .flag = 0, .size = 0x10000
+    };
+    if (pal_teb_register(&teb_desc, 0) != 0) pal_abort();
+
+    /* Step 15: install signal alt-stack / mask (signal 0x23 = SIGRTMIN+3 on
+     * Linux — ELF explicitly passes 0x23). */
+    uint8_t sigctx[128];
+    pal_sigalt_init(sigctx);
+    pal_sigalt_set_signo(sigctx, 0x23);
+    (void)pal_sigalt_install(0, sigctx, NULL);
+
+    /* Step 16: fs:-0x08 = KTHREAD + 8 (host TCB pointer-to-KTHREAD-slot). */
+    pal_fs_tcb_link_neg8((uint8_t *)kt_words + 8);
+
+    /* Step 17: arch_prctl(SET_GS, KTHREAD+0x78 RegisterValues). */
+    if (pal_set_thread_gs_base((uint8_t *)kt_words + 0x78) != 0) {
+        pal_abi_assert_fail("Failed to set Gs/Fs base registers.",
+                            *pal_abi_errno_location());
+    }
+
+    /* Step 19: observer notify if KTHREAD[+0x80] == 0. */
+    if (*(uint64_t *)((uint8_t *)kt_words + 0x80) == 0) {
+        pal_observer_notify(0, kt_words, 0x10000);
+    }
+
+    /* Step 20-21: signal-mask fork context. */
+    uint8_t sig_fork_ctx[208];
+    if (pal_signal_mask_fork(sig_fork_ctx) != 0) {
+        pal_signal_mask_release(tl);
+        return;  /* matches ELF early-return when fork returns non-zero */
+    }
+    *(void **)((uint8_t *)kt_words + 0x9f0) = sig_fork_ctx;
+
+    /* Step 22: invoke the guest entry. Never returns. */
+    void *entry    = *(void **)((uint8_t *)kt_words + 0x58);
+    void *arg      = *(void **)((uint8_t *)kt_words + 0x60);
+    void *stack_sp = *(void **)((uint8_t *)kt_words + 0x70);
+    void *tcb_slot = (uint8_t *)kt_words + 8;  /* fs:-8 slot */
+    pal_invoke_guest_entry(entry, stack_sp, tcb_slot, arg);
+    /* unreachable */
 }
 
 /* ==================================================================
- * pal_thread_subsystem_init — FUN_002890a0 @ line 156863 (TODO M3c)
+ * pal_thread_subsystem_init — FUN_002890a0 @ line 156863
+ *
+ * ELF body (~15 lines):
+ *   local_30 = 0xffff00000400;
+ *   local_28 = 0;
+ *   uStack_20 = 0;
+ *   local_18 = 0xe10;
+ *   FUN_00355d60(&local_30);          // register scheduler config
+ *   FUN_00279f90(FUN_00252bf0);        // register AIO callback
  * ================================================================== */
+
+extern void pal_scheduler_register(const void *config);    /* FUN_00355d60 */
+extern void pal_aio_callback_register(void (*cb)(void*,long)); /* FUN_00279f90 */
+extern void pal_aio_callback(void *arg1, long arg2);       /* FUN_00252bf0 */
+
 void pal_thread_subsystem_init(void)
 {
-    /* TODO(M3c): translate FUN_002890a0. Registers scheduler config
-     * (0xffff00000400, 0, 0, 0xe10) via FUN_00355d60 and the AIO
-     * callback FUN_00252bf0 via FUN_00279f90. */
+    struct pal_scheduler_config {
+        uint64_t magic;    /* 0xffff00000400 */
+        uint64_t zero1;
+        uint64_t zero2;
+        uint64_t period;   /* 0xe10 */
+    } config = {
+        .magic  = 0xffff00000400ULL,
+        .zero1  = 0,
+        .zero2  = 0,
+        .period = 0xe10ULL,
+    };
+    pal_scheduler_register(&config);
+    pal_aio_callback_register(pal_aio_callback);
 }

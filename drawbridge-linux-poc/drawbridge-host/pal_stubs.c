@@ -265,6 +265,8 @@ PAL_WEAK void pal_assert_fail(const char *expr, int err)
  * real translations in future milestones override them.
  */
 #include <pthread.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 PAL_WEAK char pal_thread_validate_param(void){ return 1; }
 PAL_WEAK char pal_thread_validate_param_ex(void *p){ (void)p; return 1; }
@@ -328,3 +330,38 @@ PAL_WEAK void pal_post_boot_init_2(void){ }                      /* FUN_00235a80
 PAL_WEAK void pal_post_boot_init_3(void){ }                      /* FUN_00244790 */
 PAL_WEAK void pal_io_finalize(void){ }                           /* FUN_00279f10 */
 PAL_WEAK void pal_kernel_version_log(void){ }                    /* FUN_00204da0 */
+
+/* ------------ pal_thread.c M3c thunk/subsystem stubs -------- */
+
+PAL_WEAK void  pal_pal_thread_starting(void *x){ (void)x; }      /* FUN_00207280 */
+PAL_WEAK void *pal_thread_local_alloc(void){ return calloc(1, 0x1000); } /* FUN_003553f0 */
+PAL_WEAK int   pal_thread_state_setup(void *tl, void *out){ (void)tl;(void)out; return 0; } /* FUN_00355400 */
+PAL_WEAK int   pal_thread_state_stack(void *s, long *b, long *l){ (void)s;
+    if (b) *b = 0; if (l) *l = 0x200000; return 0; }             /* FUN_00355410 */
+PAL_WEAK int   pal_thread_state_finalize(void *s){ (void)s; return 0; } /* FUN_003553e0 */
+PAL_WEAK uint32_t pal_gettid(void){ return (uint32_t)syscall(SYS_gettid); } /* FUN_00354170 */
+PAL_WEAK int   pal_teb_register(void *d, int f){ (void)d;(void)f; return 0; } /* FUN_00355420 */
+PAL_WEAK void  pal_sigalt_init(void *c){ (void)c; }              /* FUN_00355430 */
+PAL_WEAK void  pal_sigalt_set_signo(void *c, int s){ (void)c;(void)s; } /* FUN_00355440 */
+PAL_WEAK int   pal_sigalt_install(int h, void *c, void *o){ (void)h;(void)c;(void)o; return 0; } /* FUN_00355450 */
+PAL_WEAK void  pal_observer_notify(int f, void *k, uint64_t s){ (void)f;(void)k;(void)s; } /* FUN_0020d9e0 */
+PAL_WEAK int   pal_signal_mask_fork(void *c){ (void)c; return 0; } /* FUN_00355460 */
+PAL_WEAK void  pal_signal_mask_release(void *t){ (void)t; }       /* FUN_00355470 */
+PAL_WEAK void  pal_invoke_guest_entry(void *entry, void *stack,
+                                       void *tcb_slot, void *arg)
+{
+    (void)stack; (void)tcb_slot;
+    /* Weak default: call entry as a Windows ms_abi function with arg.
+     * The real implementation switches stacks via a tiny ASM trampoline. */
+    if (entry) {
+        void (*fn)(void*) __attribute__((ms_abi)) = (void(*)(void*))entry;
+        fn(arg);
+    }
+    abort();
+}
+PAL_WEAK void  pal_abort(void) { abort(); }                       /* FUN_00354060 */
+
+/* Scheduler / AIO callback registration (FUN_00355d60, FUN_00279f90, FUN_00252bf0). */
+PAL_WEAK void pal_scheduler_register(const void *cfg){ (void)cfg; }
+PAL_WEAK void pal_aio_callback_register(void (*cb)(void*, long)){ (void)cb; }
+PAL_WEAK void pal_aio_callback(void *a, long b){ (void)a; (void)b; }
