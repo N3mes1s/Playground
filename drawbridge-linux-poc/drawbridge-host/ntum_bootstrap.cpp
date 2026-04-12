@@ -1006,18 +1006,29 @@ static void *boot_thread_fn(void *arg) {
     }
 
     {
-        /* Wave-29b: trap the specific CONFLICTING_ADDRESSES path INSIDE
-         * FUN_0x3804b8 at RVA 0x3805a3 (mov ebx, 0xc0000018 after the
-         * jne-from-0x380588 that means "0x384fbc returned rsi != requested").
-         * Original bytes: `bb 18 00 00 c0`. Patch first two to ud2 so
-         * we see rsi (rax return from 0x384fbc), the bitmap state at
-         * descriptor+0x68, and what the allocator found. */
-        volatile uint8_t *p_bf = (uint8_t*)0x1803805a3ULL;
-        if (p_bf[0] == 0xbb && p_bf[1] == 0x18) {
-            p_bf[0] = 0x0f;
-            p_bf[1] = 0x0b;
+        /* Wave-30: PRE-RESERVE the PE's chosen VM window at
+         * 0x300000000000 before boot, so subsequent DK_VirtualMemoryAllocate
+         * calls with that hint find the range already mapped and our
+         * MAP_FIXED_NOREPLACE fallback path (mprotect on existing map)
+         * works cleanly. Without pre-reservation, Linux may allocate
+         * our host's own data in that range and the PE's init fails
+         * with CONFLICTING_ADDRESSES.
+         *
+         * Use MAP_NORESERVE so we don't actually commit the full 2 GiB;
+         * the pages are committed lazily as the PE touches them. */
+        void *r = mmap((void*)0x300000000000ULL, 0x80000000ULL,
+                       PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE |
+                       MAP_NORESERVE,
+                       -1, 0);
+        if (r == MAP_FAILED) {
             fprintf(stderr,
-                "[BOOT] wave-29b: trapped FUN_3804b8 CONFLICT path @0x3805a3\n");
+                "[BOOT] wave-30: MAP_FIXED_NOREPLACE for 0x300000000000 "
+                "failed (already mapped?)\n");
+        } else {
+            fprintf(stderr,
+                "[BOOT] wave-30: pre-reserved 2GB at 0x300000000000 (MAP_NORESERVE) -> %p\n",
+                r);
         }
     }
 

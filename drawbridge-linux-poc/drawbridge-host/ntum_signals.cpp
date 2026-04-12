@@ -811,7 +811,7 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
                 return;
             }
         }
-        if (rip == 0x1803805a3ULL) {
+        if (0 && rip == 0x1803805a3ULL) {  /* wave-29 diagnostic retired */
             /* Wave-29b: inside FUN_3804b8, 0x384fbc returned rsi != rbp_requested.
              * rax (= rsi) is the bitmap-found page. rdi is the ctx (desc+0x68).
              * rbp has been set to the requested page (before the compare). */

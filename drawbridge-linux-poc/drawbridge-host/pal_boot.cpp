@@ -587,14 +587,13 @@ extern "C" int pal_boot_init(void)
         pal_boot_write_module_globals(params);
     }
 
-    /* Step 22b (Wave 4 C4 expansion): populate the VM module global at
-     * [0x180c00878] so the PE consumer at RVA 0x24c3f6 doesn't NULL-
-     * deref.  Translated from ELF FUN_0037f700 / FUN_00378c00 /
-     * FUN_00379c14 — see pal_vm.cpp for the body. */
-    {
-        extern VmModuleState *pal_vm_init_module_state(void);
-        (void)pal_vm_init_module_state();
-    }
+    /* Step 22b RETIRED (Wave-29): pal_vm_init_module_state is redundant.
+     * The PE's own FUN_0x37f700 runs during boot and allocates its own
+     * VmModuleState at a different VA (observed at 0x300000000000),
+     * overwriting [0x180c00878]. Our pre-init was discarded and left
+     * the pointer stale. Skip it entirely; the PE handles its own VM
+     * module setup via DK_VirtualMemoryAllocate calls. */
+    (void)0;
 
     /* Step 22c (Wave 5a C2 expansion): populate the image-mode enum
      * global at [0x180c00868] used by 23 downstream readers.
