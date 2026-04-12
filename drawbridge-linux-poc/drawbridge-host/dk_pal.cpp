@@ -1185,8 +1185,36 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
     static int post_count = 0;
     post_count++;
     if (post_count <= 50) {
-        fprintf(stderr, "[DK] PostRes: type=0x%lx size=0x%lx in=%p\n",
-                (unsigned long)call_type, (unsigned long)data_size, in_buf);
+        fprintf(stderr, "[DK] PostRes: type=0x%lx size=0x%lx in=%p out=%p\n",
+                (unsigned long)call_type, (unsigned long)data_size, in_buf, out_buf);
+    }
+
+    /* RCA2 fix: the PE pre-stamps DK_STATUS_NOT_IMPLEMENTED (0xC0000002)
+     * in its output slot before calling us. When we return SUCCESS but
+     * don't write the slot, the PE later reads that NTSTATUS as if it
+     * were a valid pointer (seen at PE RIP 0x2661bc caching, then used
+     * at 0x224b78 as rdx→rsi). Write NULL to the out slot so the PE's
+     * downstream null-check takes the safe branch. See /tmp/status_rca.md.
+     *
+     * The ELF's real path (FUN_00249418) stores the allocated kernel-object
+     * pointer here; until that's translated, NULL is strictly better than
+     * leaving STATUS_NOT_IMPLEMENTED in place. */
+    if (out_buf) {
+        uint64_t ob = (uint64_t)out_buf;
+        if ((ob >= 0x180000000ULL && ob < 0x181000000ULL) ||
+            (ob >= 0x100000000ULL && ob < 0x800000000ULL)) {
+            /* ONLY overwrite if the slot currently holds the PE's
+             * pre-stamped STATUS_NOT_IMPLEMENTED (0xC0000002). Any
+             * other value may be a valid pointer the PE expects us to
+             * preserve — don't stomp it. */
+            volatile uint64_t *slot = (volatile uint64_t*)out_buf;
+            if (*slot == 0xC0000002ULL ||
+                ((*slot & 0xFFFFFFFFULL) == 0xC0000002ULL)) {
+                *slot = 0;
+                fprintf(stderr, "[DK] cleared NTSTATUS 0xC0000002 at out_buf=%p\n",
+                        out_buf);
+            }
+        }
     }
     {
         uint64_t retval = DK_STATUS_SUCCESS;
