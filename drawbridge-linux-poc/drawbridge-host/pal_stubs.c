@@ -171,6 +171,10 @@ PAL_WEAK uint8_t g_runtime_callback_state_template[256];
 /* DAT_00369f30 — init tag constant */
 PAL_WEAK uint8_t g_libos_init_tag[64];
 
+/* DAT_0036f598 — outer PAL instance context (sized 0x1000 for now —
+ * actual size is TBD once we translate FUN_00204ee0). */
+PAL_WEAK uint8_t g_pal_instance[0x1000];
+
 /* Std runtime_error vtable/dtor placeholders — throwing runtime errors
  * is a noreturn path we route through abort() in the stub. */
 PAL_WEAK void *g_std_runtime_error_typeinfo = NULL;
@@ -254,3 +258,73 @@ PAL_WEAK void pal_assert_fail(const char *expr, int err)
     fprintf(stderr, "[PAL-ASSERT] %s (errno=%d)\n", expr ? expr : "?", err);
     abort();
 }
+
+/* ------------ pal_thread.c extern stubs -------------------- *
+ * These correspond to helpers called from the translated
+ * pal_thread_create (FUN_00252e60). All are weak stubs so the
+ * real translations in future milestones override them.
+ */
+#include <pthread.h>
+
+PAL_WEAK char pal_thread_validate_param(void){ return 1; }
+PAL_WEAK char pal_thread_validate_param_ex(void *p){ (void)p; return 1; }
+PAL_WEAK void *pal_nothrow_alloc(size_t size, const void *nothrow_tag){
+    (void)nothrow_tag;
+    return calloc(1, size);
+}
+PAL_WEAK void pal_kthread_construct(void *kt){
+    if (kt) memset(kt, 0, 0xaa0);
+}
+PAL_WEAK int pal_mutex_lock(void *m){ (void)m; return 0; }
+PAL_WEAK int pal_mutex_unlock(void *m){ (void)m; return 0; }
+PAL_WEAK void pal_guest_dispatch_nt(void){ /* no-op */ }
+PAL_WEAK void pal_guest_dispatch_linux(void){ /* no-op */ }
+PAL_WEAK long pal_thread_state_alloc(int kind){
+    (void)kind;
+    return (long)calloc(1, 0x200);
+}
+PAL_WEAK void pal_thread_destroy(void *kt){ free(kt); }
+PAL_WEAK void *pal_ts_acquire(long ts){ return (void*)ts; }
+PAL_WEAK void pal_ts_arm(long ts){ (void)ts; }
+PAL_WEAK void pal_ts_set_attached(long ts){ (void)ts; }
+PAL_WEAK void pal_ts_release(long ts){ (void)ts; }
+PAL_WEAK void pal_ts_release_alt(long ts){ (void)ts; }
+PAL_WEAK uint64_t pal_instance_get_attr(void *image_handle){
+    (void)image_handle; return 0;
+}
+PAL_WEAK int pal_pthread_attr_init(void *attr){ (void)attr; return 0; }
+PAL_WEAK int pal_pthread_attr_set_detach(void *a, uint64_t f){
+    (void)a; (void)f; return 0;
+}
+PAL_WEAK int pal_pthread_attr_destroy(void *attr){ (void)attr; return 0; }
+PAL_WEAK int pal_pthread_create(void *tid_out, void *attr,
+                                void *(*start)(void *), void *arg){
+    (void)attr;
+    return pthread_create((pthread_t*)tid_out, NULL, start, arg);
+}
+PAL_WEAK void pal_result_set_from_errno(void *r, const char *f,
+                                         uint16_t l, int err){
+    (void)r; (void)f; (void)l; (void)err;
+}
+PAL_WEAK char pal_result_is_error_full(void *r){ (void)r; return 0; }
+
+/* ------------ pal_boot.c 22-step extern stubs -------------- *
+ * Each corresponds to an ELF FUN_* helper cited in pal_boot_init. */
+
+PAL_WEAK void pal_runtime_params_init(void){ }                   /* FUN_00354250 */
+PAL_WEAK void pal_runtime_params_commit(void){ }                 /* FUN_00354260 */
+PAL_WEAK void pal_logging_init(uint8_t d){ (void)d; }            /* FUN_00279cd0 */
+PAL_WEAK void pal_debugger_setup(void){ }                        /* FUN_0027a2f0 */
+PAL_WEAK char pal_threading_needed(void *i){ (void)i; return 0; }/* FUN_001bd660 */
+PAL_WEAK int  pal_logger_thread_create(void){ return 0; }        /* FUN_00204bb0 */
+PAL_WEAK void pal_dynlink_init(void){ }                          /* FUN_0021a7d0 */
+PAL_WEAK int  pal_module_loader_init(void){ return 0; }          /* FUN_0021d1c0 */
+PAL_WEAK void pal_library_init(void){ }                          /* FUN_0021a750 */
+PAL_WEAK int  pal_setrlimit(int w, int s, int h){ (void)w;(void)s;(void)h; return 0; }
+PAL_WEAK int  pal_fd_limit_get(int r, void *o){ (void)r;(void)o; return 0; }
+PAL_WEAK int  pal_fd_limit_set(int r, const void *i){ (void)r;(void)i; return 0; }
+PAL_WEAK void pal_post_boot_init_1(void *c){ (void)c; }          /* FUN_002285a0 */
+PAL_WEAK void pal_post_boot_init_2(void){ }                      /* FUN_00235a80 */
+PAL_WEAK void pal_post_boot_init_3(void){ }                      /* FUN_00244790 */
+PAL_WEAK void pal_io_finalize(void){ }                           /* FUN_00279f10 */
+PAL_WEAK void pal_kernel_version_log(void){ }                    /* FUN_00204da0 */

@@ -19,6 +19,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <pthread.h>
 #include <sys/syscall.h>
 #include <asm/prctl.h>
 
@@ -256,26 +257,229 @@ static void pal_teb_gs_observe(long new_gs, long kthread, size_t len)
 
 
 /* ==================================================================
- * TODO(M3): pal_thread_create        — FUN_00252e60 @ line 123466
- * TODO(M3): pal_thread_entry_thunk   — FUN_00253350 @ line 123665
- * TODO(M3): pal_thread_subsystem_init— FUN_002890a0 @ line 156863
+ * pal_thread_create — FUN_00252e60 @ analysis/sqlservr_FULL.c:123466
+ *
+ * Creates a KTHREAD (0xaa0 bytes), links it into the global thread
+ * list guarded by g_thread_list_mutex, increments the global thread
+ * ID counter, stores the entry function / parameter / event object /
+ * stack hint in the KTHREAD, then pthread_create()s a host thread
+ * whose start routine is pal_thread_entry_thunk (FUN_00253350).
+ *
+ * Signature mapping:
+ *   param_1 = entry  (void* — guest entry routine)
+ *   param_2 = arg    (void* — entry argument, stored at KTHREAD[+0xC])
+ *   param_3 = event_obj (void*, nullable — stored at [+0xE])
+ *   param_4 = sched_config (uint32[4], nullable — stored at [+0xF..0x84])
+ *   param_5 = is_system_thread (char — gates where arg goes)
+ *   param_6 = out_event_slot (void**, nullable — receives event obj)
+ *
+ * We collapse to (entry, arg) for our pal_internal.h signature;
+ * the other parameters become internal defaults. Full fidelity
+ * can be restored in M6 by widening the signature.
+ *
+ * Globals (ELF DAT_* → meaningful names):
+ *   DAT_003b2198 → g_thread_list_mutex
+ *   DAT_003b21c0 → g_thread_id_counter
+ *   DAT_003b21c8 → g_thread_list_head
  * ================================================================== */
+
+/* ---- extern stubs for helpers still in other TUs. ---- */
+/* FUN_00280200: parameter validation (returns 0 on error). */
+extern char pal_thread_validate_param(void);
+extern char pal_thread_validate_param_ex(void *p);
+/* FUN_00354030: aligned nothrow operator_new wrapper. */
+extern void *pal_nothrow_alloc(size_t size, const void *nothrow_tag);
+extern const void *const pal_std_nothrow_tag;
+/* FUN_001fa870: KTHREAD in-place constructor. */
+extern void pal_kthread_construct(void *kt);
+/* FUN_003541b0 / FUN_003541c0: pthread_mutex lock/unlock. */
+extern int pal_mutex_lock(void *m);
+extern int pal_mutex_unlock(void *m);
+/* FUN_0025a520 / FUN_0025a540: guest-OS dispatch thunks (NT vs others). */
+extern void pal_guest_dispatch_nt(void);
+extern void pal_guest_dispatch_linux(void);
+/* FUN_001fa5f0: allocates an "thread state" object of kind `kind`. */
+extern long pal_thread_state_alloc(int kind);
+/* FUN_002535c0: KTHREAD destructor + list unlink on failure paths. */
+extern void pal_thread_destroy(void *kt);
+/* FUN_002b6070/FUN_002b60a0/FUN_002b60d0/FUN_002b6100/FUN_002b6190:
+ * thread state ref-count / attribute helpers. */
+extern void    *pal_ts_acquire(long ts);
+extern void     pal_ts_arm(long ts);
+extern void     pal_ts_set_attached(long ts);
+extern void     pal_ts_release(long ts);
+extern void     pal_ts_release_alt(long ts);
+/* FUN_001bbc30: Get PAL instance attribute (module handle). */
+extern uint64_t pal_instance_get_attr(void *image_handle);
+/* FUN_003553c0 / FUN_003553d0 / FUN_003553e0: pthread attr init / set / destroy. */
+extern int pal_pthread_attr_init(void *attr);
+extern int pal_pthread_attr_set_detach(void *attr, uint64_t detach_flag);
+extern int pal_pthread_attr_destroy(void *attr);
+/* FUN_00353f90: pthread_create(host_thread_out, attr, start, arg) wrapper. */
+extern int pal_pthread_create(void *tid_out, void *attr,
+                              void *(*start)(void *), void *arg);
+/* FUN_0028e0f0: pal_result_set_from_errno(result, file, line, errno). */
+extern void pal_result_set_from_errno(void *result, const char *file,
+                                      uint16_t line, int err);
+/* FUN_0028e130 / FUN_0028e1f0 / FUN_0028e200: pal_result helpers also
+ * declared via pal_stubs.c. */
+extern char pal_result_is_error_full(void *result);
+
+/* DAT_0036f598: outer PAL instance context; reuse from pal_boot.c. */
+extern uint8_t g_pal_instance[];
+#define PAL_INSTANCE_OS_KIND_OFFSET   0x0C    /* int: 1=NT, 2=Linux */
+#define PAL_INSTANCE_IMAGE_HANDLE_OFF 0x138
+
+/* Offsets within the KTHREAD expressed in uint64 words (ELF writes
+ * via puVar8[N]; N is the dword index). */
+#define KT_WORD_THREAD_ID_WORD    0x12   /* int32 at byte 0x90 */
+#define KT_WORD_LIST_NEXT         0x13   /* 0x98 */
+#define KT_WORD_LIST_PREV         0x14   /* 0xa0 */
+#define KT_WORD_ENTRY_FUNC        0xB    /* 0x58 */
+#define KT_WORD_ENTRY_ARG         0xC    /* 0x60 */
+#define KT_WORD_ARG2              0xD    /* 0x68 */
+#define KT_WORD_EVENT_OBJ         0xE    /* 0x70 */
+#define KT_WORD_SCHED_CFG_DW      0xF    /* 0x78 */
+#define KT_WORD_DISPATCH_THUNK    0x15   /* 0xa8 */
+#define KT_WORD_PTHREAD_HANDLE    0x4    /* 0x20 */
+#define KT_WORD_THREAD_STATE_PRIM 0x0    /* 0x00 — set to ts->primary */
+
+/* Opaque static globals (addresses known; layouts irrelevant here). */
+static void *g_thread_list_mutex;          /* DAT_003b2198 — opaque mutex */
+static uint32_t g_thread_id_counter;       /* DAT_003b21c0 */
+static uint64_t *g_thread_list_head;       /* DAT_003b21c8 */
 
 ntum_kthread_t *pal_thread_create(void *entry, void *arg)
 {
-    (void)entry; (void)arg;
-    /* TODO: translate FUN_00252e60 (KTHREAD allocator + clone). */
-    return NULL;
+    /* 1. Parameter validation — FUN_00280200 pair. */
+    if (!pal_thread_validate_param()) {
+        return NULL;  /* STATUS_INVALID_PARAMETER (0xc000000d) */
+    }
+
+    /* 2. Allocate a zero-initialized 0xaa0 KTHREAD. */
+    uint64_t *kt_words = (uint64_t *)pal_nothrow_alloc(0xaa0, pal_std_nothrow_tag);
+    if (kt_words == NULL) {
+        pal_abi_assert_fail("t != nullptr", *pal_abi_errno_location());
+    }
+    pal_kthread_construct(kt_words);
+
+    /* 3. Link into global thread list under the mutex. */
+    if (pal_mutex_lock(&g_thread_list_mutex) != 0) {
+        pal_abi_assert_fail("mutex_lock(g_thread_list_mutex)",
+                            *pal_abi_errno_location());
+    }
+    uint32_t new_id = ++g_thread_id_counter;
+    *(uint32_t *)&kt_words[KT_WORD_THREAD_ID_WORD] = new_id;
+    uint64_t *prev_head = g_thread_list_head;
+    kt_words[KT_WORD_LIST_NEXT] = (uint64_t)prev_head;
+    kt_words[KT_WORD_LIST_PREV] = 0;
+    if (prev_head != NULL) {
+        if (prev_head[KT_WORD_LIST_PREV] != 0) {
+            pal_abi_assert_fail("all_threads->tprev == nullptr",
+                                *pal_abi_errno_location());
+        }
+        prev_head[KT_WORD_LIST_PREV] = (uint64_t)kt_words;
+    }
+    g_thread_list_head = kt_words;
+    if (pal_mutex_unlock(&g_thread_list_mutex) != 0) {
+        pal_abi_assert_fail("mutex_unlock(g_thread_list_mutex)",
+                            *pal_abi_errno_location());
+    }
+
+    /* 4. Stash the entry/arg/event parameters.
+     * is_system_thread (param_5) is 0 in our simplified form →
+     * KT_WORD_ARG2 also gets arg (matches ELF fallthrough). */
+    kt_words[KT_WORD_ENTRY_FUNC] = (uint64_t)entry;
+    kt_words[KT_WORD_ENTRY_ARG]  = (uint64_t)arg;
+    kt_words[KT_WORD_ARG2]       = (uint64_t)arg;
+    kt_words[KT_WORD_EVENT_OBJ]  = 0;
+
+    /* 5. Select dispatch thunk per PAL instance OS kind. */
+    int os_kind = *(int *)(g_pal_instance + PAL_INSTANCE_OS_KIND_OFFSET);
+    void (*dispatch_thunk)(void);
+    if (os_kind == 1) {
+        dispatch_thunk = pal_guest_dispatch_nt;
+    } else if (os_kind == 2) {
+        dispatch_thunk = pal_guest_dispatch_linux;
+    } else {
+        pal_abi_assert_fail("Unsupported PAL OS", *pal_abi_errno_location());
+    }
+    kt_words[KT_WORD_DISPATCH_THUNK] = (uint64_t)(void *)dispatch_thunk;
+
+    /* 6. Allocate a thread-state tracking object and link it. */
+    long ts = pal_thread_state_alloc(4);
+    if (ts == 0) {
+        pal_thread_destroy(kt_words);
+        return NULL;  /* STATUS_NO_MEMORY (0xc0000017) */
+    }
+    pal_ts_acquire((void *)ts);
+    pal_ts_arm((void *)ts);
+    pal_ts_release_alt(ts);
+    *(uint64_t **)(ts + 0x58) = kt_words;
+    kt_words[KT_WORD_THREAD_STATE_PRIM] = (uint64_t)pal_ts_acquire((void *)ts);
+
+    /* 7. Create the host pthread with pal_thread_entry_thunk as the
+     *    start routine. The KTHREAD pointer is passed as arg; the
+     *    entry thunk sets up TEB/GS then invokes the dispatch_thunk. */
+    uint64_t image_attr = pal_instance_get_attr(
+        *(void **)(g_pal_instance + PAL_INSTANCE_IMAGE_HANDLE_OFF));
+    (void)image_attr; /* TODO: feed into pthread_attr stack size. */
+
+    char pthread_attr[56];  /* local_70 in ELF */
+    if (pal_pthread_attr_init(pthread_attr) != 0) {
+        pal_abi_assert_fail("pthread_attr_init",
+                            *pal_abi_errno_location());
+    }
+    if (pal_pthread_attr_set_detach(pthread_attr, image_attr) != 0) {
+        pal_abi_assert_fail("pthread_attr_set",
+                            *pal_abi_errno_location());
+    }
+    int rc = pal_pthread_create(&kt_words[KT_WORD_PTHREAD_HANDLE],
+                                pthread_attr,
+                                (void *(*)(void *))pal_thread_entry_thunk,
+                                kt_words);
+    if (rc != 0) {
+        /* pthread_create failed — unwind the thread state and return. */
+        pal_thread_destroy(kt_words);
+        *(uint64_t *)(ts + 0x58) = 0;
+        pal_ts_release((void *)ts);
+        pal_ts_release_alt(ts);
+        pal_ts_release_alt(ts);
+        pal_pthread_attr_destroy(pthread_attr);
+        return NULL;  /* STATUS_UNSUCCESSFUL (0xc0000001) */
+    }
+    if (pal_pthread_attr_destroy(pthread_attr) != 0) {
+        pal_abi_assert_fail("pthread_attr_destroy",
+                            *pal_abi_errno_location());
+    }
+    pal_ts_release_alt(ts);
+    return (ntum_kthread_t *)kt_words;
 }
 
+/* ==================================================================
+ * pal_thread_entry_thunk — FUN_00253350 @ line 123665 (TODO M3c)
+ *
+ * The host side of a freshly-created thread. Responsibilities per
+ * REAL_BOOT_SEQUENCE.c Phase 5:
+ *   1. Get thread-local memory
+ *   2. Allocate and init stack
+ *   3. thread[+0x18] = stack base; thread[+0x10] = stack top
+ *   4. Call pal_alloc_teb(); store at thread[+0x88]
+ *   5. Call pal_set_thread_gs_base() (arch_prctl SET_GS)
+ *   6. Jump to thread entry (dispatch_thunk stored at KT_WORD_DISPATCH_THUNK)
+ * ================================================================== */
 void pal_thread_entry_thunk(ntum_kthread_t *kt)
 {
     (void)kt;
-    /* TODO: translate FUN_00253350 (stack/TEB setup, invokes
-     * pal_alloc_teb + pal_set_thread_gs_base). */
+    /* TODO(M3c): translate FUN_00253350 (stack alloc + TEB + GS set). */
 }
 
+/* ==================================================================
+ * pal_thread_subsystem_init — FUN_002890a0 @ line 156863 (TODO M3c)
+ * ================================================================== */
 void pal_thread_subsystem_init(void)
 {
-    /* TODO: translate FUN_002890a0 (thread subsystem tables init). */
+    /* TODO(M3c): translate FUN_002890a0. Registers scheduler config
+     * (0xffff00000400, 0, 0, 0xe10) via FUN_00355d60 and the AIO
+     * callback FUN_00252bf0 via FUN_00279f90. */
 }

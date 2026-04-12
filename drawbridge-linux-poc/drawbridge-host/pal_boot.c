@@ -25,7 +25,8 @@
  * ============================================================ */
 extern uint8_t g_host_abi_table_template[];         /* DAT_00369ec8 */
 extern uint8_t g_runtime_callback_state_template[]; /* DAT_003b2138 */
-static uint8_t g_pal_instance[0x1000];              /* DAT_0036f598 - TODO size */
+/* Defined (weak) in pal_stubs.c so pal_thread.c can also reference it. */
+extern uint8_t g_pal_instance[];                    /* DAT_0036f598 */
 extern uint8_t g_libos_init_tag[];                  /* DAT_00369f30 - TODO */
 
 /* ============================================================
@@ -336,14 +337,145 @@ void pal_init_libos_params(WINDOWS_LIBOS_PARAMETERS *params)
 }
 
 /* ============================================================
- * pal_boot_init (FUN_00204680 @ line 69308)
+ * pal_boot_init  (FUN_00204680 @ analysis/sqlservr_FULL.c:69308-69503)
  *
- * TODO(M2b): translate the 22-step PAL boot sequence.  Another agent is
- * splitting this work concurrently - leave as an empty stub for now.
+ * The 22-step PAL boot sequence. Guarded by g_pal_boot_done — runs
+ * once on the first call. Called from pal_init_abi_table's caller
+ * context (pal_instance + param_2=non-eval flag + param_3=debug flag).
+ *
+ * Per REAL_BOOT_SEQUENCE.c, the steps are:
+ *    1.  FUN_00354250/60     — setup runtime parameters
+ *    2.  FUN_00279cd0        — initialize logging
+ *    3.  FUN_0027a2f0        — debugger setup (conditional on param_3)
+ *    4.  FUN_001bd660        — check if threading needed
+ *    5.  FUN_00204bb0        — create logger thread (conditional)
+ *    6.  FUN_0021a7d0        — initialize dynamic linking
+ *    7.  FUN_0021d1c0        — module loader setup
+ *    8.  FUN_0021a750        — library initialization
+ *    9.  FUN_00252b70        — open /dev/null  (→ pal_open_dev_null)
+ *   10.  FUN_002890a0        — thread subsystem init  (→ pal_thread_subsystem_init)
+ *   11-12. FUN_00353a90      — setrlimit soft/hard
+ *   13-14. FUN_00354270/80   — get/set file descriptor limits
+ *   15.  g_pal_boot_done = 1
+ *   16.  FUN_002285a0        — further init
+ *   17.  FUN_00235a80        — further init
+ *   18.  FUN_00244790        — further init
+ *   19.  FUN_001f1c50        — FileIoCompletionPort  (→ pal_io_create_completion_port)
+ *   20.  FUN_00279f10        — finalize I/O
+ *   21.  PAL[+8] = 1          — boot status = booted
+ *   22.  FUN_00204da0        — kernel version logging
+ *
+ * The param_2 flag controls evaluation-period checks (not relevant for
+ * our host). The param_3 flag enables the debugger.
+ *
+ * We implement steps 9, 10, and 19 with the translated pal_* entry
+ * points and leave the ELF-internal helpers as extern stubs that
+ * today are no-ops from pal_stubs.c. A future milestone can flesh
+ * them out individually without touching this orchestrator.
+ *
+ * Signature: pal_internal.h declares `int pal_boot_init(void)`. We
+ * pull the actual parameters (PAL instance, eval flag, debug flag)
+ * from g_pal_instance at runtime to match that signature.
  * ============================================================ */
+
+/* File-scope one-time init guard (ELF DAT_0036f618). */
+static uint8_t g_pal_boot_done = 0;
+
+/* Extern stubs for the not-yet-translated ELF helpers. All are weak
+ * in pal_stubs.c so future milestones supersede them. */
+extern void pal_runtime_params_init(void);          /* FUN_00354250 */
+extern void pal_runtime_params_commit(void);        /* FUN_00354260 */
+extern void pal_logging_init(uint8_t debug_flag);   /* FUN_00279cd0 */
+extern void pal_debugger_setup(void);               /* FUN_0027a2f0 */
+extern char pal_threading_needed(void *image);      /* FUN_001bd660 */
+extern int  pal_logger_thread_create(void);         /* FUN_00204bb0 */
+extern void pal_dynlink_init(void);                 /* FUN_0021a7d0 */
+extern int  pal_module_loader_init(void);           /* FUN_0021d1c0 */
+extern void pal_library_init(void);                 /* FUN_0021a750 */
+extern int  pal_setrlimit(int which, int soft, int hard); /* FUN_00353a90 */
+extern int  pal_fd_limit_get(int resource, void *out); /* FUN_00354270 */
+extern int  pal_fd_limit_set(int resource, const void *in); /* FUN_00354280 */
+extern void pal_post_boot_init_1(void *ctx);        /* FUN_002285a0 */
+extern void pal_post_boot_init_2(void);             /* FUN_00235a80 */
+extern void pal_post_boot_init_3(void);             /* FUN_00244790 */
+extern void pal_io_finalize(void);                  /* FUN_00279f10 */
+extern void pal_kernel_version_log(void);           /* FUN_00204da0 */
+
+/* PAL instance byte offsets (TODO: promote to a typed struct). */
+#define PAL_INSTANCE_BOOT_STATUS_OFFSET   0x08  /* int: set to 1 when booted */
+
 int pal_boot_init(void)
 {
-    /* TODO(M2b) */
+    uint8_t *instance = g_pal_instance;
+    void    *image_handle =
+        *(void **)(instance + PAL_INSTANCE_IMAGE_HANDLE_OFFSET);
+
+    /* We don't currently thread param_2 / param_3 through — default to
+     * "not evaluation build" + "no debugger" which matches the common
+     * production path the ELF host takes. */
+    const uint8_t param_2_eval = 0;
+    const uint8_t param_3_debug = 0;
+
+    if (g_pal_boot_done == 0) {
+        /* Step 1: runtime parameter init. */
+        pal_runtime_params_init();
+        pal_runtime_params_commit();
+
+        /* Step 2: initialize logging. */
+        pal_logging_init(param_3_debug);
+
+        /* Step 3: debugger setup (conditional on non-null eval flag). */
+        if (param_2_eval != 0) {
+            pal_debugger_setup();
+        }
+
+        /* Step 4-5: logger thread (conditional). */
+        if (pal_threading_needed(image_handle)) {
+            (void)pal_logger_thread_create();
+        }
+
+        /* Step 6-8: dynamic link / module loader / library init. */
+        pal_dynlink_init();
+        (void)pal_module_loader_init();
+        pal_library_init();
+
+        /* Step 9: open /dev/null → g_dev_null_fd (pal_io.c). */
+        (void)pal_open_dev_null();
+
+        /* Step 10: thread subsystem init (pal_thread.c). */
+        pal_thread_subsystem_init();
+
+        /* Step 11-12: setrlimit soft/hard. 0x400 matches the ELF. */
+        (void)pal_setrlimit(1, 4, 0x400);
+        (void)pal_setrlimit(2, 4, 0x400);
+
+        /* Step 13-14: file descriptor limit get/set (resource 7 = NOFILE). */
+        uint8_t fd_limit_buf[32];
+        (void)pal_fd_limit_get(7, fd_limit_buf);
+        (void)pal_fd_limit_set(7, fd_limit_buf);
+
+        /* Step 15: mark boot complete. */
+        g_pal_boot_done = 1;
+
+        /* Step 16-18: further init. */
+        pal_post_boot_init_1(NULL);
+        pal_post_boot_init_2();
+        pal_post_boot_init_3();
+    }
+
+    /* Step 19: FileIoCompletionPort (pal_io.c). Always runs even on
+     * subsequent calls — the ELF guards this via the result object. */
+    (void)pal_io_create_completion_port(NULL);
+
+    /* Step 20: finalize I/O. */
+    pal_io_finalize();
+
+    /* Step 21: mark PAL[+8] = 1 (booted). */
+    *(volatile uint32_t *)(instance + PAL_INSTANCE_BOOT_STATUS_OFFSET) = 1;
+
+    /* Step 22: log kernel version. */
+    pal_kernel_version_log();
+
     return 0;
 }
 
