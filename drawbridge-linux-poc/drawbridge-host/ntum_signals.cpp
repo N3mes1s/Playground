@@ -157,10 +157,43 @@ static int handle_libos_fault(void *fault_addr, ucontext_t *uc) {
      * runs indefinitely on an unbounded demand-paged stack. */
     if (addr >= 0x4F0000000ULL && addr < 0x500000000ULL) {
         uintptr_t rip = uc ? uc->uc_mcontext.gregs[REG_RIP] : 0;
+        uintptr_t rsp_pe = uc ? uc->uc_mcontext.gregs[REG_RSP] : 0;
         fprintf(stderr,
-            "[STACK-OVERFLOW] fault at 0x%lx from RIP=0x%lx — boot stack "
-            "exhausted below 0x500000000; propagating to surface the loop\n",
-            (unsigned long)addr, (unsigned long)rip);
+            "[STACK-OVERFLOW] fault at 0x%lx from RIP=0x%lx RSP=0x%lx\n",
+            (unsigned long)addr, (unsigned long)rip, (unsigned long)rsp_pe);
+        /* Dump the first 256 PE-range return addresses found on the
+         * stack. If the loop is a tight recursion, we'll see the same
+         * return address repeated many times. */
+        /* At overflow, RSP is just below 0x500000000. Scan from the
+         * fault address upward through the still-valid stack. */
+        uintptr_t scan_lo = (rsp_pe < 0x500000000ULL) ? 0x500000000ULL : rsp_pe;
+        if (scan_lo < 0x500200000ULL) {
+            int count = 0;
+            int same_count = 0;
+            uintptr_t last_ret = 0;
+            for (uintptr_t p = scan_lo; p < 0x500200000ULL && count < 256; p += 8) {
+                uint64_t v = *(volatile uint64_t*)p;
+                if (v >= 0x180200000ULL && v < 0x1803a0000ULL) {
+                    if (v == last_ret) {
+                        same_count++;
+                    } else {
+                        if (same_count > 0)
+                            fprintf(stderr,
+                                "[STACK-OVERFLOW]   ... repeated %d times\n",
+                                same_count);
+                        fprintf(stderr,
+                            "[STACK-OVERFLOW]   scan+0x%04lx = 0x%lx\n",
+                            (unsigned long)(p - scan_lo), (unsigned long)v);
+                        last_ret = v;
+                        same_count = 0;
+                    }
+                    count++;
+                }
+            }
+            if (same_count > 0)
+                fprintf(stderr,
+                    "[STACK-OVERFLOW]   ... repeated %d times\n", same_count);
+        }
         return 0;
     }
 
