@@ -917,16 +917,37 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
      * Fix: route 0x7002002 to a separate branch that writes the version (2)
      * for every function id. */
     if (call_type == 0x7002002) {
+        /* Wave-25: per-function version response. The PE's downstream
+         * version-check sites mostly expect 1 (103 cmp-against-1 sites
+         * vs 13 cmp-against-2 sites in sqlpal disasm).
+         * in_buf points to a struct {uint32_t dk_id, uint32_t flag};
+         * we choose the version based on the queried dk_id. */
+        uint32_t dk_id = 0;
+        if (in_buf)
+            dk_id = *(uint32_t*)in_buf;
+
+        uint32_t version = 1;  /* default: most DK functions are v1 */
+
+        /* Known v2 functions (from cmp $0x2,%ebx disasm sites):
+         * DkVirtualMemoryProtect (0x5003000) at RVA 0x2145c8,
+         * and a few others TBD. Populate as they surface. */
+        switch (dk_id & 0xFFFFF000) {
+        case 0x5003000:  /* DkVirtualMemoryProtect */
+            version = 2;
+            break;
+        default: break;
+        }
+
         if (out_buf) {
             uint64_t *result_ptr = *(uint64_t**)out_buf;
             if (result_ptr) {
-                *(uint32_t*)result_ptr = 2;  /* DK ABI version = 2 */
+                *(uint32_t*)result_ptr = version;
             }
         }
         uint64_t retval = DK_STATUS_SUCCESS;
         if (dispatch_count <= 500)
-            fprintf(stderr, "[DK-RET] #%d call_type=0x7002002 (GetVersion) -> status=0x%lx (ver=2)\n",
-                    dispatch_count, (unsigned long)retval);
+            fprintf(stderr, "[DK-RET] #%d GetVersion(dk_id=0x%x) -> ver=%u status=0x%lx\n",
+                    dispatch_count, dk_id, version, (unsigned long)retval);
         return retval;
     }
 
