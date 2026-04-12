@@ -15,6 +15,9 @@
 #define DRAWBRIDGE_TYPES_H
 
 #include <stdint.h>
+#include <stddef.h>
+
+#include <stdint.h>
 
 /* ================================================================
  * Status Codes (NTSTATUS-compatible)
