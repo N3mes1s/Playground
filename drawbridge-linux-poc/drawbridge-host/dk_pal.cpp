@@ -1029,8 +1029,23 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
          * The other 0x5xxx IDs remain tentatively mapped to sync
          * primitives but this may also be wrong -- will verify as
          * boot progresses and each function gets called. */
-        case 0x5001000: func = (void*)&DK_NotificationEventCreate; is_stub=0; break;
-        case 0x5002000: func = (void*)&DK_SynchronizationEventCreate; is_stub=0; break;
+        /* Wave-33: 0x5001/5002 remapped from event create to identity-
+         * echo. The PE's caller at RVA 0x37b492 passes rcx/rdx as
+         * VAs and expects *out1=rcx, *out2=rdx (identity). Our
+         * previous DK_NotificationEventCreate wrote a kevent pointer
+         * which didn't match the PE's `cmp rsi, [rbp-0x18]` check. */
+        case 0x5001000: {
+            DK_API uint64_t DK_VmIdentityEcho(void*, uint64_t, uint64_t,
+                                              uint32_t, uint32_t,
+                                              uint64_t*, uint64_t*);
+            func = (void*)&DK_VmIdentityEcho; is_stub=0; break;
+        }
+        case 0x5002000: {
+            DK_API uint64_t DK_VmIdentityEcho(void*, uint64_t, uint64_t,
+                                              uint32_t, uint32_t,
+                                              uint64_t*, uint64_t*);
+            func = (void*)&DK_VmIdentityEcho; is_stub=0; break;
+        }
         case 0x5003000: func = (void*)&DK_VirtualMemoryProtect; is_stub=0; break;
 
         /* Console (category 0x06) */
@@ -1398,6 +1413,43 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
                 dispatch_count, (unsigned long)call_type, (unsigned long)retval);
         return retval;
     }
+}
+
+/* Wave-33/34: identity-echo DK function for call_type 0x5001000 family.
+ * Agent-A analysis of FUN_0x212860 (v1 sub-dispatcher) shows the real
+ * signature is a 7-arg "VM register range" call:
+ *   NTSTATUS DK_VmRegisterRange(
+ *       void* traceCtx,       // rcx: injected by dispatcher (not PE arg)
+ *       u64   vaStart,        // rdx: PE's rcx (vaStart)
+ *       u64   vaEnd,          // r8:  PE's rdx (vaEnd)
+ *       u32   regionKind,     // r9:  PE's r8d (kind, often 3)
+ *       u32   index,          // [rsp+0x20]: PE's r9d
+ *       u64*  outVaStart,     // [rsp+0x28]: PE's arg5
+ *       u64*  outVaEnd);      // [rsp+0x30]: PE's arg6
+ *
+ * The caller at RVA 0x37b4a3 validates identity-echo:
+ *     cmp rsi(=vaStart), [rbp-0x18]  (outVaStart)
+ *     cmp rdi(=vaEnd),   [rbp-0x10]  (outVaEnd)
+ * so our shim must write *outVaStart = vaStart (rdx) and
+ * *outVaEnd = vaEnd (r8). */
+DK_API __attribute__((force_align_arg_pointer))
+uint64_t DK_VmIdentityEcho(void *trace_ctx, uint64_t va_start,
+                           uint64_t va_end, uint32_t region_kind,
+                           uint32_t index, uint64_t *out_va_start,
+                           uint64_t *out_va_end) {
+    (void)trace_ctx; (void)region_kind; (void)index;
+    static int echo_count = 0;
+    ++echo_count;
+    if (echo_count <= 20)
+        fprintf(stderr,
+            "[VM-ECHO] #%d vaStart=0x%lx vaEnd=0x%lx kind=%u idx=%u "
+            "out_start=%p out_end=%p\n",
+            echo_count, (unsigned long)va_start, (unsigned long)va_end,
+            region_kind, index,
+            (void*)out_va_start, (void*)out_va_end);
+    if (out_va_start) *out_va_start = va_start;
+    if (out_va_end)   *out_va_end   = va_end;
+    return DK_STATUS_SUCCESS;
 }
 
 /*
