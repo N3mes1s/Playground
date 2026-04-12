@@ -15,6 +15,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -702,9 +703,30 @@ void pal_thread_entry_thunk(ntum_kthread_t *kt)
  *   FUN_00279f90(FUN_00252bf0);        // register AIO callback
  * ================================================================== */
 
-extern void pal_scheduler_register(const void *config);    /* FUN_00355d60 */
-extern void pal_aio_callback_register(void (*cb)(void*,long)); /* FUN_00279f90 */
-extern void pal_aio_callback(void *arg1, long arg2);       /* FUN_00252bf0 */
+extern "C" {
+    /* FUN_00252bf0 — AIO completion callback. No-op stub; not invoked until
+     * async I/O completes. Real scheduler comes in Wave 2 / C15. */
+    void pal_aio_callback(void *arg1, long arg2)
+    {
+        (void)arg1; (void)arg2;
+    }
+
+    /* File-static stash for the registered AIO callback. */
+    static void (*s_pal_aio_cb)(void*, long) = nullptr;
+
+    /* FUN_00279f90 — stash callback; no scheduling yet. */
+    void pal_aio_callback_register(void (*cb)(void*, long))
+    {
+        s_pal_aio_cb = cb;
+        fprintf(stderr, "[PAL-SCHED] aio_callback_register: cb=%p\n", (void*)cb);
+    }
+
+    /* FUN_00355d60 — scheduler config register. No-op for now. */
+    void pal_scheduler_register(const void *config)
+    {
+        fprintf(stderr, "[PAL-SCHED] register: config=%p\n", config);
+    }
+}
 
 void pal_thread_subsystem_init(void)
 {
