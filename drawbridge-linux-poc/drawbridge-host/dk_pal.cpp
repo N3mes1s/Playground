@@ -1098,8 +1098,9 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
         }
         {
             uint64_t retval = 0;
-            fprintf(stderr, "[DK-RET] #%d call_type=0x%lx -> status=0x%lx\n",
-                    dispatch_count, (unsigned long)call_type, (unsigned long)retval);
+            if (dispatch_count <= 500 || (dispatch_count % 1000) == 0)
+                fprintf(stderr, "[DK-RET] #%d call_type=0x%lx -> status=0x%lx\n",
+                        dispatch_count, (unsigned long)call_type, (unsigned long)retval);
             return retval;  /* STATUS_SUCCESS */
         }
     }
@@ -1110,8 +1111,9 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
             *(uint32_t*)out_buf = 2;
         {
             uint64_t retval = DK_STATUS_SUCCESS;
-            fprintf(stderr, "[DK-RET] #%d call_type=0x%lx -> status=0x%lx\n",
-                    dispatch_count, (unsigned long)call_type, (unsigned long)retval);
+            if (dispatch_count <= 500 || (dispatch_count % 1000) == 0)
+                fprintf(stderr, "[DK-RET] #%d call_type=0x%lx -> status=0x%lx\n",
+                        dispatch_count, (unsigned long)call_type, (unsigned long)retval);
             return retval;
         }
     }
@@ -1298,7 +1300,11 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
     }
     {
         uint64_t retval = DK_STATUS_SUCCESS;
-        fprintf(stderr, "[DK-RET] #%d call_type=0x%lx -> status=0x%lx\n",
+        /* Throttle logging — each fprintf consumes ~3 KB of stack
+         * via libc internal buffers. With PostRes call loops of 500+
+         * the cumulative stack use blows our 2 MB boot stack. */
+        if (dispatch_count <= 500 || (dispatch_count % 1000) == 0)
+            fprintf(stderr, "[DK-RET] #%d call_type=0x%lx -> status=0x%lx\n",
                 dispatch_count, (unsigned long)call_type, (unsigned long)retval);
         return retval;
     }

@@ -148,6 +148,22 @@ static int handle_libos_fault(void *fault_addr, ucontext_t *uc) {
     if (addr >= LIBOS_VM_END)
         return 0;
 
+    /* Boot-stack guard: our dedicated boot stack lives at
+     * 0x500000000..0x500200000 (2 MB). Any fault BELOW 0x500000000
+     * but within the "stack grows down" region (0x4F0000000..0x500000000)
+     * is a stack overflow. Do NOT demand-page — propagate the SIGSEGV
+     * so we can see the exact PE RIP that ran past the stack bottom.
+     * This surfaces the PE's descriptor-processing loop that otherwise
+     * runs indefinitely on an unbounded demand-paged stack. */
+    if (addr >= 0x4F0000000ULL && addr < 0x500000000ULL) {
+        uintptr_t rip = uc ? uc->uc_mcontext.gregs[REG_RIP] : 0;
+        fprintf(stderr,
+            "[STACK-OVERFLOW] fault at 0x%lx from RIP=0x%lx — boot stack "
+            "exhausted below 0x500000000; propagating to surface the loop\n",
+            (unsigned long)addr, (unsigned long)rip);
+        return 0;
+    }
+
     /* Don't map NULL page or very low addresses - these are real crashes */
     if (addr < LIBOS_VM_START) {
         uintptr_t rip = uc ? uc->uc_mcontext.gregs[REG_RIP] : 0;
