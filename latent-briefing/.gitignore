@@ -1,7 +1,9 @@
 upstream/
 __pycache__/
+**/__pycache__/
 *.pyc
 .venv/
 *.pt
 *.safetensors
 results/
+bench_*.json
