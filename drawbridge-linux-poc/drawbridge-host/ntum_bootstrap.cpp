@@ -935,6 +935,27 @@ static void *boot_thread_fn(void *arg) {
                 "[BOOT] wave-13: seeded runtime module list heads "
                 "[0x180645510/18]=&self\n");
         }
+
+        /* Wave-14: vectored-exception-handler list head at 0x1806087a8.
+         * RtlDispatchException walks this as a LIST_ENTRY ring before
+         * calling per-function language handlers. An all-zero head
+         * causes the walker to dereference NULL on first iteration,
+         * which is consistent with the recursion we observe at
+         * RIP=0x1802962f1 inside RtlDispatchException's body (offset
+         * +0x49). Seed the two-pointer head as self-referencing so
+         * the walker sees an empty-ring and exits cleanly. */
+        /* NOTE: runtime observation — at boot time this slot already
+         * holds [0x1802421a0, 0x1802421c0], i.e. PE-range function
+         * pointers (probably the default language-handler chain, NOT
+         * a LIST_ENTRY head). Leave it untouched. Keeping the probe
+         * here only as a diagnostic log so future waves can confirm
+         * the slot hasn't been zeroed by a prior step. */
+        volatile uint64_t *veh_flink = (uint64_t*)0x1806087a8ULL;
+        volatile uint64_t *veh_blink = (uint64_t*)0x1806087b0ULL;
+        fprintf(stderr,
+            "[BOOT] wave-14: VEH slot [0x1806087a8/b0]=[%lx,%lx] "
+            "(left untouched — not a LIST_ENTRY)\n",
+            (unsigned long)*veh_flink, (unsigned long)*veh_blink);
     }
 
     /* Wave-12: RtlRaiseStatus (FUN_002a84f8) recursion trap.

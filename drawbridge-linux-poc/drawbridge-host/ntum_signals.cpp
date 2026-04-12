@@ -771,6 +771,11 @@ void ntum_signal_init(void) {
     sigaction(SIGBUS, &sa, NULL);
     sigaction(SIGFPE, &sa, NULL);
     sigaction(SIGTRAP, &sa, NULL);
+    /* Wave-14: SIGILL handler — Wave-12 patched PE RVA 0x2a855a
+     * (RtlRaiseStatus retry) from `call rel32` to `ud2 + 3 nops`.
+     * When that fires we want the full crash dump (RIP, ECX = first
+     * raised NTSTATUS, stack scan) rather than an uncaught SIGILL. */
+    sigaction(SIGILL, &sa, NULL);
 
     fprintf(stderr, "[SIGNAL] Handler installed with exception forwarding (altstack=%p)\n",
             ss.ss_sp);
