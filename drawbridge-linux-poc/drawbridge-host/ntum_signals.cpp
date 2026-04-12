@@ -156,6 +156,22 @@ static int handle_libos_fault(void *fault_addr, ucontext_t *uc) {
         return 0;
     }
 
+    /* Don't map pages in the NT STATUS range (0xC0000000-0xC0010000).
+     * If the PE faults there, it's treating an NTSTATUS error code as
+     * a pointer — indicating a DK_* function returned an error value
+     * the PE mis-interprets. Silently mapping these pages lets the PE
+     * keep running with corrupted state and produces the DK #234
+     * livelock (see /tmp/deadlock_rca.md). Let the fault propagate so
+     * the real root cause surfaces. */
+    if (addr >= 0xC0000000ULL && addr < 0xC0010000ULL) {
+        uintptr_t rip = uc ? uc->uc_mcontext.gregs[REG_RIP] : 0;
+        fprintf(stderr, "[FAULT] NTSTATUS-as-pointer at 0x%lx from RIP=0x%lx — "
+                        "a DK_* returned this status code where the PE expected "
+                        "a pointer; NOT auto-mapping\n",
+                (unsigned long)addr, (unsigned long)rip);
+        return 0;
+    }
+
     /* Map the faulted page (MAP_FIXED_NOREPLACE preserves existing maps) */
     void *result = mmap((void*)page, 0x1000,
                         PROT_READ | PROT_WRITE | PROT_EXEC,

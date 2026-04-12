@@ -842,6 +842,28 @@ static void *boot_thread_fn(void *arg) {
         fprintf(stderr, "[BOOT] SRW waiter-anchor janitor thread started\n");
     }
 
+    /* SRW-lock release livelock breaker.
+     * Even after the janitor stamps the Flink, the PE's CAS release
+     * retry at RVA 0x226aee->0x226af2 never succeeds because the lock
+     * value keeps bit-0 set (contended). Both jumps patched to nops:
+     *   RVA 0x226ada: je 0x226ac8  (74 ec) — inner waiter walk loop
+     *   RVA 0x226af2: jne 0x226ab7 (75 c3) — CAS release retry
+     * With both nop'd, the PE falls through to `call 0x226994`, which
+     * is the "no-waiter wake" fallback — correct behaviour for our
+     * case where the lock never had a real contender. */
+    {
+        volatile uint8_t *p_ada = (uint8_t*)0x180226adaULL;
+        volatile uint8_t *p_af2 = (uint8_t*)0x180226af2ULL;
+        if (p_ada[0] == 0x74 && p_ada[1] == 0xec) {
+            p_ada[0] = 0x90; p_ada[1] = 0x90;
+            fprintf(stderr, "[BOOT] patched PE RVA 0x226ada je->nop\n");
+        }
+        if (p_af2[0] == 0x75 && p_af2[1] == 0xc3) {
+            p_af2[0] = 0x90; p_af2[1] = 0x90;
+            fprintf(stderr, "[BOOT] patched PE RVA 0x226af2 jne->nop\n");
+        }
+    }
+
     fprintf(stderr, "[BOOT] Calling REAL entry point at %p (no hacks!)\n",
             args->entry_point);
     fprintf(stderr, "[BOOT] rcx = rdx = %p (params)\n", args->params);
