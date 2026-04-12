@@ -123,6 +123,36 @@ class TestProbeCapture(unittest.TestCase):
         self.assertEqual(len(pc.queries), cfg.n_layer)
         self.assertEqual(pc.rope_summary()["with_rope"], 0)
 
+    def test_rope_failure_raises(self):
+        """If apply_rotary_pos_emb fails on our pre-hook call, we MUST raise
+        rather than silently fall back to pre-RoPE Q (which would produce
+        meaningless AM probe scores against post-RoPE cached K)."""
+        import importlib
+        cfg, model = self._build_tiny_llama()
+        from briefing.probe import ProbeCapture
+
+        llama_mod = importlib.import_module(type(model.model.layers[0].self_attn).__module__)
+        original = llama_mod.apply_rotary_pos_emb
+
+        def fail_on_probe_call(*args, **kwargs):
+            # Our pre-hook passes q as both q and k; the real forward passes
+            # distinct tensors. Simulate an arch where only our call fails.
+            if len(args) >= 2 and args[0] is args[1]:
+                raise ValueError("artificial incompatibility for test")
+            return original(*args, **kwargs)
+
+        llama_mod.apply_rotary_pos_emb = fail_on_probe_call
+        try:
+            pc = ProbeCapture(model)
+            input_ids = torch.randint(0, cfg.vocab_size, (1, 6))
+            with self.assertRaises(RuntimeError) as ctx:
+                with pc.record():
+                    with torch.no_grad():
+                        model(input_ids, use_cache=False)
+            self.assertIn("apply_rotary_pos_emb failed", str(ctx.exception))
+        finally:
+            llama_mod.apply_rotary_pos_emb = original
+
 
 if __name__ == "__main__":
     unittest.main()

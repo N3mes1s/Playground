@@ -46,6 +46,35 @@ class TestCachePlumbing(unittest.TestCase):
         for r in per_layer:
             self.assertEqual(r.compact_len, 32)
 
+    def test_clone_cache_is_deep(self):
+        """Extending or mutating a clone must not affect the original.
+
+        HF's DynamicCache.update() is in-place; a shallow clone would be
+        silently corrupted by any subsequent forward that extends it.
+        Regression for the cache-contamination bug class.
+        """
+        try:
+            from transformers.cache_utils import DynamicCache
+        except ImportError:
+            self.skipTest("transformers not installed")
+
+        from compaction import clone_cache
+
+        orig = DynamicCache()
+        orig.update(torch.zeros(1, 2, 4, 8), torch.zeros(1, 2, 4, 8), 0)
+        clone = clone_cache(orig)
+
+        # Extend clone via update() (HF's in-place append).
+        clone.update(torch.ones(1, 2, 3, 8), torch.ones(1, 2, 3, 8), 0)
+        self.assertEqual(cache_token_count(clone), 7)
+        self.assertEqual(cache_token_count(orig), 4,
+                         "clone_cache was shallow -- extending the clone mutated the original")
+
+        # Mutate a tensor in the clone in-place.
+        clone.layers[0].keys[0, 0, 0, 0] = 999.0
+        self.assertEqual(float(orig.layers[0].keys[0, 0, 0, 0]), 0.0,
+                         "clone_cache was shallow -- in-place edit leaked")
+
     def test_compact_dynamic_cache_roundtrip(self):
         """Compaction round-trips through a real DynamicCache (no model)."""
         try:

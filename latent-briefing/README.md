@@ -15,7 +15,7 @@ latent-briefing/
 │   ├── probe.py                      Per-layer post-RoPE Q capture via hooks
 │   ├── model.py                      LatentBriefingModel wrapper
 │   └── session.py                    OrchestratorWorkerSession with prefix reuse
-├── tests/                            17 unit tests, no network required
+├── tests/                            19 unit tests, no network required
 │   ├── test_attention_matching.py    AM correctness on synthetic tensors
 │   ├── test_cache.py                 DynamicCache round-trip
 │   ├── test_probe.py                 Probe Q matches model-internal Q bit-exact
@@ -94,13 +94,15 @@ Given a cache `K, V` of shape `[num_heads, n, head_dim]` and a probe `Q` of shap
 **Harness invariants:**
 - `generate()` does not mutate the caller's `past_cache` (regression test — HF's DynamicCache updates are in-place, so we clone before stepping).
 - `demo.held_out_nll()` does not mutate the caller's cache either (regression test — same root cause, different call site).
+- `clone_cache()` is verified truly deep: extending or in-place-editing the clone does not leak to the original.
+- `ProbeCapture` raises `RuntimeError` if it encounters a RoPE-using architecture where its `apply_rotary_pos_emb` call fails, rather than silently falling back to pre-RoPE Q (which would produce meaningless AM scores).
 
 **Real-model end-to-end** (not in the test suite — run via `demo.py` / `/tmp/verify_*.py`):
 - SmolLM2-135M (Llama, 30 layers, GQA 3:1): full pipeline runs, 30/30 layers post-RoPE, AM at 80% savings generates "Alexander the Great" correctly where recent/random produce garbage.
 - Qwen2.5-0.5B (Qwen2, 24 layers, GQA 7:1): full pipeline runs, 24/24 layers post-RoPE, AM at 80% savings ΔNLL=-0.003 (actually slightly lower than full cache) and generates the correct answer; recent/random ΔNLL around +7.
 
 ```
-Ran 17 tests in ~9s. OK.
+Ran 19 tests in ~6s. OK.
 ```
 
 ## What IS NOT verified

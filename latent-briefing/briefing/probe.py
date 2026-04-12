@@ -147,19 +147,30 @@ class ProbeCapture:
                 used_rope = False
                 if position_embeddings is not None:
                     apply_rope = _locate_apply_rotary(module)
-                    if apply_rope is not None:
-                        cos, sin = position_embeddings
-                        # apply_rotary_pos_emb takes (q, k, cos, sin) and returns both.
-                        # We pass q as both to avoid allocating a separate dummy.
-                        try:
-                            q_rope, _ = apply_rope(q, q, cos, sin)
-                            q = q_rope.contiguous()
-                            used_rope = True
-                        except Exception:
-                            # Architecture variant where the signature differs;
-                            # keep pre-RoPE Q rather than crashing.
-                            pass
-                # If we couldn't apply RoPE, fall through with pre-RoPE q.
+                    if apply_rope is None:
+                        raise RuntimeError(
+                            f"Architecture {type(module).__name__} provides "
+                            f"position_embeddings but no apply_rotary_pos_emb "
+                            f"in module {type(module).__module__}. Probe would "
+                            f"produce meaningless pre-RoPE Q."
+                        )
+                    cos, sin = position_embeddings
+                    # apply_rotary_pos_emb takes (q, k, cos, sin) and returns both.
+                    # We pass q as both to avoid allocating a separate dummy.
+                    try:
+                        q_rope, _ = apply_rope(q, q, cos, sin)
+                    except Exception as exc:
+                        raise RuntimeError(
+                            f"apply_rotary_pos_emb failed on "
+                            f"{type(module).__name__}; probe cannot be made "
+                            f"post-RoPE. Upstream error: {exc!r}"
+                        ) from exc
+                    q = q_rope.contiguous()
+                    used_rope = True
+                # If position_embeddings was None, either (a) the architecture
+                # has no RoPE (unlikely for a q_proj-style module) or (b) the
+                # model called attention without it. Keep pre-RoPE Q; caller
+                # can check used_rope to decide whether to trust the probe.
             else:
                 raise RuntimeError(
                     f"Unsupported attention module for probe capture: {type(module).__name__}"
