@@ -648,6 +648,12 @@ DK_API uint64_t DK_ThreadInterrupt(DK_HANDLE thread) {
 
 DK_API uint64_t DK_ThreadSetAffinity(DK_HANDLE thread, uint64_t group,
                                       uint64_t mask) {
+    static int ta_count = 0;
+    ++ta_count;
+    fprintf(stderr,
+        "[TSA] #%d thread=0x%lx group=0x%lx mask=0x%lx\n",
+        ta_count, (unsigned long)thread,
+        (unsigned long)group, (unsigned long)mask);
     DK_TRACE_ENTRY("DK_ThreadSetAffinity", thread, group, mask, 0);
     (void)thread; (void)group; (void)mask;
     return DK_STATUS_SUCCESS;
@@ -1415,9 +1421,19 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
     }
 }
 
-/* Wave-33/34: identity-echo DK function for call_type 0x5001000 family.
- * Agent-A analysis of FUN_0x212860 (v1 sub-dispatcher) shows the real
- * signature is a 7-arg "VM register range" call:
+/* Wave-33/34: DkVirtualMemoryAllocate v2 (DK id 0x5001000).
+ *
+ * Agent-B trace of the PE resolver loop at RVA 0x213067 + enter-tag
+ * string matching confirmed category 0x5xxx is the live "v2" VM
+ * interface:
+ *   0x5001000 = DkVirtualMemoryAllocate (this function)
+ *   0x5002000 = DkVirtualMemoryFree
+ *   0x5003000 = DkVirtualMemoryProtect
+ * The 0x2xxx VM category is legacy/stale; no PE code reads its
+ * resolver results.
+ *
+ * Agent-A analysis of FUN_0x212860 (v1 sub-dispatcher) gave the
+ * extended 7-arg signature:
  *   NTSTATUS DK_VmRegisterRange(
  *       void* traceCtx,       // rcx: injected by dispatcher (not PE arg)
  *       u64   vaStart,        // rdx: PE's rcx (vaStart)
