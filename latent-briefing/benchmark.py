@@ -136,7 +136,7 @@ def eval_method(
     return nll, hit, savings, compact_ms
 
 
-def run(lbm, ratio: float, max_new_tokens: int) -> Dict[str, MethodRow]:
+def run(lbm, ratio: float, max_new_tokens: int, seeds: int) -> Dict[str, MethodRow]:
     rows: Dict[str, MethodRow] = {
         "full": MethodRow("full"),
         "AM": MethodRow("AM"),
@@ -148,7 +148,7 @@ def run(lbm, ratio: float, max_new_tokens: int) -> Dict[str, MethodRow]:
         _, full_cache = lbm.prefill(ctx)
         probe_qs = lbm.probe_queries(probe, full_cache)
 
-        # Full-cache reference
+        # Full-cache reference (deterministic, one run).
         nll_full = held_out_nll(lbm, full_cache, probe, tgt)
         gen_full = gen_answer(lbm, probe, full_cache, max_new_tokens)
         hit_full = int(ans.lower() in gen_full.lower())
@@ -156,7 +156,8 @@ def run(lbm, ratio: float, max_new_tokens: int) -> Dict[str, MethodRow]:
         rows["full"].hits.append(hit_full)
         rows["full"].savings.append(0.0)
 
-        for method in ("AM", "recent", "random"):
+        # AM and recent are deterministic -> one seed suffices.
+        for method in ("AM", "recent"):
             nll, hit, sv, ms = eval_method(
                 lbm, full_cache, probe, tgt, ans, ratio, method,
                 probe_qs, max_new_tokens,
@@ -165,6 +166,18 @@ def run(lbm, ratio: float, max_new_tokens: int) -> Dict[str, MethodRow]:
             rows[method].hits.append(hit)
             rows[method].savings.append(sv)
             rows[method].compact_ms.append(ms)
+
+        # Random has a seed degree of freedom -> average across N seeds.
+        for seed in range(seeds):
+            torch.manual_seed(seed + 1234)
+            nll, hit, sv, ms = eval_method(
+                lbm, full_cache, probe, tgt, ans, ratio, "random",
+                probe_qs, max_new_tokens,
+            )
+            rows["random"].nll.append(nll)
+            rows["random"].hits.append(hit)
+            rows["random"].savings.append(sv)
+            rows["random"].compact_ms.append(ms)
     return rows
 
 
@@ -174,6 +187,8 @@ def main():
     ap.add_argument("--ratios", type=float, nargs="+", default=[0.1, 0.2, 0.3, 0.5])
     ap.add_argument("--max-new-tokens", type=int, default=16)
     ap.add_argument("--device", default="cpu")
+    ap.add_argument("--random-seeds", type=int, default=5,
+                    help="Averaging seeds for the random baseline")
     ap.add_argument("--json-out", default=None)
     args = ap.parse_args()
 
@@ -183,24 +198,26 @@ def main():
 
     all_results: Dict[str, Dict[str, MethodRow]] = {}
     for r in args.ratios:
-        print(f"\n[bench] ratio={r}")
-        rows = run(lbm, r, args.max_new_tokens)
+        print(f"\n[bench] ratio={r}  (random baseline x{args.random_seeds} seeds)")
+        rows = run(lbm, r, args.max_new_tokens, args.random_seeds)
         all_results[f"{r}"] = rows
 
-        print(f"{'method':<10} {'tok_keep':>8} {'avg NLL':>10} {'ΔNLL':>10} "
-              f"{'acc':>6} {'ms/op':>8}")
+        print(f"{'method':<10} {'tok_keep':>8} {'NLL mean':>10} {'±std':>8} "
+              f"{'ΔNLL':>9} {'acc':>6} {'ms/op':>8}")
         nll_full = statistics.mean(rows["full"].nll)
         acc_full = statistics.mean(rows["full"].hits)
-        print(f"{'full':<10} {'100%':>8} {nll_full:>10.4f} {'0.0000':>10} "
-              f"{acc_full:>6.1%} {'—':>8}")
+        print(f"{'full':<10} {'100%':>8} {nll_full:>10.4f} "
+              f"{'—':>8} {'0.0000':>9} {acc_full:>6.1%} {'—':>8}")
         for name in ("AM", "recent", "random"):
             row = rows[name]
             mean_nll = statistics.mean(row.nll)
+            std_nll = statistics.pstdev(row.nll) if len(row.nll) > 1 else 0.0
             acc = statistics.mean(row.hits)
             sv = statistics.mean(row.savings)
             ms = statistics.mean(row.compact_ms)
             print(f"{name:<10} {(1-sv)*100:>7.1f}% {mean_nll:>10.4f} "
-                  f"{mean_nll - nll_full:>+10.4f} {acc:>6.1%} {ms:>8.1f}")
+                  f"{std_nll:>8.4f} {mean_nll - nll_full:>+9.4f} "
+                  f"{acc:>6.1%} {ms:>8.1f}")
 
     if args.json_out:
         serial = {
