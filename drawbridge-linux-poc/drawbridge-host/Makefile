@@ -6,6 +6,7 @@ LDFLAGS = -lpthread -ldl -no-pie
 SRCS  = main.c ntum_bootstrap.c dk_pal.c ntum_signals.c
 # New per-subsystem translations of the ELF host (M1 scaffolding)
 SRCS += pal_boot.c pal_thread.c pal_abi.c pal_io.c pe_init_replicas.c
+SRCS += pal_stubs.c
 
 ASM_SRCS = trampoline.S cfg_passthrough.S
 HDRS = ntum_bootstrap.h pal_internal.h drawbridge_types.h
