@@ -800,6 +800,30 @@ DK_API uint64_t DK_RandomBitsRead(void *buffer, uint64_t length) {
                                     : DK_STATUS_INVALID_PARAM;
 }
 
+/* Wave-37: DkThreadSetRegisters stub (DK id 0xf004000).
+ * Per PE enter-tag at 0x43cbe0 "DKDkThreadSetRegisters:enter
+ * thread=0x%I64x", dispatcher marshals 4 args:
+ *   (thread_handle, *CONTEXT_record, context_size, flags)
+ * The PE's BOOT init calls this to set the initial thread's
+ * register state. Our port runs the PE's boot thread directly on
+ * the host stack so there's nothing physical to update; returning
+ * SUCCESS is sufficient for the PE to continue (it uses this as a
+ * no-op on the in-process path). */
+DK_API uint64_t DK_DkThreadSetRegisters(DK_HANDLE thread,
+                                         void *context_record,
+                                         uint64_t context_size,
+                                         uint64_t flags) {
+    (void)thread; (void)context_record; (void)context_size; (void)flags;
+    static int count = 0;
+    ++count;
+    if (count <= 5)
+        fprintf(stderr,
+            "[DK-TSR] #%d thread=0x%lx ctx=%p size=0x%lx flags=0x%lx\n",
+            count, (unsigned long)thread, context_record,
+            (unsigned long)context_size, (unsigned long)flags);
+    return DK_STATUS_SUCCESS;
+}
+
 /* Wave-35: DkSystem_CpuUtilizationQuery_v1 (DK id 0xe003000).
  * Per PE enter-tag "DkSystem_CpuUtilizationQuery_v1:enter kernelTime
  * userTime thread" — signature with dispatcher trace-ctx is
@@ -1214,8 +1238,18 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
          *   RVA 0x2133bf: 0xf005000 → [0x63f4f0] (flag, checked == 1)
          *   RVA 0x213ba2: 0xf005001 → [0x63f4f8] (func ptr, called via jmp *rax)
          */
+        /* Wave-37: 0xf004000 is DkThreadSetRegisters (not a stream fn).
+         * Agent-B traced fn-ptr slot [0x63f4f8] → 0xf004001 (not
+         * 0xf005001 as our comment claimed), and matched the enter-tag
+         * at 0x43cbe0 "DKDkThreadSetRegisters:enter thread=0x%I64x".
+         * When this returns 0 the BOOT init path hits
+         * "BOOT: FATAL: Failed to initialize initial thread" at 0x439058.
+         * Dispatcher marshals (thread_handle, *CONTEXT, size, flags). */
+        case 0xf004000: func = (void*)&DK_DkThreadSetRegisters; is_stub=0; break;
+
+        /* Stream extended (category 0x0F) -- stubs for now */
         case 0xf001000: case 0xf002000: case 0xf003000:
-        case 0xf004000: case 0xf005000: case 0xf006000:
+                       case 0xf005000: case 0xf006000:
         case 0xf007000:
             func = (original_version == 0) ? (void*)1 : (void*)&DK_GenericStub;
             is_stub = (original_version != 0); break;
