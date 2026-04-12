@@ -454,9 +454,23 @@ VmModuleState *pal_vm_init_module_state(void)
     (void)pal_vm_compute_head_list(self);
 
     /* Populate the consumer-relevant fields the PE reads at
-     * RVA 0x24c3f6 (vm_base) / 0x24c402 (size_shift). */
-    self->vm_base    = (uint64_t)region;
-    self->size_shift = (map_len >> 0x1F) ? (map_len >> 0x1F) : 1;
+     * RVA 0x24c3f6 (vm_base) / 0x24c402 (size_shift).
+     *
+     * CORRECTION (Wave-4 post-impl): `vm_base` must be the base of the
+     * LIBOS-MANAGED VA region (where kernel-heap objects live), NOT the
+     * descriptor-buffer address. The PE uses these two fields as a
+     * pointer-validity filter:
+     *
+     *   candidate_in_range = (rbx >= vm_base) && (rbx < vm_base + (size_shift << 0x1F))
+     *
+     * Observed LibOS heap pointers during boot: rbp=0x3200100f0,
+     * r14=0x34006a070 — all in 0x300000000..0x400000000. Per
+     * /tmp/wave4_consumer.md and drawbridge_types.h LIBOS_VM_START/END,
+     * the full LibOS VA window is 0x300000000..0x800000000 (5 GiB).
+     * size_shift is in 2 GiB units (PE shifts it by 0x1F == 31):
+     *   0xA * 2 GiB = 0x500000000 == LIBOS_VM_END - LIBOS_VM_START. */
+    self->vm_base     = 0x300000000ULL;              /* LIBOS_VM_START */
+    self->size_shift  = 0xAULL;                      /* 0xA * 2GiB = 0x500000000 */
     self->struct_tail = (uint64_t)region + map_len - 0x1000ULL;
 
     fprintf(stderr,
