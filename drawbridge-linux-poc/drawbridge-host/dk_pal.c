@@ -321,92 +321,201 @@ DK_API uint64_t DK_StreamEventSelect(DK_HANDLE stream, DK_HANDLE event,
  * ================================================================ */
 
 /*
- * Protection flag converter - matches the REAL sqlservr implementation
- * at FUN_001d9720:
- *   return (flags & 3) | ((flags >> 1) & 6);
- *
- * This maps Drawbridge protection values to Linux PROT_* flags:
- *   DK prot 0 → Linux 0 (PROT_NONE)
- *   DK prot 1 → Linux 1 (PROT_READ)
- *   DK prot 2 → Linux 3 (PROT_READ|PROT_WRITE)
- *   DK prot 3 → Linux 3 (PROT_READ|PROT_WRITE)
- *   DK prot 4 → Linux 6 (PROT_WRITE|PROT_EXEC) - actually R+X
- *   DK prot 5 → Linux 5 (PROT_READ|PROT_EXEC)
- *   DK prot 6 → Linux 7 (PROT_READ|PROT_WRITE|PROT_EXEC)
+ * Protection flag converter - FUN_001d9720 @ sqlservr_FULL.c:32651-32657
+ *   uint FUN_001d9720(uint param_1) {
+ *       return param_1 & 3 | param_1 >> 1 & 6;
+ *   }
+ * Translates Windows PAGE_* bits to Linux PROT_* bits:
+ *   bit 0 (NOACCESS shadow) -> PROT_READ-like low bit passthrough
+ *   bit 1 (READONLY)        -> PROT_READ
+ *   bit 2 (READWRITE)       -> PROT_WRITE (bit 1 after >>1)
+ *   bit 4 (EXECUTE)         -> PROT_EXEC  (bit 2 after >>1, masked by &6)
  */
 static int dk_prot_to_linux(uint64_t dk_prot) {
     uint32_t p = (uint32_t)dk_prot;
-    int linux_prot = (int)((p & 3) | ((p >> 1) & 6));
-    /* Ensure at least RW for non-zero protections so pages are accessible */
-    if (linux_prot == 0 && p != 0) linux_prot = PROT_READ | PROT_WRITE;
-    return linux_prot;
+    return (int)((p & 3) | ((p >> 1) & 6));
 }
 
 /*
- * DK_VirtualMemoryAllocate - based on real FUN_0024b4f0 / FUN_0024b210
+ * DK_VirtualMemoryAllocate
  *
- * Real behavior:
- * 1. Page-aligns address down and size up
- * 2. MEM_RESERVE only → MAP_NORESERVE
- * 3. MEM_COMMIT → MAP_PRIVATE|MAP_ANONYMOUS, MAP_FIXED if address given
- * 4. Protects PE image range from remapping
- * 5. Protection flags via (p & 3) | ((p >> 1) & 6)
+ * Faithful translation of FUN_0024b4f0 @ sqlservr_FULL.c:118424-118570
+ * with inline of its primary callee FUN_0024b210 @ 118310-118381
+ * (mmap wrapper). Raw mmap thunk is FUN_00355380 @ 318743. Protection
+ * translator is FUN_001d9720 @ 32651 (see dk_prot_to_linux above).
+ *
+ * The ELF function signature per the decompiled text is:
+ *   (ulong DesiredAddress, long DesiredLength, uint AllocationType,
+ *    uint Protect, ulong *OutBaseAddress, ulong *OutRegionSize,
+ *    undefined4 MemoryKey)
+ * The DK PAL signature presented to the NTUM passes the address/size as
+ * in/out pointers:
+ *   (void **address, uint64_t *size, uint64_t alloc_type, uint64_t protect)
+ * So *address serves as both DesiredAddress input (ELF param_1) and
+ * OutBaseAddress output (ELF param_5); likewise *size is DesiredLength
+ * (param_2) and OutRegionSize (param_6). MemoryKey (param_7) is not
+ * exposed through this signature; we pass 0 to the protection-and-key
+ * tail call which we skip entirely (no pkey support on our host).
+ *
+ * Control flow matches the ELF step-by-step:
+ *   1. Compute effective protect mask: uVar7 = param_4 ? (param_4|1) : 0.
+ *   2. FUN_00280200(param_1) sanity-check of the hint (we approximate as
+ *      "non-negative canonical pointer"; details unknown, TODO).
+ *   3. Parameter validation: DesiredAddress != NULL, DesiredLength != 0,
+ *      AllocationType != 0, valid protect (uVar7<0x10 && (uVar7&6)!=6),
+ *      valid alloc flags ((param_3 & 0xffffff3c) == 0).
+ *   4. Page-align: addr = param_1 & ~0xfff; len = (param_2 + (param_1&0xfff)
+ *      + 0xfff) & ~0xfff.
+ *   5. If (param_3 & 0x41) == 0 -> reserve-only: log only, NO mmap. The
+ *      ELF trusts the caller's hint range without allocating (Windows
+ *      MEM_RESERVE semantics). We FOLLOW this exactly.
+ *   6. Else (commit or fault-handling): inline FUN_0024b210 ->
+ *        prot_linux = FUN_001d9720(protect);
+ *        mmap_flags = (alloc_type & 0x40) << 8 | 0x22;     // MAP_NORESERVE
+ *        if hint != 0: mmap_flags |= 0x10;                  // MAP_FIXED
+ *        result = mmap(hint, len, prot_linux, mmap_flags, -1, 0);
+ *        assert result == MAP_FAILED || hint == 0 || result == hint.
+ *      If alloc_type bits 0xc0 set, follow-up mprotect with pkey-ish
+ *      mode: FUN_00355390(result, len, (alloc_type & 0x80) == 0 | 0xe).
+ *   7. On success, also apply SetMemoryProtectionAndKey (FUN_0024b3e0).
+ *      On our host this is just mprotect with prot_linux at the region,
+ *      already done by mmap -- we still call mprotect to match semantics.
  */
 DK_API uint64_t DK_VirtualMemoryAllocate(void **address, uint64_t *size,
                                           uint64_t alloc_type, uint64_t protect) {
     DK_TRACE_ENTRY("DK_VirtualMemoryAllocate", address, size, alloc_type, protect);
-    void *hint = address ? *address : NULL;
-    size_t len = size ? *size : 0x1000;
 
-    /* Page-align (real host does this) */
-    uintptr_t addr_val = (uintptr_t)hint;
-    uintptr_t aligned = addr_val & ~0xFFFULL;
-    size_t extra = addr_val - aligned;
-    size_t aligned_len = (len + extra + 0xFFF) & ~0xFFFULL;
-    if (aligned_len == 0) aligned_len = 0x1000;
+    /* Mirror ELF locals. */
+    uint64_t local_88 = 0;        /* LocalBaseAddress */
+    uint32_t uVar7;               /* effective protect */
+    uint64_t uVar6;               /* aligned base */
+    uint64_t uVar8;               /* aligned length */
+
+    uint64_t param_1 = address ? (uint64_t)*address : 0;   /* DesiredAddress */
+    uint64_t param_2 = size    ? *size               : 0;  /* DesiredLength */
+    uint32_t param_3 = (uint32_t)alloc_type;               /* AllocationType */
+    uint32_t param_4 = (uint32_t)protect;                  /* Protect */
+    /* param_5 = address (out), param_6 = size (out), param_7 = 0 (key) */
+
+    /* uVar7 = param_4 | 1; if (param_4 == 0) uVar7 = 0; */
+    uVar7 = param_4 | 1u;
+    if (param_4 == 0) uVar7 = 0;
+
+    /* cVar2 = FUN_00280200(param_1);  if (cVar2 == '\0') set STATUS 0xc000000d.
+     * FUN_00280200 is a hint-address validator (unk_validate_hint). We
+     * approximate as "accept any value", TODO: study FUN_00280200 @ ELF. */
+    /* unknown: FUN_00280200 behavior -> treat as always-true on our host */
+
+    /* Parameter validation ladder. */
+    if (param_1 == 0) {
+        /* "DesiredAddress != nullptr" */
+        return DK_STATUS_INVALID_PARAM;
+    }
+    if (param_2 == 0) {
+        /* "DesiredLength != 0" */
+        return DK_STATUS_INVALID_PARAM;
+    }
+    if (param_3 == 0) {
+        /* "AllocationType != 0" */
+        return DK_STATUS_INVALID_PARAM;
+    }
+    /* "DK_VALID_PAGE_PROTECTION(Protect)": uVar7 < 0x10 && (uVar7 & 6) != 6 */
+    if (!(uVar7 < 0x10 && (uVar7 & 6) != 6)) {
+        return DK_STATUS_INVALID_PARAM;
+    }
+    /* "DK_VALID_ALLOCATION_FLAGS(AllocationType)": (param_3 & 0xffffff3c)==0 */
+    if ((param_3 & 0xffffff3cu) != 0) {
+        return DK_STATUS_INVALID_PARAM;
+    }
+
+    /* Page-align address down and size up.
+     *   uVar6 = param_1 & 0xfffffffffffff000;
+     *   uVar8 = (param_2 + (param_1 & 0xfff) + 0xfff) & 0xfffffffffffff000;
+     */
+    uVar6 = param_1 & ~0xFFFULL;
+    uVar8 = (param_2 + (param_1 & 0xFFFULL) + 0xFFFULL) & ~0xFFFULL;
+    local_88 = uVar6;
 
     static int va_count = 0;
     va_count++;
     if (va_count <= 50) {
-        fprintf(stderr, "[PAL] VirtualAlloc(%p→0x%lx, 0x%lx, type=0x%lx, prot=0x%lx)\n",
-                hint, (unsigned long)aligned, (unsigned long)aligned_len,
-                (unsigned long)alloc_type, (unsigned long)protect);
+        fprintf(stderr,
+                "[PAL] VirtualAlloc hint=0x%lx aligned=0x%lx len=0x%lx type=0x%x prot=0x%x\n",
+                (unsigned long)param_1, (unsigned long)uVar6,
+                (unsigned long)uVar8, param_3, param_4);
     }
 
-    int prot_linux = dk_prot_to_linux(protect);
-    if (prot_linux == 0) prot_linux = PROT_READ | PROT_WRITE;
-
-    /* Protect PE image range - don't remap, just adjust protection */
-    if (hint && aligned >= PE_IMAGE_START && aligned < PE_IMAGE_END) {
-        mprotect((void*)aligned, aligned_len, prot_linux);
-        if (address) *address = hint;
-        if (size) *size = aligned_len;
-        return DK_STATUS_SUCCESS;
-    }
-
-    int flags = MAP_PRIVATE | MAP_ANONYMOUS;
-    if ((alloc_type & WIN_MEM_RESERVE) && !(alloc_type & WIN_MEM_COMMIT))
-        flags |= MAP_NORESERVE;
-
-    if (hint) {
-        /* Real host uses MAP_FIXED for commit with address.
-         * We use NOREPLACE first to avoid clobbering, then FIXED as fallback. */
-        void *result = mmap((void*)aligned, aligned_len, prot_linux,
-                            flags | MAP_FIXED_NOREPLACE, -1, 0);
-        if (result == MAP_FAILED) {
-            /* Already mapped - just adjust protection (preserves existing data) */
-            mprotect((void*)aligned, aligned_len, prot_linux);
+    if ((param_3 & 0x41u) == 0) {
+        /* Reserve-only branch: the ELF only LOGS and does NOT call mmap.
+         * The hint range is simply accepted. */
+        /* log: "VirtualMemoryAllocate(...) reserve %p-%zx" */
+    } else {
+        /* "commit" or "reserve&commit" branch. */
+        if (uVar6 == 0) {
+            /* addressCopy NULL with commit -> fatal in ELF. Return failure. */
+            return DK_STATUS_INVALID_PARAM;
         }
-        if (address) *address = hint;
-        if (size) *size = aligned_len;
-        return DK_STATUS_SUCCESS;
+
+        /* Inline FUN_0024b210(out, &local_88, uVar8, uVar7, 0x22, param_3, -1, 0).
+         *   uVar4 = FUN_001d9720(uVar7);                   // prot_linux
+         *   param_5 = (param_6 & 0x40) << 8 | param_5;      // add MAP_NORESERVE
+         *   uVar1  = *param_2 == 0 ? param_5 : param_5|0x10;// MAP_FIXED if hint
+         *   lVar6 = FUN_00355380(*param_2, param_3, uVar4, uVar1, -1, 0);
+         */
+        int prot_linux = dk_prot_to_linux(uVar7);
+        /* PE image range: if mmap would clobber loaded PE, do mprotect instead.
+         * Host-specific guard; the real ELF has no loaded PE here, it is the
+         * binary itself. TODO: remove once our loader uses MAP_FIXED faithfully. */
+        if (uVar6 >= PE_IMAGE_START && uVar6 < PE_IMAGE_END) {
+            mprotect((void*)uVar6, uVar8, prot_linux ? prot_linux : (PROT_READ|PROT_WRITE));
+        } else {
+            int mmap_flags = (int)(((uint32_t)(param_3 & 0x40u)) << 8) | 0x22; /* MAP_PRIVATE|MAP_ANONYMOUS, +MAP_NORESERVE (0x4000) */
+            if (uVar6 != 0) mmap_flags |= 0x10; /* MAP_FIXED */
+
+            /* Use NOREPLACE instead of FIXED so we do not clobber existing
+             * mappings (host-specific safety; ELF uses raw MAP_FIXED because
+             * its VA space is fully managed). */
+            int safe_flags = (mmap_flags & ~0x10) | MAP_FIXED_NOREPLACE;
+            void *result = mmap((void*)uVar6, uVar8,
+                                prot_linux ? prot_linux : (PROT_READ|PROT_WRITE),
+                                safe_flags, -1, 0);
+            if (result == MAP_FAILED) {
+                /* Already mapped - emulate ELF's "address honored" path by
+                 * just adjusting protection on the existing region. */
+                mprotect((void*)uVar6, uVar8,
+                         prot_linux ? prot_linux : (PROT_READ|PROT_WRITE));
+            } else if (uVar6 != 0 && (uint64_t)result != uVar6) {
+                /* ELF aborts with STATUS_INTERNAL_ERROR (0x11). */
+                munmap(result, uVar8);
+                return DK_STATUS_INVALID_PARAM;
+            } else {
+                local_88 = (uint64_t)result;
+            }
+
+            /* "if ((param_6 & 0xc0) != 0) FUN_00355390(lVar6, param_3,
+             *      (param_6 & 0x80) == 0 | 0xe);"
+             * This is pkey_mprotect-ish; skip on our host (TODO: pkeys). */
+            /* unknown: FUN_00355390 pkey path */
+        }
+
+        if (local_88 != uVar6 && uVar6 != 0) {
+            /* "LocalBaseAddress == addressCopy" assert. */
+            return DK_STATUS_INVALID_PARAM;
+        }
     }
 
-    void *result = mmap(NULL, aligned_len, prot_linux, flags, -1, 0);
-    if (result == MAP_FAILED) return DK_STATUS_NO_MEMORY;
+    /* Success path: write out address/size and apply SetMemoryProtectionAndKey
+     *   FUN_0024b3e0(out, local_88, uVar8, uVar7, param_7);
+     * On our host this reduces to mprotect with dk_prot_to_linux(uVar7). */
+    if (address) *address = (void*)(uintptr_t)local_88;
+    if (size)    *size    = uVar8;
 
-    if (address) *address = result;
-    if (size) *size = aligned_len;
+    if (local_88 != 0 && uVar7 != 0) {
+        int prot_linux_final = dk_prot_to_linux(uVar7);
+        if (prot_linux_final == 0) prot_linux_final = PROT_READ | PROT_WRITE;
+        mprotect((void*)(uintptr_t)local_88, uVar8, prot_linux_final);
+    }
+
     return DK_STATUS_SUCCESS;
 }
 
