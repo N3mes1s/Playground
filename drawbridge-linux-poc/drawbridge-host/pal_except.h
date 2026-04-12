@@ -113,12 +113,12 @@ typedef struct _NT_CONTEXT {
     uint64_t LastExceptionFromRip;                            /* 0x4c8 */
 } NT_CONTEXT;
 
-_Static_assert(offsetof(NT_CONTEXT, ContextFlags) == 0x030, "ContextFlags");
-_Static_assert(offsetof(NT_CONTEXT, EFlags)       == 0x044, "EFlags");
-_Static_assert(offsetof(NT_CONTEXT, Rax)          == 0x078, "Rax");
-_Static_assert(offsetof(NT_CONTEXT, Rip)          == 0x0f8, "Rip");
-_Static_assert(offsetof(NT_CONTEXT, FltSave)      == 0x100, "FltSave");
-_Static_assert(sizeof(NT_CONTEXT)                 == 0x4d0, "CONTEXT size");
+static_assert(offsetof(NT_CONTEXT, ContextFlags) == 0x030, "ContextFlags");
+static_assert(offsetof(NT_CONTEXT, EFlags)       == 0x044, "EFlags");
+static_assert(offsetof(NT_CONTEXT, Rax)          == 0x078, "Rax");
+static_assert(offsetof(NT_CONTEXT, Rip)          == 0x0f8, "Rip");
+static_assert(offsetof(NT_CONTEXT, FltSave)      == 0x100, "FltSave");
+static_assert(sizeof(NT_CONTEXT)                 == 0x4d0, "CONTEXT size");
 
 /* ============================================================
  * Windows x64 EXCEPTION_RECORD (Microsoft SDK "winnt.h").
@@ -138,10 +138,10 @@ struct _NT_EXCEPTION_RECORD {
     uint32_t            _pad;                 /* 0x1c */
     uint64_t            ExceptionInformation[NT_EXCEPTION_MAXIMUM_PARAMETERS]; /* 0x20 */
 };
-_Static_assert(offsetof(NT_EXCEPTION_RECORD, ExceptionAddress) == 0x10, "ExceptionAddress");
-_Static_assert(offsetof(NT_EXCEPTION_RECORD, NumberParameters) == 0x18, "NumberParameters");
-_Static_assert(offsetof(NT_EXCEPTION_RECORD, ExceptionInformation) == 0x20, "ExceptionInformation");
-_Static_assert(sizeof(NT_EXCEPTION_RECORD) == 0x98, "EXCEPTION_RECORD size");
+static_assert(offsetof(NT_EXCEPTION_RECORD, ExceptionAddress) == 0x10, "ExceptionAddress");
+static_assert(offsetof(NT_EXCEPTION_RECORD, NumberParameters) == 0x18, "NumberParameters");
+static_assert(offsetof(NT_EXCEPTION_RECORD, ExceptionInformation) == 0x20, "ExceptionInformation");
+static_assert(sizeof(NT_EXCEPTION_RECORD) == 0x98, "EXCEPTION_RECORD size");
 
 /* ============================================================
  * dk_exception_record_t — the 0x280-byte compressed-CONTEXT
@@ -203,10 +203,10 @@ typedef struct __attribute__((packed)) {
     uint8_t  _reserved[0x40];       /* 0x240 */
 } dk_exception_record_t;
 
-_Static_assert(offsetof(dk_exception_record_t, rax) == 0x010, "rax off");
-_Static_assert(offsetof(dk_exception_record_t, rip) == 0x090, "rip off");
-_Static_assert(offsetof(dk_exception_record_t, fpu_state) == 0x0a0, "fpu off");
-_Static_assert(sizeof(dk_exception_record_t) == 0x280, "record size");
+static_assert(offsetof(dk_exception_record_t, rax) == 0x010, "rax off");
+static_assert(offsetof(dk_exception_record_t, rip) == 0x090, "rip off");
+static_assert(offsetof(dk_exception_record_t, fpu_state) == 0x0a0, "fpu off");
+static_assert(sizeof(dk_exception_record_t) == 0x280, "record size");
 
 /* ============================================================
  * Public API

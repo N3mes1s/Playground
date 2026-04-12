@@ -27,6 +27,8 @@
 #include <stddef.h>
 #include "pal_internal.h"
 
+extern "C" {
+
 /* ============================================================
  * ABI registry layout (derived from FUN_00269650 / FUN_002696b0).
  *
@@ -90,6 +92,9 @@ static uint8_t g_abi_version_table_secondary[PAL_ABI_VERSION_COUNT *
  *   FUN_0028e1f0 → pal_result is-error check.
  *   FUN_0028e560 → pal_result combine (lhs |= rhs).
  * ------------------------------------------------------------ */
+/* Integrator fix (C++ pivot): these live in pal_stubs.cpp which is now
+ * wrapped in extern "C"; match here so mangling agrees across TUs. */
+extern "C" {
 extern int   *pal_abi_errno_location(void);                 /* FUN_00353860 */
 extern void   pal_abi_assert_fail(const char *msg, int err) /* FUN_001c1100 */
                   __attribute__((noreturn));
@@ -101,6 +106,7 @@ extern void   pal_result_set(void *result, uint32_t status,
 extern void   pal_result_fini(void *result);               /* FUN_0028e130 */
 extern char   pal_result_is_error(void *result);           /* FUN_0028e1f0 */
 extern void   pal_result_combine(void *dst, void *src);    /* FUN_0028e560 */
+}
 
 /* Size of the opaque pal_result structure (see "Error Handling
  * Pattern" note in CLAUDE.md — file ptr, status, line, extended).
@@ -424,8 +430,10 @@ uint64_t pal_abi_dispatch(void *abi_table, uint32_t call_type,
  *   version stride = 0x20 header + 28 * 0x20 groups = 0x3a0
  *   group   stride = 0x08 base   +  3 * 0x08 slots  = 0x20
  */
-_Static_assert(PAL_ABI_VERSION_STRIDE ==
+static_assert(PAL_ABI_VERSION_STRIDE ==
                0x20 + PAL_ABI_GROUP_COUNT * PAL_ABI_GROUP_STRIDE,
                "version stride should cover header + 28 groups");
-_Static_assert(PAL_ABI_GROUP_STRIDE == 8 + PAL_ABI_SUBFN_COUNT * 8,
+static_assert(PAL_ABI_GROUP_STRIDE == 8 + PAL_ABI_SUBFN_COUNT * 8,
                "group stride is base + 3 slot ptrs");
+
+} // extern "C"

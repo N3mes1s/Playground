@@ -37,6 +37,8 @@
 
 #include "pal_internal.h"
 
+extern "C" {
+
 /* ============================================================
  * Globals
  * ============================================================
@@ -325,10 +327,10 @@ int pal_io_create_completion_port(void *out_port)
 /* ============================================================
  * Static asserts
  * ============================================================ */
-_Static_assert(PAL_IO_COMPLETION_PORT_AIOCTX_OFF
+static_assert(PAL_IO_COMPLETION_PORT_AIOCTX_OFF
                    < PAL_IO_COMPLETION_PORT_SIZE,
                "m_KernelAioContext must sit inside the object");
-_Static_assert(sizeof(pal_aio_context_t) == sizeof(unsigned long),
+static_assert(sizeof(pal_aio_context_t) == sizeof(unsigned long),
                "aio_context_t is an opaque unsigned long per io_setup(2)");
 
 /* ============================================================
@@ -352,8 +354,7 @@ void *pal_aligned_nothrow_alloc(size_t size, size_t align,
     return p;
 }
 
-__attribute__((weak))
-const void *const pal_std_nothrow_tag = (const void *)0;
+/* pal_std_nothrow_tag lives in pal_stubs.cpp */
 
 __attribute__((weak))
 void io_completion_port_construct(void *self)
@@ -384,3 +385,5 @@ void pal_panic_assert(const char *expr, int linux_errno)
     (void)linux_errno;
     __builtin_trap();
 }
+
+} // extern "C"

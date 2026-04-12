@@ -8,6 +8,9 @@
  */
 
 #ifndef DK_PAL_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 #define DK_PAL_H
 
 #include "drawbridge_types.h"
@@ -151,4 +154,7 @@ DK_API uint64_t DK_InstructionCacheFlush(void *base, uint64_t length);
 void dk_pal_init(void);
 void *dk_pal_get_table(void);
 
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
 #endif /* DK_PAL_H */

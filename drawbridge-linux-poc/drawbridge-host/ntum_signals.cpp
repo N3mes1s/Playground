@@ -28,6 +28,14 @@
 
 #include "drawbridge_types.h"
 
+extern "C" uint64_t DK_AbiDispatcher(uint64_t,uint64_t,uint64_t,void*,uint64_t,void*) __attribute__((ms_abi));
+
+/* File-scope extern "C" decl so the in-body DK_AbiDispatcher reference
+ * uses the C-linkage symbol from dk_pal.cpp (matches its ms_abi defn). */
+extern "C" uint64_t DK_AbiDispatcher(uint64_t, uint64_t, uint64_t,
+                                      void *, uint64_t, void *)
+    __attribute__((ms_abi));
+
 /* ================================================================
  * Exception Record (0x280 = 640 bytes)
  *
@@ -398,7 +406,7 @@ static void ntum_signal_handler(int sig, siginfo_t *info, void *ctx) {
 
                     if (is_boot_sync) {
                         /* Boot sync: set flag, patch spin loop to nops */
-                        extern uint64_t DK_AbiDispatcher(uint64_t,uint64_t,uint64_t,void*,uint64_t,void*) __attribute__((ms_abi));
+                        /* extern "C" declaration hoisted to file scope above */
                         *(volatile uint32_t*)NTUM_BOOT_FLAG_ADDR = 1;
                         *(volatile uint64_t*)NTUM_ABI_DISPATCHER_ADDR = (uint64_t)&DK_AbiDispatcher;
                         cc[0] = 0x90; next[0] = 0x90; next[1] = 0x90;

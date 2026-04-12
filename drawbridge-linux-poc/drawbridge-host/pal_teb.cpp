@@ -46,7 +46,7 @@
 #include "pal_teb.h"
 
 /* arch_prctl() is not in every libc's headers; prototype it directly. */
-extern int arch_prctl(int code, unsigned long addr);
+extern "C" int arch_prctl(int code, unsigned long addr);
 
 /* -------------------------------------------------------------------
  * FUN_001fa9c0  (TEB allocator).

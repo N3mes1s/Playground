@@ -39,6 +39,9 @@
 
 #define PAL_WEAK __attribute__((weak))
 
+extern "C" {
+
+
 /* ==================================================================
  * Fail-loud primitive (class 1)
  * ================================================================== */
@@ -198,7 +201,10 @@ PAL_WEAK uint8_t g_libos_init_tag[64];                   /* DAT_00369f30 */
 PAL_WEAK uint8_t g_pal_instance[0x1000];                 /* DAT_0036f598 */
 PAL_WEAK void   *g_std_runtime_error_typeinfo = NULL;
 PAL_WEAK void   *g_std_runtime_error_dtor_ptr = NULL;
-PAL_WEAK const void *const pal_std_nothrow_tag = (const void*)0;
+/* Integrator fix (C++ pivot): namespace-scope `const` has internal
+ * linkage by default in C++, which conflicts with __attribute__((weak)).
+ * Wrap in extern "C" to give it external linkage. */
+extern "C" { PAL_WEAK const void *pal_std_nothrow_tag = (const void*)0; }
 
 /* ==================================================================
  * Class 1: fail-loud placeholders.  Each has its ELF FUN_* and the
@@ -319,3 +325,6 @@ PAL_WEAK void pal_aio_callback(void *a, long b)       { (void)a; (void)b; PAL_UN
 /* ---- C14  Async I/O ---- FUN_001f1fd0 (FileIoCompletionPort ctor) */
 PAL_WEAK void io_completion_port_construct(void *self)
 { (void)self; PAL_UNIMPLEMENTED("io_completion_port_construct"); }
+
+
+} // extern "C"

@@ -296,7 +296,7 @@ typedef struct ntum_kthread {
     uint8_t   _pad3[0x4038];                   /* 0x078-0x40AF */
     void     *thread_local_alt;                /* 0x40B0: alt thread-local ptr */
     uint8_t   _pad4[0x108];                    /* 0x40B8-0x41BF */
-    void     *thread_local;                    /* 0x41C0: -> thread_local_block */
+    void     *thread_local_block;              /* 0x41C0 (renamed: thread_local is a C++ kw) */
     uint8_t   _tail[0x38];                     /* 0x41C8-0x41FF */
 } ntum_kthread_t;
 

@@ -87,11 +87,11 @@ struct pe_thread_object_header {
     uint32_t    cpu_slot_count;     /* 0x038 */
 };
 
-_Static_assert(offsetof(struct pe_thread_object_header, init_timestamp) == 0x10,
+static_assert(offsetof(struct pe_thread_object_header, init_timestamp) == 0x10,
                "header: init_timestamp at +0x10");
-_Static_assert(offsetof(struct pe_thread_object_header, unk_0x028_state) == 0x28,
+static_assert(offsetof(struct pe_thread_object_header, unk_0x028_state) == 0x28,
                "header: +0x28");
-_Static_assert(offsetof(struct pe_thread_object_header, cpu_slot_count) == 0x38,
+static_assert(offsetof(struct pe_thread_object_header, cpu_slot_count) == 0x38,
                "header: cpu_slot_count at +0x38");
 
 /* Named byte offsets for sparse fields beyond the header. */

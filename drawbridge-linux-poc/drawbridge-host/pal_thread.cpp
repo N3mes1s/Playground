@@ -26,6 +26,8 @@
 #include "pal_internal.h"
 #include "drawbridge_types.h"
 
+extern "C" {
+
 /* ------------------------------------------------------------------
  * Cross-subsystem helpers — real implementations live in pal_stubs.c
  * (weak) and will be superseded by later translations.
@@ -654,3 +656,5 @@ void pal_thread_subsystem_init(void)
     pal_scheduler_register(&config);
     pal_aio_callback_register(pal_aio_callback);
 }
+
+} // extern "C"

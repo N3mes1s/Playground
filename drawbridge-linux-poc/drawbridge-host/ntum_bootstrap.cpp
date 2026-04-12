@@ -30,6 +30,7 @@
 
 #include "ntum_bootstrap.h"
 #include "dk_pal.h"
+#include "pal_internal.h"   /* extern "C" wrappered pal_boot_init, etc. */
 
 /* PAL callback state (like sqlservr's DAT_003b2138).
  * The NTUM writes KiUserExceptionDispatcher address to offset 0x10
@@ -262,7 +263,7 @@ void ntum_bootstrap_init(WINDOWS_LIBOS_PARAMETERS *params,
             boot_kthread->list2.blink = (uint64_t)&boot_kthread->list2;
             boot_kthread->sched_block      = boot_sched;
             boot_kthread->teb              = ntum_teb;
-            boot_kthread->thread_local     = boot_thread_local;
+            boot_kthread->thread_local_block     = boot_thread_local;
             boot_kthread->thread_local_alt = boot_thread_local;
 
             /* Scheduler block — PE RVA 0x27672c does SWAR popcount on
@@ -805,7 +806,6 @@ static void *boot_thread_fn(void *arg) {
      * behavior kicks in as later milestones translate each step. */
 #ifndef PAL_SKIP_BOOT_INIT
     {
-        extern int pal_boot_init(void);   /* translated in pal_boot.c */
         fprintf(stderr, "[BOOT] running pal_boot_init (FUN_00204680, 22 steps)\n");
         int rc = pal_boot_init();
         fprintf(stderr, "[BOOT] pal_boot_init returned %d\n", rc);

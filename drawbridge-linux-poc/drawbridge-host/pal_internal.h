@@ -20,6 +20,9 @@
 #include <stdint.h>
 #include "drawbridge_types.h"
 #include "pal_thread.h"    /* C6: thread/fiber public API */
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /* ============================================================
  * pal_boot.c — to be filled in M2
@@ -69,4 +72,7 @@ int  pe_replica_type_registry_init(void);
 /* Source: PE RVA 0x276b68 — thread/object initializer */
 int  pe_replica_thread_object_init(void);
 
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
 #endif /* PAL_INTERNAL_H */

@@ -150,7 +150,7 @@ static void pal_init_libos_params_ex(WINDOWS_LIBOS_PARAMETERS *params,
                                      void *runtime_cbstate,
                                      void *stack_reservation);
 
-void pal_init_abi_table(WINDOWS_LIBOS_PARAMETERS *params_ignored)
+extern "C" void pal_init_abi_table(WINDOWS_LIBOS_PARAMETERS *params_ignored)
 {
     /* The public signature takes the LIBOS params pointer directly, but the
      * ELF decompilation receives the outer PAL-instance pointer and derives
@@ -325,7 +325,7 @@ static void pal_init_libos_params_ex(WINDOWS_LIBOS_PARAMETERS *params,
 /* One-arg shim kept to satisfy the pal_internal.h signature.  The real
  * entry point is pal_init_abi_table (FUN_002053e0) which calls the _ex
  * variant with the correct image metadata. */
-void pal_init_libos_params(WINDOWS_LIBOS_PARAMETERS *params)
+extern "C" void pal_init_libos_params(WINDOWS_LIBOS_PARAMETERS *params)
 {
     pal_init_libos_params_ex(params,
                              /* image_handle    */ NULL,
@@ -383,6 +383,7 @@ static uint8_t g_pal_boot_done = 0;
 
 /* Extern stubs for the not-yet-translated ELF helpers. All are weak
  * in pal_stubs.c so future milestones supersede them. */
+extern "C" {
 extern void pal_runtime_params_init(void);          /* FUN_00354250 */
 extern void pal_runtime_params_commit(void);        /* FUN_00354260 */
 extern void pal_logging_init(uint8_t debug_flag);   /* FUN_00279cd0 */
@@ -400,11 +401,12 @@ extern void pal_post_boot_init_2(void);             /* FUN_00235a80 */
 extern void pal_post_boot_init_3(void);             /* FUN_00244790 */
 extern void pal_io_finalize(void);                  /* FUN_00279f10 */
 extern void pal_kernel_version_log(void);           /* FUN_00204da0 */
+} /* extern "C" */
 
 /* PAL instance byte offsets (TODO: promote to a typed struct). */
 #define PAL_INSTANCE_BOOT_STATUS_OFFSET   0x08  /* int: set to 1 when booted */
 
-int pal_boot_init(void)
+extern "C" int pal_boot_init(void)
 {
     uint8_t *instance = g_pal_instance;
     void    *image_handle =
@@ -533,3 +535,153 @@ PAL_WEAK void     pal_stack_chk_fail(void) { __builtin_trap(); }
 PAL_WEAK int     *pal_errno_location(void) { static int e; return &e; }
 PAL_WEAK void     pal_assert_fail(const char *ex, int er)
 { (void)ex; (void)er; __builtin_trap(); }
+
+/* ================================================================
+ * STRONG TRANSLATIONS of the 22-step boot helpers (component C2).
+ *
+ * These override the fail-loud placeholders in pal_stubs.cpp because
+ * pal_stubs.cpp declares them __attribute__((weak)).  C linkage matches
+ * the pal_internal.h / pal_boot.h declarations.
+ *
+ * Each carries its ELF line-number cite per plan rule #1.  Any helper
+ * NOT on Agent G's component-C2 list stays as the fail-loud stub.
+ * ================================================================ */
+
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/resource.h>
+#include <sys/utsname.h>
+#include <link.h>
+#include <dlfcn.h>
+
+extern "C" {
+
+/* ---- FUN_00354250 @ analysis/sqlservr_FULL.c:315716 ----
+ * Runtime-parameter init: snapshot the inherited rlimits so
+ * pal_runtime_params_commit can restore them verbatim.  Matches the
+ * ELF's "capture then restore" pattern without perturbing limits we
+ * don't need to change.
+ */
+static struct rlimit g_pal_rlim_core;
+static struct rlimit g_pal_rlim_cpu;
+static int           g_pal_runtime_params_valid = 0;
+
+void pal_runtime_params_init(void)
+{
+    if (getrlimit(RLIMIT_CORE, &g_pal_rlim_core) != 0) {
+        g_pal_rlim_core.rlim_cur = RLIM_INFINITY;
+        g_pal_rlim_core.rlim_max = RLIM_INFINITY;
+    }
+    if (getrlimit(RLIMIT_CPU, &g_pal_rlim_cpu) != 0) {
+        g_pal_rlim_cpu.rlim_cur = RLIM_INFINITY;
+        g_pal_rlim_cpu.rlim_max = RLIM_INFINITY;
+    }
+    g_pal_runtime_params_valid = 1;
+    fprintf(stderr, "[PAL-BOOT] runtime_params_init: core=%lu/%lu cpu=%lu/%lu\n",
+            (unsigned long)g_pal_rlim_core.rlim_cur,
+            (unsigned long)g_pal_rlim_core.rlim_max,
+            (unsigned long)g_pal_rlim_cpu.rlim_cur,
+            (unsigned long)g_pal_rlim_cpu.rlim_max);
+}
+
+/* FUN_00354260 @ 315727 — commit paired with the init above. */
+void pal_runtime_params_commit(void)
+{
+    if (!g_pal_runtime_params_valid) return;
+    (void)setrlimit(RLIMIT_CORE, &g_pal_rlim_core);
+    (void)setrlimit(RLIMIT_CPU,  &g_pal_rlim_cpu);
+}
+
+/* ---- FUN_00279cd0 @ 148635 ----  trace infrastructure. */
+static int g_pal_logging_debug = 0;
+void pal_logging_init(uint8_t debug_flag)
+{
+    g_pal_logging_debug = !!debug_flag;
+    fprintf(stderr, "[PAL-BOOT] logging_init: debug=%d\n",
+            g_pal_logging_debug);
+}
+
+/* ---- FUN_001bd660 @ 11011 ----  threading-required query.
+ * sqlpal.dll always needs threading (logger + AIO), so return 1. */
+char pal_threading_needed(void *image_handle)
+{
+    (void)image_handle;
+    return 1;
+}
+
+/* ---- FUN_0021a7d0 @ 87323 ----  dl_iterate_phdr equivalent. */
+static int g_pal_dynlink_module_count = 0;
+static int pal_dynlink_phdr_cb(struct dl_phdr_info *info, size_t sz, void *d)
+{
+    (void)info; (void)sz; (void)d;
+    g_pal_dynlink_module_count++;
+    return 0;
+}
+void pal_dynlink_init(void)
+{
+    g_pal_dynlink_module_count = 0;
+    dl_iterate_phdr(pal_dynlink_phdr_cb, NULL);
+    fprintf(stderr, "[PAL-BOOT] dynlink_init: %d modules\n",
+            g_pal_dynlink_module_count);
+}
+
+/* ---- FUN_0021d1c0 @ 88826 ----  module loader setup.  pe_loader.cpp
+ * already resolves the module set for our host; nothing else needed. */
+int pal_module_loader_init(void) { return 0; }
+
+/* ---- FUN_0021a750 ----  library init pass.  No-op (compiler handles
+ * global ctors).  See REAL_BOOT_SEQUENCE.c step 8. */
+void pal_library_init(void) { /* no-op */ }
+
+/* ---- FUN_00353a90 @ 314352 ----  setrlimit wrapper.  Call sites
+ * (FUN_00204680 lines 69413/69414) pass (1,4,0x400) & (2,4,0x400). */
+int pal_setrlimit(int which, int soft, int hard)
+{
+    struct rlimit r;
+    r.rlim_cur = (rlim_t)soft;
+    r.rlim_max = (rlim_t)hard;
+    if (setrlimit(which, &r) != 0) return errno;
+    return 0;
+}
+
+/* ---- FUN_00354270 @ 315738 ----  getrlimit on NOFILE (resource=7). */
+int pal_fd_limit_get(int resource, void *out_rlimit)
+{
+    if (!out_rlimit) return EINVAL;
+    int res = (resource == 7) ? RLIMIT_NOFILE : resource;
+    if (getrlimit(res, (struct rlimit *)out_rlimit) != 0) return errno;
+    return 0;
+}
+
+/* ---- FUN_00354280 @ 315749 ---- */
+int pal_fd_limit_set(int resource, const void *in_rlimit)
+{
+    if (!in_rlimit) return EINVAL;
+    int res = (resource == 7) ? RLIMIT_NOFILE : resource;
+    if (setrlimit(res, (const struct rlimit *)in_rlimit) != 0) return errno;
+    return 0;
+}
+
+/* ---- FUN_00279f10 @ 148701 ----  finalize I/O (flush trace). */
+void pal_io_finalize(void)
+{
+    fflush(stdout);
+    fflush(stderr);
+}
+
+/* ---- FUN_00204da0 @ 69609 ----  uname(2) + emit kernel version. */
+void pal_kernel_version_log(void)
+{
+    struct utsname u;
+    if (uname(&u) != 0) {
+        fprintf(stderr, "[PAL-BOOT] kernel_version_log: uname failed errno=%d\n",
+                errno);
+        return;
+    }
+    fprintf(stderr, "[PAL-BOOT] kernel: %s %s %s %s %s\n",
+            u.sysname, u.nodename, u.release, u.version, u.machine);
+}
+
+} /* extern "C" */
