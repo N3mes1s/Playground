@@ -24,6 +24,20 @@
 
 #include "dk_pal.h"
 
+#define DK_TRACE_ENTRY(fn_name, a, b, c, d) do {           \
+    static int _n = 0;                                      \
+    _n++;                                                   \
+    if (_n <= 20) {                                         \
+        fprintf(stderr, "[DK-CALL] %-32s #%d"                \
+                        " a=0x%lx b=0x%lx c=0x%lx d=0x%lx\n",\
+                fn_name, _n,                                \
+                (unsigned long)(uintptr_t)(a),              \
+                (unsigned long)(uintptr_t)(b),              \
+                (unsigned long)(uintptr_t)(c),              \
+                (unsigned long)(uintptr_t)(d));             \
+    }                                                       \
+} while (0)
+
 /* ================================================================
  * Handle Table
  * ================================================================ */
@@ -73,6 +87,7 @@ DK_API uint64_t DK_StreamOpen(const void *uri, uint64_t uri_len,
                                uint64_t access, uint64_t share_mode,
                                uint64_t create_disp, uint64_t flags,
                                DK_HANDLE *out_handle) {
+    DK_TRACE_ENTRY("DK_StreamOpen", uri, uri_len, access, share_mode);
     (void)share_mode; (void)flags;
 
     /* Convert wide string URI to ASCII */
@@ -129,6 +144,7 @@ DK_API uint64_t DK_StreamOpen(const void *uri, uint64_t uri_len,
 DK_API uint64_t DK_StreamRead(DK_HANDLE stream, uint64_t offset,
                                void *buffer, uint64_t bytes_to_read,
                                uint64_t *bytes_read) {
+    DK_TRACE_ENTRY("DK_StreamRead", stream, offset, buffer, bytes_to_read);
     if (stream >= MAX_HANDLES || g_handles[stream].type != HANDLE_FD)
         return DK_STATUS_INVALID_PARAM;
     ssize_t n = pread(g_handles[stream].fd, buffer, bytes_to_read, (off_t)offset);
@@ -140,6 +156,7 @@ DK_API uint64_t DK_StreamRead(DK_HANDLE stream, uint64_t offset,
 DK_API uint64_t DK_StreamWrite(DK_HANDLE stream, uint64_t offset,
                                 const void *buffer, uint64_t bytes_to_write,
                                 uint64_t *bytes_written) {
+    DK_TRACE_ENTRY("DK_StreamWrite", stream, offset, buffer, bytes_to_write);
     if (stream >= MAX_HANDLES || g_handles[stream].type != HANDLE_FD)
         return DK_STATUS_INVALID_PARAM;
     ssize_t n = pwrite(g_handles[stream].fd, buffer, bytes_to_write, (off_t)offset);
@@ -151,10 +168,12 @@ DK_API uint64_t DK_StreamWrite(DK_HANDLE stream, uint64_t offset,
 }
 
 DK_API uint64_t DK_StreamClose(DK_HANDLE handle) {
+    DK_TRACE_ENTRY("DK_StreamClose", handle, 0, 0, 0);
     return DK_ObjectClose(handle);
 }
 
 DK_API uint64_t DK_StreamFlush(DK_HANDLE stream) {
+    DK_TRACE_ENTRY("DK_StreamFlush", stream, 0, 0, 0);
     if (stream >= MAX_HANDLES || g_handles[stream].type != HANDLE_FD)
         return DK_STATUS_SUCCESS;
     fsync(g_handles[stream].fd);
@@ -162,6 +181,7 @@ DK_API uint64_t DK_StreamFlush(DK_HANDLE stream) {
 }
 
 DK_API uint64_t DK_StreamSetLength(DK_HANDLE stream, uint64_t length) {
+    DK_TRACE_ENTRY("DK_StreamSetLength", stream, length, 0, 0);
     if (stream >= MAX_HANDLES || g_handles[stream].type != HANDLE_FD)
         return DK_STATUS_INVALID_PARAM;
     if (ftruncate(g_handles[stream].fd, (off_t)length) < 0)
@@ -172,6 +192,7 @@ DK_API uint64_t DK_StreamSetLength(DK_HANDLE stream, uint64_t length) {
 DK_API uint64_t DK_StreamMap(DK_HANDLE stream, void *address,
                               uint64_t offset, uint64_t size,
                               uint64_t protect, void **mapped) {
+    DK_TRACE_ENTRY("DK_StreamMap", stream, address, offset, size);
     (void)protect;
 
     /* Protect PE image range from being overwritten by file maps */
@@ -201,6 +222,7 @@ DK_API uint64_t DK_StreamMap(DK_HANDLE stream, void *address,
 
 DK_API uint64_t DK_StreamMapPeBinary(DK_HANDLE stream, void **base,
                                       uint64_t *entry_point) {
+    DK_TRACE_ENTRY("DK_StreamMapPeBinary", stream, base, entry_point, 0);
     (void)stream;
     if (base) *base = (void*)PE_IMAGE_START;
     if (entry_point) *entry_point = PE_IMAGE_START + NTUM_ENTRY_RVA;
@@ -208,11 +230,13 @@ DK_API uint64_t DK_StreamMapPeBinary(DK_HANDLE stream, void **base,
 }
 
 DK_API uint64_t DK_StreamUnmap(void *address, uint64_t size) {
+    DK_TRACE_ENTRY("DK_StreamUnmap", address, size, 0, 0);
     munmap(address, size);
     return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_StreamDelete(DK_HANDLE stream) {
+    DK_TRACE_ENTRY("DK_StreamDelete", stream, 0, 0, 0);
     (void)stream;
     return DK_STATUS_SUCCESS;
 }
@@ -220,63 +244,74 @@ DK_API uint64_t DK_StreamDelete(DK_HANDLE stream) {
 DK_API uint64_t DK_StreamControl(DK_HANDLE in_handle, uint64_t op_code,
                                   void *in_buf, uint64_t in_size,
                                   void *out_buf, uint64_t out_size) {
+    DK_TRACE_ENTRY("DK_StreamControl", in_handle, op_code, in_buf, in_size);
     (void)in_handle; (void)op_code; (void)in_buf; (void)in_size;
     (void)out_buf; (void)out_size;
     return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_StreamAttributesQuery(const void *uri, void *attrs) {
+    DK_TRACE_ENTRY("DK_StreamAttributesQuery", uri, attrs, 0, 0);
     (void)uri; (void)attrs;
     return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_StreamAttributesQueryByHandle(DK_HANDLE stream,
                                                    uint64_t flags, void *attrs) {
+    DK_TRACE_ENTRY("DK_StreamAttributesQueryByHandle", stream, flags, attrs, 0);
     (void)stream; (void)flags; (void)attrs;
     return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_StreamEnumerateChildren(DK_HANDLE stream, void *buf,
                                             uint64_t buf_size, uint64_t *used) {
+    DK_TRACE_ENTRY("DK_StreamEnumerateChildren", stream, buf, buf_size, used);
     (void)stream; (void)buf; (void)buf_size; (void)used;
     return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_StreamRename(DK_HANDLE stream, const void *new_name) {
+    DK_TRACE_ENTRY("DK_StreamRename", stream, new_name, 0, 0);
     (void)stream; (void)new_name;
     return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_StreamChangesRegister(DK_HANDLE stream, uint64_t filter,
                                           uint64_t watch_tree, DK_HANDLE *event) {
+    DK_TRACE_ENTRY("DK_StreamChangesRegister", stream, filter, watch_tree, event);
     (void)stream; (void)filter; (void)watch_tree; (void)event;
     return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_StreamChangesPoll(DK_HANDLE stream, void *buf, uint64_t *size) {
+    DK_TRACE_ENTRY("DK_StreamChangesPoll", stream, buf, size, 0);
     (void)stream; (void)buf; (void)size;
     return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_StreamRangeLock(DK_HANDLE stream, uint64_t off, uint64_t len,
                                     uint64_t exclusive) {
+    DK_TRACE_ENTRY("DK_StreamRangeLock", stream, off, len, exclusive);
     (void)stream; (void)off; (void)len; (void)exclusive;
     return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_StreamRangeUnlock(DK_HANDLE stream, uint64_t off, uint64_t len) {
+    DK_TRACE_ENTRY("DK_StreamRangeUnlock", stream, off, len, 0);
     (void)stream; (void)off; (void)len;
     return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_StreamGetEvent(DK_HANDLE stream, uint64_t event_id,
                                    DK_HANDLE *event) {
+    DK_TRACE_ENTRY("DK_StreamGetEvent", stream, event_id, event, 0);
     (void)stream; (void)event_id; (void)event;
     return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_StreamEventSelect(DK_HANDLE stream, DK_HANDLE event,
                                       uint64_t poll_events, DK_HANDLE *async) {
+    DK_TRACE_ENTRY("DK_StreamEventSelect", stream, event, poll_events, async);
     (void)stream; (void)event; (void)poll_events; (void)async;
     return DK_STATUS_SUCCESS;
 }
@@ -319,6 +354,7 @@ static int dk_prot_to_linux(uint64_t dk_prot) {
  */
 DK_API uint64_t DK_VirtualMemoryAllocate(void **address, uint64_t *size,
                                           uint64_t alloc_type, uint64_t protect) {
+    DK_TRACE_ENTRY("DK_VirtualMemoryAllocate", address, size, alloc_type, protect);
     void *hint = address ? *address : NULL;
     size_t len = size ? *size : 0x1000;
 
@@ -376,6 +412,7 @@ DK_API uint64_t DK_VirtualMemoryAllocate(void **address, uint64_t *size,
 
 DK_API uint64_t DK_VirtualMemoryFree(void *address, uint64_t size,
                                       uint64_t free_type) {
+    DK_TRACE_ENTRY("DK_VirtualMemoryFree", address, size, free_type, 0);
     (void)free_type;
     if (size == 0) size = 4096;
 
@@ -391,6 +428,7 @@ DK_API uint64_t DK_VirtualMemoryFree(void *address, uint64_t size,
 DK_API uint64_t DK_VirtualMemoryProtect(void *address, uint64_t size,
                                          uint64_t new_protect,
                                          uint64_t *old_protect) {
+    DK_TRACE_ENTRY("DK_VirtualMemoryProtect", address, size, new_protect, old_protect);
     if (old_protect) *old_protect = WIN_PAGE_READWRITE;
     int prot = dk_prot_to_linux(new_protect);
     mprotect(address, size, prot);
@@ -437,6 +475,7 @@ static void *dk_thread_wrapper(void *arg) {
  */
 DK_API uint64_t DK_ThreadCreate(void *start_routine, void *stack_ptr,
                                  uint64_t flags, DK_HANDLE *thread) {
+    DK_TRACE_ENTRY("DK_ThreadCreate", start_routine, stack_ptr, flags, thread);
     (void)flags;
     DK_HANDLE h = alloc_handle();
     if (h == DK_NULL_HANDLE) return DK_STATUS_NO_MEMORY;
@@ -471,21 +510,25 @@ DK_API uint64_t DK_ThreadCreate(void *start_routine, void *stack_ptr,
 }
 
 DK_API void DK_ThreadExit(uint64_t exit_code) {
+    DK_TRACE_ENTRY("DK_ThreadExit", exit_code, 0, 0, 0);
     pthread_exit((void*)(intptr_t)exit_code);
 }
 
 DK_API uint64_t DK_ThreadYieldExecution(void) {
+    DK_TRACE_ENTRY("DK_ThreadYieldExecution", 0, 0, 0, 0);
     sched_yield();
     return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_ThreadInterrupt(DK_HANDLE thread) {
+    DK_TRACE_ENTRY("DK_ThreadInterrupt", thread, 0, 0, 0);
     (void)thread;
     return DK_STATUS_SUCCESS;
 }
 
 DK_API uint64_t DK_ThreadSetAffinity(DK_HANDLE thread, uint64_t group,
                                       uint64_t mask) {
+    DK_TRACE_ENTRY("DK_ThreadSetAffinity", thread, group, mask, 0);
     (void)thread; (void)group; (void)mask;
     return DK_STATUS_SUCCESS;
 }
@@ -496,6 +539,7 @@ DK_API uint64_t DK_ThreadSetAffinity(DK_HANDLE thread, uint64_t group,
 
 DK_API uint64_t DK_NotificationEventCreate(uint64_t initial_state,
                                             DK_HANDLE *event) {
+    DK_TRACE_ENTRY("DK_NotificationEventCreate", initial_state, event, 0, 0);
     int efd = eventfd(initial_state ? 1 : 0, EFD_NONBLOCK);
     if (efd < 0) return DK_STATUS_NO_MEMORY;
     DK_HANDLE h = alloc_handle();
@@ -507,10 +551,12 @@ DK_API uint64_t DK_NotificationEventCreate(uint64_t initial_state,
 
 DK_API uint64_t DK_SynchronizationEventCreate(uint64_t initial_state,
                                                DK_HANDLE *event) {
+    DK_TRACE_ENTRY("DK_SynchronizationEventCreate", initial_state, event, 0, 0);
     return DK_NotificationEventCreate(initial_state, event);
 }
 
 DK_API uint64_t DK_EventSet(DK_HANDLE event) {
+    DK_TRACE_ENTRY("DK_EventSet", event, 0, 0, 0);
     if (event >= MAX_HANDLES || g_handles[event].type != HANDLE_EVENT)
         return DK_STATUS_INVALID_PARAM;
     uint64_t val = 1;
