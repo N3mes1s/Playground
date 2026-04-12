@@ -1341,6 +1341,16 @@ uint64_t DK_AbiDispatcher(uint64_t context, uint64_t call_type,
  * Returns allocated pointer in rax.
  */
 DK_API __attribute__((force_align_arg_pointer))
+/* No-op vtable slot used to fill unclaimed entries of the kernel
+ * pool_obj's vtable. Returns 0 so the PE's `jmp *%rax` → returns-0
+ * path doesn't cascade into recursion. */
+DK_API __attribute__((force_align_arg_pointer))
+uint64_t pool_vtable_noop(void *a, uint64_t b, uint64_t c,
+                           void *d, uint64_t e, void *f) {
+    (void)a; (void)b; (void)c; (void)d; (void)e; (void)f;
+    return 0;
+}
+
 uint64_t pool_allocator_fn(void *pool_obj, uint64_t alloc_size,
                             uint64_t flags, void *param4,
                             uint64_t param5, void *param6) {

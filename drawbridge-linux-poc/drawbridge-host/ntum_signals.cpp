@@ -155,6 +155,7 @@ static int handle_libos_fault(void *fault_addr, ucontext_t *uc) {
      * so we can see the exact PE RIP that ran past the stack bottom.
      * This surfaces the PE's descriptor-processing loop that otherwise
      * runs indefinitely on an unbounded demand-paged stack. */
+    /* Stack lives at 0x500000000..0x501000000 (16 MB). Overflow region: */
     if (addr >= 0x4F0000000ULL && addr < 0x500000000ULL) {
         uintptr_t rip = uc ? uc->uc_mcontext.gregs[REG_RIP] : 0;
         uintptr_t rsp_pe = uc ? uc->uc_mcontext.gregs[REG_RSP] : 0;

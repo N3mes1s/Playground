@@ -649,8 +649,19 @@ static void *boot_thread_fn(void *arg) {
          * was producing malformed nodes that deadlocked PE waiter walks. */
         extern uint64_t pool_allocator_fn_real(void*, uint64_t, uint64_t, void*,
                                                uint64_t, void*) __attribute__((ms_abi));
+        /* Wave-11: earlier we wired EVERY vtable slot to the allocator.
+         * That made vtable[0x50] also be an allocator, and the PE's
+         * FUN_002bc3b8 calls vtable[0x50] expecting a different
+         * operation — returning an "allocation" where a no-op was
+         * expected creates infinite recursion (see stack trace in
+         * /tmp/chain2.txt). Wire only slot 0 (the alloc operation);
+         * all other slots get a safe no-op returning NULL. */
+        extern uint64_t pool_vtable_noop(void*, uint64_t, uint64_t,
+                                         void*, uint64_t, void*)
+            __attribute__((ms_abi));
         for (size_t i = 0; i < 0x200/sizeof(void*); i++)
-            pool_vtable[i] = (void*)&pool_allocator_fn_real;
+            pool_vtable[i] = (void*)&pool_vtable_noop;
+        pool_vtable[0] = (void*)&pool_allocator_fn_real;
 
         sub_inner[0] = (void*)&pool_allocator_fn_real; /* called via guard_dispatch */
         sub_alloc[0] = sub_inner;
@@ -994,8 +1005,8 @@ static void *boot_thread_fn(void *arg) {
          *     RSP = 0x180637000 + [0x180413480]
          * so we set [0x180413480] = 0x500200000 - 0x180637000 to get
          * RSP = 0x500200000 on entry. Stack grows DOWN from there. */
-        const uint64_t BOOT_STACK_TOP = 0x500200000ULL;
-        const size_t   BOOT_STACK_SZ  = 0x200000;   /* 2 MB */
+        const uint64_t BOOT_STACK_TOP = 0x501000000ULL;
+        const size_t   BOOT_STACK_SZ  = 0x1000000;  /* 16 MB */
         void *stk = mmap((void*)(BOOT_STACK_TOP - BOOT_STACK_SZ),
                          BOOT_STACK_SZ,
                          PROT_READ | PROT_WRITE,
