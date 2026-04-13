@@ -1,0 +1,78 @@
+name: Rust CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Check on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy: 
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Add x86_64 target (macOS ARM)
+        if: runner.os == 'macOS'
+        run: rustup target add x86_64-apple-darwin
+
+      - name: Run libmwemu tests (linux / mac)
+        if: runner.os != 'Windows'
+        run: make tests 
+
+      - name: Download libmwemu tests (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Invoke-WebRequest -Uri "https://github.com/sha0coder/mwemu/releases/download/maps/test.zip"  -OutFile "test.zip"
+
+      - name: Instlal 7z (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install 7zip -y; exit 0
+
+      - name: Uncompress tests (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          7z x test.zip -pmwemuTestSystem
+
+      - name: Run libmwemu tests (windows)
+        if: runner.os == 'Windows'
+        working-directory: ./test
+        shell: pwsh
+        run: |
+          cargo test --package libmwemu --verbose
+          cargo test --release --package libmwemu --verbose
+
+   #   - name: Install cargo-tarpaulin
+   #     if: runner.os == 'Linux'
+   #     run: cargo install cargo-tarpaulin
+
+   #   - name: Run coverage
+   #     if: runner.os == 'Linux'
+   #     run: |
+   #       cargo tarpaulin --no-default-features --out Xml --timeout 200
+
+   #   - name: Upload coverage reports to Codecov
+   #     if: runner.os == 'Linux'
+   #     uses: codecov/codecov-action@v5
+   #     with:
+   #       token: ${{ secrets.CODECOV_TOKEN }}
+   #       slug: sha0coder/mwemu

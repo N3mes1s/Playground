@@ -1,0 +1,751 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::sync::atomic::AtomicU32;
+use std::sync::Arc;
+use std::time::Instant;
+
+use atty::Stream;
+use csv::ReaderBuilder;
+use iced_x86::{Formatter as _, IntelFormatter};
+use std::collections::BTreeSet;
+
+use crate::emu::disassemble::InstructionCache;
+use crate::emu::{ArchState, Emu};
+use crate::maps::mem64::Permission;
+use crate::loaders::pe::pe64;
+use crate::windows::peb::{peb32, peb64};
+use crate::{
+    api::banzai::Banzai, debug::breakpoint::Breakpoints, utils::colors::Colors, config::Config,
+    threading::global_locks::GlobalLocks, hooks::Hooks, maps::Maps, threading::context::ThreadContext,
+};
+use crate::{windows::kuser_shared, windows::structures, winapi::winapi32, winapi::winapi64};
+
+use crate::maps::heap_allocation::O1Heap;
+use fast_log::appender::{Command, FastLogRecord, RecordFormat};
+use crate::emu::object_handle::HandleManagement;
+
+pub struct CustomLogFormat;
+impl RecordFormat for CustomLogFormat {
+    fn do_format(&self, arg: &mut FastLogRecord) {
+        match &arg.command {
+            Command::CommandRecord => {
+                arg.formated = format!("{}\n", arg.args);
+            }
+            Command::CommandExit => {}
+            Command::CommandFlush(_) => {}
+        }
+    }
+}
+
+impl CustomLogFormat {
+    pub fn new() -> CustomLogFormat {
+        Self {}
+    }
+}
+
+impl Default for Emu {
+    fn default() -> Self {
+        Emu::new()
+    }
+}
+
+pub struct Lib {
+    pe64: pe64::PE64,
+    base: u64,
+    name: String,
+}
+
+impl Emu {
+    pub fn new() -> Emu {
+        let mut formatter = IntelFormatter::new();
+        formatter.options_mut().set_digit_separator("");
+        formatter.options_mut().set_first_operand_char_index(6);
+        Emu {
+            arch_state: ArchState::X86 {
+                instruction: None,
+                formatter,
+                instruction_cache: InstructionCache::new(),
+                decoder_position: 0,
+            },
+            maps: Maps::default(),
+            hooks: Hooks::new(),
+            exp: 0,
+            break_on_alert: false,
+            bp: Breakpoints::new(),
+            cfg: Config::new(),
+            colors: Colors::new(),
+            pos: 0,
+            max_pos: None,
+            force_break: false,
+            process_terminated: false,
+            call_depth: 0,
+            force_reload: false,
+            tls_callbacks: Vec::new(),
+            main_thread_cont: 0,
+            gateway_return: 0,
+            is_running: Arc::new(AtomicU32::new(0)),
+            break_on_next_cmp: false,
+            break_on_next_return: false,
+            filename: String::new(),
+            enabled_ctrlc: false,
+            run_until_ret: false,
+            running_script: true,
+            banzai: Banzai::new(),
+            os: crate::arch::OperatingSystem::Windows,
+            now: Instant::now(),
+            skip_apicall: false,
+            its_apicall: None,
+            last_decoded: None,
+            last_instruction_size: 0,
+            pe64: None,
+            pe32: None,
+            elf64: None,
+            elf32: None,
+            macho64: None,
+            memory_operations: vec![],
+            rep: None,
+            tick: 0,
+            trace_file: None,
+            base: 0,
+            heap_addr: 0,
+            rng: RefCell::new(rand::rng()),
+            // Initialize with main thread as thread 0
+            threads: vec![ThreadContext::new(0x1000, crate::arch::Arch::X86)],
+            current_thread_id: 0,
+            global_locks: GlobalLocks::new(),
+            definitions: HashMap::new(),
+            stored_contexts: HashMap::new(),
+            entropy: 0.0,
+            heap_management: None,
+            last_error: 0,
+            is_api_run: false,
+            is_break_on_api: false,
+            instruction_count: 0,
+            fault_count: 0,
+            handle_management: HandleManagement::new(),
+            library_loaded: false,
+        }
+    }
+
+    /// This inits the 32bits stack, it's called from init_cpu() and init()
+    pub fn init_stack32(&mut self) {
+        // default if not set via clap args
+        if self.cfg.stack_addr == 0 {
+            self.cfg.stack_addr = 0x212000;
+            let esp = self.cfg.stack_addr + 0x1c000 + 4;
+            let ebp = self.cfg.stack_addr + 0x1c000 + 4 + 0x1000;
+            self.regs_mut().set_esp(esp);
+            self.regs_mut().set_ebp(ebp);
+        }
+
+        // Store register values in local variables
+        let esp = self.regs().get_esp();
+        let ebp = self.regs().get_ebp();
+
+        let (stack_base, stack_bottom) = if let Some(stack) = self.maps.get_map_by_name("stack") {
+            (stack.get_base(), stack.get_bottom())
+        } else {
+            let stack = self
+                .maps
+                .create_map(
+                    "stack",
+                    self.cfg.stack_addr,
+                    0x030000,
+                    Permission::READ_WRITE,
+                )
+                .expect("cannot create stack map");
+            (stack.get_base(), stack.get_bottom())
+        };
+
+        // Now do all the assertions using the local variables
+        assert!(esp < ebp);
+        assert!(esp > stack_base);
+        assert!(esp < stack_bottom);
+        assert!(ebp > stack_base);
+        assert!(ebp < stack_bottom);
+        assert!(esp >= stack_base && esp < stack_bottom);
+        assert!(ebp >= stack_base && ebp < stack_bottom);
+    }
+
+    /// This inits the 64bits stack, it's called from init_cpu() and init()
+    pub fn init_stack64(&mut self) {
+        // Large stack only when booting through `ntdll!LdrInitializeThunk` (needs >2 MB).
+        let stack_size = if self.cfg.emulate_winapi && self.cfg.emulate_winapi {
+            0x400000
+        } else {
+            0x100000
+        };
+
+        // default if not set via clap args
+        if self.cfg.stack_addr == 0 {
+            self.cfg.stack_addr = if self.cfg.emulate_winapi && self.cfg.emulate_winapi {
+                0x10000
+            } else {
+                0x22a000
+            };
+            self.regs_mut().rsp = self.cfg.stack_addr + stack_size;
+            self.regs_mut().rbp = self.cfg.stack_addr + stack_size + 0x1000;
+        }
+
+        // Store register values in local variables
+        let rsp = self.regs().rsp;
+        let rbp = self.regs().rbp;
+
+        // Add extra buffer beyond rbp to ensure it's strictly less than bottom
+        let (stack_base, stack_bottom) = if let Some(stack) = self.maps.get_map_by_name("stack") {
+            (stack.get_base(), stack.get_bottom())
+        } else {
+            let stack = self
+                .maps
+                .create_map(
+                    "stack",
+                    self.cfg.stack_addr,
+                    stack_size + 0x2000,
+                    Permission::READ_WRITE,
+                ) // Increased size
+                .expect("cannot create stack map");
+            (stack.get_base(), stack.get_bottom())
+        };
+
+        // Now do all the assertions using the local variables
+        assert!(rsp < rbp);
+        assert!(rsp > stack_base);
+        assert!(rsp < stack_bottom);
+        assert!(rbp > stack_base);
+        assert!(rbp < stack_bottom);
+        assert!(rsp >= stack_base && rsp < stack_bottom);
+        assert!(rbp >= stack_base && rbp < stack_bottom);
+    }
+
+    //TODO: tests only in tests.rs
+    pub fn init_stack_aarch64(&mut self) {
+        let stack_size: u64 = 0x100000;
+
+        if self.cfg.stack_addr == 0 {
+            self.cfg.stack_addr = 0x22a000;
+        }
+
+        let sp = self.cfg.stack_addr + stack_size;
+
+        if self.maps.get_map_by_name("stack").is_none() {
+            self.maps
+                .create_map(
+                    "stack",
+                    self.cfg.stack_addr,
+                    stack_size + 0x2000,
+                    Permission::READ_WRITE,
+                )
+                .expect("cannot create stack map");
+        }
+
+        self.regs_aarch64_mut().sp = sp;
+    }
+
+    pub fn init_stack64_tests(&mut self) {
+        self.regs_mut().rsp = 0x000000000014F4B0;
+        self.regs_mut().rbp = 0x0000000000000000;
+        let stack = self.maps.get_mem_mut("stack");
+        stack.set_base(0x0000000000149000);
+        stack.set_size(0x0000000000007000);
+    }
+
+    //TODO: tests only in tests.rs
+    pub fn init_regs_tests(&mut self) {
+        self.regs_mut().rax = 0x00000001448A76A4;
+        self.regs_mut().rbx = 0x000000007FFE0385;
+        self.regs_mut().rcx = 0x0000000140000000;
+        self.regs_mut().rdx = 0x0000000000000001;
+        self.regs_mut().rsi = 0x0000000000000001;
+        self.regs_mut().rdi = 0x000000007FFE0384;
+        self.regs_mut().r10 = 0x000000007FFE0384;
+        self.regs_mut().r11 = 0x0000000000000246;
+        self.regs_mut().r12 = 0x00000001448A76A4;
+        self.regs_mut().r14 = 0x0000000140000000;
+    }
+
+    //TODO: tests only in tests.rs
+    pub fn init_flags_tests(&mut self) {
+        self.flags_mut().clear();
+
+        self.flags_mut().f_zf = true;
+        self.flags_mut().f_pf = true;
+        self.flags_mut().f_af = false;
+
+        self.flags_mut().f_of = false;
+        self.flags_mut().f_sf = false;
+        self.flags_mut().f_df = false;
+
+        self.flags_mut().f_cf = false;
+        self.flags_mut().f_tf = false;
+        self.flags_mut().f_if = true;
+
+        self.flags_mut().f_nt = false;
+    }
+
+    pub fn init_logger(&mut self) {
+        fast_log::init(
+            fast_log::Config::new()
+                .format(CustomLogFormat::new())
+                .console()
+                .chan_len(Some(100000)),
+        )
+        .unwrap();
+    }
+
+    /// Initialize windows simulator, this does like init_cpu() but also setup the windows memory.
+    /// This require having the map files in place, otherwise use just init_cpu() but emu32() and
+    /// emu64() already call init_cpu()
+    /// This is called from load_code if the code is a PE or shellcode.
+    /// load_code_bytes() and other loading ways don't call this, if you need windows simulation call this.
+    pub fn init_win32(&mut self, clear_registers: bool, clear_flags: bool) {
+        self.pos = 0;
+
+        if !atty::is(Stream::Stdout) {
+            self.cfg.nocolors = true;
+            self.colors.disable();
+            self.cfg.console_enabled = false;
+            self.disable_ctrlc();
+        }
+
+        //log::trace!("initializing regs");
+        if clear_registers {
+            self.regs_mut().clear::<64>();
+        }
+        if clear_flags {
+            self.flags_mut().clear();
+        }
+        //self.regs().rand();
+
+        self.regs_mut().rip = self.cfg.entry_point;
+        if self.cfg.is_x64() {
+            self.maps.is_64bits = self.cfg.arch.is_64bits();
+            self.init_win32_mem64();
+            self.init_stack64();
+        } else {
+            // 32bits
+            self.maps.is_64bits = self.cfg.arch.is_64bits();
+            self.regs_mut().sanitize32();
+            self.init_win32_mem32();
+            self.init_stack32();
+        }
+
+        // loading banzai on 32bits
+        if !self.cfg.is_x64() {
+            let mut rdr = ReaderBuilder::new()
+                .from_path(format!("{}/banzai.csv", self.cfg.maps_folder))
+                .expect("banzai.csv not found on maps folder, please download last mwemu maps");
+
+            for result in rdr.records() {
+                let record = result.expect("error parsing banzai.csv");
+                let api = &record[0];
+                let params: i32 = record[1].parse().expect("error parsing maps32/banzai.csv");
+
+                self.banzai.add(api, params);
+            }
+        }
+
+        //self.init_tests();
+    }
+
+    /// The minimum initializations necessary to emualte asm with no OS simulation.
+    pub fn init_cpu(&mut self) {
+        self.pos = 0;
+        self.maps.is_64bits = self.cfg.arch.is_64bits();
+
+        // Ensure thread context matches the target architecture
+        if self.cfg.arch.is_aarch64() {
+            if matches!(self.threads[self.current_thread_id].arch, crate::threading::context::ArchThreadState::X86 { .. }) {
+                let id = self.threads[self.current_thread_id].id;
+                self.threads[self.current_thread_id] = crate::threading::context::ThreadContext::new(id, self.cfg.arch);
+            }
+        }
+
+        // Ensure arch_state matches the target architecture
+        if self.cfg.arch.is_aarch64() && matches!(self.arch_state, super::ArchState::X86 { .. }) {
+            self.arch_state = super::ArchState::AArch64 {
+                instruction: None,
+                instruction_cache: crate::emu::disassemble::InstructionCache::new(),
+            };
+        }
+
+        if self.cfg.arch.is_aarch64() {
+            self.init_stack_aarch64();
+        } else if self.cfg.is_x64() {
+            self.init_stack64();
+        } else {
+            self.regs_mut().sanitize32();
+            self.init_stack32()
+        }
+    }
+
+    /// Initialize linux aarch64 simulation for ELF loading.
+    pub fn init_linux64_aarch64(&mut self) {
+        // Ensure thread context is aarch64
+        if matches!(self.threads[self.current_thread_id].arch, crate::threading::context::ArchThreadState::X86 { .. }) {
+            let id = self.threads[self.current_thread_id].id;
+            self.threads[self.current_thread_id] = crate::threading::context::ThreadContext::new(id, self.cfg.arch);
+        }
+
+        self.init_stack_aarch64();
+    }
+
+    /// Initialize macOS aarch64 simulation for Mach-O loading.
+    pub fn init_macos_aarch64(&mut self) {
+        self.os = crate::arch::OperatingSystem::MacOS;
+
+        // Ensure thread context is aarch64
+        if matches!(self.threads[self.current_thread_id].arch, crate::threading::context::ArchThreadState::X86 { .. }) {
+            let id = self.threads[self.current_thread_id].id;
+            self.threads[self.current_thread_id] = crate::threading::context::ThreadContext::new(id, self.cfg.arch);
+        }
+
+        self.init_stack_aarch64();
+    }
+
+    /// Initialize linux x86_64 simulation, it's called from load_code() if the sample is an ELF.
+    pub fn init_linux64(&mut self, dyn_link: bool) {
+        //self.regs_mut().clear::<64>();
+        self.flags_mut().clear();
+        self.flags_mut().f_if = true;
+
+        let orig_path = std::env::current_dir().unwrap();
+        std::env::set_current_dir(self.cfg.maps_folder.clone());
+        if dyn_link {
+            //self.regs_mut().rsp = 0x7fffffffe2b0;
+            self.regs_mut().rsp = 0x7fffffffe790;
+            self.maps
+                .create_map(
+                    "linux_dynamic_stack",
+                    0x7ffffffde000,
+                    0x100000,
+                    Permission::READ_WRITE,
+                )
+                .expect("cannot create linux_dynamic_stack map");
+            //self.maps.create_map("dso_dyn").load_at(0x7ffff7ffd0000);
+            self.maps
+                .create_map("dso_dyn", 0x7ffff7ffd000, 0x1000, Permission::READ_WRITE)
+                .expect("cannot create dso_dyn map");
+            self.maps
+                .create_map(
+                    "linker",
+                    0x7ffff7ffd000 - 0x1000 - 0x10000,
+                    0x10000,
+                    Permission::READ_WRITE,
+                )
+                .expect("cannot create linker map");
+        } else {
+            self.regs_mut().rsp = 0x7fffffffe270;
+            self.maps
+                .create_map(
+                    "linux_static_stack",
+                    0x7ffffffde000,
+                    0x100000,
+                    Permission::READ_WRITE,
+                )
+                .expect("cannot create linux_static_stack map");
+            self.maps
+                .create_map("dso", 0x7ffff7ffd000, 0x100000, Permission::READ_WRITE)
+                .expect("cannot create dso map");
+        }
+        let tls = self
+            .maps
+            .create_map("tls", 0x7ffff8fff000, 0xfff, Permission::READ_WRITE)
+            .expect("cannot create tls map");
+        tls.load("tls.bin");
+
+        std::env::set_current_dir(orig_path);
+
+        if dyn_link {
+            //heap.set_base(0x555555579000);
+        } else {
+            // here we are allocating 4MB of heap memory
+            let heap_sz = 0x885900 - 0x4b5000;
+            self.heap_addr = self.maps.alloc(heap_sz).expect("cannot allocate heap");
+            let heap = self
+                .maps
+                .create_map(".heap", self.heap_addr, heap_sz, Permission::READ_WRITE) //.create_map("heap", 0x4b5b00, 0x4d8000 - 0x4b5000)
+                .expect("cannot create heap map");
+            heap.load("heap.bin");
+
+            self.heap_management = Some(Box::new(
+                O1Heap::new(self.heap_addr, heap_sz as u32)
+                    .expect("Expect new heap_management but failed"),
+            ));
+        }
+
+        self.regs_mut().rbp = 0;
+
+        self.fs_mut().insert(0xffffffffffffffc8, 0); //0x4b6c50
+        self.fs_mut().insert(0xffffffffffffffd0, 0);
+        self.fs_mut().insert(0xffffffffffffffd8, 0x4b27a0);
+        self.fs_mut().insert(0xffffffffffffffa0, 0x4b3980);
+        self.fs_mut().insert(0x18, 0);
+        self.fs_mut().insert(40, 0x4b27a0);
+    }
+
+    /// This is called from init(), this setup the 32bits windows memory simulation.
+    pub fn init_win32_mem32(&mut self) {
+        log::trace!("loading memory maps");
+
+        self.maps.is_64bits = self.cfg.arch.is_64bits();
+
+        let orig_path = std::env::current_dir().unwrap();
+        std::env::set_current_dir(self.cfg.maps_folder.clone());
+
+        //self.maps.create_map("m10000", 0x10000, 0).expect("cannot create m10000 map");
+        //self.maps.create_map("m20000", 0x20000, 0).expect("cannot create m20000 map");
+        //self.maps.create_map("code", self.cfg.code_base_addr, 0);
+
+        //self.maps.write_byte(0x2c3000, 0x61); // metasploit trick
+
+        std::env::set_current_dir(orig_path);
+
+        peb32::init_peb(self);
+        winapi32::kernel32::load_library(self, "ntdll.dll");
+        let ntdll_base = self.maps.get_mem("ntdll.pe").get_base();
+        peb32::update_peb_image_base(self, ntdll_base as u32);
+
+        winapi32::kernel32::load_library(self, "kernel32.dll");
+        winapi32::kernel32::load_library(self, "kernelbase.dll");
+        winapi32::kernel32::load_library(self, "iphlpapi.dll");
+        winapi32::kernel32::load_library(self, "ws2_32.dll");
+        winapi32::kernel32::load_library(self, "advapi32.dll");
+        //winapi32::kernel32::load_library(self, "comctl32.dll");
+        winapi32::kernel32::load_library(self, "winhttp.dll");
+        winapi32::kernel32::load_library(self, "wininet.dll");
+        //winapi32::kernel32::load_library(self, "dnsapi.dll");
+        winapi32::kernel32::load_library(self, "shell32.dll");
+        //winapi32::kernel32::load_library(self, "shlwapi.dll");
+
+        let teb_map = self.maps.get_mem_mut("teb");
+        let mut teb = structures::TEB::load_map(teb_map.get_base(), teb_map);
+        teb.nt_tib.stack_base = self.cfg.stack_addr as u32;
+        teb.nt_tib.stack_limit = (self.cfg.stack_addr + 0x30000) as u32;
+        teb.save(teb_map);
+    }
+
+    //TODO: tests on tests.rs
+    pub fn init_tests(&mut self) {
+        let mem = self
+            .maps
+            .create_map("test", 0, 1024, Permission::READ_WRITE_EXECUTE)
+            .expect("cannot create test map");
+        mem.write_qword(0, 0x1122334455667788);
+        assert!(mem.read_qword(0) == 0x1122334455667788);
+        self.maps.free("test");
+
+        // some tests
+        assert!(get_bit!(0xffffff00u32, 0) == 0);
+        assert!(get_bit!(0xffffffffu32, 5) == 1);
+        assert!(get_bit!(0xffffff00u32, 5) == 0);
+        assert!(get_bit!(0xffffff00u32, 7) == 0);
+        assert!(get_bit!(0xffffff00u32, 8) == 1);
+
+        let mut a: u32 = 0xffffff00;
+        set_bit!(a, 0, 1);
+        set_bit!(a, 1, 1);
+        set_bit!(a, 2, 1);
+        set_bit!(a, 3, 1);
+        set_bit!(a, 4, 1);
+        set_bit!(a, 5, 1);
+        set_bit!(a, 6, 1);
+        set_bit!(a, 7, 1);
+
+        assert!(a == 0xffffffff);
+
+        set_bit!(a, 0, 0);
+        set_bit!(a, 1, 0);
+        set_bit!(a, 2, 0);
+        set_bit!(a, 3, 0);
+        set_bit!(a, 4, 0);
+        set_bit!(a, 5, 0);
+        set_bit!(a, 6, 0);
+        set_bit!(a, 7, 0);
+
+        assert!(a == 0xffffff00);
+
+        /*
+        remove this test because it isn't that correct
+        let mut r: u64;
+        (r, _) = engine::logic::shrd(self, 0x9fd88893, 0x1b, 0x6, 32);
+        assert!(r == 0x6e7f6222);
+        (r, _) = engine::logic::shrd(self, 0x6fdcb03, 0x0, 0x6, 32);
+        assert!(r == 0x1bf72c);
+        (r, _) = engine::logic::shrd(self, 0x91545f1d, 0x6fe2, 0x6, 32);
+        assert!(r == 0x8a45517c);
+        (r, _) = engine::logic::shld(self, 0x1b, 0xf1a7eb1d, 0xa, 32);
+        assert!(r == 0x6fc6);
+        (r, _) = engine::logic::shld(self, 0x1, 0xffffffff, 4, 32);
+        assert!(r == 0x1f);
+        (r, _) = engine::logic::shld(self, 0x1, 0xffffffff, 33, 32);
+        assert!(r == 0x3);
+        (r, _) = engine::logic::shld(self, 0x144e471f8, 0x14F498, 0x3e, 64);
+        assert!(r == 0x53d26);
+        */
+
+        assert!(self.maps.mem_test(), "It doesn't pass the memory tests!!");
+        log::trace!("memory test Ok.");
+    }
+
+    /// This is called from init(), this setup the 64bits windows memory simulation.
+    pub fn init_win32_mem64(&mut self) {
+        log::trace!("loading memory maps");
+        self.maps.is_64bits = self.cfg.arch.is_64bits();
+
+        // In SSDT mode we can optionally let `ntdll!LdrInitializeThunk` bootstrap the loader.
+        // This path intentionally maps far fewer DLLs up front.
+        if self.cfg.emulate_winapi && self.cfg.emulate_winapi {
+            // Empty PEB + TEB only; `ntdll!LdrInitializeThunk` is expected to initialize loader state.
+            peb64::init_peb_teb_empty(self);
+            kuser_shared::init_kuser_shared_data(self);
+
+            // Map ntdll (LdrInitializeThunk lives here).
+            winapi64::kernel32::load_library(self, "ntdll.dll");
+
+            // Map the base DLLs used by imports reached after `LdrInitializeThunk`.
+            // They must be present in the LDR lists before binding so exports and
+            // forwarders can resolve across `kernel32` / `kernelbase`.
+            let mut base_dlls: Vec<Lib> = Vec::new();
+            for dll in &["kernel32.dll", "kernelbase.dll", "user32.dll", "gdi32.dll", "win32u.dll"] {
+                let filepath = self.cfg.get_maps_folder(dll);
+                if std::path::Path::new(&filepath).exists() {
+                    let (base, pe64) = self.map_dll_pe64(&filepath);
+                    peb64::dynamic_link_module(base, pe64.get_pe_off(), dll, self);
+                    base_dlls.push(Lib {
+                        pe64,
+                        base,
+                        name: dll.to_string(),
+                    });
+                }
+            }
+
+            // Bind internal imports now that both modules are mapped. Without this,
+            // export thunks like `kernel32!LoadLibraryA -> jmp [IAT]` can jump
+            // through uninitialized slots when the sample resumes after loader init.
+            for dll in base_dlls.iter_mut() {
+                dll.pe64.iat_binding(self, dll.base);
+                dll.pe64.delay_load_binding(self, dll.base);
+            }
+
+            // Minimal TEB stack bounds (NtTib) so stack probes do not fault.
+            let (stack_base, stack_limit) = self
+                .maps
+                .get_map_by_name("stack")
+                .map(|s| (s.get_base(), s.get_bottom()))
+                .unwrap_or((
+                    self.cfg.stack_addr,
+                    self.cfg.stack_addr + 0x400000 + 0x2000,
+                ));
+            let teb_map = self.maps.get_mem_mut("teb");
+            let mut teb = structures::TEB64::load_map(teb_map.get_base(), teb_map);
+            teb.nt_tib.stack_base = stack_base;
+            teb.nt_tib.stack_limit = stack_limit;
+            teb.save(teb_map);
+
+            return;
+        }
+
+        peb64::init_peb(self);
+        kuser_shared::init_kuser_shared_data(self);
+
+        let mut metadata: Vec<Lib> = Vec::new();
+        let base: Vec<&str> = vec!["kernelbase.dll", "kernel32.dll", "ntdll.dll"];
+
+        // Stage 1: map kernel32
+        for dll in &base {
+            let filepath = self.cfg.get_maps_folder(dll);
+            log::debug!("mapping base lib64: {}", &filepath);
+            let (base, pe64) = self.map_dll_pe64(&filepath);
+            let lib = Lib {
+                pe64,
+                base,
+                name: dll.to_string(),
+            };
+            metadata.push(lib);
+        }
+
+        // Stage 2: get_dependencies
+        let mut dependencies: BTreeSet<String> = BTreeSet::new();
+        for dll in metadata.iter_mut() {
+            for mut dep in dll.pe64.get_dependencies(self) {
+                dep = dep.to_lowercase();
+                if !dep.ends_with(".dll") {
+                    dep.push_str(".dll");
+                }
+                if !base.contains(&dep.as_str()) {
+                    dependencies.insert(dep);
+                }
+            }
+        }
+
+        // Stage 3: map dependencies
+        for dll in dependencies {
+            let filepath = self.cfg.get_maps_folder(&dll);
+            log::debug!("mapping depenency {}", &filepath);
+            let (base, pe64) = self.map_dll_pe64(&filepath);
+            let lib = Lib {
+                pe64,
+                base,
+                name: dll.to_string(),
+            };
+            metadata.push(lib);
+        }
+
+        // Stage 3: dynamic linking base + deps
+        for dll in &metadata {
+            log::debug!("dynamic linking {}", &dll.name);
+            peb64::dynamic_link_module(dll.base, dll.pe64.get_pe_off(), &dll.name, self);
+        }
+
+        // Stage 3: IAT binding for base + deps (relocs already applied in `map_dll_pe64`).
+        for dll in metadata.iter_mut() {
+            log::debug!("iat binding {}", &dll.name);
+            dll.pe64.iat_binding(self, dll.base);
+            dll.pe64.delay_load_binding(self, dll.base);
+        }
+        log::debug!("win32 64bits base libs ok.");
+
+        let ntdll_base = self.maps.get_mem("ntdll.pe").get_base();
+        peb64::update_peb_image_base(self, ntdll_base);
+
+        let (stack_base, stack_limit) = self
+            .maps
+            .get_map_by_name("stack")
+            .map(|s| (s.get_base(), s.get_bottom()))
+            .unwrap_or((
+                self.cfg.stack_addr,
+                self.cfg.stack_addr + 0x100000 + 0x2000,
+            ));
+        let teb_map = self.maps.get_mem_mut("teb");
+        let mut teb = structures::TEB64::load_map(teb_map.get_base(), teb_map);
+        teb.nt_tib.stack_base = stack_base;
+        teb.nt_tib.stack_limit = stack_limit;
+        teb.save(teb_map);
+
+        let heap_sz = 0x885900 - 0x4b5000;
+        self.heap_addr = 0x520000; // Hardcoded in PEB64
+        let heap = self
+            .maps
+            .create_map(".heap", self.heap_addr, heap_sz, Permission::READ_WRITE)
+            .expect("cannot create heap map");
+
+        // Native ntdll!RtlAllocateHeap expects SegmentSignature at offset 0x10
+        self.maps.write_dword(self.heap_addr + 0x10, 0x0DDEEDDEE);
+        
+        // ntdll!RtlAllocateHeap accesses FreeLists/BlocksIndex. If 0, it crashes dereferencing NULL.
+        // We put a self-referential or valid pointer so it doesn't crash on [r10+2].
+        // At 0x5203D8 (rsi+rcx*8+80h) it expects a pointer to something. We point it to 0x520400.
+        self.maps.write_qword(self.heap_addr + 0x3D8, self.heap_addr + 0x400);
+
+        // Later accesses [0x520480] and passes it as locking structure. Needs to be != 0 to avoid [0x10] unmapped array
+        self.maps.write_qword(self.heap_addr + 0x480, self.heap_addr + 0x500);
+
+        // At 0x520418 it checks [rdi] == rdi to see if list is empty
+        self.maps.write_qword(self.heap_addr + 0x418, self.heap_addr + 0x418);
+
+        self.heap_management = Some(Box::new(
+            O1Heap::new(self.heap_addr, heap_sz as u32)
+                .expect("Expect new heap_management but failed"),
+        ));
+    }
+}
