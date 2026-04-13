@@ -14,6 +14,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include "pal_internal.h"
+#include "pal_vm.h"
 
 /* ============================================================
  * File-scope globals referenced by the decompiled boot code.
@@ -594,6 +595,32 @@ extern "C" int pal_boot_init(void)
      * the pointer stale. Skip it entirely; the PE handles its own VM
      * module setup via DK_VirtualMemoryAllocate calls. */
     (void)0;
+
+    /* Step 22b-wave49: conservative host-side reproduction of
+     * FUN_0x37cf68 (VmModuleState::ReservePeImageRange).
+     *
+     * If [0x180c00878] has already been populated, register the PE
+     * image range as a VmPeImageDescriptor on the vms list at vms+0x48.
+     * Otherwise (the common case at this point, because step 22b is
+     * retired), defer to DK_VmIdentityEcho which fires later during PE
+     * execution when vms has been populated by the PE's own FUN_0x37f700.
+     *
+     * See analysis/WAVE48_MASTER_flow.md §Conservative approach. */
+    {
+        VmModuleState *vms =
+            *(VmModuleState * volatile *)NTUM_VM_MODULE_STATE_ADDR;
+        if (vms != nullptr) {
+            fprintf(stderr,
+                    "[PAL][BOOT] wave-49: reserving PE image range via "
+                    "pal_reserve_pe_image_range(vms=%p)\n", (void *)vms);
+            (void)pal_reserve_pe_image_range(vms, 0x180000000ULL,
+                                             0x01000000ULL, /*flags=*/0u);
+        } else {
+            fprintf(stderr,
+                    "[PAL][BOOT] wave-49: [0xc00878] not yet populated; "
+                    "deferring pal_reserve_pe_image_range to DK_VmIdentityEcho\n");
+        }
+    }
 
     /* Step 22c (Wave 5a C2 expansion): populate the image-mode enum
      * global at [0x180c00868] used by 23 downstream readers.

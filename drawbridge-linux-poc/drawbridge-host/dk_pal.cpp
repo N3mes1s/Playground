@@ -23,6 +23,7 @@
 #include <errno.h>
 
 #include "dk_pal.h"
+#include "pal_vm.h"
 
 #define DK_TRACE_ENTRY(fn_name, a, b, c, d) do {           \
     static int _n = 0;                                      \
@@ -1604,6 +1605,28 @@ uint64_t DK_VmIdentityEcho(void *trace_ctx, uint64_t va_start,
     static uint64_t aux_bitmap[0x200]
         __attribute__((aligned(16))) = {0};  /* 0x1000 bytes, 0x8000 pages */
     uint64_t vms_ptr = *(volatile uint64_t*)0x180c00878ULL;
+
+    /* Wave-49: reproduce FUN_0x37cf68 (VmModuleState::ReservePeImageRange)
+     * side-effects. The PE's own FUN_0x37f700 has by now published vms at
+     * [0xc00878]; we register a VmPeImageDescriptor on vms+0x48's list so
+     * the scheduler read at RIP 0x3756a3 finds a valid descriptor for the
+     * PE image [0x180000000, +0x01000000).
+     *
+     * SKIPS the AVL-tree insert (FUN_0x380708) and global counters — see
+     * analysis/WAVE48_MASTER_flow.md §Conservative approach. */
+    {
+        static int pe_image_reserved = 0;
+        if (!pe_image_reserved && vms_ptr) {
+            pe_image_reserved = 1;
+            fprintf(stderr,
+                "[VM-ECHO] wave-49: reserving PE image range on vms=0x%lx\n",
+                (unsigned long)vms_ptr);
+            (void)pal_reserve_pe_image_range((VmModuleState *)vms_ptr,
+                                             0x180000000ULL,
+                                             0x01000000ULL, /*flags=*/0u);
+        }
+    }
+
     if (vms_ptr && *(volatile uint64_t*)(vms_ptr + 0xa8) == 0) {
         /* Seed a descriptor covering the PE image range (not the
          * incoming VM-ECHO range). The PE's ReservePeImageRange at

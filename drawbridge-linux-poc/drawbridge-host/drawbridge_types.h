@@ -838,6 +838,84 @@ static_assert(offsetof(VmModuleState, region_end) == 0xE0, "region_end @ 0xE0");
 #define NTUM_VM_MODULE_STATE_ADDR   0x180c00878ULL
 
 /* ================================================================
+ * VmPeImageDescriptor  —  per-PE-image descriptor produced by
+ * FUN_0x37cf68 (VmModuleState::ReservePeImageRange) and consumed by
+ * the scheduler / module walkers at RVA 0x3756a3+.
+ *
+ * Field-by-field reverse-engineered from:
+ *   analysis/WAVE48_fun_37e1f0.md  (the 18-field populator)
+ *   analysis/WAVE48_bookkeeping.md (LIST_ENTRY insert at vms+0x48)
+ *   analysis/WAVE48_MASTER_flow.md (state transition +0x74: 1 -> 2)
+ *
+ * Size: at least 0xE8 bytes (matches FUN_0x37f700's desc-body stride).
+ * ================================================================ */
+
+#pragma pack(push, 1)
+typedef struct VmPeImageDescriptor {
+    uint64_t  vtable;           /* +0x00: outer vtable 0x412e18 (written by 0x381d8c
+                                  *        AFTER 0x37e1f0 writes inner 0x412d70) */
+    uint64_t  list_flink;       /* +0x08: vms-list LIST_ENTRY Flink */
+    uint64_t  list_blink;       /* +0x10: vms-list LIST_ENTRY Blink */
+    uint64_t  list_head_backptr;/* +0x18: &vms+0x48 (set by FUN_0x37d23c) */
+    uint32_t  state_tag;        /* +0x20: 1 — asserted by FUN_0x37e1f0 self-check */
+    uint32_t  _pad24;           /* +0x24 */
+    uint64_t  va_base;          /* +0x28: PE image base (0x180000000) */
+    uint64_t  size;             /* +0x30: page-aligned image size */
+    uint64_t  self_ref_38;      /* +0x38: 0 (conditional self-relative ptr) */
+    uint64_t  page_count;       /* +0x40: size / page_size */
+    uint32_t  page_size;        /* +0x48: 0x1000 */
+    uint32_t  caller_dword_4c;  /* +0x4C */
+    uint32_t  caller_dword_50;  /* +0x50 */
+    uint32_t  _pad54;           /* +0x54 */
+    uint64_t  avl_node_58;      /* +0x58: AVL-tree node lo (zeroed — skipped) */
+    uint64_t  avl_node_60;      /* +0x60: AVL-tree node hi (zeroed — skipped) */
+    uint64_t  zero_68;          /* +0x68 */
+    uint32_t  flags;            /* +0x70: flags dword (r8d arg) */
+    uint32_t  state;            /* +0x74: 1 -> 2 (REGISTERED after FUN_0x37e4c0) */
+    uint64_t  ctx;              /* +0x78: context (arg2 rdx: points to vms) */
+    uint64_t  _pad80;           /* +0x80 */
+    uint64_t  _pad88;           /* +0x88 */
+    /* +0x90..+0xD0: UNICODE path buffer (filled by FUN_0x3818e8) — zeroed here. */
+    uint8_t   unicode_path[0x40];
+    uint64_t  _padd0;           /* +0xD0 */
+    uint64_t  _padd8;           /* +0xD8 */
+    uint64_t  _pade0;           /* +0xE0 */
+} VmPeImageDescriptor;
+#pragma pack(pop)
+
+#ifdef __cplusplus
+static_assert(offsetof(VmPeImageDescriptor, list_flink)        == 0x08, "list_flink @ 0x08");
+static_assert(offsetof(VmPeImageDescriptor, list_blink)        == 0x10, "list_blink @ 0x10");
+static_assert(offsetof(VmPeImageDescriptor, list_head_backptr) == 0x18, "list_head_backptr @ 0x18");
+static_assert(offsetof(VmPeImageDescriptor, state_tag)         == 0x20, "state_tag @ 0x20");
+static_assert(offsetof(VmPeImageDescriptor, va_base)           == 0x28, "va_base @ 0x28");
+static_assert(offsetof(VmPeImageDescriptor, size)              == 0x30, "size @ 0x30");
+static_assert(offsetof(VmPeImageDescriptor, self_ref_38)       == 0x38, "self_ref_38 @ 0x38");
+static_assert(offsetof(VmPeImageDescriptor, page_count)        == 0x40, "page_count @ 0x40");
+static_assert(offsetof(VmPeImageDescriptor, page_size)         == 0x48, "page_size @ 0x48");
+static_assert(offsetof(VmPeImageDescriptor, caller_dword_4c)   == 0x4C, "caller_dword_4c @ 0x4C");
+static_assert(offsetof(VmPeImageDescriptor, caller_dword_50)   == 0x50, "caller_dword_50 @ 0x50");
+static_assert(offsetof(VmPeImageDescriptor, avl_node_58)       == 0x58, "avl_node_58 @ 0x58");
+static_assert(offsetof(VmPeImageDescriptor, avl_node_60)       == 0x60, "avl_node_60 @ 0x60");
+static_assert(offsetof(VmPeImageDescriptor, zero_68)           == 0x68, "zero_68 @ 0x68");
+static_assert(offsetof(VmPeImageDescriptor, flags)             == 0x70, "flags @ 0x70");
+static_assert(offsetof(VmPeImageDescriptor, state)             == 0x74, "state @ 0x74");
+static_assert(offsetof(VmPeImageDescriptor, ctx)               == 0x78, "ctx @ 0x78");
+static_assert(offsetof(VmPeImageDescriptor, unicode_path)      == 0x90, "unicode_path @ 0x90");
+static_assert(sizeof(VmPeImageDescriptor)                      >= 0xE8, "descriptor >= 0xE8");
+#endif
+
+/* The "outer vtable" stamped into desc[+0x00] by FUN_0x381d8c — this is
+ * the vtable that 0x37e1f0's 0x412d70 inner gets overwritten by. */
+#define PE_IMAGE_DESC_OUTER_VTABLE   0x180412e18ULL
+#define PE_IMAGE_DESC_INNER_VTABLE   0x180412d70ULL
+
+/* Standard PE-image reservation constants. */
+#define PE_IMAGE_DESC_PAGE_SIZE      0x1000u
+#define PE_IMAGE_DESC_STATE_ALLOCATED 1u
+#define PE_IMAGE_DESC_STATE_REGISTERED 2u
+
+/* ================================================================
  * NtumImageMode — u32 enum stored at [0x180c00868].
  *
  * Written by FUN_0020e4e4 based on the wide-character name embedded

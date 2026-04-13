@@ -48,6 +48,27 @@ VmModuleState *pal_vm_init_module_state(void);
 void           pal_vm_init_wrapper(void);
 VmModuleState *pal_vm_compute_head_list(VmModuleState *self);
 
+/* ------------------------------------------------------------------
+ * Wave-49 — conservative reproduction of FUN_0x37cf68's side-effects:
+ *
+ *   1) allocate >= 0xE8-byte descriptor from the vms heap
+ *   2) populate all 18 fields from FUN_0x37e1f0's table
+ *   3) splice descriptor[+0x08] into vms+0x48 LIST_ENTRY, back-pointer
+ *      at desc[+0x18] (FUN_0x37d23c)
+ *   4) transition desc[+0x74] from 1 -> 2 (FUN_0x37e4c0)
+ *
+ * Deliberately SKIPS the AVL-tree insert (FUN_0x380708) and the global
+ * memory-accounting update (FUN_0x208b0c) — see WAVE48_MASTER_flow.md
+ * §Conservative approach.
+ *
+ * Returns the descriptor pointer, or NULL on error (e.g. vms is NULL).
+ * ------------------------------------------------------------------ */
+struct VmPeImageDescriptor *
+pal_reserve_pe_image_range(VmModuleState *vms,
+                           uint64_t pe_base,
+                           uint64_t size,
+                           uint32_t flags);
+
 #ifdef __cplusplus
 }
 #endif

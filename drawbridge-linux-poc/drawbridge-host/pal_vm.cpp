@@ -599,3 +599,240 @@ void pal_vm_init_wrapper(void)
 {
     (void)pal_vm_init_module_state();
 }
+
+/* ==================================================================
+ * pal_reserve_pe_image_range  —  Wave-49 conservative translation of
+ *                                FUN_0x37cf68's side-effects.
+ *
+ * Reproduces, on the host side, the descriptor the PE's sqlpal.dll
+ * expects to find already registered in vms's list before its own PE
+ * init runs (the wave-44 blocker at RIP 0x3756a3 reads fields of this
+ * descriptor).
+ *
+ * Source:
+ *   analysis/WAVE48_MASTER_flow.md  — overall flow
+ *   analysis/WAVE48_fun_37e1f0.md   — 18-field populator table
+ *   analysis/WAVE48_bookkeeping.md  — list-insert (FUN_0x37d23c)
+ *
+ * Intentional omissions (§"Conservative approach"):
+ *   - AVL-tree insert (FUN_0x380708)
+ *   - Global memory-accounting counters at
+ *     [0x180653ed8] / [0x180662cf8] / [0x180662d10] (FUN_0x208b0c)
+ * ================================================================== */
+
+/* A tiny bump-arena carved out of the vms mmap tail — this mirrors
+ * how FUN_0x37b2f0 would carve from the vms heap, but without touching
+ * the bitmap slab (which FUN_0x37f700 already laid out for us). The
+ * arena starts 1 page below the struct tail so it doesn't collide with
+ * the VmModuleState header or the descriptor-slab region. */
+static uint8_t *pal_vms_arena_alloc(VmModuleState *vms, size_t bytes)
+{
+    (void)vms;
+    /* 16-byte align */
+    bytes = (bytes + 15U) & ~(size_t)15U;
+
+    /* Use a dedicated page-aligned mmap so we don't collide with the
+     * PE's own internal allocations inside its vms region. The PE's
+     * FUN_0x37f700 uses a slab layout the host doesn't know; anything
+     * we place "inside" vms risks overlap with the PE's own descriptors.
+     * mmap'ing a fresh 64 KiB pool avoids that entirely. */
+    static uint8_t *arena = nullptr;
+    static size_t  arena_used = 0;
+    static const size_t kArenaSize = 0x10000;
+
+    if (!arena) {
+        arena = (uint8_t *)mmap(nullptr, kArenaSize,
+                                PROT_READ | PROT_WRITE,
+                                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (arena == MAP_FAILED) {
+            fprintf(stderr, "[PAL][VMS-ARENA] mmap failed: %s\n",
+                    strerror(errno));
+            arena = nullptr;
+            return nullptr;
+        }
+        memset(arena, 0, kArenaSize);
+        fprintf(stderr, "[PAL][VMS-ARENA] arena mmap at %p size=0x%zx\n",
+                (void *)arena, kArenaSize);
+    }
+
+    if (arena_used + bytes > kArenaSize) {
+        fprintf(stderr, "[PAL][VMS-ARENA] out of space: used=%zu req=%zu\n",
+                arena_used, bytes);
+        return nullptr;
+    }
+    uint8_t *p = arena + arena_used;
+    arena_used += bytes;
+    memset(p, 0, bytes);
+    return p;
+}
+
+extern "C" VmPeImageDescriptor *
+pal_reserve_pe_image_range(VmModuleState *vms,
+                           uint64_t pe_base,
+                           uint64_t size,
+                           uint32_t flags)
+{
+    if (!vms) {
+        fprintf(stderr, "[PAL][RESERVE-PE] vms is NULL — bail\n");
+        return nullptr;
+    }
+    if ((pe_base & 0xFFFULL) != 0) {
+        fprintf(stderr,
+                "[PAL][RESERVE-PE] pe_base=0x%lx not page-aligned\n",
+                (unsigned long)pe_base);
+        return nullptr;
+    }
+    if ((size & 0xFFFULL) != 0) {
+        fprintf(stderr,
+                "[PAL][RESERVE-PE] size=0x%lx not page-aligned\n",
+                (unsigned long)size);
+        return nullptr;
+    }
+
+    /* 1) Allocate a zeroed >= 0xE8-byte chunk from the vms arena. */
+    size_t desc_bytes = sizeof(VmPeImageDescriptor);
+    if (desc_bytes < 0xE8) desc_bytes = 0xE8;
+
+    VmPeImageDescriptor *desc =
+        (VmPeImageDescriptor *)pal_vms_arena_alloc(vms, desc_bytes);
+    if (!desc) {
+        fprintf(stderr, "[PAL][RESERVE-PE] arena alloc failed\n");
+        return nullptr;
+    }
+
+    fprintf(stderr,
+            "[PAL][RESERVE-PE] vms=%p pe_base=0x%lx size=0x%lx flags=0x%x\n"
+            "[PAL][RESERVE-PE]  desc=%p size=0x%zx\n",
+            (void *)vms, (unsigned long)pe_base, (unsigned long)size,
+            (unsigned)flags, (void *)desc, desc_bytes);
+
+    /* 2) Populate per WAVE48_fun_37e1f0.md / WAVE48_MASTER_flow.md.
+     *    Every write is a verbatim table-row; log at debug. */
+    const uint64_t page_sz = PE_IMAGE_DESC_PAGE_SIZE;
+    desc->vtable            = PE_IMAGE_DESC_OUTER_VTABLE;          /* +0x00 */
+    desc->list_flink        = 0;                                   /* +0x08 (filled by insert) */
+    desc->list_blink        = 0;                                   /* +0x10 (filled by insert) */
+    desc->list_head_backptr = 0;                                   /* +0x18 (filled by insert) */
+    desc->state_tag         = PE_IMAGE_DESC_STATE_ALLOCATED;       /* +0x20 = 1 */
+    desc->va_base           = pe_base;                             /* +0x28 */
+    desc->size              = size;                                /* +0x30 */
+    desc->self_ref_38       = 0;                                   /* +0x38 */
+    desc->page_count        = size / page_sz;                      /* +0x40 */
+    desc->page_size         = (uint32_t)page_sz;                   /* +0x48 */
+    desc->caller_dword_4c   = 0;                                   /* +0x4C */
+    desc->caller_dword_50   = 0;                                   /* +0x50 */
+    desc->avl_node_58       = 0;                                   /* +0x58 (AVL skipped) */
+    desc->avl_node_60       = 0;                                   /* +0x60 (AVL skipped) */
+    desc->zero_68           = 0;                                   /* +0x68 */
+    desc->flags             = flags;                               /* +0x70 */
+    desc->state             = PE_IMAGE_DESC_STATE_ALLOCATED;       /* +0x74 = 1 (pre-transition) */
+    desc->ctx               = (uint64_t)vms;                       /* +0x78 */
+
+    fprintf(stderr,
+            "[PAL][RESERVE-PE]  +0x00 vtable=0x%lx  +0x20 tag=%u  +0x28 va_base=0x%lx\n"
+            "[PAL][RESERVE-PE]  +0x30 size=0x%lx    +0x40 pgcnt=0x%lx  +0x48 pgsz=0x%x\n"
+            "[PAL][RESERVE-PE]  +0x70 flags=0x%x   +0x74 state=%u     +0x78 ctx=0x%lx\n",
+            (unsigned long)desc->vtable,
+            (unsigned)desc->state_tag,
+            (unsigned long)desc->va_base,
+            (unsigned long)desc->size,
+            (unsigned long)desc->page_count,
+            (unsigned)desc->page_size,
+            (unsigned)desc->flags,
+            (unsigned)desc->state,
+            (unsigned long)desc->ctx);
+
+    /* 3) LIST_ENTRY insert at vms+0x48 (FUN_0x37d23c).
+     *
+     * Layout per WAVE48_bookkeeping.md (assembly-level, authoritative):
+     *   vms+0x48+0x00 = Blink    (implicit from `[r8]=rdi` line 434854)
+     *   vms+0x48+0x08 = Flink    (read at 434850, written at 434853)
+     *   vms+0x48+0x10 = spinlock (dword)
+     *   vms+0x48+0x14 = count    (dword, incremented at 434855)
+     *
+     * Node inside descriptor (at desc+0x08):
+     *   desc+0x08 = Blink  (written to list-head at line 434854)
+     *   desc+0x10 = Flink  (written to old-Flink at lines 434848/50)
+     *   desc+0x18 = back-pointer to list-head (line 434856)
+     *
+     * Insert-head sequence (verbatim translation):
+     *   new_node_addr = desc+0x08
+     *   new_node->Flink  = head->Flink        [desc+0x10 = old_flink]
+     *   old_flink->Blink = new_node_addr      [[rdi+0x8]'s +0x0 = r8]
+     *   head->Flink      = new_node_addr      [vms+0x50 = r8]
+     *   new_node->Blink  = head               [desc+0x08 = vms+0x48]
+     */
+    {
+        uint64_t head_addr = (uint64_t)vms + 0x48ULL;
+        uint64_t node_addr = (uint64_t)desc + 0x08ULL;
+
+        volatile uint32_t *lock_word =
+            (volatile uint32_t *)((uint8_t *)head_addr + 0x10);  /* vms+0x58 */
+        volatile uint32_t *count_word =
+            (volatile uint32_t *)((uint8_t *)head_addr + 0x14);  /* vms+0x5c */
+
+        /* Detect & repair an un-initialised or corrupt list-head. A
+         * FUN_0x37f700-initialised head has self-ref (+0x00 == head,
+         * +0x08 == head); anything else means the head predates its
+         * init or has been trampled.  We treat anything other than a
+         * valid in-arena Blink as "empty". */
+        volatile uint64_t *head_blink = (volatile uint64_t *)(head_addr);
+        volatile uint64_t *head_flink = (volatile uint64_t *)(head_addr + 8);
+
+        if (*head_flink == 0 || *head_flink == (uint64_t)-1 ||
+            *head_blink == 0 || *head_blink == (uint64_t)-1) {
+            fprintf(stderr,
+                    "[PAL][RESERVE-PE]  head empty/corrupt "
+                    "(Blink=0x%lx Flink=0x%lx) — self-ref-initializing\n",
+                    (unsigned long)*head_blink,
+                    (unsigned long)*head_flink);
+            *head_blink = head_addr;
+            *head_flink = head_addr;
+        }
+
+        /* Acquire spinlock at vms+0x58 (test-and-set on the dword). */
+        while (__atomic_exchange_n(lock_word, 1U, __ATOMIC_ACQUIRE) != 0) {
+            /* spin */
+        }
+
+        uint64_t old_flink = *head_flink;
+
+        /* new_node->Flink = old_flink */
+        *(volatile uint64_t *)(node_addr + 8ULL) = old_flink;
+        /* old_flink->Blink = new_node (old_flink points at some node,
+         * its Blink is at that node+0x00). */
+        *(volatile uint64_t *)(old_flink) = node_addr;
+        /* head->Flink = new_node */
+        *head_flink = node_addr;
+        /* new_node->Blink = head_addr */
+        *(volatile uint64_t *)(node_addr) = head_addr;
+
+        /* Back-pointer: desc[+0x18] = vms+0x48 */
+        desc->list_head_backptr = head_addr;
+
+        /* Count++ */
+        (*count_word)++;
+
+        fprintf(stderr,
+                "[PAL][RESERVE-PE]  list-insert: head=0x%lx node=0x%lx "
+                "oldFlink=0x%lx count=%u\n",
+                (unsigned long)head_addr, (unsigned long)node_addr,
+                (unsigned long)old_flink, (unsigned)*count_word);
+
+        /* Release lock. */
+        __atomic_store_n(lock_word, 0U, __ATOMIC_RELEASE);
+    }
+
+    /* 4) State transition: desc[+0x74] 1 -> 2 (REGISTERED). */
+    desc->state = PE_IMAGE_DESC_STATE_REGISTERED;
+    fprintf(stderr,
+            "[PAL][RESERVE-PE]  state transition +0x74: 1 -> %u (REGISTERED)\n",
+            (unsigned)desc->state);
+
+    /* 5) Skip AVL insert + global counters per master-flow §Conservative. */
+    fprintf(stderr,
+            "[PAL][RESERVE-PE]  SKIPPED: AVL insert (FUN_0x380708) and "
+            "global counters (FUN_0x208b0c) per wave-49 conservative plan\n");
+
+    return desc;
+}
