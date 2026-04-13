@@ -69,16 +69,38 @@ Caller: `FUN_0x2055dc "RegisterInitialModule"` invokes `FUN_0x37cf68(vms, reques
 
 ### FUN_0x381d8c (wave-47-b, `analysis/WAVE47_fun_381d8c.md`)
 - 40-instruction vtable installer + PE loader trampoline
-- Args: (rcx=descriptor, rdx=header_ptr, r8=image_base, r9=request_va/size, stack[0x20]=arg5, stack[0x28]=&out)
-- Writes ONLY: `descriptor[+0x00] = vtable_ptr` (0x412e18)
+- Args: (rcx=descriptor, rdx=header_ptr, r8=image_base, **r9=page_aligned_size** — corrected by wave-47-e, stack[0x20]=arg5, stack[0x28]=&out)
+- Writes: `descriptor[+0x00] = vtable_ptr` (0x412e18)
 - Internal callees:
-  - FUN_0x3812cc — header assembly on local stack
+  - **FUN_0x3812cc — threads descriptor through to FUN_0x3853e4 → FUN_0x37e1f0 which writes +0x28 and +0x30** (correction from wave-47-e)
   - FUN_0x3818e8 — UNICODE path copy (reads desc[+0x90..+0xd0])
   - FUN_0x3814d4 — PE/COFF parser (validates MZ/PE signatures, walks sections)
-- **va_base at desc[+0x28] and size at desc[+0x30]** — CONFIRMED to be read by downstream consumers, but NOT written by 0x381d8c itself
-- Writer is in one of 0x381d8c's internal callees — **wave-47-e agent investigating**
 
-### FUN_0x37f128 (wave-46, `analysis/WAVE46_scope_layout.md`) — NOT called from this path
+### FUN_0x37e1f0 (wave-47-e, `analysis/WAVE47_desc_28_writer.md`)
+**The authoritative writer of va_base and size fields.** Called deep in the chain:
+`FUN_0x37cf68 → FUN_0x381d8c → FUN_0x3812cc → FUN_0x3853e4 → FUN_0x37e1f0`.
+
+Writes:
+- `desc[+0x28] = image_base` at RVA `0x37e25f`, line **436039**: `mov %r9, 0x28(%rcx)`
+- `desc[+0x30] = page_aligned_size` at RVA `0x37e27b`, line **436045**: `mov %rbp, 0x30(%rcx)`
+
+Source-of-value chain:
+- r9 → 0x37e1f0's r9 → 0x3853e4's ... → 0x3812cc's r9 (from `mov %r8,%r9` at line 439400) → FUN_0x381d8c's r8 → FUN_0x37cf68's rbx → caller's arg2 (PE base, validated PE32+ at line 434700-434702)
+- rbp (size) → loaded from `0x80(%rsp)` at line 436021 → propagated from FUN_0x3812cc's `mov %r9, -0x48(%r11)` at line 439399 → FUN_0x381d8c's r9 → FUN_0x37cf68's rsi (page-aligned-up size, computed at 434681-434683)
+
+## Post-0x381d8c operations in FUN_0x37cf68 (lines 434812–434829)
+
+| RVA     | Line  | Operation                                   |
+|---------|-------|---------------------------------------------|
+| 0x37d1e4| 434813| `mov %rax, 0x50(%rbp)` — save 381d8c ret    |
+| 0x37d1ee| 434816| `call 0x208b0c` — logging/telemetry helper  |
+| 0x37d1fa| 434819| `call 0x37d23c(rcx=vms+0x48, rdx=desc_ret)` |
+| 0x37d207| 434822| `call 0x37e4c0(rcx=desc_ret, edx=2)` — **state → 2** |
+| 0x37d213| 434825| `call 0x380708(rcx=rdi, rdx=&local)` — final bookkeeping |
+| 0x37d21c| 434827| `call 0x379788(rcx=&local)` — cleanup       |
+| 0x37d225| 434829| `call 0x3797fc(rcx=local)` — cleanup        |
+
+## FUN_0x37f128 (wave-46, `analysis/WAVE46_scope_layout.md`) — NOT called from this path
 - Pure bitmap slot allocator over fixed descriptor pool
 - Earlier waves incorrectly thought this was a scope-list walker
 - Not relevant to the RegisterInitialModule flow for PE image
@@ -100,13 +122,18 @@ The ELF `sqlservr` host calls 3 DK functions BEFORE PE entry:
 
 Our port does raw `mmap()` via `pe_loader_parse_and_map` in `main.cpp`, skipping all three DK calls. This is why the descriptor state the PE expects post-`FUN_0x37f700` is missing.
 
-## Open questions (wave-47-e and beyond)
+## Open questions (wave-48 and beyond)
 
-1. **Where is `desc[+0x28]` actually written?** (wave-47-e agent running)
-2. **What other descriptor fields (+0x38, +0x40, +0x58, +0x60, +0x68, +0x70) need to be populated?** Need decodes of FUN_0x3812cc, FUN_0x3818e8, FUN_0x3814d4.
-3. **What does FUN_0x37e4c0(rcx=desc, edx=2) do?** It's the state=2 transition but may also set counters/links.
+1. ~~**Where is `desc[+0x28]` actually written?**~~ ✅ Resolved by wave-47-e: FUN_0x37e1f0.
+2. **What other descriptor fields (+0x38, +0x40, +0x58, +0x60, +0x68, +0x70, +0x90..+0xd0) need to be populated?**
+   - `desc[+0x90..+0xd0]` — UNICODE path (read by FUN_0x3818e8 per wave-47-b)
+   - FUN_0x37e1f0 may write more fields beyond +0x28/+0x30 — check rest of its body
+   - FUN_0x3814d4 (PE parser) may write section-related fields
+3. **What does FUN_0x37e4c0(rcx=desc, edx=2) do?** The state=2 transition but may also set counters/links.
 4. **What does FUN_0x380708 do?** Final bookkeeping — may register descriptor in a broader vms index.
 5. **What does FUN_0x37d23c(rcx=vms+0x48, rdx=desc_return) do?** State op on vms itself.
+6. **What does FUN_0x208b0c do?** Helper call at line 434816 — likely logging/telemetry.
+7. **What's at `r14` (line 434801 `movaps (%r14),%xmm0`)?** A 16-byte header struct passed to 0x381d8c; need to trace r14's origin in FUN_0x37cf68's prologue.
 
 ## Implementation path (deferred until open questions resolved)
 
