@@ -192,5 +192,42 @@ class TestSessionPrefixReuse(unittest.TestCase):
         self.assertEqual((delta, total), (0, 15))
 
 
+    def test_dispatch_worker_end_to_end(self):
+        """Full orchestrator->worker path: set trajectory, dispatch, get a turn."""
+        from briefing.model import LatentBriefingModel
+        lbm, sess = self._make_session()
+        V = self.cfg.vocab_size
+
+        torch.manual_seed(5)
+        ids = torch.randint(3, V, (1, 15))
+        lbm.tokenizer._lookup["trajectory"] = ids
+        sess.set_orchestrator_trajectory("trajectory")
+
+        task_ids = torch.randint(3, V, (1, 4))
+        lbm.tokenizer._lookup["task"] = task_ids
+
+        turn = sess.dispatch_worker("task", target_size=0.3, max_new_tokens=4)
+
+        self.assertEqual(turn.worker_task, "task")
+        self.assertGreater(len(turn.worker_answer), 0)
+        # Compaction stats: source was 15 tokens, target 0.3 -> ~5.
+        self.assertEqual(turn.briefing_stats.source_tokens, 15)
+        self.assertLess(turn.briefing_stats.compact_tokens, 15)
+        self.assertGreaterEqual(turn.briefing_stats.compact_tokens, 1)
+        # Session history recorded.
+        self.assertEqual(len(sess.history), 1)
+        self.assertIs(sess.history[0], turn)
+
+        # Orchestrator cache must not have been mutated by the dispatch.
+        self.assertEqual(cache_token_count(sess.orchestrator.full_cache), 15)
+
+    def test_dispatch_without_trajectory_raises(self):
+        """dispatch_worker before set_orchestrator_trajectory must raise."""
+        lbm, sess = self._make_session()
+        lbm.tokenizer._lookup["t"] = torch.tensor([[3, 4, 5]])
+        with self.assertRaises(RuntimeError):
+            sess.dispatch_worker("t", 0.3)
+
+
 if __name__ == "__main__":
     unittest.main()

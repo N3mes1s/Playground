@@ -112,6 +112,17 @@ class TestCachePlumbing(unittest.TestCase):
         # Output cache should be the same type as input (DynamicCache).
         self.assertIsInstance(new_cache, DynamicCache)
 
+        # CRITICAL: get_seq_length() must report the compacted length, not the
+        # original. If this is wrong, subsequent generation uses wrong
+        # position embeddings (they'd start at 96 instead of 24).
+        self.assertEqual(new_cache.get_seq_length(), 24,
+                         "get_seq_length() returned original length after compaction")
+        for i, layer in enumerate(new_cache.layers):
+            self.assertEqual(layer.get_seq_length(), 24,
+                             f"layer {i}: per-layer seq_length inconsistent")
+            self.assertEqual(layer.keys.shape[-2], 24)
+            self.assertEqual(layer.values.shape[-2], 24)
+
 
 if __name__ == "__main__":
     unittest.main()
