@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/user/Playground/token-flamegraph/auto_optimize.py",
+            "timeout": 30,
+            "statusMessage": "Analyzing token patterns..."
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+*.html
+__pycache__/
+*.pyc
+CLAUDE-optimized.md
+.baseline.json
+.mailbox/
+.chat/
+.baseline.json
