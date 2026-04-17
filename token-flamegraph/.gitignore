@@ -6,3 +6,4 @@ CLAUDE-optimized.md
 .mailbox/
 .chat/
 .baseline.json
+chat.py
