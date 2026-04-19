@@ -1,0 +1,31 @@
+[package]
+name        = "ods-cli"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+repository.workspace  = true
+publish               = false
+
+[[bin]]
+name = "ods"
+path = "src/main.rs"
+
+[dependencies]
+ods-core       = { workspace = true }
+ods-agents     = { workspace = true }
+ods-measure    = { workspace = true }
+ods-verify     = { workspace = true }
+ods-recipes    = { workspace = true }
+ods-lang       = { workspace = true }
+ods-lang-rust  = { workspace = true }
+ods-ci         = { workspace = true }
+ods-report     = { workspace = true }
+anyhow         = { workspace = true }
+clap           = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+serde_yaml     = { workspace = true }
+tokio          = { workspace = true }
+tracing        = { workspace = true }
+tracing-subscriber = { workspace = true }

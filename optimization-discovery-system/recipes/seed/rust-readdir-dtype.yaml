@@ -1,0 +1,42 @@
+id: rust-readdir-dtype
+name: avoid stat(2) when readdir d_type already classifies the entry
+category: syscall-elimination
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: |
+    (call_expression
+      function: (field_expression
+        field: (field_identifier) @method (#match? @method "metadata|file_type"))
+      arguments: (arguments))
+  profile_signature:
+    - "syscall:stat>N per readdir-entry"
+    - "hot:DirEntry::metadata"
+  naive_alt_ratio_min: 1.2
+transformation:
+  steps:
+    - "Replace `entry.metadata()?.is_dir()` with `entry.file_type()?.is_dir()` where the caller only needs the type classifier."
+    - "For bulk traversals (walkdir-style), cache DirEntry::file_type() and avoid falling back to metadata() unless a non-type field is read."
+    - "On platforms where d_type is unreliable (some filesystems return DT_UNKNOWN), retain the metadata() slow path."
+verification:
+  test_selectors: ["fs::", "walk::", "dir::"]
+  property_seeds: [3735928559, 3405691582]
+  fuzz_minutes: 5
+  semver_check: true
+benchmark_template: |
+  fn bench_readdir(c: &mut Criterion) {
+      let dir = tempfile::tempdir().unwrap();
+      populate(&dir, 10_000);
+      c.bench_function("readdir_classify", |b| {
+          b.iter(|| {
+              let mut dirs = 0u32;
+              for e in std::fs::read_dir(dir.path()).unwrap() {
+                  let e = e.unwrap();
+                  if e.file_type().unwrap().is_dir() { dirs += 1; }
+              }
+              std::hint::black_box(dirs);
+          })
+      });
+  }
+success_history: []
+embedding: null

@@ -1,0 +1,59 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ods-cli",
+    "crates/ods-core",
+    "crates/ods-agents",
+    "crates/ods-measure",
+    "crates/ods-verify",
+    "crates/ods-recipes",
+    "crates/ods-lang",
+    "crates/ods-lang-rust",
+    "crates/ods-ci",
+    "crates/ods-report",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/n3mes1s/playground"
+publish = false
+
+[workspace.dependencies]
+ods-core      = { path = "crates/ods-core" }
+ods-agents    = { path = "crates/ods-agents" }
+ods-measure   = { path = "crates/ods-measure" }
+ods-verify    = { path = "crates/ods-verify" }
+ods-recipes   = { path = "crates/ods-recipes" }
+ods-lang      = { path = "crates/ods-lang" }
+ods-lang-rust = { path = "crates/ods-lang-rust" }
+ods-ci        = { path = "crates/ods-ci" }
+ods-report    = { path = "crates/ods-report" }
+
+anyhow     = "1"
+thiserror  = "1"
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+tokio      = { version = "1", features = ["rt-multi-thread", "macros", "fs", "process", "time", "sync", "signal"] }
+tracing    = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap       = { version = "4", features = ["derive", "env"] }
+uuid       = { version = "1", features = ["v4", "serde"] }
+time       = { version = "0.3", features = ["serde", "formatting", "parsing"] }
+reqwest    = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "json"] }
+rusqlite   = { version = "0.32", features = ["bundled"] }
+semver     = { version = "1", features = ["serde"] }
+
+[profile.release]
+opt-level   = 3
+lto         = "fat"
+codegen-units = 1
+strip       = "symbols"
+panic       = "abort"
+
+[profile.dist]
+inherits = "release"
+debug    = 1

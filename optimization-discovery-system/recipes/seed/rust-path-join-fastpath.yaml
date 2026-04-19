@@ -1,0 +1,41 @@
+id: rust-path-join-fastpath
+name: fast path for ASCII-clean PathBuf::push and PathBuf::join
+category: fast-path-specialization
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: |
+    (call_expression
+      function: (field_expression
+        field: (field_identifier) @m (#match? @m "push|join")))
+  profile_signature:
+    - "hot:PathBuf::push"
+    - "hot:Path::join"
+    - "branch:encoding-classification"
+  naive_alt_ratio_min: 1.1
+transformation:
+  steps:
+    - "Detect ASCII inputs (no multi-byte code units, no interior separators) and use a single-byte append path that bypasses OsString encoding validation."
+    - "Preserve a correct slow path for non-ASCII / non-UTF-8 / Windows verbatim prefixes."
+    - "Scan trailing separators from the right with a short hand-rolled loop rather than repeatedly calling has_trailing_slash helpers."
+verification:
+  test_selectors: ["path::", "pathbuf::", "os_str::"]
+  property_seeds: [12345678901, 2718281828]
+  fuzz_minutes: 10
+  semver_check: true
+benchmark_template: |
+  fn bench_path_join(c: &mut Criterion) {
+      let base = PathBuf::from("/var/lib/foo");
+      c.bench_function("path_join_two", |b| {
+          b.iter(|| std::hint::black_box(base.join("bar.txt")))
+      });
+      c.bench_function("path_join_many", |b| {
+          b.iter(|| {
+              let mut p = base.clone();
+              for part in ["a", "b", "c", "d", "e"] { p.push(part); }
+              std::hint::black_box(p);
+          })
+      });
+  }
+success_history: []
+embedding: null

@@ -31,6 +31,7 @@ While this is primarily a coding agent workspace, contributions and suggestions 
 |-----------|-------------|
 | [`vulnllm-analyzer/`](vulnllm-analyzer/) | Automated vulnerability analysis for GitHub repos using [VulnLLM-R-7B](https://github.com/ucsb-mlsec/VulnLLM-R) on Modal GPUs |
 | [recursive-lm-security-audit](./recursive-lm-security-audit/) | Automated codebase security scanner using DSPy's Recursive Language Model (RLM) module. Accepts a GitHub repo URL or local path and produces a vulnerability report for ~$0.87. |
+| [`optimization-discovery-system/`](optimization-discovery-system/) | CI-integrated, agent-driven performance optimization across languages. Generalises byroot's ["faster paths"](https://byroot.github.io/ruby/performance/2026/04/18/faster-paths.html) methodology: specialist coding agents discover, verify, bench, and land perf wins backed by data (not vibes), and harvest reusable "optimization recipes". Rust single-binary, musl-static, multi-platform. |
 
 ## Note
 
