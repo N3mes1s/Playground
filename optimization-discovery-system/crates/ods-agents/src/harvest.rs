@@ -276,8 +276,6 @@ fn parse_generalized_recipe(
     if !g.invariants.is_empty() {
         steps.push(format!("Invariants: {}", g.invariants.join("; ")));
     }
-    let now = time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)?;
     let _ = target; // target is only used by the caller; the generalized recipe deliberately carries no repo-specific fields.
     Ok(Recipe {
         id: RecipeId(g.id.clone()),

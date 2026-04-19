@@ -1,0 +1,30 @@
+id: python-functools-cache
+name: memoize pure hot functions with functools.cache
+category: caching
+language: python
+promotion: seed
+trigger:
+  ast_pattern: 'def\s+\w+\s*\([^)]*\)\s*:\s*\n(?:[^\n]*\n){0,40}[^\n]*return\s+'
+  profile_signature:
+    - "cprofile:ncalls>>unique-inputs"
+    - "hot:function-dominates-self-time"
+    - "recursion-or-loop-with-repeating-args"
+  naive_alt_ratio_min: null
+transformation:
+  steps:
+    - "Verify purity: no hidden global state, hashable arguments, deterministic output, no I/O side-effects. This is the only correctness gate."
+    - "Decorate with `@functools.cache` when input domain is bounded, or `@functools.lru_cache(maxsize=N)` when unbounded to cap memory."
+    - "For instance methods, move the pure core to a module-level helper and cache that -- decorating methods keeps `self` alive indefinitely."
+    - "Invariants: pure function; hashable args; memory growth bounded when using lru_cache."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: true
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:python-docs/functools,infoworld-lru-cache"
+embedding: null

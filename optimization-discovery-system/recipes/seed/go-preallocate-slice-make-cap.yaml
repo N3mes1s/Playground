@@ -1,0 +1,31 @@
+id: go-preallocate-slice-make-cap
+name: preallocate slice capacity before a known-length append loop
+category: alloc-reduction
+language: go
+promotion: seed
+trigger:
+  ast_pattern: '(var\s+\w+\s+\[\]\w+|\w+\s*:=\s*\[\]\w+\{\})[^}]*for\s+[^{]+range\s+\w+\s*\{[^}]*append\('
+  profile_signature:
+    - "allocs/op:>1"
+    - "hot:runtime.growslice"
+    - "hot:runtime.memmove"
+    - "gc:cpu-share-elevated"
+  naive_alt_ratio_min: null
+transformation:
+  steps:
+    - "Determine the loop bound: `len(src)`, a constant, or a numeric argument."
+    - "Replace `var out []T` with `out := make([]T, 0, <bound>)` so the backing array never reallocates."
+    - "When every iteration emits exactly one element with no skipping, prefer `make([]T, <bound>)` + indexed assignment `out[i] = ...` to avoid `append`'s bookkeeping."
+    - "Invariants: final slice length and element order identical; nil-vs-empty distinction preserved if callers depend on it (verify with `reflect.DeepEqual`)."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:alexkohler/prealloc,oilbeater.com-2024"
+embedding: null

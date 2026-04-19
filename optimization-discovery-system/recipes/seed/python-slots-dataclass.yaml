@@ -1,0 +1,30 @@
+id: python-slots-dataclass
+name: slots=True on dataclasses with fixed attribute set
+category: alloc-reduction
+language: python
+promotion: seed
+trigger:
+  ast_pattern: '@dataclass(\s*\))'
+  profile_signature:
+    - "alloc:instance-__dict__-per-object"
+    - "hot:LOAD_ATTR"
+    - "memory:rss-linear-in-instance-count"
+  naive_alt_ratio_min: null
+transformation:
+  steps:
+    - "Confirm the class has a fixed attribute set (no dynamic `obj.foo = ...` outside `__init__`), no `__dict__` reliance, and no `hasattr`/`setattr` monkey-patching."
+    - "Add `slots=True` to the `@dataclass(...)` decorator (Python >=3.10). For plain classes define `__slots__ = ('x', 'y', ...)`."
+    - "When the class has a base class that lacks slots, convert the parents too -- otherwise the `__dict__` savings are lost."
+    - "Invariants: attribute names and types unchanged; pickle wire format may change (document in CHANGELOG)."
+verification:
+  test_selectors: ["pickle", "serialize"]
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: true
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:PEP-557,tildalice.io-2024"
+embedding: null

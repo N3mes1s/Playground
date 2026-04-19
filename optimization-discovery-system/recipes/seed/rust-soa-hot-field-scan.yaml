@@ -1,0 +1,32 @@
+id: rust-soa-hot-field-scan
+name: split AoS into SoA when the hot loop touches only one field
+category: algorithmic
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: 'for\s+\w+\s+in\s+&?\w+\s*\{[^}]*\w+\.\w+'
+  profile_signature:
+    - "cache:L1-dcache-load-miss-dominant"
+    - "perf:IPC-below-1.0"
+    - "mem-bandwidth:saturated"
+    - "struct-size:>=32-bytes"
+  naive_alt_ratio_min: null
+transformation:
+  steps:
+    - "Confirm the struct is >=32 bytes and the hot loop reads only one or two fields."
+    - "Split `Vec<S>` into parallel vectors `prices: Vec<f64>`, `ids: Vec<u64>`, ... (one per field), kept at identical indices."
+    - "Replace row-at-a-time pushes with column pushes at the same index."
+    - "Rewrite the hot loop to iterate only the needed column(s); LLVM autovectorization now has dense input and will SIMD-fy."
+    - "Invariants: row-at-index-i semantics preserved across columns; all columns stay the same length."
+verification:
+  test_selectors: ["scan", "aggregate"]
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: true
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:deadbeef.k47.cz/soa-aos,acton/data-oriented-design"
+embedding: null

@@ -1,0 +1,41 @@
+id: rust-cache-line-pad-shared-atomic
+name: pad co-located atomics to separate cache lines (false sharing fix)
+category: algorithmic
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: 'struct\s+\w+\s*\{[^}]*Atomic(U|I)(8|16|32|64|size)[^}]*Atomic'
+  profile_signature:
+    - "cache:L1-dcache-load-miss-spike"
+    - "hot:HITM-on-struct-address"
+    - "scaling:throughput-degrades-with-cores"
+  naive_alt_ratio_min: null
+transformation:
+  steps:
+    - "Identify atomics or counters that are written by independent threads but live on the same cache line."
+    - "Wrap each independent field in `crossbeam_utils::CachePadded<T>` so every hot atomic lands on its own 64-byte line."
+    - "Keep read-mostly shared state unpadded so the common case still fits in one line."
+    - "Re-verify with `perf c2c` (or Intel PCM) that HITM events on the struct address drop to near-zero after the change."
+    - "Invariants: atomic ordering (`Ordering::*`) is unchanged; only the struct's memory layout moves."
+verification:
+  test_selectors: ["concurrent", "atomic", "counter"]
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: true
+benchmark_template: |
+  fn bench_shared_counter(c: &mut Criterion) {
+      let c_counter = Arc::new(Counter::default());
+      c.bench_function("shared_counter_4threads", |b| b.iter(|| {
+          let handles: Vec<_> = (0..4).map(|_| {
+              let c = c_counter.clone();
+              std::thread::spawn(move || for _ in 0..100_000 { c.inc(); })
+          }).collect();
+          for h in handles { h.join().unwrap(); }
+      }));
+  }
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:lemire,linux-false-sharing"
+embedding: null

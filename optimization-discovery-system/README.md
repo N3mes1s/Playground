@@ -44,14 +44,17 @@ cargo zigbuild --release --target x86_64-unknown-linux-musl --bin ods
 ## CLI
 
 ```
-ods scan     <repo>                              # discover hot-primitive candidates
-ods run      <repo> --target <lang::mod::sym>    # execute the full loop
-ods bench    <repo> --target <lang::mod::sym>    # measurement only
-ods verify   <repo> --patch <path>               # compat gate on an existing patch
-ods recipes  {list|show|import|export|promote}   # corpus management
-ods ci       action <repo>                       # GitHub Actions one-shot mode
-ods ci       serve  --port 8787                  # GitHub App webhook server
-ods explain  <run-id>                            # regenerate the data-backed report
+ods scan     <repo>                                                    # enumerate bench candidates
+ods discover <repo> [--top N]                                          # recipe + anti-pattern scan, ranked
+ods run      <repo> --target <lang::mod::sym> [--llm]                  # execute the full loop on one target
+ods optimize <repo> [--budget-usd N] [--top K] [--llm]                 # Discover -> top-K -> race, batched
+ods explore  <repo> [--budget-usd N] [--max-recipes N]                 # read-only Explorer proposes new Hypothesized recipes
+ods bench    <repo> --target <lang::mod::sym>                          # measurement only
+ods verify   <repo> --patch <path>                                     # compat gate on an existing patch
+ods recipes  {list [--all]|show|search|import|import-dir|export|promote}  # corpus management
+ods ci       action <repo>                                             # GitHub Actions one-shot mode
+ods ci       serve  --port 8787                                        # GitHub App webhook server
+ods explain  <repo> <run-id> [--timeline]                              # regenerate report; --timeline replays events
 ```
 
 ### Run modes
@@ -80,8 +83,45 @@ crates/
   ods-lang-java/    Java adapter (mvn/gradle + surefire/JMH)
   ods-ci/           GitHub REST API client + Actions one-shot + App webhook server
   ods-report/       PR body renderer (numbers, deltas, evidence, repro cmd)
-recipes/seed/       hand-authored starter recipes
+recipes/seed/         hand-authored Seed recipes (starter validated wins)
+recipes/antipatterns/ hand-authored anti-patterns: rust (11), go (8), python (7)
+                      AntiPattern-only promotion state - surfaced by the Discoverer
+                      as candidate targets, never auto-applied
 ```
+
+## The four-state lifecycle and how the corpus grows itself
+
+```
+Hypothesized  -- Explorer proposed it; never validated
+     |          Generalizer also lands generalized wins here
+     v
+   Seed        -- human-blessed; or Explorer output that passed review
+     |          Auto-promote on first gate-passing race win
+     v
+Candidate     -- one win, specific to a repo
+     |          Auto-promote on >=3 distinct-repo merged wins
+     v
+Validated     -- proven across repos, zero rollbacks
+     |          Auto-promote on +N extra wins within rolling window
+     v
+  Corpus      -- shipped defaults
+                AntiPattern is parallel: target-surfacing signals only,
+                never auto-applied regardless of hits.
+```
+
+Every retrieval produces **evidence** that flows back into the corpus:
+
+- **Win** -> auto-harvest specific recipe + run Generalizer for a reusable
+  sibling (links via `generalized_from` / `generalized_as`).
+- **Abstain / gate reject / no measured speedup** -> append a
+  `NegativeRecord` to the retrieved recipe; the retrieval ranker
+  down-weights it for future runs; Hypothesized recipes with >=3
+  distinct-repo negatives and zero wins are auto-retired.
+
+Retrieval itself is **vector-first**: `cosine(query_embedding, recipe_embedding)` over
+a hash-based 128-dim embedding auto-populated on every upsert, multiplied by
+`promotion_weight * (1 - negative_penalty)` so heavily-penalised recipes
+stop surfacing but can recover if wins later outweigh negatives.
 
 ## The recipe corpus
 

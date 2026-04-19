@@ -3,7 +3,9 @@
 //! is idempotent and monotonic (never regresses) unless the caller demotes
 //! explicitly.
 
-use crate::schema::{NegativeOutcome, NegativeRecord, PromotionState, Recipe, SuccessRecord};
+use crate::schema::{NegativeOutcome, PromotionState, Recipe, SuccessRecord};
+#[cfg(test)]
+use crate::schema::NegativeRecord;
 
 #[derive(Debug, Clone)]
 pub struct PromotionRules {
