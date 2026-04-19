@@ -32,7 +32,9 @@ pub struct ZeroDiffGate {
 
 impl Default for ZeroDiffGate {
     fn default() -> Self {
-        Self { min_fuzz_minutes: 5 }
+        Self {
+            min_fuzz_minutes: 5,
+        }
     }
 }
 
@@ -41,10 +43,7 @@ impl ZeroDiffGate {
         let mut reasons = Vec::new();
 
         if !input.tests.green() {
-            reasons.push(format!(
-                "{} project test(s) failed",
-                input.tests.failed
-            ));
+            reasons.push(format!("{} project test(s) failed", input.tests.failed));
         }
 
         if let Some(pt) = &input.property_tests {

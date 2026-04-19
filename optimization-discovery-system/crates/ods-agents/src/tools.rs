@@ -49,7 +49,9 @@ fn normalize(p: &Path) -> PathBuf {
             std::path::Component::ParentDir => {
                 if !matches!(
                     out.last(),
-                    Some(std::path::Component::RootDir) | Some(std::path::Component::Prefix(_)) | None
+                    Some(std::path::Component::RootDir)
+                        | Some(std::path::Component::Prefix(_))
+                        | None
                 ) {
                     out.pop();
                 } else if out.is_empty() {
@@ -75,7 +77,8 @@ impl ToolHandlerMap {
         loop_.register(
             ToolSpec {
                 name: "read_file".into(),
-                description: "Read a UTF-8 text file from the sandbox at the given relative path.".into(),
+                description: "Read a UTF-8 text file from the sandbox at the given relative path."
+                    .into(),
                 input_schema: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -84,7 +87,9 @@ impl ToolHandlerMap {
                     "required": ["path"]
                 }),
             },
-            Box::new(ReadFile { sandbox: sb.clone() }),
+            Box::new(ReadFile {
+                sandbox: sb.clone(),
+            }),
         );
 
         loop_.register(
@@ -97,15 +102,21 @@ impl ToolHandlerMap {
                     "required": ["path"]
                 }),
             },
-            Box::new(ListDir { sandbox: sb.clone() }),
+            Box::new(ListDir {
+                sandbox: sb.clone(),
+            }),
         );
 
         loop_.register(
             ToolSpec {
                 name: "ast_query".into(),
                 description:
-                    "Run a regex-based AST query against a sandbox-relative file; returns matching \
-                     lines with 1-based line numbers."
+                    "Query a sandbox-relative source file. If `pattern` starts with `(` it is \
+                     parsed as a tree-sitter-rust S-expression query over the AST (e.g. \
+                     `(call_expression function: (field_expression field: (field_identifier) @m))`); \
+                     matches inside comments, string literals, and macro bodies are filtered out \
+                     automatically. Otherwise `pattern` is treated as a line-anchored regex. \
+                     Returns one entry per match with 1-based line numbers and the matched text."
                         .into(),
                 input_schema: serde_json::json!({
                     "type": "object",
@@ -139,21 +150,24 @@ impl ToolHandlerMap {
                     "required": ["diff"]
                 }),
             },
-            Box::new(ApplyPatch { sandbox: sb.clone() }),
+            Box::new(ApplyPatch {
+                sandbox: sb.clone(),
+            }),
         );
 
         loop_.register(
             ToolSpec {
                 name: "run_tests".into(),
-                description: "Run the sandbox's test suite and return a structured summary."
-                    .into(),
+                description: "Run the sandbox's test suite and return a structured summary.".into(),
                 input_schema: serde_json::json!({
                     "type": "object",
                     "properties": { "language": { "type": "string" } },
                     "required": ["language"]
                 }),
             },
-            Box::new(RunTests { sandbox: sb.clone() }),
+            Box::new(RunTests {
+                sandbox: sb.clone(),
+            }),
         );
 
         loop_.register(
@@ -166,7 +180,9 @@ impl ToolHandlerMap {
                     "properties": { "filter": { "type": "string" } }
                 }),
             },
-            Box::new(RunBench { sandbox: sb.clone() }),
+            Box::new(RunBench {
+                sandbox: sb.clone(),
+            }),
         );
     }
 }
@@ -265,13 +281,17 @@ impl ToolHandler for ApplyPatch {
                 ])
                 .cwd(root)
                 .allow_nonzero())
-                .await
+            .await
         } else {
             run(&Invocation::new("patch")
-                .args(["-p1".to_string(), "-i".to_string(), tmp.display().to_string()])
+                .args([
+                    "-p1".to_string(),
+                    "-i".to_string(),
+                    tmp.display().to_string(),
+                ])
                 .cwd(root)
                 .allow_nonzero())
-                .await
+            .await
         };
         let _ = tokio::fs::remove_file(&tmp).await;
         let out = result?;
@@ -303,7 +323,12 @@ impl ToolHandler for RunTests {
         let (program, args): (&str, Vec<String>) = match arg.language.as_str() {
             "rust" => (
                 "cargo",
-                vec!["test".into(), "--workspace".into(), "--no-fail-fast".into(), "--quiet".into()],
+                vec![
+                    "test".into(),
+                    "--workspace".into(),
+                    "--no-fail-fast".into(),
+                    "--quiet".into(),
+                ],
             ),
             "go" => ("go", vec!["test".into(), "./...".into()]),
             "python" => ("pytest", vec!["-q".into()]),
@@ -319,7 +344,7 @@ impl ToolHandler for RunTests {
             .args(args)
             .cwd(root)
             .allow_nonzero())
-            .await?;
+        .await?;
         Ok(format!(
             "status={}\n---stdout---\n{}\n---stderr---\n{}",
             out.status,
@@ -352,7 +377,7 @@ impl ToolHandler for RunBench {
             .args(args)
             .cwd(root)
             .allow_nonzero())
-            .await?;
+        .await?;
         Ok(format!(
             "status={}\n---stdout---\n{}",
             out.status,

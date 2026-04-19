@@ -1,10 +1,16 @@
 //! Rust language adapter backed by real subprocess invocations of `cargo`.
 //!
-//! The adapter intentionally avoids linking against `tree-sitter` today: the
-//! grammar adds ~40s of `cc` to every `cargo build` and we can do useful AST
-//! matching with line-anchored regex queries for the MVP. Stage 2+ can swap in
-//! `tree-sitter-rust` behind the same [`LanguageAdapter::ast_query`] seam
-//! without a user-visible change.
+//! `ast_query` accepts two dialects, chosen transparently by the caller's
+//! query string:
+//! - If the string starts with `(` it is parsed as a `tree-sitter-rust`
+//!   S-expression query and executed against the parsed AST. Matches
+//!   inside comments, string literals, and macro bodies are filtered out
+//!   by the grammar, so recipes get structural triggers instead of
+//!   prose-overmatching regex.
+//! - Otherwise the string is treated as a line-anchored regex. This keeps
+//!   every existing recipe (~50+) that ships regex triggers working
+//!   verbatim. `Discoverer`'s bulk trigger-scan still uses regex directly;
+//!   only the agent-facing `ast_query` tool path gained the AST mode.
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -64,8 +70,8 @@ impl LanguageAdapter for RustAdapter {
             .cwd(repo)
             .timeout(self.build_timeout)
             .allow_nonzero())
-            .await
-            .context("cargo build")?;
+        .await
+        .context("cargo build")?;
 
         Ok(Build {
             workdir: repo.to_path_buf(),
@@ -91,7 +97,7 @@ impl LanguageAdapter for RustAdapter {
             .cwd(&build.workdir)
             .timeout(self.test_timeout)
             .allow_nonzero())
-            .await?;
+        .await?;
         Ok(parse_cargo_test_output(&out.stdout, &out.stderr))
     }
 
@@ -104,7 +110,7 @@ impl LanguageAdapter for RustAdapter {
             .cwd(&build.workdir)
             .timeout(self.bench_timeout)
             .allow_nonzero())
-            .await?;
+        .await?;
         // Prefer Criterion's JSON artifacts when they exist - structured,
         // not regex - and fall back to stdout parsing otherwise.
         let crit = criterion_json::collect(&build.workdir).unwrap_or_default();
@@ -122,19 +128,11 @@ impl LanguageAdapter for RustAdapter {
         let text = tokio::fs::read_to_string(file)
             .await
             .with_context(|| format!("read {}", file.display()))?;
-        let re = Regex::new(query).context("compile ast_query regex")?;
-        let mut out = Vec::new();
-        for (i, line) in text.lines().enumerate() {
-            if re.is_match(line) {
-                out.push(AstMatch {
-                    file: file.to_path_buf(),
-                    start_line: (i + 1) as u32,
-                    end_line: (i + 1) as u32,
-                    text: line.to_string(),
-                });
-            }
+        if query.trim_start().starts_with('(') {
+            tree_sitter_ast_query(file, &text, query)
+        } else {
+            regex_ast_query(file, &text, query)
         }
-        Ok(out)
     }
 
     fn emit_patch(&self, edits: &[Edit]) -> Result<Patch> {
@@ -143,7 +141,11 @@ impl LanguageAdapter for RustAdapter {
             let rel = e.file.display().to_string();
             diff.push_str(&format!("--- a/{rel}\n+++ b/{rel}\n"));
             let text_diff = similar::TextDiff::from_lines(&e.before, &e.after);
-            for hunk in text_diff.unified_diff().header("before", "after").iter_hunks() {
+            for hunk in text_diff
+                .unified_diff()
+                .header("before", "after")
+                .iter_hunks()
+            {
                 diff.push_str(&hunk.to_string());
             }
         }
@@ -184,19 +186,17 @@ impl LanguageAdapter for RustAdapter {
             });
         };
         let out = run(&Invocation::new("cargo")
-            .args(
-                [
-                    "fuzz".to_string(),
-                    "run".to_string(),
-                    first.clone(),
-                    "--".to_string(),
-                    format!("-max_total_time={}", budget.as_secs()),
-                ],
-            )
+            .args([
+                "fuzz".to_string(),
+                "run".to_string(),
+                first.clone(),
+                "--".to_string(),
+                format!("-max_total_time={}", budget.as_secs()),
+            ])
             .cwd(&build.workdir)
             .timeout(budget + Duration::from_secs(30))
             .allow_nonzero())
-            .await?;
+        .await?;
         let crashes = if out.stdout.contains("crash-") || out.stderr.contains("crash-") {
             1
         } else {
@@ -208,6 +208,58 @@ impl LanguageAdapter for RustAdapter {
             seed_corpus_size: 0,
         })
     }
+}
+
+/// Structural `tree-sitter-rust` query path. Captures in the query are
+/// ignored — every matched node becomes one [`AstMatch`] whose line range
+/// tracks the node's byte range. Comments, string literals, and macro bodies
+/// are filtered automatically because they appear as their own tree-sitter
+/// node types, not as the `function_item`/`call_expression`/etc. nodes
+/// recipes actually target.
+fn regex_ast_query(file: &Path, text: &str, query: &str) -> Result<Vec<AstMatch>> {
+    let re = Regex::new(query).context("compile ast_query regex")?;
+    let mut out = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        if re.is_match(line) {
+            out.push(AstMatch {
+                file: file.to_path_buf(),
+                start_line: (i + 1) as u32,
+                end_line: (i + 1) as u32,
+                text: line.to_string(),
+            });
+        }
+    }
+    Ok(out)
+}
+
+fn tree_sitter_ast_query(file: &Path, text: &str, query: &str) -> Result<Vec<AstMatch>> {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_rust::language())
+        .context("load tree-sitter-rust grammar")?;
+    let Some(tree) = parser.parse(text, None) else {
+        anyhow::bail!("tree-sitter failed to parse {}", file.display());
+    };
+    let q = tree_sitter::Query::new(&tree_sitter_rust::language(), query)
+        .with_context(|| format!("compile tree-sitter query: {query}"))?;
+    let mut cursor = tree_sitter::QueryCursor::new();
+    let mut out = Vec::new();
+    let bytes = text.as_bytes();
+    for m in cursor.matches(&q, tree.root_node(), bytes) {
+        for cap in m.captures {
+            let node = cap.node;
+            let start = node.start_position();
+            let end = node.end_position();
+            let matched = node.utf8_text(bytes).unwrap_or("").to_string();
+            out.push(AstMatch {
+                file: file.to_path_buf(),
+                start_line: (start.row + 1) as u32,
+                end_line: (end.row + 1) as u32,
+                text: matched,
+            });
+        }
+    }
+    Ok(out)
 }
 
 fn detect_toolchain(repo: &Path) -> Option<String> {
@@ -244,10 +296,8 @@ fn discover_fuzz_targets(fuzz_dir: &Path) -> Result<Vec<String>> {
 /// Parse `cargo test --quiet` output. libtest emits lines like:
 ///   `test result: ok. 42 passed; 0 failed; 1 ignored; 0 measured;`
 pub fn parse_cargo_test_output(stdout: &str, stderr: &str) -> TestReport {
-    let re = Regex::new(
-        r"test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored",
-    )
-    .expect("static regex");
+    let re = Regex::new(r"test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored")
+        .expect("static regex");
     let mut passed = 0u32;
     let mut failed = 0u32;
     let mut skipped = 0u32;
@@ -272,10 +322,8 @@ pub fn parse_cargo_test_output(stdout: &str, stderr: &str) -> TestReport {
 pub fn parse_cargo_bench_output(stdout: &str) -> BenchReport {
     let mut samples = Vec::new();
 
-    let libtest_re = Regex::new(
-        r"test\s+(?P<name>\S+)\s+\.\.\.\s+bench:\s+([\d,]+)\s+ns/iter",
-    )
-    .unwrap();
+    let libtest_re =
+        Regex::new(r"test\s+(?P<name>\S+)\s+\.\.\.\s+bench:\s+([\d,]+)\s+ns/iter").unwrap();
     for caps in libtest_re.captures_iter(stdout) {
         let name = caps.name("name").unwrap().as_str().to_string();
         let raw = caps.get(2).unwrap().as_str().replace(',', "");
@@ -294,7 +342,10 @@ pub fn parse_cargo_bench_output(stdout: &str) -> BenchReport {
     .unwrap();
     for caps in crit_re.captures_iter(stdout) {
         let name = caps.name("name").unwrap().as_str().trim().to_string();
-        let mid: f64 = caps.get(4).and_then(|m| m.as_str().parse().ok()).unwrap_or(0.0);
+        let mid: f64 = caps
+            .get(4)
+            .and_then(|m| m.as_str().parse().ok())
+            .unwrap_or(0.0);
         let unit = caps.name("unit").unwrap().as_str();
         let ns = match unit {
             "ns" => mid,
@@ -357,6 +408,36 @@ mod tests {
         let hits = a.ast_query(&p, r"fn read_dir\b").await.unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].start_line, 2);
+    }
+
+    #[tokio::test]
+    async fn ast_query_tree_sitter_ignores_comments_and_strings() {
+        // Regex would match all three `fn foo`; tree-sitter only matches
+        // the real function definition.
+        let src = r#"
+// fn foo_in_comment() {}
+const S: &str = "fn foo_in_string() {}";
+fn foo_real() {}
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("y.rs");
+        std::fs::write(&p, src).unwrap();
+        let a = RustAdapter::new();
+        let hits = a
+            .ast_query(&p, "(function_item name: (identifier) @n)")
+            .await
+            .unwrap();
+        assert_eq!(
+            hits.len(),
+            1,
+            "expected only the real fn; got {:?}",
+            hits.iter().map(|h| &h.text).collect::<Vec<_>>()
+        );
+        assert!(
+            hits[0].text.contains("foo_real"),
+            "captured wrong node: {:?}",
+            hits[0].text
+        );
     }
 
     #[test]

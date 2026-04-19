@@ -71,9 +71,8 @@ impl GitHubAppAuth {
         installation_id: u64,
     ) -> Result<String> {
         let jwt = Self::jwt(creds, Duration::from_secs(600))?;
-        let url = format!(
-            "https://api.github.com/app/installations/{installation_id}/access_tokens"
-        );
+        let url =
+            format!("https://api.github.com/app/installations/{installation_id}/access_tokens");
         let resp = client
             .post(&url)
             .header("Authorization", format!("Bearer {jwt}"))
@@ -138,14 +137,11 @@ impl rsa::rand_core::CryptoRng for DeterministicRng {}
 
 /// URL-safe base64 without padding.
 fn b64url(bytes: &[u8]) -> String {
-    const ALPH: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const ALPH: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
     let mut i = 0;
     while i + 3 <= bytes.len() {
-        let n = ((bytes[i] as u32) << 16)
-            | ((bytes[i + 1] as u32) << 8)
-            | (bytes[i + 2] as u32);
+        let n = ((bytes[i] as u32) << 16) | ((bytes[i + 1] as u32) << 8) | (bytes[i + 2] as u32);
         out.push(ALPH[((n >> 18) & 0x3F) as usize] as char);
         out.push(ALPH[((n >> 12) & 0x3F) as usize] as char);
         out.push(ALPH[((n >> 6) & 0x3F) as usize] as char);

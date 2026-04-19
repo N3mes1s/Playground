@@ -157,7 +157,18 @@ fn is_bench_file(p: &Path) -> bool {
 fn is_source_file(p: &Path) -> bool {
     matches!(
         p.extension().and_then(|s| s.to_str()),
-        Some("rs") | Some("go") | Some("py") | Some("rb") | Some("c") | Some("cc") | Some("cpp") | Some("h") | Some("hpp") | Some("js") | Some("ts") | Some("java")
+        Some("rs")
+            | Some("go")
+            | Some("py")
+            | Some("rb")
+            | Some("c")
+            | Some("cc")
+            | Some("cpp")
+            | Some("h")
+            | Some("hpp")
+            | Some("js")
+            | Some("ts")
+            | Some("java")
     )
 }
 
@@ -341,7 +352,10 @@ impl Discoverer {
                 .iter()
                 .map(|(r, n)| retrieval_score(r, 5) * (*n as f64).min(5.0))
                 .sum();
-            let anti_score: f64 = anti_hits.iter().map(|(_, n)| (*n as f64).min(5.0) * 0.5).sum();
+            let anti_score: f64 = anti_hits
+                .iter()
+                .map(|(_, n)| (*n as f64).min(5.0) * 0.5)
+                .sum();
             let fan_in_score = ((fan_in + 1) as f64).ln() * 0.3;
             cand.score = recipe_score + anti_score + fan_in_score;
             candidates.push(cand);
@@ -454,7 +468,10 @@ fn find_naive_alts(
                     .chars()
                     .take(120)
                     .collect();
-                hints.insert(sym.clone(), format!("referenced in {}: {snip}", f.display()));
+                hints.insert(
+                    sym.clone(),
+                    format!("referenced in {}: {snip}", f.display()),
+                );
             }
         }
     }

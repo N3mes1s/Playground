@@ -47,7 +47,7 @@ impl LanguageAdapter for RubyAdapter {
                 .cwd(repo)
                 .allow_nonzero()
                 .timeout(Duration::from_secs(600)))
-                .await?;
+            .await?;
         }
         Ok(Build {
             workdir: repo.to_path_buf(),
@@ -63,7 +63,7 @@ impl LanguageAdapter for RubyAdapter {
                 .cwd(&build.workdir)
                 .timeout(Duration::from_secs(600))
                 .allow_nonzero())
-                .await?;
+            .await?;
             return Ok(parse_minitest_output(&out.stdout));
         }
         if build.workdir.join("spec").exists() && which("bundle").is_some() {
@@ -72,7 +72,7 @@ impl LanguageAdapter for RubyAdapter {
                 .cwd(&build.workdir)
                 .timeout(Duration::from_secs(600))
                 .allow_nonzero())
-                .await?;
+            .await?;
             return Ok(parse_rspec_output(&out.stdout));
         }
         Ok(TestReport {
@@ -94,7 +94,7 @@ impl LanguageAdapter for RubyAdapter {
                 .cwd(&build.workdir)
                 .timeout(Duration::from_secs(600))
                 .allow_nonzero())
-                .await?;
+            .await?;
             return Ok(parse_benchmark_ips_output(&out.stdout));
         }
         Ok(BenchReport { samples: vec![] })
@@ -147,9 +147,10 @@ fn detect_ruby_version(repo: &Path) -> Option<String> {
 
 /// minitest final line: `42 runs, 100 assertions, 0 failures, 0 errors, 1 skips`
 pub fn parse_minitest_output(stdout: &str) -> TestReport {
-    let re =
-        Regex::new(r"(\d+)\s+runs,\s+\d+\s+assertions,\s+(\d+)\s+failures,\s+\d+\s+errors,\s+(\d+)\s+skips")
-            .unwrap();
+    let re = Regex::new(
+        r"(\d+)\s+runs,\s+\d+\s+assertions,\s+(\d+)\s+failures,\s+\d+\s+errors,\s+(\d+)\s+skips",
+    )
+    .unwrap();
     for caps in re.captures_iter(stdout) {
         let runs: u32 = caps[1].parse().unwrap_or(0);
         let failures: u32 = caps[2].parse().unwrap_or(0);

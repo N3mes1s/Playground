@@ -5,9 +5,7 @@ use ods_ci::api::{b64_encode, GitHubClient};
 use ods_ci::{AppCredentials, GitHubAppAuth, PrAllowlist};
 use ods_core::{git::Worktree, Budget, Mode};
 use ods_lang::Registry;
-use ods_recipes::{
-    score::score_recipes, PromotionState, RecipeQuery, Store,
-};
+use ods_recipes::{score::score_recipes, PromotionState, RecipeQuery, Store};
 use ods_report::{render_pr_body, ReportInputs};
 use ods_verify::{GateInput, ZeroDiffGate};
 use std::path::PathBuf;
@@ -206,7 +204,9 @@ enum CiAction {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .init();
 
     let cli = Cli::parse();
@@ -217,23 +217,64 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::Scan { repo, json } => cmd_scan(&repo, json).await,
-        Command::Run { repo, target, mode, wall_cap_s, spend_cap_usd, llm } => {
-            cmd_run(&repo, &target, mode, wall_cap_s, spend_cap_usd, llm, &store_path).await
+        Command::Run {
+            repo,
+            target,
+            mode,
+            wall_cap_s,
+            spend_cap_usd,
+            llm,
+        } => {
+            cmd_run(
+                &repo,
+                &target,
+                mode,
+                wall_cap_s,
+                spend_cap_usd,
+                llm,
+                &store_path,
+            )
+            .await
         }
         Command::Bench { repo, target } => cmd_bench(&repo, &target).await,
         Command::Verify { repo, patch } => cmd_verify(&repo, &patch).await,
         Command::Recipes { action } => cmd_recipes(action, &store_path).await,
         Command::Ci { action } => cmd_ci(action, &store_path).await,
-        Command::Explain { repo, run_id, timeline } => cmd_explain(&repo, &run_id, timeline),
-        Command::Explore { repo, budget_usd, max_recipes, language, dry_run } => {
-            cmd_explore(&repo, budget_usd, max_recipes, &language, dry_run, &store_path).await
+        Command::Explain {
+            repo,
+            run_id,
+            timeline,
+        } => cmd_explain(&repo, &run_id, timeline),
+        Command::Explore {
+            repo,
+            budget_usd,
+            max_recipes,
+            language,
+            dry_run,
+        } => {
+            cmd_explore(
+                &repo,
+                budget_usd,
+                max_recipes,
+                &language,
+                dry_run,
+                &store_path,
+            )
+            .await
         }
-        Command::Discover { repo, top, json, language } => {
-            cmd_discover(&repo, top, json, &language, &store_path).await
-        }
-        Command::Optimize { repo, budget_usd, top, mode, llm } => {
-            cmd_optimize(&repo, budget_usd, top, mode, llm, &store_path).await
-        }
+        Command::Discover {
+            repo,
+            top,
+            json,
+            language,
+        } => cmd_discover(&repo, top, json, &language, &store_path).await,
+        Command::Optimize {
+            repo,
+            budget_usd,
+            top,
+            mode,
+            llm,
+        } => cmd_optimize(&repo, budget_usd, top, mode, llm, &store_path).await,
     }
 }
 
@@ -342,9 +383,9 @@ async fn cmd_run(
             "winner: {} ({:.2}x, lower {:.2}x, accepted: {})",
             kind, v.speedup_point, v.speedup_lower, v.accepted
         ),
-        (None, _) => println!(
-            "winner: none (race did not select a specialist; no source change applied)"
-        ),
+        (None, _) => {
+            println!("winner: none (race did not select a specialist; no source change applied)")
+        }
         (Some(kind), None) => println!("winner: {} (no speedup verdict persisted)", kind),
     }
     Ok(())
@@ -363,8 +404,8 @@ async fn cmd_bench(repo: &PathBuf, target_raw: &str) -> Result<()> {
 async fn cmd_verify(repo: &PathBuf, patch: &PathBuf) -> Result<()> {
     let registry = build_registry();
     let adapter = registry.detect(repo).await?;
-    let patch_text = std::fs::read_to_string(patch)
-        .with_context(|| format!("read {}", patch.display()))?;
+    let patch_text =
+        std::fs::read_to_string(patch).with_context(|| format!("read {}", patch.display()))?;
 
     let parent = repo.join(".ods").join("verify");
     let wt = Worktree::create(repo, "verify", &parent)?;
@@ -459,7 +500,9 @@ async fn cmd_recipes(action: RecipeAction, store_path: &PathBuf) -> Result<()> {
                 hits.extend(antis);
             }
             if hits.is_empty() {
-                println!("(no recipes. import seeds with `ods recipes import recipes/seed/<file>.yaml`)");
+                println!(
+                    "(no recipes. import seeds with `ods recipes import recipes/seed/<file>.yaml`)"
+                );
                 return Ok(());
             }
             for r in hits {
@@ -476,7 +519,11 @@ async fn cmd_recipes(action: RecipeAction, store_path: &PathBuf) -> Result<()> {
                 None => anyhow::bail!("no such recipe: {id}"),
             }
         }
-        RecipeAction::Search { query, language, limit } => {
+        RecipeAction::Search {
+            query,
+            language,
+            limit,
+        } => {
             let candidates = store.search(&RecipeQuery {
                 language,
                 category: None,
@@ -494,8 +541,8 @@ async fn cmd_recipes(action: RecipeAction, store_path: &PathBuf) -> Result<()> {
         RecipeAction::Import { path } => {
             let text = std::fs::read_to_string(&path)
                 .with_context(|| format!("read {}", path.display()))?;
-            let recipe: ods_recipes::Recipe = serde_yaml::from_str(&text)
-                .with_context(|| format!("parse {}", path.display()))?;
+            let recipe: ods_recipes::Recipe =
+                serde_yaml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
             store.upsert(&recipe)?;
             println!("imported {}", recipe.id);
         }
@@ -503,8 +550,8 @@ async fn cmd_recipes(action: RecipeAction, store_path: &PathBuf) -> Result<()> {
             let mut imported = 0u32;
             let mut skipped = 0u32;
             let mut failed = 0u32;
-            for entry in std::fs::read_dir(&path)
-                .with_context(|| format!("read_dir {}", path.display()))?
+            for entry in
+                std::fs::read_dir(&path).with_context(|| format!("read_dir {}", path.display()))?
             {
                 let Ok(entry) = entry else {
                     continue;
@@ -540,8 +587,7 @@ async fn cmd_recipes(action: RecipeAction, store_path: &PathBuf) -> Result<()> {
                 ..Default::default()
             })?;
             let yaml = serde_yaml::to_string(&all)?;
-            std::fs::write(&out, yaml)
-                .with_context(|| format!("write {}", out.display()))?;
+            std::fs::write(&out, yaml).with_context(|| format!("write {}", out.display()))?;
             println!("exported {} recipes to {}", all.len(), out.display());
         }
         RecipeAction::Promote { id, to } => {
@@ -550,10 +596,10 @@ async fn cmd_recipes(action: RecipeAction, store_path: &PathBuf) -> Result<()> {
                 .get(&id)?
                 .with_context(|| format!("no such recipe: {id}"))?;
             recipe.promotion = match to {
-                RecipePromotion::Seed      => PromotionState::Seed,
+                RecipePromotion::Seed => PromotionState::Seed,
                 RecipePromotion::Candidate => PromotionState::Candidate,
                 RecipePromotion::Validated => PromotionState::Validated,
-                RecipePromotion::Corpus    => PromotionState::Corpus,
+                RecipePromotion::Corpus => PromotionState::Corpus,
             };
             store.upsert(&recipe)?;
             println!("promoted {} to {:?}", recipe.id, recipe.promotion);
@@ -574,7 +620,9 @@ async fn cmd_ci(action: CiAction, store_path: &PathBuf) -> Result<()> {
         } => {
             if let Some(list) = allowlist {
                 let al = PrAllowlist::from_list(
-                    list.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+                    list.split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty()),
                 );
                 if !al.permits(&github_repo) {
                     anyhow::bail!("{github_repo} not on ODS_ALLOWLIST");
@@ -602,13 +650,7 @@ async fn cmd_ci(action: CiAction, store_path: &PathBuf) -> Result<()> {
                     private_key_pem: pem,
                 };
                 let http = reqwest::Client::builder().build()?;
-                GitHubAppAuth::installation_token(
-                    &http,
-                    "ods/0.1",
-                    &creds,
-                    install_id,
-                )
-                .await?
+                GitHubAppAuth::installation_token(&http, "ods/0.1", &creds, install_id).await?
             } else {
                 std::env::var("GITHUB_TOKEN")
                     .or_else(|_| std::env::var("ODS_GITHUB_TOKEN"))
@@ -653,20 +695,17 @@ async fn cmd_ci(action: CiAction, store_path: &PathBuf) -> Result<()> {
                 .cloned()
                 .map(ods_recipes::RecipeId)
                 .collect();
-            let pre_profile = art
-                .pre_profile
-                .clone()
-                .unwrap_or(ods_lang::ProfileReport {
-                    wall: std::time::Duration::ZERO,
-                    cycles: None,
-                    instructions: None,
-                    llc_misses: None,
-                    branch_misses: None,
-                    syscall_counts: vec![],
-                    alloc_count: None,
-                    alloc_bytes: None,
-                    flame_svg_path: None,
-                });
+            let pre_profile = art.pre_profile.clone().unwrap_or(ods_lang::ProfileReport {
+                wall: std::time::Duration::ZERO,
+                cycles: None,
+                instructions: None,
+                llc_misses: None,
+                branch_misses: None,
+                syscall_counts: vec![],
+                alloc_count: None,
+                alloc_bytes: None,
+                flame_svg_path: None,
+            });
             let post_profile = art
                 .post_profile
                 .clone()
@@ -780,8 +819,8 @@ fn cmd_explain(repo: &PathBuf, run_id: &str, timeline: bool) -> Result<()> {
         let runs_db = repo.join(".ods").join("runs.db");
         let store = ods_core::RunStore::open(&runs_db)
             .with_context(|| format!("open {}", runs_db.display()))?;
-        let uuid = uuid::Uuid::parse_str(run_id)
-            .with_context(|| format!("parse run id `{run_id}`"))?;
+        let uuid =
+            uuid::Uuid::parse_str(run_id).with_context(|| format!("parse run id `{run_id}`"))?;
         let rid = ods_core::RunId(uuid);
         let events = store.events(&rid)?;
         if events.is_empty() {
@@ -793,13 +832,19 @@ fn cmd_explain(repo: &PathBuf, run_id: &str, timeline: bool) -> Result<()> {
             // render key fields inline.
             let detail = ev.detail.unwrap_or_default();
             let summary = summarize_event(&ev.kind, &detail);
-            println!("[{}] {:>4} {:<22} {:<16} {}", ev.at, ev.seq, ev.stage, ev.kind, summary);
+            println!(
+                "[{}] {:>4} {:<22} {:<16} {}",
+                ev.at, ev.seq, ev.stage, ev.kind, summary
+            );
         }
         return Ok(());
     }
-    let path = repo.join(".ods").join("runs").join(format!("{run_id}.json"));
-    let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("read {}", path.display()))?;
+    let path = repo
+        .join(".ods")
+        .join("runs")
+        .join(format!("{run_id}.json"));
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
     println!("{text}");
     Ok(())
 }
@@ -833,7 +878,12 @@ fn summarize_event(kind: &str, detail_json: &str) -> String {
             field("input_tokens"),
             field("output_tokens")
         ),
-        "reasoning" => format!("{} iter={} >> {}", field("specialist"), field("iteration"), field("text_preview")),
+        "reasoning" => format!(
+            "{} iter={} >> {}",
+            field("specialist"),
+            field("iteration"),
+            field("text_preview")
+        ),
         "tool-call" => format!(
             "{} iter={} {}({})",
             field("specialist"),
@@ -882,17 +932,24 @@ fn split_repo(full: &str) -> Result<(String, String)> {
 
 async fn cmd_explore(
     repo: &PathBuf,
-    _budget_usd: f64,
+    budget_usd: f64,
     max_recipes: u32,
     language: &str,
     dry_run: bool,
     store_path: &PathBuf,
 ) -> Result<()> {
+    // Give the Explorer a hard per-call budget gate using its user-specified
+    // cap. A generous 30-minute wall ceiling matches the default CI mode.
+    let tracker = ods_core::BudgetTracker::new(Some(&ods_core::Budget {
+        wall_cap: std::time::Duration::from_secs(30 * 60),
+        spend_cap_usd: budget_usd,
+    }));
     let outcome = ods_agents::run_explorer(ods_agents::ExplorerInput {
         repo,
         language: language.to_string(),
         max_recipes,
         max_iters: 24,
+        budget_tracker: Some(tracker),
     })
     .await?;
     println!(
@@ -962,8 +1019,7 @@ async fn cmd_discover(
 ) -> Result<()> {
     ensure_parent(store_path)?;
     let store = Store::open(store_path)?;
-    let candidates =
-        ods_agents::Discoverer::default().scan_with_recipes(repo, &store, top)?;
+    let candidates = ods_agents::Discoverer::default().scan_with_recipes(repo, &store, top)?;
     if json {
         println!("{}", serde_json::to_string_pretty(&candidates)?);
     } else {
@@ -1010,7 +1066,10 @@ async fn cmd_optimize(
     let batch = scheduler.run(top, llm).await?;
     println!(
         "batch {} done: {} runs, total spend ${:.2}, winners {}",
-        batch.id, batch.child_runs.len(), batch.total_spent_usd, batch.winners
+        batch.id,
+        batch.child_runs.len(),
+        batch.total_spent_usd,
+        batch.winners
     );
     Ok(())
 }

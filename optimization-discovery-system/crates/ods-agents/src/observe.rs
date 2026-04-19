@@ -23,9 +23,7 @@ use std::sync::Mutex;
 #[serde(tag = "event", rename_all = "kebab-case")]
 pub enum AgentEvent {
     /// The orchestrator routed a specialist race.
-    RaceStart {
-        specialists: Vec<String>,
-    },
+    RaceStart { specialists: Vec<String> },
     /// A specialist's conversation is beginning.
     SpecialistStart {
         kind: String,
@@ -150,7 +148,12 @@ impl EventSink for InMemorySink {
 }
 
 /// Emit an event to both tracing and the sink. Keeps call-sites terse.
-pub fn emit(sink: Option<&Arc<dyn EventSink>>, run_id: &RunId, stage: LoopStage, event: AgentEvent) {
+pub fn emit(
+    sink: Option<&Arc<dyn EventSink>>,
+    run_id: &RunId,
+    stage: LoopStage,
+    event: AgentEvent,
+) {
     emit_trace(&event);
     if let Some(s) = sink {
         s.record(run_id, stage, &event);
@@ -254,7 +257,10 @@ fn emit_trace(event: &AgentEvent) {
                 "patch proposed"
             );
         }
-        AgentEvent::PatchRejected { specialist, reasons } => {
+        AgentEvent::PatchRejected {
+            specialist,
+            reasons,
+        } => {
             tracing::info!(
                 target: "ods::agents",
                 specialist = %specialist,

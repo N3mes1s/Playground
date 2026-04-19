@@ -294,8 +294,7 @@ fn row_to_record(r: &rusqlite::Row<'_>) -> Result<RunRecord> {
 }
 
 fn now_rfc3339() -> Result<String> {
-    Ok(time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)?)
+    Ok(time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?)
 }
 
 #[cfg(test)]

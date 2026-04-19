@@ -68,12 +68,21 @@ pub fn render_pr_body(i: &ReportInputs) -> String {
         .collect();
     if !negatives.is_empty() {
         writeln!(s, "### Prior failures on retrieved recipes").ok();
-        writeln!(s, "These retrieved patterns have not helped on every codebase.")
-            .ok();
-        writeln!(s, "| recipe | prior negatives | most recent outcome | on repo |")
-            .ok();
-        writeln!(s, "|--------|-----------------|---------------------|---------|")
-            .ok();
+        writeln!(
+            s,
+            "These retrieved patterns have not helped on every codebase."
+        )
+        .ok();
+        writeln!(
+            s,
+            "| recipe | prior negatives | most recent outcome | on repo |"
+        )
+        .ok();
+        writeln!(
+            s,
+            "|--------|-----------------|---------------------|---------|"
+        )
+        .ok();
         for (recipe, _) in negatives {
             let last = recipe.negative_history.last();
             let (last_outcome, last_repo) = match last {
@@ -174,8 +183,18 @@ mod tests {
 
     fn dummy_verdict() -> SpeedupVerdict {
         SpeedupVerdict {
-            pre: ConfidenceInterval { lower: 900.0, point: 1000.0, upper: 1100.0, confidence: 0.99 },
-            post: ConfidenceInterval { lower: 400.0, point: 500.0, upper: 600.0, confidence: 0.99 },
+            pre: ConfidenceInterval {
+                lower: 900.0,
+                point: 1000.0,
+                upper: 1100.0,
+                confidence: 0.99,
+            },
+            post: ConfidenceInterval {
+                lower: 400.0,
+                point: 500.0,
+                upper: 600.0,
+                confidence: 0.99,
+            },
             speedup_point: 2.0,
             speedup_lower: 1.5,
             accepted: true,
@@ -191,7 +210,10 @@ mod tests {
             symbol: "read_dir".into(),
             arity: None,
         };
-        let gate = GateReport { decision: ods_verify::GateDecision::Pass, reasons: vec![] };
+        let gate = GateReport {
+            decision: ods_verify::GateDecision::Pass,
+            reasons: vec![],
+        };
         let pre = dummy_profile();
         let post = ProfileReport {
             syscall_counts: vec![("read".into(), 10), ("stat".into(), 0)],
@@ -214,6 +236,9 @@ mod tests {
     }
 
     fn _sample_unused() -> Sample {
-        Sample { name: "x".into(), values_ns: vec![] }
+        Sample {
+            name: "x".into(),
+            values_ns: vec![],
+        }
     }
 }

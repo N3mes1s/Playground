@@ -126,6 +126,5 @@ impl Scheduler {
 }
 
 fn now_rfc3339() -> Result<String> {
-    Ok(time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)?)
+    Ok(time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?)
 }

@@ -64,7 +64,7 @@ impl LanguageAdapter for JavaAdapter {
                     .cwd(repo)
                     .timeout(Duration::from_secs(1200))
                     .allow_nonzero())
-                    .await?;
+                .await?;
             }
             JavaTool::Gradle => {
                 let gradle = if repo.join("gradlew").exists() {
@@ -77,7 +77,7 @@ impl LanguageAdapter for JavaAdapter {
                     .cwd(repo)
                     .timeout(Duration::from_secs(1200))
                     .allow_nonzero())
-                    .await?;
+                .await?;
             }
             _ => {}
         }
@@ -101,7 +101,7 @@ impl LanguageAdapter for JavaAdapter {
                     .cwd(&build.workdir)
                     .timeout(Duration::from_secs(1800))
                     .allow_nonzero())
-                    .await?
+                .await?
             }
             JavaTool::Gradle => {
                 let gradle = if build.workdir.join("gradlew").exists() {
@@ -114,7 +114,7 @@ impl LanguageAdapter for JavaAdapter {
                     .cwd(&build.workdir)
                     .timeout(Duration::from_secs(1800))
                     .allow_nonzero())
-                    .await?
+                .await?
             }
         };
         Ok(parse_junit_textual(&out.stdout))
@@ -189,9 +189,10 @@ impl LanguageAdapter for JavaAdapter {
 /// Maven surefire / Gradle test textual output:
 ///   `Tests run: 42, Failures: 1, Errors: 0, Skipped: 2`
 pub fn parse_junit_textual(stdout: &str) -> TestReport {
-    let re =
-        Regex::new(r"Tests run:\s+(\d+),\s+Failures:\s+(\d+),\s+Errors:\s+(\d+),\s+Skipped:\s+(\d+)")
-            .unwrap();
+    let re = Regex::new(
+        r"Tests run:\s+(\d+),\s+Failures:\s+(\d+),\s+Errors:\s+(\d+),\s+Skipped:\s+(\d+)",
+    )
+    .unwrap();
     let mut total = 0u32;
     let mut failed = 0u32;
     let mut errors = 0u32;

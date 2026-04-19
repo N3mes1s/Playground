@@ -153,7 +153,12 @@ async fn handle(
     if parsed.action != "created" {
         return (StatusCode::OK, "ignored");
     }
-    if !parsed.comment.body.trim_start().starts_with("/ods optimize") {
+    if !parsed
+        .comment
+        .body
+        .trim_start()
+        .starts_with("/ods optimize")
+    {
         return (StatusCode::OK, "ignored");
     }
     let event = WebhookEvent {

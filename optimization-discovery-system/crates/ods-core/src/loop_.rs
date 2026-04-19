@@ -46,6 +46,12 @@ pub enum LoopError {
         elapsed_secs: u64,
         spent_usd: f64,
     },
+    #[error("budget would exceed before next call (current ${current_usd:.2} + projected ${projected_usd:.2} > cap ${cap_usd:.2})")]
+    BudgetWouldExceed {
+        current_usd: f64,
+        projected_usd: f64,
+        cap_usd: f64,
+    },
     #[error("compatibility gate failed at stage {stage:?}: {detail}")]
     CompatFailure { stage: LoopStage, detail: String },
     #[error("stage {stage:?} produced no result: {detail}")]

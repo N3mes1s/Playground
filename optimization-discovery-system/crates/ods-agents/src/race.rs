@@ -39,6 +39,11 @@ pub struct RaceInput<'a> {
     pub sink: Option<Arc<dyn EventSink>>,
     /// Run id used for event persistence.
     pub run_id: RunId,
+    /// Shared cross-specialist spend counter. When `Some`, every
+    /// `ToolUseLoop` run by this race charges its per-call cost into this
+    /// tracker, and bails with `LoopError::BudgetWouldExceed` before the
+    /// next POST if the projected cost would push spend past the cap.
+    pub budget_tracker: Option<ods_core::BudgetTracker>,
 }
 
 pub struct RaceOutput {
@@ -73,10 +78,8 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
     let mut spent_usd = 0.0;
     let mut winners: Vec<WinnerRecord> = Vec::new();
     let mut budget_exhausted = false;
-    let mut negative_records: Vec<(
-        ods_recipes::RecipeId,
-        ods_recipes::NegativeOutcome,
-    )> = Vec::new();
+    let mut negative_records: Vec<(ods_recipes::RecipeId, ods_recipes::NegativeOutcome)> =
+        Vec::new();
     let sink = input.sink.as_ref();
     let run_id = input.run_id;
 
@@ -85,11 +88,7 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
         &run_id,
         LoopStage::Transform,
         AgentEvent::RaceStart {
-            specialists: input
-                .plan
-                .iter()
-                .map(|(k, _)| format!("{:?}", k))
-                .collect(),
+            specialists: input.plan.iter().map(|(k, _)| format!("{:?}", k)).collect(),
         },
     );
 
@@ -121,9 +120,20 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
     std::fs::create_dir_all(&input.worktree_parent)?;
 
     for (kind, hyp) in &input.plan {
-        // CI-mode budget check before each specialist.
+        // CI-mode budget check before each specialist. Uses the shared
+        // tracker when present so parallel specialists see each other's
+        // spend; falls back to local `spent_usd` for Dev-mode runs.
         if let Mode::Ci(b) = &input.mode {
-            if spent_usd >= b.spend_cap_usd {
+            let current = input
+                .budget_tracker
+                .as_ref()
+                .map(|t| t.spent())
+                .unwrap_or(spent_usd);
+            // A per-specialist round on average costs ~$0.50. If there's
+            // less headroom than that we short-circuit rather than burn a
+            // specialist that's almost guaranteed to bail mid-conversation.
+            const PER_SPECIALIST_MIN: f64 = 0.50;
+            if current + PER_SPECIALIST_MIN > b.spend_cap_usd {
                 budget_exhausted = true;
                 break;
             }
@@ -136,6 +146,9 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
         let mut loop_ = ToolUseLoop::default();
         ToolHandlerMap::register_read_only(&mut loop_, sandbox.clone());
         ToolHandlerMap::register_mutating(&mut loop_, sandbox.clone());
+        if let Some(t) = input.budget_tracker.as_ref() {
+            loop_ = loop_.with_budget_tracker(t.clone());
+        }
 
         let spec = Specialist::new(*kind);
         let initial = compose_user_prompt(kind, hyp, input.target, &input.recipe_snippets);
@@ -160,10 +173,18 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
         {
             Ok(v) => v,
             Err(e) => {
+                // Detect the hard per-call budget gate so we stop racing
+                // new specialists instead of silently marking each one as
+                // "failed conversation" and burning a worktree per error.
+                let hit_budget = e
+                    .downcast_ref::<LoopError>()
+                    .map(|le| matches!(le, LoopError::BudgetWouldExceed { .. }))
+                    .unwrap_or(false);
                 tracing::warn!(
                     kind = %kind_name(*kind),
                     err = %e,
                     err_chain = %format!("{e:#}"),
+                    hit_budget,
                     "specialist conversation failed"
                 );
                 observe::emit(
@@ -179,6 +200,11 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
                         tokens_out: 0,
                     },
                 );
+                if hit_budget {
+                    budget_exhausted = true;
+                    drop(wt);
+                    break;
+                }
                 continue;
             }
         };

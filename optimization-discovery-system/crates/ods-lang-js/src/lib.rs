@@ -46,14 +46,14 @@ impl LanguageAdapter for JsAdapter {
                 .cwd(repo)
                 .timeout(Duration::from_secs(600))
                 .allow_nonzero())
-                .await?;
+            .await?;
         } else if which("npm").is_some() {
             let _ = run(&Invocation::new("npm")
                 .arg("install")
                 .cwd(repo)
                 .timeout(Duration::from_secs(600))
                 .allow_nonzero())
-                .await?;
+            .await?;
         }
         Ok(Build {
             workdir: repo.to_path_buf(),
@@ -76,7 +76,7 @@ impl LanguageAdapter for JsAdapter {
             .cwd(&build.workdir)
             .timeout(Duration::from_secs(900))
             .allow_nonzero())
-            .await?;
+        .await?;
         Ok(parse_npm_test_output(&out.stdout, &out.stderr))
     }
 
@@ -89,7 +89,7 @@ impl LanguageAdapter for JsAdapter {
             .cwd(&build.workdir)
             .timeout(Duration::from_secs(600))
             .allow_nonzero())
-            .await?;
+        .await?;
         Ok(parse_tinybench_output(&out.stdout))
     }
 
@@ -162,12 +162,19 @@ pub fn parse_npm_test_output(stdout: &str, stderr: &str) -> TestReport {
     let mut skipped = 0u32;
 
     // Jest / Vitest "Tests:" line.
-    if let Some(caps) = Regex::new(r"Tests:\s+(?:(\d+)\s+failed,\s+)?(?:(\d+)\s+skipped,\s+)?(\d+)\s+passed")
-        .unwrap()
-        .captures(&combined)
+    if let Some(caps) =
+        Regex::new(r"Tests:\s+(?:(\d+)\s+failed,\s+)?(?:(\d+)\s+skipped,\s+)?(\d+)\s+passed")
+            .unwrap()
+            .captures(&combined)
     {
-        failed = caps.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-        skipped = caps.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+        failed = caps
+            .get(1)
+            .and_then(|m| m.as_str().parse().ok())
+            .unwrap_or(0);
+        skipped = caps
+            .get(2)
+            .and_then(|m| m.as_str().parse().ok())
+            .unwrap_or(0);
         passed = caps
             .get(3)
             .and_then(|m| m.as_str().parse().ok())

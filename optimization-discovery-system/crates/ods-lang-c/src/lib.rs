@@ -57,12 +57,12 @@ impl LanguageAdapter for CAdapter {
                 ])
                 .timeout(Duration::from_secs(600))
                 .allow_nonzero())
-                .await?;
+            .await?;
             run(&Invocation::new("cmake")
                 .args(["--build".to_string(), build_dir.display().to_string()])
                 .timeout(Duration::from_secs(1200))
                 .allow_nonzero())
-                .await?;
+            .await?;
             return Ok(Build {
                 workdir: build_dir,
                 artifact: None,
@@ -74,7 +74,7 @@ impl LanguageAdapter for CAdapter {
                 .cwd(repo)
                 .timeout(Duration::from_secs(1200))
                 .allow_nonzero())
-                .await?;
+            .await?;
             return Ok(Build {
                 workdir: repo.to_path_buf(),
                 artifact: None,
@@ -91,7 +91,7 @@ impl LanguageAdapter for CAdapter {
                 .cwd(&build.workdir)
                 .timeout(Duration::from_secs(900))
                 .allow_nonzero())
-                .await?;
+            .await?;
             return Ok(parse_ctest_output(&out.stdout));
         }
         Ok(TestReport {

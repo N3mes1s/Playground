@@ -140,7 +140,10 @@ pub fn score_recipes(recipes: &[Recipe], query: &str) -> Vec<ScoredRecipe> {
     let n = recipes.len() as f64;
     let mut idf_by_term: HashMap<&str, f64> = HashMap::with_capacity(query_terms.len());
     for term in &query_terms {
-        let df = doc_tfs.iter().filter(|m| m.contains_key(term.as_str())).count() as f64;
+        let df = doc_tfs
+            .iter()
+            .filter(|m| m.contains_key(term.as_str()))
+            .count() as f64;
         let idf = (((n - df + 0.5) / (df + 0.5)) + 1.0).ln();
         idf_by_term.insert(term.as_str(), idf);
     }

@@ -32,8 +32,7 @@ pub fn harvest(
     commit: &str,
     store: &Store,
 ) -> anyhow::Result<RecipeId> {
-    harvest_full(winner, target, repo, commit, store, None)
-        .map(|o| o.specific_id)
+    harvest_full(winner, target, repo, commit, store, None).map(|o| o.specific_id)
 }
 
 /// Full harvest: Phase 1 narrow + optional Phase 2 generalizer LLM call.
@@ -49,8 +48,8 @@ pub fn harvest_full(
 ) -> anyhow::Result<HarvestOutcome> {
     // Phase 1: specific recipe (provenance).
     let id = synthesize_id(&winner.outcome.kind, target);
-    let now = time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)?;
+    let now =
+        time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?;
     let mut recipe = Recipe {
         id: RecipeId(id.clone()),
         name: format!(
@@ -62,10 +61,7 @@ pub fn harvest_full(
         promotion: PromotionState::Candidate,
         trigger: Trigger {
             ast_pattern: extract_ast_hint(&winner.patch.unified_diff),
-            profile_signature: vec![format!(
-                "hot:{}::{}",
-                target.module, target.symbol
-            )],
+            profile_signature: vec![format!("hot:{}::{}", target.module, target.symbol)],
             naive_alt_ratio_min: None,
         },
         transformation: Transformation {
@@ -131,8 +127,8 @@ pub fn record_negatives(
     outcome: ods_recipes::NegativeOutcome,
     store: &Store,
 ) -> anyhow::Result<()> {
-    let now = time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)?;
+    let now =
+        time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?;
     for id in recipe_ids {
         let Some(mut recipe) = store.get(id)? else {
             continue;
@@ -194,7 +190,9 @@ fn run_generalizer(
            \"steps\": [\"<ordered transformation steps, pattern-level>\"],\n\
            \"invariants\": [\"<semantic invariants to preserve>\"]\n\
          }}",
-        target.language, target.module, target.symbol,
+        target.language,
+        target.module,
+        target.symbol,
         winner.outcome.kind,
         truncate_to(&winner.outcome.rationale, 1500),
         truncate_to(&winner.patch.unified_diff, 2500),
@@ -261,15 +259,11 @@ fn parse_generalized_recipe(
     let cat = match g.category.as_str() {
         "syscall-elimination" => ods_core::OptimizationCategory::SyscallElimination,
         "alloc-reduction" => ods_core::OptimizationCategory::AllocReduction,
-        "fast-path-specialization" => {
-            ods_core::OptimizationCategory::FastPathSpecialization
-        }
+        "fast-path-specialization" => ods_core::OptimizationCategory::FastPathSpecialization,
         "algorithmic" => ods_core::OptimizationCategory::Algorithmic,
         "validation-removal" => ods_core::OptimizationCategory::ValidationRemoval,
         "caching" => ods_core::OptimizationCategory::Caching,
-        "dependency-optimization" => {
-            ods_core::OptimizationCategory::DependencyOptimization
-        }
+        "dependency-optimization" => ods_core::OptimizationCategory::DependencyOptimization,
         other => anyhow::bail!("unknown category: {other}"),
     };
     let mut steps = g.steps;

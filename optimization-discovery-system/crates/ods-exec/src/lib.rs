@@ -168,11 +168,7 @@ pub async fn run(inv: &Invocation) -> Result<CommandOutput> {
 
 /// Convenience: run with the current directory set, no env overrides,
 /// default timeout, error on non-zero exit.
-pub async fn run_at(
-    program: &str,
-    args: &[&str],
-    cwd: &Path,
-) -> Result<CommandOutput> {
+pub async fn run_at(program: &str, args: &[&str], cwd: &Path) -> Result<CommandOutput> {
     let inv = Invocation::new(program)
         .args(args.iter().map(|s| s.to_string()))
         .cwd(cwd);
@@ -212,9 +208,12 @@ mod tests {
 
     #[tokio::test]
     async fn nonzero_allowed_when_opted_in() {
-        let out = run(&Invocation::new("sh").arg("-c").arg("exit 7").allow_nonzero())
-            .await
-            .unwrap();
+        let out = run(&Invocation::new("sh")
+            .arg("-c")
+            .arg("exit 7")
+            .allow_nonzero())
+        .await
+        .unwrap();
         assert_eq!(out.status, 7);
     }
 

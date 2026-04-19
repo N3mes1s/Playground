@@ -3,9 +3,9 @@
 //! is idempotent and monotonic (never regresses) unless the caller demotes
 //! explicitly.
 
-use crate::schema::{NegativeOutcome, PromotionState, Recipe, SuccessRecord};
 #[cfg(test)]
 use crate::schema::NegativeRecord;
+use crate::schema::{NegativeOutcome, PromotionState, Recipe, SuccessRecord};
 
 #[derive(Debug, Clone)]
 pub struct PromotionRules {
@@ -40,7 +40,10 @@ impl Default for PromotionRules {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PromotionOutcome {
     Unchanged,
-    Promoted { from: PromotionState, to: PromotionState },
+    Promoted {
+        from: PromotionState,
+        to: PromotionState,
+    },
     /// The recipe should be deleted from the corpus (Hypothesized-only
     /// outcome after sustained negatives with zero wins).
     Retire,
@@ -256,7 +259,8 @@ mod tests {
         let mut r = base();
         r.promotion = PromotionState::Hypothesized;
         for repo in ["a/b", "c/d", "e/f"] {
-            r.negative_history.push(mk_neg(repo, NegativeOutcome::Abstained));
+            r.negative_history
+                .push(mk_neg(repo, NegativeOutcome::Abstained));
         }
         assert_eq!(
             promote_on_negative(&r, &PromotionRules::default()),
@@ -269,7 +273,8 @@ mod tests {
         let mut r = base();
         r.promotion = PromotionState::Seed;
         for repo in ["a/b", "c/d", "e/f", "g/h"] {
-            r.negative_history.push(mk_neg(repo, NegativeOutcome::Abstained));
+            r.negative_history
+                .push(mk_neg(repo, NegativeOutcome::Abstained));
         }
         assert_eq!(
             promote_on_negative(&r, &PromotionRules::default()),

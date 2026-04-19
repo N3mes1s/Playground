@@ -125,13 +125,14 @@ fn parse_time_elapsed(stderr: &str) -> Option<Duration> {
 
 fn parse_strace_c(stderr: &str) -> Vec<(String, u64)> {
     // `strace -c` table rows:  "  0.00  0.000000           0         5        1 read"
-    let re = Regex::new(
-        r"(?m)^\s*[\d.]+\s+[\d.]+\s+\d+\s+(\d+)\s+\d*\s*([a-zA-Z0-9_]+)\s*$",
-    )
-    .unwrap();
+    let re =
+        Regex::new(r"(?m)^\s*[\d.]+\s+[\d.]+\s+\d+\s+(\d+)\s+\d*\s*([a-zA-Z0-9_]+)\s*$").unwrap();
     let mut out = Vec::new();
     for caps in re.captures_iter(stderr) {
-        let calls: u64 = caps.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+        let calls: u64 = caps
+            .get(1)
+            .and_then(|m| m.as_str().parse().ok())
+            .unwrap_or(0);
         let name = caps.get(2).unwrap().as_str().to_string();
         if name == "total" {
             continue;
@@ -142,8 +143,9 @@ fn parse_strace_c(stderr: &str) -> Vec<(String, u64)> {
 }
 
 fn fill_perf_stat(report: &mut ProfileReport, stderr: &str) {
-    let re = Regex::new(r"(?m)^\s*([\d,\.]+)\s+(cycles|instructions|LLC-load-misses|branch-misses)")
-        .unwrap();
+    let re =
+        Regex::new(r"(?m)^\s*([\d,\.]+)\s+(cycles|instructions|LLC-load-misses|branch-misses)")
+            .unwrap();
     for caps in re.captures_iter(stderr) {
         let raw = caps.get(1).unwrap().as_str().replace(',', "");
         let Ok(n) = raw.parse::<f64>() else {

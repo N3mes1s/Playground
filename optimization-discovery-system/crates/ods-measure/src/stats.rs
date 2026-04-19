@@ -38,7 +38,10 @@ fn tukey_filter(values: &[f64]) -> Vec<f64> {
     let iqr = q3 - q1;
     let lo = q1 - 1.5 * iqr;
     let hi = q3 + 1.5 * iqr;
-    sorted.into_iter().filter(|v| *v >= lo && *v <= hi).collect()
+    sorted
+        .into_iter()
+        .filter(|v| *v >= lo && *v <= hi)
+        .collect()
 }
 
 fn percentile(values: &mut [f64], p: f64) -> f64 {

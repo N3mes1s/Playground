@@ -68,7 +68,7 @@ impl LanguageAdapter for PythonAdapter {
             .cwd(&build.workdir)
             .timeout(Duration::from_secs(600))
             .allow_nonzero())
-            .await?;
+        .await?;
         Ok(parse_pytest_output(&out.stdout))
     }
 
@@ -98,7 +98,7 @@ impl LanguageAdapter for PythonAdapter {
             .cwd(&build.workdir)
             .timeout(Duration::from_secs(600))
             .allow_nonzero())
-            .await?;
+        .await?;
         Ok(parse_pytest_bench_json(&json_path).unwrap_or(BenchReport { samples: vec![] }))
     }
 

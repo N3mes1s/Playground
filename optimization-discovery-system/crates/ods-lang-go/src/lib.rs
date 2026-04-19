@@ -55,8 +55,8 @@ impl LanguageAdapter for GoAdapter {
             .cwd(repo)
             .timeout(self.default_timeout)
             .allow_nonzero())
-            .await
-            .context("go build ./...")?;
+        .await
+        .context("go build ./...")?;
         Ok(Build {
             workdir: repo.to_path_buf(),
             artifact: None,
@@ -70,7 +70,7 @@ impl LanguageAdapter for GoAdapter {
             .cwd(&build.workdir)
             .timeout(self.default_timeout)
             .allow_nonzero())
-            .await?;
+        .await?;
         Ok(parse_go_test_output(&out.stdout))
     }
 
@@ -81,20 +81,18 @@ impl LanguageAdapter for GoAdapter {
             target.symbol.clone()
         };
         let out = run(&Invocation::new("go")
-            .args(
-                [
-                    "test".to_string(),
-                    "-bench".to_string(),
-                    filter,
-                    "-benchmem".to_string(),
-                    "-run=^$".to_string(),
-                    "./...".to_string(),
-                ],
-            )
+            .args([
+                "test".to_string(),
+                "-bench".to_string(),
+                filter,
+                "-benchmem".to_string(),
+                "-run=^$".to_string(),
+                "./...".to_string(),
+            ])
             .cwd(&build.workdir)
             .timeout(self.default_timeout)
             .allow_nonzero())
-            .await?;
+        .await?;
         Ok(parse_go_bench_output(&out.stdout))
     }
 
@@ -161,19 +159,17 @@ impl LanguageAdapter for GoAdapter {
             });
         }
         let out = run(&Invocation::new("go")
-            .args(
-                [
-                    "test".to_string(),
-                    "-run=^$".to_string(),
-                    format!("-fuzz={}", target.symbol),
-                    format!("-fuzztime={}s", budget.as_secs()),
-                    "./...".to_string(),
-                ],
-            )
+            .args([
+                "test".to_string(),
+                "-run=^$".to_string(),
+                format!("-fuzz={}", target.symbol),
+                format!("-fuzztime={}s", budget.as_secs()),
+                "./...".to_string(),
+            ])
             .cwd(&build.workdir)
             .timeout(budget + Duration::from_secs(30))
             .allow_nonzero())
-            .await?;
+        .await?;
         let crashes = if out.stderr.contains("FAIL") || out.stdout.contains("failing input") {
             1
         } else {
@@ -233,10 +229,7 @@ pub fn parse_go_test_output(stdout: &str) -> TestReport {
 /// Parse `go test -bench` output:
 ///   `BenchmarkName-8    1000000    1234 ns/op    16 B/op    1 allocs/op`
 pub fn parse_go_bench_output(stdout: &str) -> BenchReport {
-    let re = Regex::new(
-        r"(?m)^(Benchmark\S+)\s+(\d+)\s+([\d\.]+)\s+ns/op",
-    )
-    .unwrap();
+    let re = Regex::new(r"(?m)^(Benchmark\S+)\s+(\d+)\s+([\d\.]+)\s+ns/op").unwrap();
     let mut samples = Vec::new();
     for caps in re.captures_iter(stdout) {
         let name = caps.get(1).unwrap().as_str().to_string();

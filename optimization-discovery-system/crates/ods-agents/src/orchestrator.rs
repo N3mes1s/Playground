@@ -23,7 +23,6 @@ use ods_core::{
     loop_::LoopStage,
     Mode, Run, RunRecord, RunStatus, RunStore,
 };
-use std::sync::Mutex;
 use ods_lang::{BenchReport, LanguageAdapter, ProfileReport, TestReport, TestScope};
 use ods_measure::{compare, rerun, EnvFingerprint, RerunReport, Sample, SpeedupVerdict};
 use ods_recipes::{RecipeId, Store};
@@ -31,6 +30,7 @@ use ods_verify::{GateInput, GateReport, ZeroDiffGate};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,9 +135,8 @@ impl Orchestrator {
         // SQLite file so per-event writes don't contend with the stage-level
         // writer. SQLite with bundled features serialises writes.
         let sink_store = RunStore::open(&runs_db).context("open sink store")?;
-        let sink: Arc<dyn EventSink> = Arc::new(SqliteEventSink::shared(Arc::new(Mutex::new(
-            sink_store,
-        ))));
+        let sink: Arc<dyn EventSink> =
+            Arc::new(SqliteEventSink::shared(Arc::new(Mutex::new(sink_store))));
         run_store.insert(&RunRecord {
             id: run_id.to_string(),
             language: self.adapter.name().into(),
@@ -239,6 +238,10 @@ impl Orchestrator {
         let mut post_bench_override: Option<BenchReport> = None;
         let mut speedup_override: Option<SpeedupVerdict> = None;
         if allow_llm && std::env::var("ANTHROPIC_API_KEY").is_ok() {
+            // One shared tracker per run. Its Instant-based wall clock
+            // starts here so the full LLM race shares the same wall budget
+            // with any future parallel work (e.g. Explorer specialists).
+            let budget_tracker = self.mode.budget_tracker();
             let input = RaceInput {
                 repo: &self.repo,
                 target: &target,
@@ -256,6 +259,7 @@ impl Orchestrator {
                 fuzz_budget: Duration::from_secs(60),
                 sink: Some(sink.clone()),
                 run_id,
+                budget_tracker: Some(budget_tracker),
             };
             match race::run_specialists(input).await {
                 Ok(out) => {
@@ -287,7 +291,8 @@ impl Orchestrator {
                         speedup_override = Some(w.verdict.clone());
 
                         // Auto-harvest the winning transform.
-                        let commit_sha = current_commit(&self.repo).unwrap_or_else(|| "HEAD".into());
+                        let commit_sha =
+                            current_commit(&self.repo).unwrap_or_else(|| "HEAD".into());
                         let repo_full = self.repo.display().to_string();
                         if let Ok(RecipeId(id)) = harvest::harvest(
                             &w,
@@ -305,9 +310,8 @@ impl Orchestrator {
                 }
             }
         } else if allow_llm {
-            artifact.note = Some(
-                "allow_llm requested but ANTHROPIC_API_KEY not set; skipping LLM race".into(),
-            );
+            artifact.note =
+                Some("allow_llm requested but ANTHROPIC_API_KEY not set; skipping LLM race".into());
         }
         artifact.patch_diff = winner_diff;
         artifact.winning_specialist = winner_kind.clone();
@@ -436,11 +440,7 @@ fn collect_snippets(store: &Store, ids: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     for id in ids {
         if let Ok(Some(r)) = store.get(&RecipeId(id.clone())) {
-            out.push(format!(
-                "{}: {}",
-                r.id,
-                r.transformation.steps.join(" | ")
-            ));
+            out.push(format!("{}: {}", r.id, r.transformation.steps.join(" | ")));
         }
     }
     out
@@ -488,7 +488,12 @@ fn persist(
     stage: LoopStage,
     artifact: &RunArtifact,
 ) -> Result<()> {
-    run_store.update_stage(id, stage, artifact.spent_usd, &serde_json::to_string(artifact)?)?;
+    run_store.update_stage(
+        id,
+        stage,
+        artifact.spent_usd,
+        &serde_json::to_string(artifact)?,
+    )?;
     run_store.append_event(id, stage, "done", None)?;
     Ok(())
 }
@@ -503,8 +508,7 @@ fn persist_json(repo: &PathBuf, art: &RunArtifact) -> Result<()> {
 }
 
 fn now_rfc3339() -> Result<String> {
-    Ok(time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)?)
+    Ok(time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?)
 }
 
 #[cfg(test)]

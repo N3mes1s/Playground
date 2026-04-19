@@ -74,8 +74,7 @@ pub fn scaffold(repo: &Path, target: &TargetSig) -> Result<ScaffoldOutcome> {
 
     // Determine the containing crate (for `cargo bench -p <crate>`).
     let (cargo_path, crate_name) = locate_target_crate(repo, target)?;
-    let (added_criterion, touched_cargo) =
-        ensure_cargo_registrations(&cargo_path, &bench_name)?;
+    let (added_criterion, touched_cargo) = ensure_cargo_registrations(&cargo_path, &bench_name)?;
     if touched_cargo {
         modified.push(cargo_path.clone());
     }
@@ -100,7 +99,12 @@ pub fn scaffold(repo: &Path, target: &TargetSig) -> Result<ScaffoldOutcome> {
 fn locate_target_crate(repo: &Path, target: &TargetSig) -> Result<(PathBuf, String)> {
     // Preferred: a member crate whose package name matches the target's
     // top-level module (e.g. `ods_recipes` -> `ods-recipes`).
-    let first_mod = target.module.split("::").next().unwrap_or("").replace('_', "-");
+    let first_mod = target
+        .module
+        .split("::")
+        .next()
+        .unwrap_or("")
+        .replace('_', "-");
     if !first_mod.is_empty() {
         for candidate in [
             repo.join("crates").join(&first_mod).join("Cargo.toml"),

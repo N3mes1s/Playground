@@ -14,5 +14,5 @@ pub mod run_store;
 pub use domain::{Hypothesis, OptimizationCategory, RunId, TargetSig};
 pub use git::{Worktree, WorktreeHandle};
 pub use loop_::{LoopError, LoopStage, Run};
-pub use mode::{Budget, Mode};
+pub use mode::{Budget, BudgetExceedReason, BudgetTracker, Mode};
 pub use run_store::{EventRow, RunRecord, RunStatus, RunStore};

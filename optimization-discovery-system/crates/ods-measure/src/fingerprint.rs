@@ -29,9 +29,7 @@ impl EnvFingerprint {
             cpu_count: std::thread::available_parallelism()
                 .ok()
                 .map(|n| n.get() as u32),
-            cpu_governor: read_first(
-                "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor",
-            ),
+            cpu_governor: read_first("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"),
             aslr_disabled: read_trim("/proc/sys/kernel/randomize_va_space")
                 .map(|v| v == "0")
                 .unwrap_or(false),
@@ -39,8 +37,7 @@ impl EnvFingerprint {
                 .map(|v| v == "1")
                 .or_else(|| {
                     // AMD / generic path
-                    read_trim("/sys/devices/system/cpu/cpufreq/boost")
-                        .map(|v| v == "0")
+                    read_trim("/sys/devices/system/cpu/cpufreq/boost").map(|v| v == "0")
                 })
                 .unwrap_or(false),
             perf_event_paranoid: read_trim("/proc/sys/kernel/perf_event_paranoid")
@@ -57,15 +54,33 @@ impl EnvFingerprint {
     /// means the two measurements are environmentally comparable.
     pub fn diff(&self, other: &Self) -> Vec<&'static str> {
         let mut out = Vec::new();
-        if self.os != other.os                                   { out.push("os"); }
-        if self.arch != other.arch                               { out.push("arch"); }
-        if self.kernel != other.kernel                           { out.push("kernel"); }
-        if self.cpu_model != other.cpu_model                     { out.push("cpu_model"); }
-        if self.cpu_count != other.cpu_count                     { out.push("cpu_count"); }
-        if self.cpu_governor != other.cpu_governor               { out.push("cpu_governor"); }
-        if self.aslr_disabled != other.aslr_disabled             { out.push("aslr_disabled"); }
-        if self.turbo_disabled != other.turbo_disabled           { out.push("turbo_disabled"); }
-        if self.perf_event_paranoid != other.perf_event_paranoid { out.push("perf_event_paranoid"); }
+        if self.os != other.os {
+            out.push("os");
+        }
+        if self.arch != other.arch {
+            out.push("arch");
+        }
+        if self.kernel != other.kernel {
+            out.push("kernel");
+        }
+        if self.cpu_model != other.cpu_model {
+            out.push("cpu_model");
+        }
+        if self.cpu_count != other.cpu_count {
+            out.push("cpu_count");
+        }
+        if self.cpu_governor != other.cpu_governor {
+            out.push("cpu_governor");
+        }
+        if self.aslr_disabled != other.aslr_disabled {
+            out.push("aslr_disabled");
+        }
+        if self.turbo_disabled != other.turbo_disabled {
+            out.push("turbo_disabled");
+        }
+        if self.perf_event_paranoid != other.perf_event_paranoid {
+            out.push("perf_event_paranoid");
+        }
         out
     }
 

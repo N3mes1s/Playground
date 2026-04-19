@@ -109,9 +109,9 @@ impl GitHubClient {
         contents_b64: &str,
         commit_message: &str,
     ) -> Result<()> {
-        let get_url =
-            format!("{API_ROOT}/repos/{owner}/{repo}/contents/{path}?ref={branch}");
-        let existing_sha = match self.http
+        let get_url = format!("{API_ROOT}/repos/{owner}/{repo}/contents/{path}?ref={branch}");
+        let existing_sha = match self
+            .http
             .get(&get_url)
             .header("Authorization", format!("Bearer {}", self.token))
             .header("User-Agent", &self.user_agent)
@@ -185,11 +185,7 @@ impl GitHubClient {
             .await?)
     }
 
-    async fn post_json(
-        &self,
-        url: &str,
-        body: &serde_json::Value,
-    ) -> Result<reqwest::Response> {
+    async fn post_json(&self, url: &str, body: &serde_json::Value) -> Result<reqwest::Response> {
         Ok(self
             .http
             .post(url)
@@ -205,8 +201,7 @@ impl GitHubClient {
 /// Very small base64 encoder sufficient for PUT contents bodies. Pulling the
 /// base64 crate is avoidable since the encode path is bounded by patch size.
 pub fn b64_encode(bytes: &[u8]) -> String {
-    const ALPH: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPH: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
     let mut i = 0;
     while i + 3 <= bytes.len() {

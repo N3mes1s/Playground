@@ -35,6 +35,9 @@ pub struct ExplorerInput<'a> {
     pub language: String,
     pub max_recipes: u32,
     pub max_iters: u32,
+    /// Shared spend tracker. When `Some`, the Explorer's internal ToolUseLoop
+    /// respects the same per-call budget gate used by the race.
+    pub budget_tracker: Option<ods_core::BudgetTracker>,
 }
 
 /// Run the Explorer. Reads `ANTHROPIC_API_KEY` from env. Returns proposed
@@ -56,6 +59,9 @@ pub async fn run_explorer(input: ExplorerInput<'_>) -> Result<ExplorerOutcome> {
     // the final text response is schema-valid by construction.
     loop_.output_schema = Some(explorer_output_schema());
     ToolHandlerMap::register_read_only(&mut loop_, Sandbox::new(input.repo.to_path_buf()));
+    if let Some(t) = input.budget_tracker.as_ref() {
+        loop_ = loop_.with_budget_tracker(t.clone());
+    }
 
     let spec = Specialist::new(SpecialistKind::Explorer);
     let system = spec.system_prompt();

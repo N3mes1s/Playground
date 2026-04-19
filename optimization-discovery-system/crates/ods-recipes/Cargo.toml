@@ -16,6 +16,7 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 tracing    = { workspace = true }
 rusqlite   = { workspace = true }
+sqlite-vec = "=0.1.8"
 time       = { workspace = true }
 
 [dev-dependencies]

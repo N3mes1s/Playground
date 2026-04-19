@@ -78,12 +78,12 @@ fn compose_query(target: &TargetSig, categories: &[OptimizationCategory]) -> Str
 fn specialist_for(c: OptimizationCategory) -> SpecialistKind {
     use OptimizationCategory::*;
     match c {
-        SyscallElimination     => SpecialistKind::SyscallEliminator,
-        AllocReduction         => SpecialistKind::AllocReducer,
+        SyscallElimination => SpecialistKind::SyscallEliminator,
+        AllocReduction => SpecialistKind::AllocReducer,
         FastPathSpecialization => SpecialistKind::FastPathSpecializer,
-        Algorithmic            => SpecialistKind::AlgorithmicFixer,
-        ValidationRemoval      => SpecialistKind::ValidationRemover,
-        Caching                => SpecialistKind::CachingSpecialist,
+        Algorithmic => SpecialistKind::AlgorithmicFixer,
+        ValidationRemoval => SpecialistKind::ValidationRemover,
+        Caching => SpecialistKind::CachingSpecialist,
         DependencyOptimization => SpecialistKind::DependencyOptimizer,
     }
 }
@@ -166,7 +166,9 @@ mod tests {
             symbol: "readdir".into(),
             arity: None,
         };
-        let plan = planner.plan(&target, &[OptimizationCategory::Algorithmic]).unwrap();
+        let plan = planner
+            .plan(&target, &[OptimizationCategory::Algorithmic])
+            .unwrap();
         // Non-empty (we have a recipe) and not the cold-start fallback
         // (which would return ALL::len() = 7 entries with seed_recipe_id
         // = None).

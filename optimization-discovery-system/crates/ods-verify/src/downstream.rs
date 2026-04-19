@@ -64,7 +64,7 @@ impl DownstreamRunner {
             .cwd(&c.path)
             .timeout(self.timeout)
             .allow_nonzero())
-            .await?;
+        .await?;
         Ok(summarize(&out.stdout, &out.stderr))
     }
 }
@@ -101,11 +101,10 @@ fn summarize(stdout: &str, stderr: &str) -> TestReport {
         };
     }
     // libtest summary
-    if let Some(caps) = regex::Regex::new(
-        r"test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored",
-    )
-    .unwrap()
-    .captures(stdout)
+    if let Some(caps) =
+        regex::Regex::new(r"test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored")
+            .unwrap()
+            .captures(stdout)
     {
         return TestReport {
             passed: caps[1].parse().unwrap_or(0),
@@ -135,7 +134,11 @@ mod tests {
     #[test]
     fn picks_cargo_for_rust_consumer() {
         let d = tempfile::tempdir().unwrap();
-        std::fs::write(d.path().join("Cargo.toml"), "[package]\nname=\"x\"\nversion=\"0.0.0\"\n").unwrap();
+        std::fs::write(
+            d.path().join("Cargo.toml"),
+            "[package]\nname=\"x\"\nversion=\"0.0.0\"\n",
+        )
+        .unwrap();
         let (p, args) = pick_default_test_cmd(d.path());
         assert_eq!(p, "cargo");
         assert_eq!(args[0], "test");

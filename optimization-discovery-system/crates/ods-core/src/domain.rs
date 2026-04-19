@@ -68,12 +68,12 @@ impl fmt::Display for OptimizationCategory {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use OptimizationCategory::*;
         let s = match self {
-            SyscallElimination     => "syscall-elimination",
-            AllocReduction         => "alloc-reduction",
+            SyscallElimination => "syscall-elimination",
+            AllocReduction => "alloc-reduction",
             FastPathSpecialization => "fast-path-specialization",
-            Algorithmic            => "algorithmic",
-            ValidationRemoval      => "validation-removal",
-            Caching                => "caching",
+            Algorithmic => "algorithmic",
+            ValidationRemoval => "validation-removal",
+            Caching => "caching",
             DependencyOptimization => "dependency-optimization",
         };
         f.write_str(s)

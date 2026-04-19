@@ -20,19 +20,19 @@ impl SpecialistKind {
     pub fn category(self) -> OptimizationCategory {
         use SpecialistKind::*;
         match self {
-            SyscallEliminator     => OptimizationCategory::SyscallElimination,
-            AllocReducer          => OptimizationCategory::AllocReduction,
-            FastPathSpecializer   => OptimizationCategory::FastPathSpecialization,
-            AlgorithmicFixer      => OptimizationCategory::Algorithmic,
-            ValidationRemover     => OptimizationCategory::ValidationRemoval,
-            CachingSpecialist     => OptimizationCategory::Caching,
-            DependencyOptimizer   => OptimizationCategory::DependencyOptimization,
+            SyscallEliminator => OptimizationCategory::SyscallElimination,
+            AllocReducer => OptimizationCategory::AllocReduction,
+            FastPathSpecializer => OptimizationCategory::FastPathSpecialization,
+            AlgorithmicFixer => OptimizationCategory::Algorithmic,
+            ValidationRemover => OptimizationCategory::ValidationRemoval,
+            CachingSpecialist => OptimizationCategory::Caching,
+            DependencyOptimizer => OptimizationCategory::DependencyOptimization,
             // Explorer is not bound to a single category: it proposes
             // patterns across all of them. We pick a neutral one here so
             // callers that expect every SpecialistKind to have a category
             // (e.g. the planner) still compile. The Explorer never flows
             // through the category-driven retrieval path.
-            Explorer              => OptimizationCategory::Algorithmic,
+            Explorer => OptimizationCategory::Algorithmic,
         }
     }
 

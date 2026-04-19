@@ -20,9 +20,10 @@ pub enum AssertVerdict {
 
 pub fn assert_determinism() -> AssertVerdict {
     let mut issues = Vec::new();
-    if let Some(g) = std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
-        .ok()
-        .map(|s| s.trim().to_string())
+    if let Some(g) =
+        std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
+            .ok()
+            .map(|s| s.trim().to_string())
     {
         if g != "performance" {
             issues.push(format!("cpu0 governor is `{g}`, not `performance`"));
@@ -56,7 +57,12 @@ pub fn taskset_prefix(cpu: u32, cmd: &str, args: &[&str]) -> Vec<String> {
         .map(|s| s.success())
         .unwrap_or(false);
     if have_taskset {
-        let mut out = vec!["taskset".to_string(), "-c".into(), cpu.to_string(), cmd.into()];
+        let mut out = vec![
+            "taskset".to_string(),
+            "-c".into(),
+            cpu.to_string(),
+            cmd.into(),
+        ];
         out.extend(args.iter().map(|s| s.to_string()));
         out
     } else {

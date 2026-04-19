@@ -41,7 +41,7 @@ impl SemverCheck {
             .cwd(workdir)
             .timeout(Duration::from_secs(600))
             .allow_nonzero())
-            .await?;
+        .await?;
         if out.status == 0 {
             return Ok(SemverVerdict::Compatible);
         }

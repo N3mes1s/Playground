@@ -4,6 +4,7 @@
 //! native-tls, no CLI shell-out - everything stays inside the static binary.
 
 use anyhow::{Context, Result};
+use ods_core::{BudgetTracker, LoopError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -201,17 +202,61 @@ impl LoopStats {
     /// Rough cost estimate assuming Opus-class pricing (tunable via
     /// `ODS_INPUT_PRICE_PER_MTOK` / `ODS_OUTPUT_PRICE_PER_MTOK` env vars).
     pub fn estimated_cost_usd(&self) -> f64 {
-        let input_per_mtok: f64 = std::env::var("ODS_INPUT_PRICE_PER_MTOK")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(15.0);
-        let output_per_mtok: f64 = std::env::var("ODS_OUTPUT_PRICE_PER_MTOK")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(75.0);
-        (self.input_tokens as f64 / 1_000_000.0) * input_per_mtok
-            + (self.output_tokens as f64 / 1_000_000.0) * output_per_mtok
+        call_cost_usd(self.input_tokens, self.output_tokens)
     }
+}
+
+fn input_rate_per_mtok() -> f64 {
+    std::env::var("ODS_INPUT_PRICE_PER_MTOK")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(15.0)
+}
+
+fn output_rate_per_mtok() -> f64 {
+    std::env::var("ODS_OUTPUT_PRICE_PER_MTOK")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(75.0)
+}
+
+/// Price one specific API call's usage numbers (this call only, not the
+/// running total).
+pub fn call_cost_usd(input_tokens: u32, output_tokens: u32) -> f64 {
+    (input_tokens as f64 / 1_000_000.0) * input_rate_per_mtok()
+        + (output_tokens as f64 / 1_000_000.0) * output_rate_per_mtok()
+}
+
+/// Upper bound on the next call's cost. Input tokens: reuse last observed
+/// value (it already includes the growing conversation), or estimate from
+/// system+messages char count on the first iteration. Output tokens: always
+/// assume the full `max_tokens` budget.
+fn project_next_call_cost(
+    max_tokens: u32,
+    last_input_tokens: Option<u32>,
+    system: &str,
+    messages: &[Message],
+) -> f64 {
+    let input_tokens = last_input_tokens.unwrap_or_else(|| estimate_input_tokens(system, messages));
+    call_cost_usd(input_tokens, max_tokens)
+}
+
+/// Very rough char-to-token estimate for the first call before we've seen
+/// Claude's own tokenizer output. 3.5 chars/token is conservative for
+/// English+code mixes; we round up to add headroom.
+fn estimate_input_tokens(system: &str, messages: &[Message]) -> u32 {
+    let mut chars = system.len();
+    for m in messages {
+        for block in &m.content {
+            chars += match block {
+                ContentBlock::Text { text } => text.len(),
+                ContentBlock::ToolUse { name, input, .. } => name.len() + input.to_string().len(),
+                ContentBlock::ToolResult { content, .. } => content.len(),
+            };
+        }
+    }
+    // 3.5 chars per token → tokens = chars / 3.5, rounded up.
+    ((chars as f64 / 3.5).ceil() as u32).max(500)
 }
 
 /// Dispatches tool calls to typed Rust functions. Callers register handlers
@@ -227,6 +272,11 @@ pub struct ToolUseLoop {
     /// constrained to match this schema -- no parser-of-last-resort
     /// needed for callers that want structured output.
     pub output_schema: Option<serde_json::Value>,
+    /// Shared per-run budget tracker. When `Some`, the loop projects a
+    /// conservative upper bound on the next API call's cost and bails with
+    /// `LoopError::BudgetWouldExceed` *before* the POST fires if charging
+    /// the projection would exceed the cap.
+    pub budget_tracker: Option<BudgetTracker>,
     handlers: HashMap<String, Box<dyn ToolHandler>>,
 }
 
@@ -242,19 +292,24 @@ impl Default for ToolUseLoop {
             max_tokens: 4096,
             tool_specs: Vec::new(),
             output_schema: None,
+            budget_tracker: None,
             handlers: HashMap::new(),
         }
     }
 }
 
 impl ToolUseLoop {
-    pub fn register(
-        &mut self,
-        spec: ToolSpec,
-        handler: Box<dyn ToolHandler>,
-    ) {
+    pub fn register(&mut self, spec: ToolSpec, handler: Box<dyn ToolHandler>) {
         self.handlers.insert(spec.name.clone(), handler);
         self.tool_specs.push(spec);
+    }
+
+    /// Attach a shared [`BudgetTracker`]. All specialists racing in the same
+    /// run share one tracker so their accumulated spend is tested against the
+    /// cap *globally* before each API call.
+    pub fn with_budget_tracker(mut self, tracker: BudgetTracker) -> Self {
+        self.budget_tracker = Some(tracker);
+        self
     }
 
     pub async fn dispatch(&self, call: &ToolCall) -> ToolResult {
@@ -292,7 +347,8 @@ impl ToolUseLoop {
         system: &str,
         initial_user_msg: &str,
     ) -> Result<(LoopStats, String, Conversation)> {
-        self.run_observed(client, system, initial_user_msg, None).await
+        self.run_observed(client, system, initial_user_msg, None)
+            .await
     }
 
     pub async fn run_observed(
@@ -306,7 +362,34 @@ impl ToolUseLoop {
         let mut convo = Conversation::new();
         convo.push_user_text(initial_user_msg);
 
+        // Best estimate of the next call's input tokens. First iteration uses
+        // a char-to-token ratio over the initial prompt; later iterations
+        // reuse the previous envelope's actual input_tokens (which includes
+        // the growing conversation history Claude is re-reading each turn).
+        let mut last_input_tokens: Option<u32> = None;
+
         for iter in 0..self.max_iters {
+            // Hard per-call budget gate. Projection is an upper bound
+            // computed from (a) the last observed input-token count (or a
+            // char-based estimate on first call) and (b) the loop's
+            // max_tokens output ceiling. If charging this projection to the
+            // shared tracker would exceed the cap, bail *before* the POST.
+            if let Some(tracker) = &self.budget_tracker {
+                let projection = project_next_call_cost(
+                    self.max_tokens,
+                    last_input_tokens,
+                    system,
+                    &convo.messages,
+                );
+                if let Some(reason) = tracker.would_exceed(projection) {
+                    return Err(anyhow::Error::new(LoopError::BudgetWouldExceed {
+                        current_usd: reason.current_usd,
+                        projected_usd: reason.projected_usd,
+                        cap_usd: reason.cap_usd,
+                    }));
+                }
+            }
+
             stats.iterations += 1;
             let envelope = client
                 .send_messages_with_schema(
@@ -321,6 +404,15 @@ impl ToolUseLoop {
             stats.output_tokens += envelope.usage.output_tokens;
             stats.cache_read_tokens += envelope.usage.cache_read_input_tokens;
             stats.cache_creation_tokens += envelope.usage.cache_creation_input_tokens;
+            last_input_tokens = Some(envelope.usage.input_tokens);
+
+            // Charge the real delta (this single call's cost) to the shared
+            // tracker so other specialists see our spend immediately.
+            if let Some(tracker) = &self.budget_tracker {
+                let delta =
+                    call_cost_usd(envelope.usage.input_tokens, envelope.usage.output_tokens);
+                tracker.add_spent(delta);
+            }
 
             // Observe the turn itself + any reasoning / tool-use blocks.
             if let Some(obs) = observer {
@@ -418,15 +510,7 @@ pub struct ConversationObserver<'a> {
 }
 
 impl<'a> ConversationObserver<'a> {
-    fn on_turn(
-        &self,
-        iter: u32,
-        stop: Option<String>,
-        tin: u32,
-        tout: u32,
-        cr: u32,
-        cc: u32,
-    ) {
+    fn on_turn(&self, iter: u32, stop: Option<String>, tin: u32, tout: u32, cr: u32, cc: u32) {
         (self.on_turn)(iter, stop, tin, tout, cr, cc);
     }
     fn on_reasoning(&self, iter: u32, text: &str) {
@@ -541,5 +625,51 @@ mod tests {
         };
         // Default Opus pricing: $15/M input
         assert!((s.estimated_cost_usd() - 15.0).abs() < 0.01);
+    }
+
+    #[tokio::test]
+    async fn run_observed_bails_before_post_when_budget_would_exceed() {
+        // Client points at a black-hole URL we'd never want to hit. The
+        // budget gate must reject the call *before* any HTTP attempt.
+        let client = AnthropicClient::new("sk-ant-test-key-not-used").expect("build client");
+        // 1-cent cap. max_tokens 4096 at $75/Mtok = $0.31 output projection
+        // alone, which already exceeds the cap, so the gate must fire on
+        // the first iteration.
+        let budget = ods_core::Budget {
+            wall_cap: std::time::Duration::from_secs(60),
+            spend_cap_usd: 0.01,
+        };
+        let tracker = ods_core::BudgetTracker::new(Some(&budget));
+        let loop_ = ToolUseLoop::default().with_budget_tracker(tracker);
+        let err = loop_
+            .run_observed(&client, "sys", "hello", None)
+            .await
+            .expect_err("expected budget gate to fire");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("budget would exceed"),
+            "unexpected error: {msg}",
+        );
+    }
+
+    #[test]
+    fn projection_respects_max_tokens() {
+        // No observed history yet — projection uses the char-based estimate
+        // for input (small) plus the full max_tokens output ceiling.
+        let p = project_next_call_cost(4096, None, "sys", &[]);
+        // 4096 * 75/1M = $0.307; input is tiny.
+        assert!(p > 0.29 && p < 0.40, "projection out of range: ${p}");
+    }
+
+    #[test]
+    fn tracker_would_exceed_trips_on_cap_breach() {
+        let b = ods_core::Budget {
+            wall_cap: std::time::Duration::from_secs(60),
+            spend_cap_usd: 1.0,
+        };
+        let t = ods_core::BudgetTracker::new(Some(&b));
+        t.add_spent(0.90);
+        assert!(t.would_exceed(0.05).is_none(), "0.90 + 0.05 < 1.00");
+        assert!(t.would_exceed(0.20).is_some(), "0.90 + 0.20 > 1.00");
     }
 }

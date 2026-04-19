@@ -105,10 +105,6 @@ pub trait LanguageAdapter: Send + Sync {
 
     fn emit_patch(&self, edits: &[Edit]) -> Result<Patch>;
 
-    async fn fuzz(
-        &self,
-        build: &Build,
-        target: &TargetSig,
-        budget: Duration,
-    ) -> Result<FuzzReport>;
+    async fn fuzz(&self, build: &Build, target: &TargetSig, budget: Duration)
+        -> Result<FuzzReport>;
 }
