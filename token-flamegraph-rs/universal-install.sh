@@ -50,20 +50,30 @@ fi
 # Step 1: Get the binary
 mkdir -p "$BIN_DIR"
 
-if command -v cargo >/dev/null 2>&1; then
-    echo "  Building from source (cargo found)..."
-    git clone --depth 1 -b claude/token-flamegraph-visualization-W0RbW \
-        https://github.com/N3mes1s/Playground.git "$TMP/src" 2>/dev/null
-    cd "$TMP/src/token-flamegraph-rs"
-    cargo build --release 2>/dev/null
-    cp "target/release/${BINARY}" "${BIN_DIR}/${BINARY}"
-    chmod +x "${BIN_DIR}/${BINARY}"
-    SIZE=$(du -h "${BIN_DIR}/${BINARY}" | cut -f1)
-    echo "  ✓ Binary: ${BIN_DIR}/${BINARY} (${SIZE})"
-else
-    echo "  ✗ cargo not found. Install Rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "  ✗ cargo not found. Install Rust first:"
+    echo "    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
     exit 1
 fi
+
+echo "  Cloning source..."
+if ! git clone --depth 1 -b claude/token-flamegraph-visualization-W0RbW \
+    https://github.com/N3mes1s/Playground.git "$TMP/src" 2>&1; then
+    echo "  ✗ Failed to clone. Check network and try again."
+    exit 1
+fi
+
+echo "  Building (this takes ~30s on first run)..."
+cd "$TMP/src/token-flamegraph-rs"
+if ! cargo build --release 2>&1 | tail -3; then
+    echo "  ✗ Build failed."
+    exit 1
+fi
+
+cp "target/release/${BINARY}" "${BIN_DIR}/${BINARY}"
+chmod +x "${BIN_DIR}/${BINARY}"
+SIZE=$(du -h "${BIN_DIR}/${BINARY}" | cut -f1)
+echo "  ✓ Binary: ${BIN_DIR}/${BINARY} (${SIZE})"
 
 # Step 2: Install /flamegraph skill
 mkdir -p "$SKILL_DIR"
