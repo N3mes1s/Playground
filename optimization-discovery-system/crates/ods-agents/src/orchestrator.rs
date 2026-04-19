@@ -268,6 +268,18 @@ impl Orchestrator {
                             out.spent_usd
                         ));
                     }
+                    // Persist counter-evidence on retrieved recipes that
+                    // failed to help here. This is what makes the corpus
+                    // self-curating over time.
+                    for (recipe_id, outcome) in &out.negative_records {
+                        let _ = crate::harvest::record_negatives(
+                            std::slice::from_ref(recipe_id),
+                            &self.repo.display().to_string(),
+                            &target,
+                            *outcome,
+                            self.store.as_ref(),
+                        );
+                    }
                     if let Some(w) = out.winner {
                         winner_diff = Some(w.patch.unified_diff.clone());
                         winner_kind = Some(format!("{:?}", w.outcome.kind));

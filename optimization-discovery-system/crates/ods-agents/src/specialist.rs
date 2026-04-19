@@ -10,6 +10,10 @@ pub enum SpecialistKind {
     ValidationRemover,
     CachingSpecialist,
     DependencyOptimizer,
+    /// Read-only survey role that proposes *new* recipes from a codebase.
+    /// Does not apply patches or run tests; its output is a list of
+    /// Hypothesized recipes that grow the corpus.
+    Explorer,
 }
 
 impl SpecialistKind {
@@ -23,6 +27,12 @@ impl SpecialistKind {
             ValidationRemover     => OptimizationCategory::ValidationRemoval,
             CachingSpecialist     => OptimizationCategory::Caching,
             DependencyOptimizer   => OptimizationCategory::DependencyOptimization,
+            // Explorer is not bound to a single category: it proposes
+            // patterns across all of them. We pick a neutral one here so
+            // callers that expect every SpecialistKind to have a category
+            // (e.g. the planner) still compile. The Explorer never flows
+            // through the category-driven retrieval path.
+            Explorer              => OptimizationCategory::Algorithmic,
         }
     }
 
@@ -65,6 +75,18 @@ impl SpecialistKind {
                 "You propose dependency bumps or swaps where the upstream \
                  release contains the optimisation. You must verify cargo-semver-checks \
                  passes and downstream consumers still build."
+            }
+            Explorer => {
+                "You are the Explorer. You do NOT apply patches or run \
+                 tests. You survey the codebase (read_file / list_dir / \
+                 ast_query only) and propose a handful of reusable \
+                 performance-optimisation patterns as JSON. Each pattern \
+                 describes a *shape* that could apply to many codebases, \
+                 not a specific one-liner fix. Before inventing a pattern, \
+                 call `recipe_search` to check whether the corpus already \
+                 contains something similar. Finish with a single fenced \
+                 ```json block containing a top-level {\"recipes\": [...]} \
+                 array."
             }
         }
     }

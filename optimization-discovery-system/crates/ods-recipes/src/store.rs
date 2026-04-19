@@ -37,12 +37,29 @@ pub struct Store {
     conn: Connection,
 }
 
-fn promotion_str(p: PromotionState) -> &'static str {
+pub(crate) fn promotion_str(p: PromotionState) -> &'static str {
     match p {
+        PromotionState::Hypothesized => "hypothesized",
         PromotionState::Seed => "seed",
         PromotionState::Candidate => "candidate",
         PromotionState::Validated => "validated",
         PromotionState::Corpus => "corpus",
+        PromotionState::AntiPattern => "anti-pattern",
+    }
+}
+
+/// Ranker weight for a promotion state. Higher is "trust more" during
+/// retrieval. Hypothesized is surfaced but heavily down-weighted relative
+/// to gate-validated states; AntiPattern-only records never drive
+/// application (the Discoverer uses them as target-surfacing signals).
+pub(crate) fn promotion_weight(p: PromotionState) -> f64 {
+    match p {
+        PromotionState::Corpus => 4.0,
+        PromotionState::Validated => 3.0,
+        PromotionState::Candidate => 2.0,
+        PromotionState::Seed => 1.5,
+        PromotionState::Hypothesized => 0.4,
+        PromotionState::AntiPattern => 0.0,
     }
 }
 
@@ -141,9 +158,19 @@ impl Store {
             sql.push_str(" AND category = ?");
             args.push(cat.to_string());
         }
-        // Promotion ordering: seed < candidate < validated < corpus.
+        // Promotion ordering:
+        //   Hypothesized < Seed < Candidate < Validated < Corpus.
+        // AntiPattern is outside the ordering - only fetched when explicitly
+        // requested via `min_promotion = AntiPattern`.
         if let Some(min) = query.min_promotion {
             let accepted: &[PromotionState] = match min {
+                PromotionState::Hypothesized => &[
+                    PromotionState::Hypothesized,
+                    PromotionState::Seed,
+                    PromotionState::Candidate,
+                    PromotionState::Validated,
+                    PromotionState::Corpus,
+                ],
                 PromotionState::Seed => &[
                     PromotionState::Seed,
                     PromotionState::Candidate,
@@ -159,6 +186,7 @@ impl Store {
                     &[PromotionState::Validated, PromotionState::Corpus]
                 }
                 PromotionState::Corpus => &[PromotionState::Corpus],
+                PromotionState::AntiPattern => &[PromotionState::AntiPattern],
             };
             sql.push_str(" AND promotion IN (");
             for (i, s) in accepted.iter().enumerate() {
@@ -194,6 +222,25 @@ impl Store {
             .query_row("SELECT COUNT(*) FROM recipes", [], |r| r.get(0))?;
         Ok(n as u64)
     }
+
+    pub fn delete(&self, id: &RecipeId) -> Result<bool> {
+        let affected = self
+            .conn
+            .execute("DELETE FROM recipes WHERE id = ?1", params![id.0])?;
+        Ok(affected > 0)
+    }
+}
+
+/// Retrieval score combining promotion strength with a negative-history
+/// penalty. `neg_window` caps how many recent negatives can depress the
+/// score, so one bad repo doesn't permanently silence an otherwise-good
+/// recipe. Returned score is clamped to a minimum of 0.1× so even
+/// heavily-penalised recipes remain surfaceable.
+pub fn retrieval_score(recipe: &Recipe, neg_window: usize) -> f64 {
+    let base = promotion_weight(recipe.promotion);
+    let negatives = recipe.negative_history.len().min(neg_window) as f64;
+    let penalty = 1.0 - (negatives / (neg_window as f64 + 1.0));
+    (base * penalty.max(0.1)).max(0.1)
 }
 
 #[cfg(test)]
@@ -225,6 +272,10 @@ mod tests {
             },
             benchmark_template: "criterion: bench_readdir".into(),
             success_history: vec![],
+            negative_history: vec![],
+            generalized_from: None,
+            generalized_as: None,
+            source_patch_ref: None,
             embedding: None,
         }
     }

@@ -11,9 +11,12 @@ pub mod score;
 pub mod store;
 
 pub use embed::{cosine, embed_query, embed_recipe, EMBED_DIM};
-pub use promote::{promote_on_success, PromotionOutcome, PromotionRules};
+pub use promote::{
+    promote_on_negative, promote_on_success, PromotionOutcome, PromotionRules,
+};
 pub use schema::{
-    PromotionState, Recipe, RecipeId, SuccessRecord, Transformation, Trigger, VerificationRecipe,
+    NegativeOutcome, NegativeRecord, PromotionState, Recipe, RecipeId, SuccessRecord,
+    Transformation, Trigger, VerificationRecipe,
 };
 pub use score::{score_recipes, ScoredRecipe};
-pub use store::{RecipeQuery, Store};
+pub use store::{retrieval_score, RecipeQuery, Store};

@@ -86,6 +86,44 @@ enum Command {
         #[arg(long)]
         timeline: bool,
     },
+    /// Run the Explorer: read-only codebase survey that proposes new
+    /// Hypothesized recipes. Never applies patches; grows the corpus.
+    Explore {
+        repo: PathBuf,
+        #[arg(long, default_value_t = 5.0)]
+        budget_usd: f64,
+        #[arg(long, default_value_t = 8)]
+        max_recipes: u32,
+        #[arg(long, default_value = "rust")]
+        language: String,
+        /// Print proposed recipes but don't upsert them into the store.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Discover hot targets autonomously (recipe-trigger scan + fan-in +
+    /// anti-patterns) without applying anything. Complements `ods scan`.
+    Discover {
+        repo: PathBuf,
+        #[arg(long, default_value_t = 10)]
+        top: usize,
+        #[arg(long)]
+        json: bool,
+        #[arg(long, default_value = "rust")]
+        language: String,
+    },
+    /// Autonomous optimise: discover -> pick top-K -> run each under a
+    /// budget cap. Writes a batch artifact.
+    Optimize {
+        repo: PathBuf,
+        #[arg(long, default_value_t = 20.0)]
+        budget_usd: f64,
+        #[arg(long, default_value_t = 3)]
+        top: usize,
+        #[arg(long, value_enum, default_value_t = RunMode::Dev)]
+        mode: RunMode,
+        #[arg(long)]
+        llm: bool,
+    },
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -178,6 +216,15 @@ async fn main() -> Result<()> {
         Command::Recipes { action } => cmd_recipes(action, &store_path).await,
         Command::Ci { action } => cmd_ci(action, &store_path).await,
         Command::Explain { repo, run_id, timeline } => cmd_explain(&repo, &run_id, timeline),
+        Command::Explore { repo, budget_usd, max_recipes, language, dry_run } => {
+            cmd_explore(&repo, budget_usd, max_recipes, &language, dry_run, &store_path).await
+        }
+        Command::Discover { repo, top, json, language } => {
+            cmd_discover(&repo, top, json, &language, &store_path).await
+        }
+        Command::Optimize { repo, budget_usd, top, mode, llm } => {
+            cmd_optimize(&repo, budget_usd, top, mode, llm, &store_path).await
+        }
     }
 }
 
@@ -759,6 +806,124 @@ fn split_repo(full: &str) -> Result<(String, String)> {
         anyhow::bail!("expected owner/repo, got `{full}`");
     }
     Ok((owner.to_string(), repo.to_string()))
+}
+
+async fn cmd_explore(
+    repo: &PathBuf,
+    _budget_usd: f64,
+    max_recipes: u32,
+    language: &str,
+    dry_run: bool,
+    store_path: &PathBuf,
+) -> Result<()> {
+    let outcome = ods_agents::run_explorer(ods_agents::ExplorerInput {
+        repo,
+        language: language.to_string(),
+        max_recipes,
+        max_iters: 24,
+    })
+    .await?;
+    println!(
+        "explorer: {} proposed recipes (cost ${:.2}, iters {}, tok_in {}, tok_out {})",
+        outcome.proposed_recipes.len(),
+        outcome.spent_usd,
+        outcome.iterations,
+        outcome.tokens_in,
+        outcome.tokens_out
+    );
+    if dry_run {
+        for r in &outcome.proposed_recipes {
+            println!(
+                "  DRY: {} [{}] {} — trigger: {}",
+                r.id,
+                r.category,
+                r.name,
+                r.trigger.ast_pattern.chars().take(80).collect::<String>()
+            );
+        }
+        return Ok(());
+    }
+    ensure_parent(store_path)?;
+    let store = Store::open(store_path)?;
+    let mut stored = 0;
+    for r in outcome.proposed_recipes {
+        if store.get(&r.id)?.is_some() {
+            println!("  skip duplicate: {}", r.id);
+            continue;
+        }
+        println!(
+            "  {} [{}] {}",
+            r.id,
+            r.category,
+            r.name.chars().take(80).collect::<String>()
+        );
+        store.upsert(&r)?;
+        stored += 1;
+    }
+    println!("upserted {stored} new Hypothesized recipes");
+    Ok(())
+}
+
+async fn cmd_discover(
+    repo: &PathBuf,
+    top: usize,
+    json: bool,
+    _language: &str,
+    store_path: &PathBuf,
+) -> Result<()> {
+    ensure_parent(store_path)?;
+    let store = Store::open(store_path)?;
+    let candidates =
+        ods_agents::Discoverer::default().scan_with_recipes(repo, &store, top)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&candidates)?);
+    } else {
+        if candidates.is_empty() {
+            println!("(no candidates discovered)");
+            return Ok(());
+        }
+        println!("{:>5}  {:<45}  {}", "score", "target", "signals");
+        for c in candidates {
+            let signals = if c.matched_recipes.is_empty() && c.anti_patterns.is_empty() {
+                format!("bench:{}, fan-in:{}", c.has_bench, c.fan_in)
+            } else {
+                format!(
+                    "recipes:{:?} anti:{:?} fan-in:{}",
+                    c.matched_recipes, c.anti_patterns, c.fan_in
+                )
+            };
+            println!(
+                "{:>5.2}  {}::{}::{:<15}  {}",
+                c.score, c.language, c.module, c.symbol, signals
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn cmd_optimize(
+    repo: &PathBuf,
+    budget_usd: f64,
+    top: usize,
+    mode: RunMode,
+    llm: bool,
+    store_path: &PathBuf,
+) -> Result<()> {
+    ensure_parent(store_path)?;
+    let store = Arc::new(Store::open(store_path)?);
+    let registry = build_registry();
+    let adapter = registry.detect(repo).await?;
+    let mode_val = match mode {
+        RunMode::Dev => ods_core::Mode::Dev,
+        RunMode::Ci => ods_core::Mode::ci_default(),
+    };
+    let scheduler = ods_agents::Scheduler::new(adapter, store, repo.clone(), mode_val, budget_usd);
+    let batch = scheduler.run(top, llm).await?;
+    println!(
+        "batch {} done: {} runs, total spend ${:.2}, winners {}",
+        batch.id, batch.child_runs.len(), batch.total_spent_usd, batch.winners
+    );
+    Ok(())
 }
 
 fn ensure_parent(p: &PathBuf) -> Result<()> {

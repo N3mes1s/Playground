@@ -46,6 +46,12 @@ pub struct RaceOutput {
     pub winner: Option<WinnerRecord>,
     pub spent_usd: f64,
     pub budget_exhausted: bool,
+    /// Counter-evidence gathered during the race: a retrieved recipe whose
+    /// specialist abstained, had its patch rejected by the gate, or failed
+    /// to produce a measurable speedup. The orchestrator persists these
+    /// onto the affected recipes' `negative_history` via
+    /// [`crate::harvest::record_negatives`].
+    pub negative_records: Vec<(ods_recipes::RecipeId, ods_recipes::NegativeOutcome)>,
 }
 
 pub struct WinnerRecord {
@@ -67,6 +73,10 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
     let mut spent_usd = 0.0;
     let mut winners: Vec<WinnerRecord> = Vec::new();
     let mut budget_exhausted = false;
+    let mut negative_records: Vec<(
+        ods_recipes::RecipeId,
+        ods_recipes::NegativeOutcome,
+    )> = Vec::new();
     let sink = input.sink.as_ref();
     let run_id = input.run_id;
 
@@ -102,6 +112,7 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
                 winner: None,
                 spent_usd: 0.0,
                 budget_exhausted: false,
+                negative_records: vec![],
             });
         }
     };
@@ -185,6 +196,14 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
         outcomes.push(outcome.clone());
 
         let Some(diff) = outcome.patch_diff.clone() else {
+            // Specialist principled-abstained. If the hypothesis was seeded
+            // by a specific recipe, record that recipe didn't fit here.
+            if let Some(id) = &hyp.seed_recipe_id {
+                negative_records.push((
+                    ods_recipes::RecipeId(id.clone()),
+                    ods_recipes::NegativeOutcome::Abstained,
+                ));
+            }
             observe::emit(
                 sink,
                 &run_id,
@@ -261,6 +280,12 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
                 reasons: vec!["gate evaluation failed".into()],
             });
         if !matches!(gate.decision, GateDecision::Pass) {
+            if let Some(id) = &hyp.seed_recipe_id {
+                negative_records.push((
+                    ods_recipes::RecipeId(id.clone()),
+                    ods_recipes::NegativeOutcome::RejectedByGate,
+                ));
+            }
             observe::emit(
                 sink,
                 &run_id,
@@ -314,6 +339,12 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
             }
         };
         if !verdict.accepted {
+            if let Some(id) = &hyp.seed_recipe_id {
+                negative_records.push((
+                    ods_recipes::RecipeId(id.clone()),
+                    ods_recipes::NegativeOutcome::NoMeasuredSpeedup,
+                ));
+            }
             observe::emit(
                 sink,
                 &run_id,
@@ -380,6 +411,7 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
         winner,
         spent_usd,
         budget_exhausted,
+        negative_records,
     })
 }
 

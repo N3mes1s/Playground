@@ -67,6 +67,10 @@ fn seed_recipe() -> Recipe {
         },
         benchmark_template: "".into(),
         success_history: vec![],
+        negative_history: vec![],
+        generalized_from: None,
+        generalized_as: None,
+        source_patch_ref: None,
         embedding: None,
     }
 }

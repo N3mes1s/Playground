@@ -15,6 +15,12 @@
 //! feed straight into `ods run --target ...`.
 
 use anyhow::Result;
+use ods_recipes::{
+    retrieval_score,
+    schema::{PromotionState, Recipe, RecipeId},
+    RecipeQuery, Store,
+};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -28,6 +34,21 @@ pub struct Candidate {
     pub source_line: u32,
     pub bench_files: Vec<PathBuf>,
     pub naive_alt_hint: Option<String>,
+    /// Recipes in the corpus whose `trigger.ast_pattern` fired on this
+    /// source file. Each one is a signal that the target may match a known
+    /// optimization pattern.
+    #[serde(default)]
+    pub matched_recipes: Vec<RecipeId>,
+    /// Anti-pattern recipes (promotion=AntiPattern) that fired on this
+    /// file — marker signals, never auto-applied.
+    #[serde(default)]
+    pub anti_patterns: Vec<RecipeId>,
+    /// Cheap call-site estimate: count of `<symbol>(` occurrences under
+    /// `src/`. Rough but useful for ranking high-fanin symbols.
+    #[serde(default)]
+    pub fan_in: u32,
+    #[serde(default)]
+    pub has_bench: bool,
     pub score: f64,
 }
 
@@ -163,22 +184,35 @@ fn detect_language(p: &Path) -> &'static str {
 fn extract_bench_targets(file: &Path, text: &str) -> Vec<Candidate> {
     let mut out = Vec::new();
     let language = detect_language(file).to_string();
+    let mut push_cand = |lang: String, module: String, symbol: String, line: usize, score: f64| {
+        out.push(Candidate {
+            language: lang,
+            module,
+            symbol,
+            source_file: file.to_path_buf(),
+            source_line: (line + 1) as u32,
+            bench_files: vec![file.to_path_buf()],
+            naive_alt_hint: None,
+            matched_recipes: vec![],
+            anti_patterns: vec![],
+            fan_in: 0,
+            has_bench: true,
+            score,
+        });
+    };
     for (i, line) in text.lines().enumerate() {
         let l = line.trim();
         // Criterion style
         if let Some(start) = l.find("bench_function(\"") {
             let rest = &l[start + "bench_function(\"".len()..];
             if let Some(end) = rest.find('"') {
-                out.push(Candidate {
-                    language: language.clone(),
-                    module: bench_module(file),
-                    symbol: rest[..end].to_string(),
-                    source_file: file.to_path_buf(),
-                    source_line: (i + 1) as u32,
-                    bench_files: vec![file.to_path_buf()],
-                    naive_alt_hint: None,
-                    score: 1.0,
-                });
+                push_cand(
+                    language.clone(),
+                    bench_module(file),
+                    rest[..end].to_string(),
+                    i,
+                    1.0,
+                );
             }
         }
         // libtest #[bench] fn name(...)
@@ -187,16 +221,7 @@ fn extract_bench_targets(file: &Path, text: &str) -> Vec<Candidate> {
                 if let Some(end) = rest.find('(') {
                     let name = rest[..end].trim().to_string();
                     if !name.is_empty() {
-                        out.push(Candidate {
-                            language: language.clone(),
-                            module: bench_module(file),
-                            symbol: name,
-                            source_file: file.to_path_buf(),
-                            source_line: (i + 1) as u32,
-                            bench_files: vec![file.to_path_buf()],
-                            naive_alt_hint: None,
-                            score: 0.8,
-                        });
+                        push_cand(language.clone(), bench_module(file), name, i, 0.8);
                     }
                 }
             }
@@ -205,21 +230,194 @@ fn extract_bench_targets(file: &Path, text: &str) -> Vec<Candidate> {
         if l.starts_with("func Benchmark") {
             if let Some(after) = l.strip_prefix("func ") {
                 if let Some(end) = after.find('(') {
-                    out.push(Candidate {
-                        language: "go".into(),
-                        module: bench_module(file),
-                        symbol: after[..end].trim().to_string(),
-                        source_file: file.to_path_buf(),
-                        source_line: (i + 1) as u32,
-                        bench_files: vec![file.to_path_buf()],
-                        naive_alt_hint: None,
-                        score: 0.9,
-                    });
+                    push_cand(
+                        "go".into(),
+                        bench_module(file),
+                        after[..end].trim().to_string(),
+                        i,
+                        0.9,
+                    );
                 }
             }
         }
     }
     out
+}
+
+impl Discoverer {
+    /// Autonomous-discovery pass: scan the repo + consult the recipe
+    /// corpus and an optional anti-pattern library. Returns candidates
+    /// ranked by `promotion_weight * (1 - negative_penalty) + anti_pattern_hits
+    /// + log(fan_in + 1) + has_bench`.
+    pub fn scan_with_recipes(
+        &self,
+        repo: &Path,
+        store: &Store,
+        top_k: usize,
+    ) -> Result<Vec<Candidate>> {
+        // Start from the bench-based candidates so existing harnesses still
+        // surface.
+        let mut candidates = self.scan(repo)?;
+
+        // Load recipes once. Two buckets:
+        //   * applicable recipes (Hypothesized..Corpus)   -- influence ranking AND can be applied
+        //   * anti-patterns (promotion=AntiPattern)       -- only surface as targets
+        let applicable = store
+            .search(&RecipeQuery {
+                language: None,
+                category: None,
+                min_promotion: Some(PromotionState::Hypothesized),
+                limit: Some(10_000),
+            })
+            .unwrap_or_default();
+        let anti = store
+            .search(&RecipeQuery {
+                language: None,
+                category: None,
+                min_promotion: Some(PromotionState::AntiPattern),
+                limit: Some(10_000),
+            })
+            .unwrap_or_default();
+
+        let compiled_applicable = compile_triggers(&applicable);
+        let compiled_anti = compile_triggers(&anti);
+
+        // Walk source files; for each file, run every recipe trigger. Each
+        // match spawns / updates a Candidate keyed on the file+line.
+        for entry in WalkDir::new(repo)
+            .into_iter()
+            .filter_entry(|e| !is_ignored(e.path()))
+        {
+            let Ok(e) = entry else { continue };
+            let p = e.path();
+            if !p.is_file() || !is_source_file(p) {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(p) else {
+                continue;
+            };
+
+            // Track per-file recipe hits to avoid spawning a Candidate per
+            // line — we want one candidate per (file, symbol-ish group).
+            let mut recipe_hits: Vec<(&Recipe, u32)> = Vec::new();
+            let mut anti_hits: Vec<(&Recipe, u32)> = Vec::new();
+            for (recipe, re) in &compiled_applicable {
+                if re_matches_any_line(re, &text) {
+                    let n = re_match_count(re, &text);
+                    recipe_hits.push((recipe, n));
+                }
+            }
+            for (recipe, re) in &compiled_anti {
+                if re_matches_any_line(re, &text) {
+                    let n = re_match_count(re, &text);
+                    anti_hits.push((recipe, n));
+                }
+            }
+            if recipe_hits.is_empty() && anti_hits.is_empty() {
+                continue;
+            }
+
+            // Use a coarse symbol derived from the module path; better
+            // per-symbol attribution lands when we add tree-sitter.
+            let module = module_from_path(repo, p);
+            let symbol = module.split("::").last().unwrap_or("").to_string();
+            let fan_in = estimate_fan_in(repo, &symbol);
+
+            let mut cand = Candidate {
+                language: detect_language(p).to_string(),
+                module: module.clone(),
+                symbol: symbol.clone(),
+                source_file: p.to_path_buf(),
+                source_line: 1,
+                bench_files: vec![],
+                naive_alt_hint: None,
+                matched_recipes: recipe_hits.iter().map(|(r, _)| r.id.clone()).collect(),
+                anti_patterns: anti_hits.iter().map(|(r, _)| r.id.clone()).collect(),
+                fan_in,
+                has_bench: false,
+                score: 0.0,
+            };
+            let recipe_score: f64 = recipe_hits
+                .iter()
+                .map(|(r, n)| retrieval_score(r, 5) * (*n as f64).min(5.0))
+                .sum();
+            let anti_score: f64 = anti_hits.iter().map(|(_, n)| (*n as f64).min(5.0) * 0.5).sum();
+            let fan_in_score = ((fan_in + 1) as f64).ln() * 0.3;
+            cand.score = recipe_score + anti_score + fan_in_score;
+            candidates.push(cand);
+        }
+
+        // Re-rank and trim.
+        candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        candidates.truncate(top_k);
+        Ok(candidates)
+    }
+}
+
+fn compile_triggers(recipes: &[Recipe]) -> Vec<(&Recipe, Regex)> {
+    recipes
+        .iter()
+        .filter_map(|r| {
+            // Skip empty patterns (they'd match everything).
+            if r.trigger.ast_pattern.trim().is_empty() {
+                return None;
+            }
+            Regex::new(&r.trigger.ast_pattern).ok().map(|re| (r, re))
+        })
+        .collect()
+}
+
+fn re_matches_any_line(re: &Regex, text: &str) -> bool {
+    text.lines().any(|l| re.is_match(l))
+}
+
+fn re_match_count(re: &Regex, text: &str) -> u32 {
+    text.lines().filter(|l| re.is_match(l)).count() as u32
+}
+
+fn module_from_path(repo: &Path, file: &Path) -> String {
+    let Ok(rel) = file.strip_prefix(repo) else {
+        return file
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("mod")
+            .to_string();
+    };
+    let stem = rel.with_extension("");
+    stem.components()
+        .filter_map(|c| c.as_os_str().to_str())
+        .filter(|s| *s != "src" && *s != "lib")
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
+fn estimate_fan_in(repo: &Path, symbol: &str) -> u32 {
+    if symbol.is_empty() {
+        return 0;
+    }
+    let pat = format!(r"\b{}\s*\(", regex::escape(symbol));
+    let Ok(re) = Regex::new(&pat) else {
+        return 0;
+    };
+    let mut count = 0u32;
+    for entry in WalkDir::new(repo)
+        .into_iter()
+        .filter_entry(|e| !is_ignored(e.path()))
+    {
+        let Ok(e) = entry else { continue };
+        let p = e.path();
+        if !p.is_file() || !is_source_file(p) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(p) else {
+            continue;
+        };
+        count += text.lines().filter(|l| re.is_match(l)).count() as u32;
+        if count > 1000 {
+            break; // cap to keep the scan cheap
+        }
+    }
+    count
 }
 
 fn bench_module(file: &Path) -> String {
