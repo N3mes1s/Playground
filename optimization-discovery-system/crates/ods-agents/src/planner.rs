@@ -85,6 +85,7 @@ fn specialist_for(c: OptimizationCategory) -> SpecialistKind {
         ValidationRemoval => SpecialistKind::ValidationRemover,
         Caching => SpecialistKind::CachingSpecialist,
         DependencyOptimization => SpecialistKind::DependencyOptimizer,
+        RuntimeConfig => SpecialistKind::RuntimeConfigurator,
     }
 }
 

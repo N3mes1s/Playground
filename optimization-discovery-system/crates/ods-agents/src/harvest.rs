@@ -319,6 +319,7 @@ fn kind_slug(k: &crate::specialist::SpecialistKind) -> &'static str {
         ValidationRemover => "validation",
         CachingSpecialist => "cache",
         DependencyOptimizer => "dep",
+        RuntimeConfigurator => "runtime",
         // Explorer never harvests, but keep the match exhaustive so new
         // SpecialistKind variants can't silently break the build.
         Explorer => "explorer",

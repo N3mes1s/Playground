@@ -402,6 +402,23 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
             },
         );
 
+        // Categories that change runtime behaviour (GC tuning, allocator
+        // choice, pre-fork hooks) can't be validated by a single-process
+        // bench — the signal is fleet-level. Until a canary gate lands,
+        // these surface as suggestions via the outcome list but never
+        // compete for the "winner" slot and so never drive an auto-apply
+        // PR. See `OptimizationCategory::requires_canary`.
+        if hyp.category.requires_canary() {
+            tracing::info!(
+                kind = %kind_name(*kind),
+                category = %hyp.category,
+                "runtime-config patch produced but withheld from winner race \
+                 (requires canary gate, not wall-clock bench)"
+            );
+            drop(wt);
+            continue;
+        }
+
         winners.push(WinnerRecord {
             outcome,
             patch,

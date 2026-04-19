@@ -176,6 +176,37 @@ construction out of the loop.
 | 6 | **No instruction-count measurement mode**                                                   | rustc / compiler projects measure in icount, not wall-clock                 | 1 day (wrap `perf stat -e instructions`) |
 | 7 | **Recipe-level "hoist setup out of loop" refinement** (memchr Finder case)                  | turns partial memchr coverage into full coverage                            | 2 h          |
 
+## Slice status (live)
+
+| Slice | Scope                                                                       | Status  | Commit |
+| ----- | --------------------------------------------------------------------------- | ------- | ------ |
+| A     | tree-sitter-ruby + 5 byroot-inspired Ruby recipes                           | landed  | 53250b2 |
+| B     | 3 new Rust recipes (rustc-shaped) + memchr Finder-hoisting antipattern      | landed  | fe79a02 |
+| C (minimum) | `OptimizationCategory::RuntimeConfig` + `SpecialistKind::RuntimeConfigurator` + race suggest-only guard + 1 Python recipe (Instagram GC pattern) | landed  | this commit |
+| C (full)    | real canary gate (staged rollout + p99/RSS delta) so runtime-config recipes can win the race | TBD — infrastructure work, not a single commit |
+| D     | C adapter + tree-sitter-c + 3-5 C recipes (byroot CRuby case 1b core)       | TBD     |        |
+
+### What "Slice C (minimum)" gives us vs doesn't
+
+- ✅ Recipes in the `runtime-config` category can ship in the corpus.
+- ✅ Discovery surfaces them in `ods discover` output as normal candidates.
+- ✅ The `RuntimeConfigurator` specialist emits a patch *and* a
+  canary-rollout plan in the PR body. The system prompt demands both.
+- ❌ The race refuses to select these as winners: a runtime-config
+  winner would mean the tool is recommending a behaviour change based
+  on a single-process bench, which is a lie we don't want to ship.
+  Enforcement lives at `crates/ods-agents/src/race.rs` via the
+  `OptimizationCategory::requires_canary()` branch.
+- ❌ No actual canary machinery exists. The PR body *tells* the human
+  what to do; the tool doesn't drive staged rollout.
+
+Filling in "Slice C (full)" requires deployment infrastructure we
+don't control from a CI job. Candidates for the future work: a
+separate service that watches PR merges + runs a traffic-shifting
+experiment in the downstream app; or a passive observer that ingests
+prometheus metrics from a canary Pod and produces a verdict hours
+after the deploy. Either way it's a new surface, not an ODS feature.
+
 ## Proposed next slices
 
 Given that our stated goal is "have existed when these posts were

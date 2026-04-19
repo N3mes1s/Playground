@@ -10,6 +10,15 @@ pub enum SpecialistKind {
     ValidationRemover,
     CachingSpecialist,
     DependencyOptimizer,
+    /// Suggests runtime-config tweaks (GC thresholds, allocator choice,
+    /// pre-fork worker hooks) that change runtime behaviour without
+    /// changing request-path semantics. Effect is fleet-level (CPU%,
+    /// RSS, LLC hit-rate) and not measurable by a single-process
+    /// benchmark, so this specialist's output is **suggest-only**: it
+    /// emits a patch + a canary-rollout plan in the PR body but the
+    /// race will not pick it as a winner until a canary gate lands.
+    /// See `OptimizationCategory::requires_canary`.
+    RuntimeConfigurator,
     /// Read-only survey role that proposes *new* recipes from a codebase.
     /// Does not apply patches or run tests; its output is a list of
     /// Hypothesized recipes that grow the corpus.
@@ -27,6 +36,7 @@ impl SpecialistKind {
             ValidationRemover => OptimizationCategory::ValidationRemoval,
             CachingSpecialist => OptimizationCategory::Caching,
             DependencyOptimizer => OptimizationCategory::DependencyOptimization,
+            RuntimeConfigurator => OptimizationCategory::RuntimeConfig,
             // Explorer is not bound to a single category: it proposes
             // patterns across all of them. We pick a neutral one here so
             // callers that expect every SpecialistKind to have a category
@@ -75,6 +85,22 @@ impl SpecialistKind {
                 "You propose dependency bumps or swaps where the upstream \
                  release contains the optimisation. You must verify cargo-semver-checks \
                  passes and downstream consumers still build."
+            }
+            RuntimeConfigurator => {
+                "You propose runtime-config tweaks: GC thresholds, allocator \
+                 selection (jemalloc / mimalloc), pre-fork worker hooks, \
+                 THP, IO scheduler. These change runtime behaviour (not \
+                 request-path semantics), so a single-process benchmark \
+                 cannot confirm the win — the production signal is \
+                 fleet-level (CPU%, p99, RSS, LLC hit-rate).\n\n\
+                 You emit TWO things: (1) a minimal patch that applies \
+                 the tweak, and (2) a **canary-rollout plan** in the PR \
+                 body that spells out: percentage of traffic to route \
+                 to the change, the metric(s) to monitor, the \
+                 stop-condition on regression, and the rollback command. \
+                 Your patch MUST NOT be applied to 100% of traffic from \
+                 the first deploy. The product's race will mark your \
+                 output 'suggest-only' until the canary gate lands."
             }
             Explorer => {
                 "You are the Explorer. You survey a codebase (read-only -- \

@@ -40,6 +40,14 @@ impl fmt::Display for TargetSig {
 
 /// The fixed set of transformation families we recognise. Matches the
 /// classification in the blog post plus one cross-dependency role.
+///
+/// `RuntimeConfig` covers wins that live outside the source code — tuning
+/// GC thresholds, selecting allocators, enabling transparent-huge-pages,
+/// configuring pre-fork worker hooks. These are behaviour-changing
+/// optimisations that a CI-time bench can't fully validate, so recipes
+/// in this category surface as *suggestions* and are never auto-applied
+/// by the specialist race until a canary-style gate lands. See
+/// `docs/retrospective-coverage.md` Slice C.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum OptimizationCategory {
@@ -50,6 +58,7 @@ pub enum OptimizationCategory {
     ValidationRemoval,
     Caching,
     DependencyOptimization,
+    RuntimeConfig,
 }
 
 impl OptimizationCategory {
@@ -61,7 +70,17 @@ impl OptimizationCategory {
         OptimizationCategory::ValidationRemoval,
         OptimizationCategory::Caching,
         OptimizationCategory::DependencyOptimization,
+        OptimizationCategory::RuntimeConfig,
     ];
+
+    /// True for categories whose effect is a runtime-behaviour change
+    /// (not a local-semantic patch), which the current `ZeroDiffGate`
+    /// can't fully validate. Callers in the specialist race use this
+    /// to route the hypothesis to a suggestion path instead of an
+    /// auto-apply path.
+    pub fn requires_canary(self) -> bool {
+        matches!(self, OptimizationCategory::RuntimeConfig)
+    }
 }
 
 impl fmt::Display for OptimizationCategory {
@@ -75,6 +94,7 @@ impl fmt::Display for OptimizationCategory {
             ValidationRemoval => "validation-removal",
             Caching => "caching",
             DependencyOptimization => "dependency-optimization",
+            RuntimeConfig => "runtime-config",
         };
         f.write_str(s)
     }
@@ -88,4 +108,33 @@ pub struct Hypothesis {
     pub rationale: String,
     /// Optional recipe id retrieved from the corpus that seeded this hypothesis.
     pub seed_recipe_id: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn requires_canary_is_honored_only_for_runtime_config() {
+        for cat in OptimizationCategory::ALL {
+            let expected = matches!(cat, OptimizationCategory::RuntimeConfig);
+            assert_eq!(
+                cat.requires_canary(),
+                expected,
+                "{cat:?} should {}require canary",
+                if expected { "" } else { "NOT " }
+            );
+        }
+    }
+
+    #[test]
+    fn runtime_config_serialises_as_kebab_case() {
+        let s = OptimizationCategory::RuntimeConfig.to_string();
+        assert_eq!(s, "runtime-config");
+        // Round-trip through serde as well, since recipe YAML depends on it.
+        let json = serde_json::to_string(&OptimizationCategory::RuntimeConfig).unwrap();
+        assert_eq!(json, "\"runtime-config\"");
+        let back: OptimizationCategory = serde_json::from_str(&json).unwrap();
+        assert!(matches!(back, OptimizationCategory::RuntimeConfig));
+    }
 }

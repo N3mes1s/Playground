@@ -1,0 +1,45 @@
+id: python-disable-gc-in-pre-fork
+name: disable GC before fork to preserve shared copy-on-write pages
+category: runtime-config
+language: python
+promotion: seed
+trigger:
+  ast_pattern: |
+    (function_definition
+      name: (identifier) @n
+      (#match? @n "^(post_fork|pre_fork|worker_boot|when_ready|post_worker_init|on_starting)$")) @match
+  profile_signature:
+    - "fleet:LLC-hit-rate-low"
+    - "fleet:shared-memory-drop-post-fork"
+    - "fleet:CPU%-higher-than-expected-for-qps"
+  naive_alt_ratio_min: null
+transformation:
+  steps:
+    - "Instagram (2017): adding `gc.set_threshold(0, 0, 0)` + `atexit(lambda: os._exit(os.EX_OK))` around the Gunicorn `post_fork` hook recovered ~10% fleet CPU. The mechanism: Python's reference counts are embedded in every PyObject header; GC traversals mutate those headers; once the parent forks, any mutation in the child breaks copy-on-write and the page gets copied. Disabling GC freezes the refcount pages."
+    - "The pattern applies to any pre-fork worker model: Gunicorn, uWSGI, Puma-Python-equivalents, Celery with --preload. If this file is that hook, consider adding `gc.disable()` in the parent's `on_starting` and `gc.disable()` again immediately post-fork (belt-and-suspenders)."
+    - "Register an `atexit` hook that calls `os._exit` to bypass interpreter shutdown's implicit `gc.collect()` — that final sweep is what makes the benefit measurable: without it, shutdown blocks on collecting every leaked object."
+    - "**Invariants you MUST verify before applying this:**"
+    - "  - The parent process must not allocate significant numbers of short-lived objects AFTER fork (the child inherits them, they survive until worker death). If your app creates per-request cycles that used to be GC'd, you'll leak memory linearly in request count until the worker hits the max-requests limit."
+    - "  - Your worker-recycle policy (`max_requests` in Gunicorn) must be set. With GC off, cyclic garbage never reclaims; max_requests bounds the leak."
+    - "  - Test frameworks that rely on `__del__` for resource cleanup (rare) can misbehave."
+    - "**Rollout plan (required because this is runtime-config, not a code patch):**"
+    - "  - Stage 1: one canary worker (out of N), 24h burn-in. Compare RSS, p99 latency, CPU% vs baseline. Stop on 2%+ p99 regression or 10%+ RSS growth."
+    - "  - Stage 2: 10% of workers, 48h. Same metrics."
+    - "  - Stage 3: full rollout."
+    - "  - At every stage, keep the rollback command ready: remove the `gc.disable()` line + redeploy."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: |
+  # NOTE: this recipe's effect is fleet-level (preserved COW pages across
+  # workers). Single-process pytest-benchmark will NOT measure the win.
+  # Verification is a production canary; the ODS race treats this recipe
+  # as suggest-only until a canary-gate lands.
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:instagram-engineering-2017,cinder-meta-python-runtime"
+embedding: null
