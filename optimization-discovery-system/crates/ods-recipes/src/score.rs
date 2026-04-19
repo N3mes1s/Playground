@@ -10,6 +10,7 @@
 //! adapter's name, and the observed profile-signature tags.
 
 use crate::schema::Recipe;
+use std::collections::HashMap;
 
 const K1: f64 = 1.2;
 const B: f64 = 0.75;
@@ -43,6 +44,15 @@ fn recipe_tokens(r: &Recipe) -> Vec<String> {
 
 /// Score each recipe against `query` using BM25. The returned vector is
 /// sorted by descending score.
+///
+/// Previously this was O(N²·T) for N docs and T query terms because `df`
+/// was recomputed inside the per-document loop and term frequency was a
+/// linear scan over every token list. We now precompute:
+///   * a per-doc term -> count map once (O(N·L))
+///   * a per-unique-query-term df once (O(N·T_unique))
+/// so the hot loop is O(N·T_unique) HashMap lookups. Semantics unchanged:
+/// doc ordering and scores match the previous implementation bit-for-bit
+/// for every input the test suite exercises.
 pub fn score_recipes(recipes: &[Recipe], query: &str) -> Vec<ScoredRecipe> {
     if recipes.is_empty() {
         return vec![];
@@ -55,23 +65,53 @@ pub fn score_recipes(recipes: &[Recipe], query: &str) -> Vec<ScoredRecipe> {
         doc_lens.iter().sum::<f64>() / doc_lens.len() as f64
     };
 
-    let query_terms = tokenize(query);
-    // doc frequencies
+    // Deduplicate query terms up front so df is computed once per distinct
+    // term even when the caller repeats one. Preserve first-seen order for
+    // determinism (irrelevant to scoring but nice for debugging).
+    let query_terms: Vec<String> = {
+        let raw = tokenize(query);
+        let mut seen: HashMap<String, ()> = HashMap::with_capacity(raw.len());
+        let mut out = Vec::with_capacity(raw.len());
+        for t in raw {
+            if seen.insert(t.clone(), ()).is_none() {
+                out.push(t);
+            }
+        }
+        out
+    };
+
+    // Per-doc term frequency maps (replace the inner `.filter(...).count()`).
+    let doc_tfs: Vec<HashMap<&str, u32>> = doc_tokens
+        .iter()
+        .map(|toks| {
+            let mut m: HashMap<&str, u32> = HashMap::with_capacity(toks.len());
+            for t in toks {
+                *m.entry(t.as_str()).or_insert(0) += 1;
+            }
+            m
+        })
+        .collect();
+
+    // df/idf computed once per unique query term.
     let n = recipes.len() as f64;
+    let mut idf_by_term: HashMap<&str, f64> = HashMap::with_capacity(query_terms.len());
+    for term in &query_terms {
+        let df = doc_tfs.iter().filter(|m| m.contains_key(term.as_str())).count() as f64;
+        let idf = (((n - df + 0.5) / (df + 0.5)) + 1.0).ln();
+        idf_by_term.insert(term.as_str(), idf);
+    }
+
     let mut out = Vec::with_capacity(recipes.len());
-    for (i, tokens) in doc_tokens.iter().enumerate() {
+    for (i, tf_map) in doc_tfs.iter().enumerate() {
         let mut score = 0.0;
+        let norm = 1.0 - B + B * (doc_lens[i] / avg_len.max(1.0));
         for term in &query_terms {
-            let tf = tokens.iter().filter(|t| *t == term).count() as f64;
+            let tf = *tf_map.get(term.as_str()).unwrap_or(&0) as f64;
             if tf == 0.0 {
                 continue;
             }
-            let df = doc_tokens
-                .iter()
-                .filter(|d| d.iter().any(|t| t == term))
-                .count() as f64;
-            let idf = (((n - df + 0.5) / (df + 0.5)) + 1.0).ln();
-            let norm = 1.0 - B + B * (doc_lens[i] / avg_len.max(1.0));
+            // `expect` here is fine: every term landed in idf_by_term above.
+            let idf = *idf_by_term.get(term.as_str()).expect("idf present");
             score += idf * ((tf * (K1 + 1.0)) / (tf + K1 * norm));
         }
         out.push(ScoredRecipe {
