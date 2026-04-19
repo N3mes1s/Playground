@@ -164,10 +164,18 @@ pub fn parse_jsonl(path: &Path) -> Session {
 
             let usage = msg.get("usage");
             if let Some(u) = usage {
-                turn.input_tokens += u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                // Output tokens: sum per API call
                 turn.output_tokens += u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                turn.cache_read_tokens += u.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                turn.cache_write_tokens += u.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+
+                // Input tokens: take MAX (cumulative per API call within a turn)
+                let inp = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as usize
+                    + u.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as usize
+                    + u.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                if inp > turn.input_tokens {
+                    turn.input_tokens = inp;
+                    turn.cache_read_tokens = u.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                    turn.cache_write_tokens = u.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                }
             }
 
             if let Some(content) = msg.get("content").and_then(|v| v.as_array()) {

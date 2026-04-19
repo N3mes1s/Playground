@@ -17,6 +17,33 @@ SKILL_DIR="${HOME}/.claude/skills/flamegraph"
 SETTINGS="${HOME}/.claude/settings.json"
 BINARY_NAME="token-flamegraph"
 
+# Uninstall mode
+if [ "${1:-}" = "--uninstall" ]; then
+    echo "  Uninstalling token-flamegraph..."
+    rm -f "${BIN_DIR}/${BINARY_NAME}"
+    rm -rf "${SKILL_DIR}"
+    if [ -f "$SETTINGS" ]; then
+        python3 -c "
+import json
+with open('$SETTINGS') as f:
+    d = json.load(f)
+stops = d.get('hooks', {}).get('Stop', [])
+d['hooks']['Stop'] = [h for h in stops if not any('token-flamegraph' in hook.get('command', '') for hook in h.get('hooks', []))]
+if not d['hooks']['Stop']:
+    del d['hooks']['Stop']
+if not d.get('hooks'):
+    del d['hooks']
+with open('$SETTINGS', 'w') as f:
+    json.dump(d, f, indent=2)
+    f.write('\n')
+" 2>/dev/null && echo "  ✓ Stop hook removed" || echo "  ⚠ Could not update settings.json"
+    fi
+    echo "  ✓ Binary removed"
+    echo "  ✓ Skill removed"
+    echo "  ✅ Uninstalled. .claude/rules/token-optimization.md left in place (safe to delete)."
+    exit 0
+fi
+
 echo "  Installing token-flamegraph..."
 
 # 1. Get the binary
