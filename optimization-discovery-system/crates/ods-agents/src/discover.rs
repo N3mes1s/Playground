@@ -315,61 +315,66 @@ impl Discoverer {
                 continue;
             };
 
-            let mut recipe_hits: Vec<(&Recipe, u32)> = Vec::new();
-            let mut anti_hits: Vec<(&Recipe, u32)> = Vec::new();
-            for trigger in &compiled_applicable {
-                if trigger.language != lang_name {
-                    continue;
-                }
-                let n = count_query_matches(&parsed, &trigger.query, text.as_bytes());
-                if n > 0 {
-                    recipe_hits.push((trigger.recipe, n));
-                }
-            }
-            for trigger in &compiled_anti {
-                if trigger.language != lang_name {
-                    continue;
-                }
-                let n = count_query_matches(&parsed, &trigger.query, text.as_bytes());
-                if n > 0 {
-                    anti_hits.push((trigger.recipe, n));
-                }
-            }
-            if recipe_hits.is_empty() && anti_hits.is_empty() {
+            // Collect every pattern match with its enclosing-symbol name
+            // (the nearest fn / def / func ancestor of the matched node).
+            // Matches outside any function are attributed to the file stem
+            // so module-level patterns (e.g. `static X: Lazy`) still surface.
+            let module = module_from_path(repo, p);
+            let file_stem_sym = module.split("::").last().unwrap_or("").to_string();
+            let mut per_symbol: std::collections::HashMap<String, SymbolHits<'_>> =
+                std::collections::HashMap::new();
+            collect_matches(
+                &parsed,
+                text.as_bytes(),
+                lang_name,
+                &compiled_applicable,
+                lang_name,
+                &file_stem_sym,
+                &mut per_symbol,
+                HitKind::Applicable,
+            );
+            collect_matches(
+                &parsed,
+                text.as_bytes(),
+                lang_name,
+                &compiled_anti,
+                lang_name,
+                &file_stem_sym,
+                &mut per_symbol,
+                HitKind::AntiPattern,
+            );
+            if per_symbol.is_empty() {
                 continue;
             }
 
-            // Use a coarse symbol derived from the module path; better
-            // per-symbol attribution lands when we add tree-sitter.
-            let module = module_from_path(repo, p);
-            let symbol = module.split("::").last().unwrap_or("").to_string();
-            let fan_in = estimate_fan_in(repo, &symbol);
-
-            let mut cand = Candidate {
-                language: detect_language(p).to_string(),
-                module: module.clone(),
-                symbol: symbol.clone(),
-                source_file: p.to_path_buf(),
-                source_line: 1,
-                bench_files: vec![],
-                naive_alt_hint: None,
-                matched_recipes: recipe_hits.iter().map(|(r, _)| r.id.clone()).collect(),
-                anti_patterns: anti_hits.iter().map(|(r, _)| r.id.clone()).collect(),
-                fan_in,
-                has_bench: false,
-                score: 0.0,
-            };
-            let recipe_score: f64 = recipe_hits
-                .iter()
-                .map(|(r, n)| retrieval_score(r, 5) * (*n as f64).min(5.0))
-                .sum();
-            let anti_score: f64 = anti_hits
-                .iter()
-                .map(|(_, n)| (*n as f64).min(5.0) * 0.5)
-                .sum();
-            let fan_in_score = ((fan_in + 1) as f64).ln() * 0.3;
-            cand.score = recipe_score + anti_score + fan_in_score;
-            candidates.push(cand);
+            for (symbol, hits) in per_symbol {
+                let fan_in = estimate_fan_in(repo, &symbol);
+                let recipe_score: f64 = hits
+                    .applicable
+                    .iter()
+                    .map(|(r, n)| retrieval_score(r, 5) * (*n as f64).min(5.0))
+                    .sum();
+                let anti_score: f64 = hits
+                    .anti
+                    .iter()
+                    .map(|(_, n)| (*n as f64).min(5.0) * 0.5)
+                    .sum();
+                let fan_in_score = ((fan_in + 1) as f64).ln() * 0.3;
+                candidates.push(Candidate {
+                    language: lang_name.to_string(),
+                    module: module.clone(),
+                    symbol,
+                    source_file: p.to_path_buf(),
+                    source_line: hits.first_line,
+                    bench_files: vec![],
+                    naive_alt_hint: None,
+                    matched_recipes: hits.applicable.iter().map(|(r, _)| r.id.clone()).collect(),
+                    anti_patterns: hits.anti.iter().map(|(r, _)| r.id.clone()).collect(),
+                    fan_in,
+                    has_bench: false,
+                    score: recipe_score + anti_score + fan_in_score,
+                });
+            }
         }
 
         // Re-rank and trim.
@@ -439,12 +444,95 @@ fn parse_with_grammar(lang_name: &str, text: &str) -> Option<tree_sitter::Tree> 
     parser.parse(text, None)
 }
 
-/// Count the number of pattern matches (NOT captures) — this is how often
-/// the trigger's shape appears in the file. A query with multiple captures
-/// still contributes one count per match.
-fn count_query_matches(tree: &tree_sitter::Tree, query: &Query, bytes: &[u8]) -> u32 {
-    let mut cursor = QueryCursor::new();
-    cursor.matches(query, tree.root_node(), bytes).count() as u32
+#[derive(Debug, Clone, Copy)]
+enum HitKind {
+    Applicable,
+    AntiPattern,
+}
+
+/// Per-symbol aggregation: how many times each trigger fired under this
+/// containing function, plus the first matched line (used as the
+/// candidate's `source_line`).
+#[derive(Debug, Default)]
+struct SymbolHits<'a> {
+    applicable: Vec<(&'a Recipe, u32)>,
+    anti: Vec<(&'a Recipe, u32)>,
+    first_line: u32,
+}
+
+/// Walk every pattern match for every applicable trigger and group the
+/// results by their enclosing-symbol name. Each trigger contributes one
+/// `(recipe, count)` entry per symbol it fires under, so a recipe that
+/// matches twice inside `fn foo` shows up as `(recipe, 2)` once.
+fn collect_matches<'a>(
+    tree: &tree_sitter::Tree,
+    bytes: &[u8],
+    lang_name: &str,
+    triggers: &'a [CompiledTrigger<'a>],
+    _grammar_key: &str,
+    file_stem_sym: &str,
+    out: &mut std::collections::HashMap<String, SymbolHits<'a>>,
+    kind: HitKind,
+) {
+    for trigger in triggers {
+        if trigger.language != lang_name {
+            continue;
+        }
+        let mut cursor = QueryCursor::new();
+        let mut per_sym: std::collections::HashMap<String, (u32, u32)> =
+            std::collections::HashMap::new();
+        for m in cursor.matches(&trigger.query, tree.root_node(), bytes) {
+            let Some(cap) = m.captures.first() else {
+                continue;
+            };
+            let line = cap.node.start_position().row as u32 + 1;
+            let sym = enclosing_symbol(cap.node, bytes, lang_name)
+                .unwrap_or_else(|| file_stem_sym.to_string());
+            let e = per_sym.entry(sym).or_insert((0, line));
+            e.0 += 1;
+            if line < e.1 {
+                e.1 = line;
+            }
+        }
+        for (sym, (count, line)) in per_sym {
+            let bucket = out.entry(sym).or_default();
+            match kind {
+                HitKind::Applicable => bucket.applicable.push((trigger.recipe, count)),
+                HitKind::AntiPattern => bucket.anti.push((trigger.recipe, count)),
+            }
+            if bucket.first_line == 0 || line < bucket.first_line {
+                bucket.first_line = line;
+            }
+        }
+    }
+}
+
+/// Walk up from `node` until we find the nearest enclosing function-like
+/// declaration, then extract its name. Returns `None` for matches at
+/// module scope (e.g. a top-level `static X: Lazy<…>`).
+fn enclosing_symbol(node: tree_sitter::Node, bytes: &[u8], lang: &str) -> Option<String> {
+    let mut cursor = Some(node);
+    while let Some(n) = cursor {
+        match (lang, n.kind()) {
+            ("rust", "function_item") => return name_field(n, "name", bytes),
+            ("rust", "function_signature_item") => return name_field(n, "name", bytes),
+            ("rust", "impl_item") => {
+                // Fall through; we prefer the inner fn if we're inside one,
+                // but for method-less impls there's no better symbol.
+            }
+            ("python", "function_definition") => return name_field(n, "name", bytes),
+            ("go", "function_declaration") => return name_field(n, "name", bytes),
+            ("go", "method_declaration") => return name_field(n, "name", bytes),
+            _ => {}
+        }
+        cursor = n.parent();
+    }
+    None
+}
+
+fn name_field(node: tree_sitter::Node, field: &str, bytes: &[u8]) -> Option<String> {
+    let name = node.child_by_field_name(field)?;
+    Some(name.utf8_text(bytes).ok()?.to_string())
 }
 
 fn module_from_path(repo: &Path, file: &Path) -> String {
@@ -572,6 +660,106 @@ fn bench_join(c: &mut Criterion) {
         let d = Discoverer::default();
         let cands = d.scan(dir.path()).unwrap();
         assert!(cands.iter().any(|c| c.symbol == "BenchmarkJoin"));
+    }
+
+    /// Discoverer must attribute recipe matches to the *enclosing function*
+    /// they live in, not the file stem. This lets `ods discover | ods run`
+    /// target real symbols like `rust::mod::fn_name` instead of `rust::file`.
+    #[test]
+    fn discover_attributes_matches_to_enclosing_function() {
+        use ods_recipes::schema::{
+            PromotionState, Recipe, RecipeId, Transformation, Trigger, VerificationRecipe,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        // Two functions, each with one Vec::new() call. The discoverer
+        // should produce two candidates keyed on `hot_a` and `hot_b`.
+        std::fs::write(
+            repo.join("src/lib.rs"),
+            r#"
+pub fn hot_a() {
+    let v: Vec<u8> = Vec::new();
+    let _ = v;
+}
+
+pub fn cold_b() {
+    let _ = 1;
+}
+
+pub fn hot_c() {
+    let v: Vec<u8> = Vec::new();
+    let _ = v;
+}
+"#,
+        )
+        .unwrap();
+        let store = Store::in_memory().unwrap();
+        store
+            .upsert(&Recipe {
+                id: RecipeId("rust-smallvec".into()),
+                name: "prefer SmallVec for hot small collections".into(),
+                category: ods_core::OptimizationCategory::AllocReduction,
+                language: "rust".into(),
+                promotion: PromotionState::Seed,
+                trigger: Trigger {
+                    ast_pattern: "(call_expression function: (scoped_identifier \
+                                 path: (identifier) @p (#eq? @p \"Vec\") \
+                                 name: (identifier) @m (#eq? @m \"new\"))) @match"
+                        .into(),
+                    profile_signature: vec![],
+                    naive_alt_ratio_min: None,
+                },
+                transformation: Transformation { steps: vec![] },
+                verification: VerificationRecipe {
+                    test_selectors: vec![],
+                    property_seeds: vec![],
+                    fuzz_minutes: 0,
+                    semver_check: false,
+                },
+                benchmark_template: "".into(),
+                success_history: vec![],
+                negative_history: vec![],
+                generalized_from: None,
+                generalized_as: None,
+                source_patch_ref: None,
+                embedding: None,
+            })
+            .unwrap();
+
+        let d = Discoverer::default();
+        let cands = d.scan_with_recipes(repo, &store, 10).unwrap();
+        let symbols: std::collections::HashSet<String> =
+            cands.iter().map(|c| c.symbol.clone()).collect();
+        assert!(
+            symbols.contains("hot_a"),
+            "expected a candidate for hot_a, got {symbols:?}"
+        );
+        assert!(
+            symbols.contains("hot_c"),
+            "expected a candidate for hot_c, got {symbols:?}"
+        );
+        assert!(
+            !symbols.contains("cold_b"),
+            "cold_b has no Vec::new, should not be a candidate; got {symbols:?}"
+        );
+        assert!(
+            !symbols.contains("lib"),
+            "file-stem fallback should NOT be used when enclosing fn exists; got {symbols:?}"
+        );
+        // Each candidate should have source_line pointing at the Vec::new line,
+        // not the fallback `1`.
+        for c in &cands {
+            if c.symbol == "hot_a" || c.symbol == "hot_c" {
+                assert!(
+                    c.source_line > 1,
+                    "expected real line for {}, got {}",
+                    c.symbol,
+                    c.source_line
+                );
+            }
+        }
     }
 
     /// Every shipped recipe YAML must have an `ast_pattern` that compiles
