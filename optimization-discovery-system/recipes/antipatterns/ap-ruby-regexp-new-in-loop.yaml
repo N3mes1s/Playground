@@ -1,0 +1,30 @@
+id: ap-ruby-regexp-new-in-loop
+name: Regexp.new / %r{} compiled repeatedly inside a loop
+category: alloc-reduction
+language: ruby
+promotion: anti-pattern
+trigger:
+  ast_pattern: |
+    (call receiver: (constant) @c (#eq? @c "Regexp")
+          method: (identifier) @m (#eq? @m "new")) @call
+  profile_signature:
+    - "alloc:regexp-compile-per-iteration"
+    - "hot:Regexp.new"
+transformation:
+  steps:
+    - "`Regexp.new(pattern)` compiles the pattern — expensive, especially for Unicode-aware regexes. Inside a loop this cost multiplies by N."
+    - "Hoist the pattern to a top-level / frozen constant: `PATTERN = /foo.*bar/` or `PATTERN = Regexp.new(dynamic_source).freeze`."
+    - "If the pattern varies per iteration based on user input, memoise by source string: `REGEX_CACHE[src] ||= Regexp.new(src)`."
+    - "Ruby caches `/literal/o` (the `o` flag) at the method-definition site, so that alternative works for tight inner loops where the pattern is a true literal."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

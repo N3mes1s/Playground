@@ -430,6 +430,7 @@ fn language_for_recipe(recipe_lang: &str) -> Option<(&'static str, Language)> {
         "rust" => Some(("rust", ods_lang_rust::tree_sitter_language())),
         "python" => Some(("python", ods_lang_python::tree_sitter_language())),
         "go" => Some(("go", ods_lang_go::tree_sitter_language())),
+        "ruby" => Some(("ruby", ods_lang_ruby::tree_sitter_language())),
         _ => None,
     }
 }
@@ -515,6 +516,7 @@ fn enclosing_symbol(node: tree_sitter::Node, bytes: &[u8], lang: &str) -> Option
         "rust" => ods_lang_rust::enclosing_symbol(node, bytes),
         "python" => ods_lang_python::enclosing_symbol(node, bytes),
         "go" => ods_lang_go::enclosing_symbol(node, bytes),
+        "ruby" => ods_lang_ruby::enclosing_symbol(node, bytes),
         _ => None,
     }
 }
@@ -744,6 +746,82 @@ pub fn hot_c() {
                 );
             }
         }
+    }
+
+    /// Cross-language proof: Ruby recipes must also route through the
+    /// per-language Discoverer dispatch and attribute matches to the
+    /// enclosing Ruby `method` (not a file-stem fallback).
+    #[test]
+    fn discover_attributes_ruby_matches_to_enclosing_method() {
+        use ods_recipes::schema::{
+            PromotionState, Recipe, RecipeId, Transformation, Trigger, VerificationRecipe,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path();
+        std::fs::write(repo.join("Gemfile"), "source 'https://rubygems.org'\n").unwrap();
+        std::fs::create_dir_all(repo.join("lib")).unwrap();
+        // `hot_method` calls `File.join`; `ghost_method` only has a
+        // commented-out call + a string literal with matching text. A
+        // regex-based matcher would flag `ghost_method` too; tree-sitter
+        // must suppress that.
+        std::fs::write(
+            repo.join("lib/app.rb"),
+            r#"
+def hot_method
+  File.join("/var", "log")
+end
+
+def ghost_method
+  # File.join("/fake", "x")
+  "File.join in a string should not match"
+end
+"#,
+        )
+        .unwrap();
+        let store = Store::in_memory().unwrap();
+        store
+            .upsert(&Recipe {
+                id: RecipeId("ruby-file-join".into()),
+                name: "File.join usage".into(),
+                category: ods_core::OptimizationCategory::FastPathSpecialization,
+                language: "ruby".into(),
+                promotion: PromotionState::Seed,
+                trigger: Trigger {
+                    ast_pattern: r#"(call receiver: (constant) @c (#eq? @c "File")
+                                         method: (identifier) @m (#eq? @m "join")) @match"#
+                        .into(),
+                    profile_signature: vec![],
+                    naive_alt_ratio_min: None,
+                },
+                transformation: Transformation { steps: vec![] },
+                verification: VerificationRecipe {
+                    test_selectors: vec![],
+                    property_seeds: vec![],
+                    fuzz_minutes: 0,
+                    semver_check: false,
+                },
+                benchmark_template: "".into(),
+                success_history: vec![],
+                negative_history: vec![],
+                generalized_from: None,
+                generalized_as: None,
+                source_patch_ref: None,
+                embedding: None,
+            })
+            .unwrap();
+
+        let d = Discoverer::default();
+        let cands = d.scan_with_recipes(repo, &store, 10).unwrap();
+        let symbols: std::collections::HashSet<String> =
+            cands.iter().map(|c| c.symbol.clone()).collect();
+        assert!(
+            symbols.contains("hot_method"),
+            "expected candidate for hot_method; got {symbols:?}"
+        );
+        assert!(
+            !symbols.contains("ghost_method"),
+            "tree-sitter must suppress comment / string matches; got {symbols:?}"
+        );
     }
 
     /// Every shipped recipe YAML must have an `ast_pattern` that compiles

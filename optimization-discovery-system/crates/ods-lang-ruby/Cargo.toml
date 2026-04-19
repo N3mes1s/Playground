@@ -18,3 +18,8 @@ similar   = { workspace = true }
 tokio     = { workspace = true }
 tracing   = { workspace = true }
 serde     = { workspace = true }
+tree-sitter = "0.22"
+tree-sitter-ruby = "0.21"
+
+[dev-dependencies]
+tempfile = { workspace = true }

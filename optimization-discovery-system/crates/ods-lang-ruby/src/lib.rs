@@ -115,7 +115,8 @@ impl LanguageAdapter for RubyAdapter {
     }
 
     async fn ast_query(&self, file: &Path, query: &str) -> Result<Vec<AstMatch>> {
-        regex_line_match(file, query).await
+        let text = tokio::fs::read_to_string(file).await?;
+        tree_sitter_ast_query(file, &text, query)
     }
 
     fn emit_patch(&self, edits: &[Edit]) -> Result<Patch> {
@@ -234,22 +235,57 @@ fn make_diff(edits: &[Edit]) -> String {
     diff
 }
 
-async fn regex_line_match(file: &Path, query: &str) -> Result<Vec<AstMatch>> {
-    let text = tokio::fs::read_to_string(file).await?;
-    let re = Regex::new(query)?;
+/// Expose the tree-sitter-ruby grammar so the Discoverer can run batched
+/// queries without re-entering the `LanguageAdapter::ast_query` file-IO
+/// path. Mirrors the helper each of the other adapters exports.
+pub fn tree_sitter_language() -> tree_sitter::Language {
+    tree_sitter_ruby::language()
+}
+
+fn tree_sitter_ast_query(file: &Path, text: &str, query: &str) -> Result<Vec<AstMatch>> {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_ruby::language())
+        .map_err(|e| anyhow::anyhow!("load tree-sitter-ruby grammar: {e}"))?;
+    let Some(tree) = parser.parse(text, None) else {
+        anyhow::bail!("tree-sitter failed to parse {}", file.display());
+    };
+    let q = tree_sitter::Query::new(&tree_sitter_ruby::language(), query)
+        .map_err(|e| anyhow::anyhow!("compile tree-sitter query `{query}`: {e}"))?;
+    let mut cursor = tree_sitter::QueryCursor::new();
     let mut out = Vec::new();
-    for (i, line) in text.lines().enumerate() {
-        if re.is_match(line) {
+    let bytes = text.as_bytes();
+    for m in cursor.matches(&q, tree.root_node(), bytes) {
+        for cap in m.captures {
+            let node = cap.node;
+            let start = node.start_position();
+            let end = node.end_position();
+            let matched = node.utf8_text(bytes).unwrap_or("").to_string();
             out.push(AstMatch {
                 file: file.to_path_buf(),
-                start_line: (i + 1) as u32,
-                end_line: (i + 1) as u32,
-                text: line.to_string(),
-                enclosing_symbol: None,
+                start_line: (start.row + 1) as u32,
+                end_line: (end.row + 1) as u32,
+                text: matched,
+                enclosing_symbol: enclosing_symbol(node, bytes),
             });
         }
     }
     Ok(out)
+}
+
+/// Find the nearest enclosing `def` — `method` for instance methods,
+/// `singleton_method` for class-level (`self.foo`) — and return its
+/// name. Returns `None` when the match is at top-level script scope.
+pub fn enclosing_symbol(node: tree_sitter::Node, bytes: &[u8]) -> Option<String> {
+    let mut cursor = Some(node);
+    while let Some(n) = cursor {
+        if matches!(n.kind(), "method" | "singleton_method") {
+            let name = n.child_by_field_name("name")?;
+            return Some(name.utf8_text(bytes).ok()?.to_string());
+        }
+        cursor = n.parent();
+    }
+    None
 }
 
 #[cfg(test)]
@@ -280,5 +316,76 @@ mod tests {
         let r = parse_benchmark_ips_output(s);
         assert_eq!(r.samples.len(), 2);
         assert!(r.samples[0].ns_per_iter > 0.0);
+    }
+
+    /// tree-sitter-ruby must parse a minimal Ruby file, recognise
+    /// `def foo` as a `method` node whose `name` field is the bare
+    /// identifier, AND filter out matches inside string literals /
+    /// comments. The old regex impl would have matched all three
+    /// `File.join` sites below; the tree-sitter path must not.
+    #[tokio::test]
+    async fn ast_query_attaches_enclosing_symbol_when_inside_method() {
+        let src = r#"
+def outer
+  File.join("/var", "log")
+end
+
+"some string with File.join inside"
+# def ghost_in_comment
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("t.rb");
+        std::fs::write(&p, src).unwrap();
+        let a = RubyAdapter::new();
+        let hits = a
+            .ast_query(
+                &p,
+                r#"(call receiver: (constant) @c (#eq? @c "File")
+                         method: (identifier) @m (#eq? @m "join")) @call"#,
+            )
+            .await
+            .unwrap();
+        // The query has three named captures (@c, @m, @call) — each
+        // match contributes one AstMatch per capture, same as the Rust
+        // / Python / Go adapters. Every match must come from the real
+        // call site (not the string literal, not the comment).
+        assert!(!hits.is_empty(), "expected hits but got none");
+        for h in &hits {
+            assert_eq!(
+                h.enclosing_symbol.as_deref(),
+                Some("outer"),
+                "hit from wrong location: {:?}",
+                h
+            );
+            assert_eq!(h.start_line, 3, "expected line 3, got {}", h.start_line);
+        }
+    }
+
+    /// Singleton methods (`def self.flush`) must also attribute correctly.
+    #[tokio::test]
+    async fn ast_query_attributes_singleton_methods() {
+        let src = r#"
+class Cache
+  def self.flush
+    Dir.glob("/tmp/*").each { |p| File.delete(p) }
+  end
+end
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("t2.rb");
+        std::fs::write(&p, src).unwrap();
+        let a = RubyAdapter::new();
+        let hits = a
+            .ast_query(
+                &p,
+                r#"(call receiver: (constant) @c (#eq? @c "Dir")
+                         method: (identifier) @m (#eq? @m "glob")) @call"#,
+            )
+            .await
+            .unwrap();
+        assert!(!hits.is_empty());
+        for h in &hits {
+            assert_eq!(h.enclosing_symbol.as_deref(), Some("flush"));
+        }
     }
 }

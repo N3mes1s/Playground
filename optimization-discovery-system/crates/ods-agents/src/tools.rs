@@ -247,15 +247,16 @@ impl ToolHandler for AstQuery {
         let arg: AstQueryIn = serde_json::from_value(input.clone())?;
         let file = self.sandbox.resolve(&arg.path)?;
         // Dispatch to the right language adapter by file extension. This
-        // is the same set the Discoverer supports (rust / python / go).
+        // is the same set the Discoverer supports.
         let adapter: Box<dyn LanguageAdapter> = match file.extension().and_then(|s| s.to_str()) {
             Some("rs") => Box::new(ods_lang_rust::RustAdapter::new()),
             Some("py") => Box::new(ods_lang_python::PythonAdapter::new()),
             Some("go") => Box::new(ods_lang_go::GoAdapter::new()),
+            Some("rb") => Box::new(ods_lang_ruby::RubyAdapter::new()),
             other => {
                 anyhow::bail!(
                     "ast_query: no tree-sitter grammar for extension {other:?}; \
-                     supported: .rs / .py / .go"
+                     supported: .rs / .py / .go / .rb"
                 );
             }
         };

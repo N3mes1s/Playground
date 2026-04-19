@@ -1,0 +1,42 @@
+id: ruby-file-join-string-interp
+name: prefer string interpolation over File.join on known-ASCII paths
+category: fast-path-specialization
+language: ruby
+promotion: seed
+trigger:
+  ast_pattern: |
+    (call receiver: (constant) @c (#eq? @c "File")
+          method: (identifier) @m (#eq? @m "join")) @call
+  profile_signature:
+    - "hot:File.join"
+    - "branch:encoding-classification"
+    - "alloc:intermediate-array"
+  naive_alt_ratio_min: 1.5
+transformation:
+  steps:
+    - "`File.join(a, b)` pays for multi-byte encoding classification (rb_enc_mbclen per byte) + an intermediate Array allocation for variadic dispatch."
+    - "When both segments are known-ASCII literals or come from a trusted source, `\"#{a}/#{b}\"` is 4-7x faster and allocates one String instead of an Array + String."
+    - "Preserve the File.join call site when either argument may carry Shift-JIS (the 0x5c byte can collide with '/'), may contain interior separators that need collapsing, or may be nil / non-String."
+    - "For three-or-more segments inside a hot loop, build the full `\"a/b/c\"` interpolation in one expression rather than chaining `File.join` calls."
+verification:
+  test_selectors: ["path", "file", "join"]
+  property_seeds: [14142135623, 1732050807]
+  fuzz_minutes: 5
+  semver_check: true
+benchmark_template: |
+  require "benchmark/ips"
+
+  base = "/var/lib/foo"
+  leaf = "bar.txt"
+
+  Benchmark.ips do |x|
+    x.report("File.join")       { File.join(base, leaf) }
+    x.report("string interp")   { "#{base}/#{leaf}" }
+    x.compare!
+  end
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:byroot/faster-paths-2026-04"
+embedding: null

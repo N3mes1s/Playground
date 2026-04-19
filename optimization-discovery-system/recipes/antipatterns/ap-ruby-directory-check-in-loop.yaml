@@ -1,0 +1,30 @@
+id: ap-ruby-directory-check-in-loop
+name: File.directory? / File.file? called per entry inside a loop
+category: syscall-elimination
+language: ruby
+promotion: anti-pattern
+trigger:
+  ast_pattern: |
+    (call receiver: (constant) @c (#eq? @c "File")
+          method: (identifier) @m (#match? @m "^(directory\\?|file\\?|exist\\?|exists\\?)$")) @call
+  profile_signature:
+    - "syscall:stat-per-iteration"
+    - "hot:File.directory?"
+transformation:
+  steps:
+    - "Each `File.directory?(path)` call issues a `stat(2)` syscall. When the directory was already iterated via `Dir.glob`, `Dir.children`, or `Dir.each_child`, the entry's type is available from `readdir`'s d_type on most filesystems."
+    - "Replace with `Dir.each_child(dir) { |name| ... }` and cache the type at iteration time."
+    - "For single-path checks outside a loop, prefer `File.lstat(path).directory?` when you don't want to follow symlinks — same syscall count, clearer intent."
+    - "If your hot path has `File.exist?` followed by `File.open`, drop the exist check and rescue `Errno::ENOENT` instead — the open is one syscall either way."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

@@ -1,0 +1,55 @@
+id: ruby-dir-each-child-over-glob-stat
+name: avoid stat(2)-per-entry when iterating a directory
+category: syscall-elimination
+language: ruby
+promotion: seed
+trigger:
+  ast_pattern: |
+    (call receiver: (constant) @c (#eq? @c "Dir")
+          method: (identifier) @m (#match? @m "^(glob|entries|\\[\\])$")) @call
+  profile_signature:
+    - "syscall:stat>N per readdir-entry"
+    - "hot:Dir.glob"
+    - "hot:File.directory?"
+  naive_alt_ratio_min: 1.2
+transformation:
+  steps:
+    - "`Dir.glob` + `File.directory?` pairs re-stat every entry. `Dir.each_child(path)` yields names without a second stat for simple classification."
+    - "On Ruby >= 3.4 with Bootsnap's upstream patch, `Dir.scan(path) { |name, type| ... }` exposes the readdir d_type directly — prefer it when available."
+    - "For bulk load-path walks (Rails autoload, Bootsnap cache build), cache the type at iteration time instead of re-asking the filesystem per entry."
+    - "Fall back to `File.directory?` only on filesystems that return `DT_UNKNOWN` — uncommon but real on NFS / sshfs."
+verification:
+  test_selectors: ["dir", "glob", "walk", "loader"]
+  property_seeds: [2718281828, 1618033988]
+  fuzz_minutes: 0
+  semver_check: true
+benchmark_template: |
+  require "benchmark/ips"
+  require "tmpdir"
+
+  Dir.mktmpdir do |dir|
+    10_000.times { |i| FileUtils.mkdir_p(File.join(dir, "d#{i}")) }
+    10_000.times { |i| File.write(File.join(dir, "f#{i}"), "") }
+
+    Benchmark.ips do |x|
+      x.report("glob+directory?") do
+        count = 0
+        Dir.glob(File.join(dir, "*")).each do |p|
+          count += 1 if File.directory?(p)
+        end
+      end
+      x.report("each_child+directory?") do
+        count = 0
+        Dir.each_child(dir) do |name|
+          count += 1 if File.directory?(File.join(dir, name))
+        end
+      end
+      x.compare!
+    end
+  end
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:byroot/faster-paths-2026-04,Shopify/bootsnap"
+embedding: null
