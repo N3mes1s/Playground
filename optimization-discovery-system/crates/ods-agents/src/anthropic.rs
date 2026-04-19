@@ -105,6 +105,13 @@ impl AnthropicClient {
                 },
             });
         }
+        tracing::debug!(
+            target: "ods::anthropic",
+            has_schema = output_schema.is_some(),
+            body_bytes = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0),
+            body_keys = ?body.as_object().map(|m| m.keys().cloned().collect::<Vec<_>>()),
+            "POST /v1/messages"
+        );
         let resp = self
             .http
             .post(API_URL)
