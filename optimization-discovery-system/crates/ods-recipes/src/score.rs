@@ -10,7 +10,7 @@
 //! adapter's name, and the observed profile-signature tags.
 
 use crate::schema::Recipe;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 const K1: f64 = 1.2;
 const B: f64 = 0.75;
@@ -21,11 +21,52 @@ pub struct ScoredRecipe {
     pub score: f64,
 }
 
+/// Tokenize `s` into lowercased alphanumeric-or-underscore runs.
+///
+/// Fast path (recipe: rust-path-join-fastpath, generalized to ASCII-clean
+/// string inputs): if `s` is pure ASCII we can split on single bytes and
+/// lowercase in place with `make_ascii_lowercase`, bypassing the UTF-8
+/// `char` decode in `str::split` and the allocate-then-lowercase-copy dance
+/// that `str::to_ascii_lowercase` performs on every token. The slow path is
+/// preserved verbatim for non-ASCII input (e.g. identifiers with diacritics
+/// or non-Latin scripts).
 fn tokenize(s: &str) -> Vec<String> {
-    s.split(|c: char| !c.is_alphanumeric() && c != '_')
-        .filter(|t| !t.is_empty())
-        .map(|t| t.to_ascii_lowercase())
-        .collect()
+    if s.is_ascii() {
+        // Hand-rolled byte scan: faster than `char`-based `split` + per-token
+        // allocate-and-lowercase, and safe because every token is a run of
+        // ASCII bytes (so a valid UTF-8 substring on its own).
+        let bytes = s.as_bytes();
+        let mut out: Vec<String> = Vec::new();
+        let mut i = 0;
+        while i < bytes.len() {
+            // Skip separators.
+            while i < bytes.len() && !is_token_byte(bytes[i]) {
+                i += 1;
+            }
+            let start = i;
+            while i < bytes.len() && is_token_byte(bytes[i]) {
+                i += 1;
+            }
+            if start < i {
+                // SAFETY: ASCII bytes are valid UTF-8.
+                let slice = unsafe { std::str::from_utf8_unchecked(&bytes[start..i]) };
+                let mut tok = slice.to_owned();
+                tok.make_ascii_lowercase();
+                out.push(tok);
+            }
+        }
+        out
+    } else {
+        s.split(|c: char| !c.is_alphanumeric() && c != '_')
+            .filter(|t| !t.is_empty())
+            .map(|t| t.to_ascii_lowercase())
+            .collect()
+    }
+}
+
+#[inline]
+fn is_token_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
 }
 
 fn recipe_tokens(r: &Recipe) -> Vec<String> {
@@ -67,13 +108,16 @@ pub fn score_recipes(recipes: &[Recipe], query: &str) -> Vec<ScoredRecipe> {
 
     // Deduplicate query terms up front so df is computed once per distinct
     // term even when the caller repeats one. Preserve first-seen order for
-    // determinism (irrelevant to scoring but nice for debugging).
+    // determinism (irrelevant to scoring but nice for debugging). Use a
+    // `HashSet<String>` membership check and only clone when a term is
+    // actually new, avoiding the unconditional `t.clone()` on the old path.
     let query_terms: Vec<String> = {
         let raw = tokenize(query);
-        let mut seen: HashMap<String, ()> = HashMap::with_capacity(raw.len());
+        let mut seen: HashSet<String> = HashSet::with_capacity(raw.len());
         let mut out = Vec::with_capacity(raw.len());
         for t in raw {
-            if seen.insert(t.clone(), ()).is_none() {
+            if !seen.contains(&t) {
+                seen.insert(t.clone());
                 out.push(t);
             }
         }
