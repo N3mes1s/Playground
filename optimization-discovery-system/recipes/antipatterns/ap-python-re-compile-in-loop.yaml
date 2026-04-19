@@ -1,0 +1,25 @@
+id: ap-python-re-compile-in-loop
+name: re.compile / re.match inline inside a loop
+category: caching
+language: python
+promotion: anti-pattern
+trigger:
+  ast_pattern: 'for\s+[^:]+:[^#]*\n[^#]*\bre\.(compile|match|search|findall|sub)\s*\('
+  profile_signature:
+    - "hot:regex-compile-per-iteration"
+transformation:
+  steps:
+    - "`re` caches compiled patterns up to 512 entries, but the cache lookup + match dispatch still dominates in tight loops."
+    - "Compile once at module level via `_RE = re.compile(r\"...\")` and call `_RE.match(...)` / `_RE.sub(...)` inside the loop. Direct method calls on the Pattern object skip the cache."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

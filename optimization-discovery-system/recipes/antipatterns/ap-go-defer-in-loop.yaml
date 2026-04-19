@@ -1,0 +1,25 @@
+id: ap-go-defer-in-loop
+name: defer inside a tight loop
+category: algorithmic
+language: go
+promotion: anti-pattern
+trigger:
+  ast_pattern: 'for\s+[^{]+\{[^}]*\bdefer\s+'
+  profile_signature:
+    - "hot:defer-schedule-per-iteration"
+transformation:
+  steps:
+    - "`defer` inside a loop defers cleanup until function return, so resources pile up and every iteration pays the scheduling cost."
+    - "Move the cleanup inline (explicit `Close()` at end of iteration) or extract the loop body into a helper function where `defer` fires per iteration."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

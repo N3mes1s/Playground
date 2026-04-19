@@ -109,31 +109,46 @@ impl Store {
         Ok(())
     }
 
-    /// Cosine-similarity vector search. Uses the hash-based embedding in
-    /// `ods_recipes::embed` and returns recipes sorted by descending score.
-    /// Callers can pre-filter with [`Self::search`] first for language /
-    /// category symbolic constraints.
-    pub fn vector_search(
+    /// Combined retrieval: symbolic pre-filter (language + promotion floor)
+    /// then vector ranking against a free-form query, then a down-weight
+    /// pass for recipes with accumulated negative history. Replaces the
+    /// raw `search` call in most retrieval paths.
+    ///
+    /// The final score for each candidate is:
+    ///   `cosine(query_emb, recipe_emb) * retrieval_score(recipe, 5)`
+    /// with a small floor so non-matching but cheap-promotion recipes
+    /// can still surface if nothing else ranks.
+    pub fn retrieve(
         &self,
-        query: &str,
-        candidates: &[Recipe],
+        language: Option<&str>,
+        query_text: &str,
         limit: usize,
-    ) -> Vec<(Recipe, f32)> {
-        let q = crate::embed::embed_query(query);
+    ) -> Result<Vec<(Recipe, f32)>> {
+        let candidates = self.search(&RecipeQuery {
+            language: language.map(String::from),
+            category: None,
+            min_promotion: Some(PromotionState::Hypothesized),
+            limit: Some(10_000),
+        })?;
+        if candidates.is_empty() {
+            return Ok(vec![]);
+        }
+        let q = crate::embed::embed_query(query_text);
         let mut scored: Vec<(Recipe, f32)> = candidates
-            .iter()
+            .into_iter()
             .map(|r| {
                 let emb = r
                     .embedding
                     .clone()
-                    .unwrap_or_else(|| crate::embed::embed_recipe(r));
+                    .unwrap_or_else(|| crate::embed::embed_recipe(&r));
                 let sim = crate::embed::cosine(&q, &emb);
-                (r.clone(), sim)
+                let neg_weight = retrieval_score(&r, 5) as f32;
+                (r, sim * neg_weight)
             })
             .collect();
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         scored.truncate(limit);
-        scored
+        Ok(scored)
     }
 
     pub fn get(&self, id: &RecipeId) -> Result<Option<Recipe>> {

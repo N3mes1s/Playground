@@ -1,0 +1,25 @@
+id: ap-python-attribute-lookup-in-loop
+name: repeated attribute lookup inside a hot loop
+category: caching
+language: python
+promotion: anti-pattern
+trigger:
+  ast_pattern: 'for\s+[^:]+:[^#]*\n[^#]*\w+\.\w+\.\w+\('
+  profile_signature:
+    - "hot:attr-lookup-per-iteration"
+transformation:
+  steps:
+    - "Python resolves `obj.method.sub(...)` through multiple dict lookups. Bind the final callable to a local name *outside* the loop: `m = obj.method.sub` then call `m(...)` inside."
+    - "The interpreter caches local names in a fast array; attribute chains go through the slower LOAD_ATTR path."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

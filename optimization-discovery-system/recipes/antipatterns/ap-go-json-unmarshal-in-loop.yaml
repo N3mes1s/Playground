@@ -1,0 +1,26 @@
+id: ap-go-json-unmarshal-in-loop
+name: json.Unmarshal inside a loop over a known shape
+category: caching
+language: go
+promotion: anti-pattern
+trigger:
+  ast_pattern: 'for\s+[^{]+\{[^}]*json\.Unmarshal\s*\('
+  profile_signature:
+    - "alloc:reflection-per-iteration"
+    - "hot:json-decode"
+transformation:
+  steps:
+    - "Use a streaming `json.Decoder` over the input source rather than re-entering `json.Unmarshal` each iteration."
+    - "Or use a generated fast decoder (`easyjson` / `sonic`) when the schema is stable and the loop is hot enough to justify the build-time cost."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

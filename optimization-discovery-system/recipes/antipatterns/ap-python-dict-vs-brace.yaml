@@ -1,0 +1,25 @@
+id: ap-python-dict-vs-brace
+name: dict() constructor vs {} literal
+category: alloc-reduction
+language: python
+promotion: anti-pattern
+trigger:
+  ast_pattern: '=\s*dict\s*\(\s*\)'
+  profile_signature:
+    - "hot:dict-ctor"
+transformation:
+  steps:
+    - "`dict()` dispatches through the builtin namespace; `{}` is a BUILD_MAP opcode. The literal form is ~3x faster in benchmarks."
+    - "Same applies to `list()` vs `[]` and `tuple()` vs `()`. The difference is microseconds but compounds in hot paths."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

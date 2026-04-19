@@ -1,0 +1,26 @@
+id: ap-python-str-concat-loop
+name: string concatenation with += inside a loop
+category: alloc-reduction
+language: python
+promotion: anti-pattern
+trigger:
+  ast_pattern: 'for\s+[^:]+:[^#\n]*\n[^#]*\+\s*=\s*[''\"]'
+  profile_signature:
+    - "alloc:string-growth-per-iteration"
+transformation:
+  steps:
+    - "Python strings are immutable; `s += chunk` in a loop is O(n^2) because each step allocates and copies."
+    - "Accumulate into a `list` then `\"\".join(list)` at the end -- one allocation, linear time."
+    - "For byte streams, `io.BytesIO` is the idiomatic accumulator."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

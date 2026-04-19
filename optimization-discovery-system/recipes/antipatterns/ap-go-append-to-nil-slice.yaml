@@ -1,0 +1,25 @@
+id: ap-go-append-to-nil-slice
+name: append to a nil slice with a known-ish final length
+category: alloc-reduction
+language: go
+promotion: anti-pattern
+trigger:
+  ast_pattern: 'var\s+\w+\s+\[\]\w+\s*\n[^}]*append\('
+  profile_signature:
+    - "alloc:slice-growth"
+transformation:
+  steps:
+    - "Preallocate with `make([]T, 0, expectedLen)` so the backing array doesn't reallocate as the slice grows."
+    - "When the final length is exact, use `make([]T, expectedLen)` and index assignment instead of append."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

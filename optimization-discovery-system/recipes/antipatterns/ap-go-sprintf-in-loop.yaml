@@ -1,0 +1,25 @@
+id: ap-go-sprintf-in-loop
+name: fmt.Sprintf inside a loop
+category: alloc-reduction
+language: go
+promotion: anti-pattern
+trigger:
+  ast_pattern: 'for\s+[^{]+\{[^}]*fmt\.Sprintf\s*\('
+  profile_signature:
+    - "alloc:sprintf-per-iteration"
+transformation:
+  steps:
+    - "Replace per-iteration `fmt.Sprintf` with a reused `strings.Builder` and `fmt.Fprintf(&b, ...)` to avoid allocating a fresh string each pass."
+    - "For simple integer-or-string interpolation, direct byte-writing via `strconv.AppendInt` / `strconv.AppendQuote` is faster than the reflection-driven Sprintf path."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

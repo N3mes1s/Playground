@@ -1,0 +1,25 @@
+id: ap-go-range-by-value-large-struct
+name: range over large structs by value
+category: alloc-reduction
+language: go
+promotion: anti-pattern
+trigger:
+  ast_pattern: 'for\s+\w+\s*,\s*\w+\s*:=\s*range\s+\w+\s*\{'
+  profile_signature:
+    - "alloc:range-copy"
+transformation:
+  steps:
+    - "Ranging over a slice of structs copies each element into the loop variable. For structs larger than ~64 bytes this is measurable."
+    - "Switch to index iteration: `for i := range s { e := &s[i]; ... }`. Operate through the pointer to avoid the copy."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null
