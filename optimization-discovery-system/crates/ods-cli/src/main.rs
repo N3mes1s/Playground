@@ -586,7 +586,7 @@ async fn cmd_ci(action: CiAction, store_path: &PathBuf) -> Result<()> {
                 "ods run . --target {}::{}::{}",
                 art.target.language, art.target.module, art.target.symbol
             );
-            let body = render_pr_body(&ReportInputs {
+            let mut body = render_pr_body(&ReportInputs {
                 target: &art.target,
                 recipes_applied: &recipes_applied_ids,
                 speedup: &speedup,
@@ -595,6 +595,37 @@ async fn cmd_ci(action: CiAction, store_path: &PathBuf) -> Result<()> {
                 gate: &gate,
                 reproduction_cmd: &repro,
             });
+            // Scaffolded-bench callout: if we added a synthetic bench
+            // harness, surface it so reviewers know to keep it.
+            if let Some(sc) = &art.scaffolded_bench {
+                body.push_str("\n### Synthetic bench harness added\n\n");
+                body.push_str(&format!(
+                    "This project did not ship a bench harness for the target. \
+                     ODS scaffolded one so pre/post measurement was possible.\n\n\
+                     - bench name: `{}`\n- bench file: `{}`\n",
+                    sc.bench_name, sc.bench_file
+                ));
+                if !sc.created_files.is_empty() {
+                    body.push_str("- created files:\n");
+                    for f in &sc.created_files {
+                        body.push_str(&format!("  - `{}`\n", f));
+                    }
+                }
+                if !sc.modified_files.is_empty() {
+                    body.push_str("- modified files (Cargo.toml `[[bench]]` / dev-deps):\n");
+                    for f in &sc.modified_files {
+                        body.push_str(&format!("  - `{}`\n", f));
+                    }
+                }
+                if sc.added_criterion_dep {
+                    body.push_str("- added `criterion` as a dev-dependency\n");
+                }
+                body.push_str(
+                    "\n**Recommendation:** keep the scaffolded bench in the repo. It \
+                     makes future optimization runs cheaper and gives reviewers a \
+                     repeatable way to replay the measurement.\n",
+                );
+            }
             let pr = gh
                 .open_pr(
                     &owner,

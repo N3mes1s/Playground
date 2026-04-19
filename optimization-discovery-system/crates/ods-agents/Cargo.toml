@@ -11,6 +11,7 @@ publish               = false
 ods-core    = { workspace = true }
 ods-recipes = { workspace = true }
 ods-lang    = { workspace = true }
+ods-lang-rust = { workspace = true }
 ods-measure = { workspace = true }
 ods-verify  = { workspace = true }
 ods-exec    = { workspace = true }

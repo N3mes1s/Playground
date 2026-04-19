@@ -1050,6 +1050,7 @@ dependencies = [
  "ods-core",
  "ods-exec",
  "ods-lang",
+ "ods-lang-rust",
  "ods-measure",
  "ods-recipes",
  "ods-verify",

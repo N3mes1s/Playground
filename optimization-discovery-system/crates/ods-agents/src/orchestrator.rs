@@ -56,6 +56,19 @@ pub struct RunArtifact {
     pub pr_withheld: bool,
     pub spent_usd: f64,
     pub note: Option<String>,
+    /// When we scaffolded a synthetic bench harness (because the repo
+    /// didn't ship one), this is populated. The PR body calls this out so
+    /// reviewers know to keep the added file as a lasting improvement.
+    pub scaffolded_bench: Option<ScaffoldSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScaffoldSummary {
+    pub bench_name: String,
+    pub bench_file: String,
+    pub created_files: Vec<String>,
+    pub modified_files: Vec<String>,
+    pub added_criterion_dep: bool,
 }
 
 pub struct Orchestrator {
@@ -109,6 +122,7 @@ impl Orchestrator {
             pr_withheld: false,
             spent_usd: 0.0,
             note: None,
+            scaffolded_bench: None,
         };
 
         // RunStore --------------------------------------------------------
@@ -154,8 +168,52 @@ impl Orchestrator {
             .context("adapter.build")?;
         let pre_profile = self.adapter.profile(&build, &target).await.ok();
         artifact.pre_profile = pre_profile.clone();
-        let pre_bench = self.adapter.run_bench(&build, &target).await.ok();
-        artifact.pre_bench = pre_bench.clone();
+        let mut pre_bench = self.adapter.run_bench(&build, &target).await.ok();
+        // If the target crate has no bench harness, scaffold one so we can
+        // still produce structured pre/post samples. We only do this for
+        // the Rust adapter today; other languages will grow analogous
+        // scaffolders in stage-6.
+        let bench_empty = pre_bench
+            .as_ref()
+            .map(|b| b.samples.is_empty())
+            .unwrap_or(true);
+        if self.adapter.name() == "rust" && bench_empty {
+            match ods_lang_rust::bench_scaffold::scaffold(&self.repo, &target) {
+                Ok(outcome) => {
+                    artifact.scaffolded_bench = Some(ScaffoldSummary {
+                        bench_name: outcome.bench_name.clone(),
+                        bench_file: outcome.bench_file.display().to_string(),
+                        created_files: outcome
+                            .created_files
+                            .iter()
+                            .map(|p| p.display().to_string())
+                            .collect(),
+                        modified_files: outcome
+                            .modified_files
+                            .iter()
+                            .map(|p| p.display().to_string())
+                            .collect(),
+                        added_criterion_dep: outcome.added_criterion_dep,
+                    });
+                    tracing::info!(
+                        bench = %outcome.bench_name,
+                        "scaffolded synthetic bench; re-running pre-bench"
+                    );
+                    let build2 = self
+                        .adapter
+                        .build(&self.repo, None)
+                        .await
+                        .unwrap_or(build.clone());
+                    pre_bench = self.adapter.run_bench(&build2, &target).await.ok();
+                    artifact.pre_bench = pre_bench.clone();
+                }
+                Err(e) => {
+                    tracing::warn!(err = %e, "bench scaffold failed; continuing without");
+                }
+            }
+        } else {
+            artifact.pre_bench = pre_bench.clone();
+        }
         artifact.stages_completed.push(LoopStage::Profile);
         persist(&run_store, &run_id, LoopStage::Profile, &artifact)?;
         run.advance()?;

@@ -313,6 +313,7 @@ pub fn parse_cargo_bench_output(stdout: &str) -> BenchReport {
     BenchReport { samples }
 }
 
+pub mod bench_scaffold;
 pub mod criterion_json;
 pub mod flame;
 pub mod profile;
