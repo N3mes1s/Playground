@@ -1,0 +1,31 @@
+id: rust-loop-tiling
+name: loop tiling (blocking) for cache-resident working sets
+category: algorithmic
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: 'for\s+\w+\s+in\s+0\.\.\w+\s*\{[^}]*for\s+\w+\s+in\s+0\.\.\w+\s*\{[^}]*\w+\[\w+\]\[\w+\]'
+  profile_signature:
+    - "perf:LLC-load-miss-rate->30%"
+    - "pcm-memory:DRAM-BW->80%-saturated"
+    - "access-stride:non-stride-1-for-inner-index"
+  naive_alt_ratio_min: null
+transformation:
+  steps:
+    - "Pick tile size T so T^2 (2D) or T^3 (3D) * sizeof(element) fits in the target cache: L1 ~32 KiB (T=64 for f32), L2 ~1 MiB (T=256)."
+    - "Wrap outer loops with tile loops: `for ii in (0..N).step_by(T) { for jj in (0..N).step_by(T) { for i in ii..(ii+T).min(N) { ... } } }`."
+    - "For matmul add a third tile level (register tiling) of 4x4 or 8x8 sized to the FMA unit width."
+    - "Verify with `perf c2c` (cache-to-cache) or `cachegrind` that access locality improved; sweep tile sizes and pick by measurement."
+    - "Invariants: loops are data-parallel within a tile (no cross-tile dependence, or the reduction is associative); array accesses use known strides; tile bounds handled at N-edges."
+verification:
+  test_selectors: ["matmul", "transpose", "stencil", "image"]
+  property_seeds: []
+  fuzz_minutes: 5
+  semver_check: true
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:drepper-memory,cgo2024-polly-tiling,faer-rs-matmul"
+embedding: null

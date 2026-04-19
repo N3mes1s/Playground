@@ -1,0 +1,32 @@
+id: rust-enum-niche-nonzero
+name: niche-filling via NonZero* / NonNull to collapse Option discriminant
+category: alloc-reduction
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: 'Option\s*<\s*(Box<|&|NonNull<|u32|u64|usize|i32|i64|NonZero)'
+  profile_signature:
+    - "size_of:T-strictly-exceeds-sum-of-fields"
+    - "cachegrind:L1-D-miss-rate-proportional-to-type-size"
+    - "pahole:discriminant-byte-with-padding"
+  naive_alt_ratio_min: null
+transformation:
+  steps:
+    - "For `Option<u32>` where 0 is semantically sentinel: switch to `Option<NonZeroU32>`. The Option discriminant folds into the u32 and size drops from 8 to 4 bytes."
+    - "For raw-pointer-plus-bool: use `Option<NonNull<T>>` or `Option<Box<T>>` -- null is the niche for the None case."
+    - "For sentinel indices, newtype around `NonZeroU32` and subtract 1 on access (biased encoding) so index 0 maps to a valid NonZero."
+    - "For custom enums with small variant count + a reserved bit pattern, add `#[rustc_layout_scalar_valid_range_start(...)]` (nightly) or factor into a NonZero* wrapper."
+    - "Confirm with `cargo +nightly rustc -- -Zprint-type-sizes | sort` that the type shrank."
+    - "Invariants: the niche value (0 or null) is genuinely not a valid inhabitant; changing the type stays API-compatible (or is internal)."
+verification:
+  test_selectors: ["serialize", "layout", "pickle"]
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: true
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:rustc-ucg-enum-layout,rust-94075,rkyv-d4c1a8f"
+embedding: null

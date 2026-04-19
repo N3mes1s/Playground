@@ -1,0 +1,32 @@
+id: rust-futures-unordered-over-join-all
+name: FuturesUnordered replaces join_all for large async fan-out
+category: algorithmic
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: '(futures::future::)?(try_)?join_all\s*\('
+  profile_signature:
+    - "tokio-console:single-task-huge-poll-duration"
+    - "memory:spike-proportional-to-N"
+    - "latency:p99-pegged-to-slowest-future"
+  naive_alt_ratio_min: null
+transformation:
+  steps:
+    - "`use futures::stream::{FuturesUnordered, StreamExt};`"
+    - "Build: `let mut fu: FuturesUnordered<_> = iter.map(make_future).collect();`"
+    - "Drain: `while let Some(result) = fu.next().await { handle(result)?; }` -- each future is processed AS it completes, not all at the end."
+    - "For bounded concurrency use `stream::iter(items).map(make_future).buffer_unordered(K)` with K sized to a downstream resource (DB pool, file descriptor cap)."
+    - "For cancel-on-first-error use `try_buffer_unordered`."
+    - "Invariants: results don't need to be in input order; partial-progress handling is acceptable; each future is independent."
+verification:
+  test_selectors: ["async", "concurrency", "fan_out"]
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: true
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:tokio-2478,niko-async-cleanup,hyper-b8fdf34"
+embedding: null

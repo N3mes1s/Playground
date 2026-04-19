@@ -1,0 +1,32 @@
+id: rust-portable-simd-reduction
+name: portable-simd / std::simd for element-wise reductions
+category: algorithmic
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: '\.iter\s*\(\s*\)\s*\.(sum|map\s*\([^)]*\)\s*\.sum|filter\s*\([^)]*\)\s*\.count)\s*\(\s*\)'
+  profile_signature:
+    - "disasm:scalar-addss-addq"
+    - "perf:fp_arith_inst_retired.scalar-dominates-256b_packed"
+    - "llvm-remarks:loop-vectorize-failed"
+  naive_alt_ratio_min: null
+transformation:
+  steps:
+    - "Confirm LLVM didn't already vectorise via `RUSTFLAGS=-C llvm-args=-pass-remarks=loop-vectorize`."
+    - "Chunk the slice: on nightly `let (prefix, body, suffix) = slice.as_simd::<8>();`. On stable, use `chunks_exact(LANES)` + a scalar tail."
+    - "Reduce with a `Simd<T, LANES>` accumulator: `let mut acc = Simd::splat(0.0); for &c in body { acc += c; } acc.reduce_sum()`."
+    - "Handle prefix + suffix with the original scalar code path."
+    - "Gate behind `#[cfg(target_feature = \"avx2\")]` or runtime-dispatch via target_feature_1_1."
+    - "Invariants: reduction is associativity-safe (sum, min, max, xor); for float sums either document non-determinism or switch to Kahan; length is dynamic at compile time (otherwise const unrolling suffices)."
+verification:
+  test_selectors: ["reduce", "sum", "dot_product"]
+  property_seeds: []
+  fuzz_minutes: 5
+  semver_check: true
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:rust-lang/portable-simd-rfc2977,lokathor-wide,cgo2024-autovec-limits"
+embedding: null

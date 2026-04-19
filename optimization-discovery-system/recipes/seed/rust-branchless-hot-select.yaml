@@ -1,0 +1,31 @@
+id: rust-branchless-hot-select
+name: replace unpredictable if/else in hot loop with branchless select
+category: algorithmic
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: 'for\s+[^{]+\{[^}]*if\s+\w+\s*[<>!=]=?\s*\w+\s*\{[^}]*\}\s*else\s*\{'
+  profile_signature:
+    - "branch:misprediction-rate->5%"
+    - "lbr:specific-branch->20%-mispredict"
+    - "IPC:~1.0-despite-simple-body"
+  naive_alt_ratio_min: null
+transformation:
+  steps:
+    - "Replace `if a < b { a } else { b }` with `a.min(b)` / `std::cmp::min` -- LLVM emits CMOV on scalar or VPMINSD on vector."
+    - "Replace counting-if `if p(x) { count += 1 }` with `count += p(x) as usize` (bool-to-int is branchless)."
+    - "For sign-based selects where CMOV is unavailable (WASM) use bitmasks: `let mask = (a >> 31) as u32; let r = (a & !mask) | (b & mask);`."
+    - "Profile-guided: CMOV beats a branch when misprediction rate >10%; perfectly predictable branches are faster as branches. Measure with `perf stat`."
+    - "Invariants: both sides of the select must be cheap and side-effect-free (no allocation, no indirect load that could trap); loop must be hot enough that misprediction dominates."
+verification:
+  test_selectors: ["loop", "reduce", "clamp"]
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: true
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:lemire-branchless-2024,agner-fog-ch12,folly-e9b1f7a"
+embedding: null

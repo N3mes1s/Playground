@@ -52,18 +52,25 @@ pub async fn run_explorer(input: ExplorerInput<'_>) -> Result<ExplorerOutcome> {
     let user = format!(
         "Survey this {} codebase for performance-optimisation patterns that \
          could apply across many similar crates. Repo root is `.`. \
-         Propose up to {} reusable patterns. For each, describe the \
-         trigger as an AST/regex pattern (pattern-level, NOT a single \
-         repo-specific identifier), the profile signature, the ordered \
-         transformation steps, and the semantic invariants to preserve. \
-         Finish your turn with a single fenced ```json block of the form:\n\
+         Propose up to {} reusable patterns.\n\n\
+         **Hard constraints on your final answer:**\n\
+         1. Your LAST turn MUST contain a single fenced ```json block and \
+         NOTHING ELSE outside it. No commentary, no prose.\n\
+         2. Inside the block, emit exactly this shape (the parser ignores \
+         everything else):\n\
+         ```json\n\
          {{\n  \"recipes\": [\n    {{\n      \"id\": \"hyp-<slug>\",\n      \
          \"name\": \"<pattern name>\",\n      \"category\": \"<one of: \
          syscall-elimination, alloc-reduction, fast-path-specialization, \
          algorithmic, validation-removal, caching, \
          dependency-optimization>\",\n      \"ast_pattern\": \"<regex>\",\n      \
          \"profile_signature\": [\"...\"],\n      \"steps\": [\"...\"],\n      \
-         \"invariants\": [\"...\"]\n    }},\n    ...\n  ]\n}}",
+         \"invariants\": [\"...\"]\n    }}\n  ]\n}}\n```\n\
+         3. If you find nothing worth proposing, emit the block with an \
+         empty `recipes: []` and finish -- do not keep searching beyond \
+         the iteration budget.\n\
+         4. Patterns must describe a SHAPE (regex trigger + what to do), \
+         not a one-off fix for a specific function in this repo.",
         input.language, input.max_recipes
     );
 
@@ -80,18 +87,112 @@ pub async fn run_explorer(input: ExplorerInput<'_>) -> Result<ExplorerOutcome> {
 }
 
 fn parse_explorer_output(text: &str, language: &str) -> Result<Vec<Recipe>> {
-    // Tolerate optional ```json fences. Pull the first JSON object spanning
-    // the first `{` to the last `}`.
-    let start = text.find('{');
-    let end = text.rfind('}');
-    let Some((s, e)) = start.zip(end) else {
-        return Ok(vec![]);
-    };
-    if e <= s {
-        return Ok(vec![]);
-    }
-    let json = &text[s..=e];
+    // Try in order of specificity:
+    //   1. every fenced ```json ... ``` block (parse each, collect all hits)
+    //   2. every bracket-balanced {...} span at the top level (pick first
+    //      that deserialises)
+    //   3. a top-level [...] bare array
+    //
+    // The previous implementation grabbed `text[first_{..last_}]` which
+    // over-consumed when the agent wrote prose like `{foo: bar}` before
+    // emitting its final JSON. Budget-burning failure mode.
+    let mut recipes: Vec<Recipe> = Vec::new();
 
+    // (1) Fenced json blocks.
+    for block in extract_fenced_blocks(text, "json") {
+        append_from_json(&block, language, &mut recipes);
+    }
+    if !recipes.is_empty() {
+        return Ok(recipes);
+    }
+
+    // (2) Bracket-balanced {} spans.
+    for span in find_balanced_spans(text, '{', '}') {
+        append_from_json(&span, language, &mut recipes);
+    }
+    if !recipes.is_empty() {
+        return Ok(recipes);
+    }
+
+    // (3) Bare array.
+    for span in find_balanced_spans(text, '[', ']') {
+        // Synthesize an envelope so the Envelope::recipes path can reuse
+        // downstream validation.
+        let envelope = format!("{{\"recipes\":{span}}}");
+        append_from_json(&envelope, language, &mut recipes);
+    }
+
+    Ok(recipes)
+}
+
+/// Extract the bodies of every fenced code block tagged with the given
+/// language (e.g. ```json ... ```). Tolerates trailing whitespace on the
+/// opening line and stops cleanly at the matching ```.
+fn extract_fenced_blocks(text: &str, tag: &str) -> Vec<String> {
+    let open = format!("```{tag}");
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(idx) = rest.find(&open) {
+        let after_open = &rest[idx + open.len()..];
+        // Skip the rest of the opening line.
+        let Some(nl) = after_open.find('\n') else {
+            break;
+        };
+        let body_start = &after_open[nl + 1..];
+        let Some(close) = body_start.find("```") else {
+            break;
+        };
+        out.push(body_start[..close].to_string());
+        rest = &body_start[close + 3..];
+    }
+    out
+}
+
+/// Walk `text` looking for top-level balanced spans between `open` and
+/// `close` characters. Ignores `open`/`close` that sit inside `"..."` string
+/// literals (so `{"foo": "bar}"}` doesn't confuse us). Returns each span's
+/// contents including the outer delimiters.
+fn find_balanced_spans(text: &str, open: char, close: char) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut spans = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] as char == open {
+            let start = i;
+            let mut depth = 1;
+            let mut in_str = false;
+            let mut escaped = false;
+            i += 1;
+            while i < bytes.len() && depth > 0 {
+                let c = bytes[i] as char;
+                if in_str {
+                    if escaped {
+                        escaped = false;
+                    } else if c == '\\' {
+                        escaped = true;
+                    } else if c == '"' {
+                        in_str = false;
+                    }
+                } else if c == '"' {
+                    in_str = true;
+                } else if c == open {
+                    depth += 1;
+                } else if c == close {
+                    depth -= 1;
+                    if depth == 0 {
+                        spans.push(text[start..=i].to_string());
+                        break;
+                    }
+                }
+                i += 1;
+            }
+        }
+        i += 1;
+    }
+    spans
+}
+
+fn append_from_json(json: &str, language: &str, out: &mut Vec<Recipe>) {
     #[derive(serde::Deserialize)]
     struct Envelope {
         #[serde(default)]
@@ -102,6 +203,7 @@ fn parse_explorer_output(text: &str, language: &str) -> Result<Vec<Recipe>> {
         id: String,
         name: String,
         category: String,
+        #[serde(default)]
         ast_pattern: String,
         #[serde(default)]
         profile_signature: Vec<String>,
@@ -111,12 +213,20 @@ fn parse_explorer_output(text: &str, language: &str) -> Result<Vec<Recipe>> {
         invariants: Vec<String>,
     }
 
-    let env: Envelope = match serde_json::from_str(json) {
+    let env: Envelope = match serde_json::from_str::<Envelope>(json) {
         Ok(e) => e,
-        Err(_) => return Ok(vec![]),
+        Err(_) => {
+            // Also tolerate a bare ProposedRecipe object (one recipe).
+            if let Ok(single) = serde_json::from_str::<ProposedRecipe>(json) {
+                Envelope {
+                    recipes: vec![single],
+                }
+            } else {
+                return;
+            }
+        }
     };
 
-    let mut out = Vec::new();
     for p in env.recipes {
         let cat = match p.category.as_str() {
             "syscall-elimination" => OptimizationCategory::SyscallElimination,
@@ -126,7 +236,6 @@ fn parse_explorer_output(text: &str, language: &str) -> Result<Vec<Recipe>> {
             "validation-removal" => OptimizationCategory::ValidationRemoval,
             "caching" => OptimizationCategory::Caching,
             "dependency-optimization" => OptimizationCategory::DependencyOptimization,
-            // Unknown category → skip rather than fail the whole run.
             _ => continue,
         };
         let mut steps = p.steps;
@@ -160,7 +269,6 @@ fn parse_explorer_output(text: &str, language: &str) -> Result<Vec<Recipe>> {
             embedding: None,
         });
     }
-    Ok(out)
 }
 
 #[cfg(test)]
