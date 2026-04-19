@@ -31,9 +31,9 @@ def _fetch_teleport_session(session_id: str):
     # Find the teleport analyzer binary
     candidates = [
         "claude-teleport-analyzer",
+        str(Path.home() / "claude-teleport-analyzer" / "target" / "release" / "claude-teleport-analyzer"),
+        str(Path.home() / "claude-teleport-analyzer" / "target" / "debug" / "claude-teleport-analyzer"),
         "/tmp/claude-teleport-analyzer/target/release/claude-teleport-analyzer",
-        "/home/user/claude-teleport-analyzer/target/debug/claude-teleport-analyzer",
-        "/home/user/claude-teleport-analyzer/target/release/claude-teleport-analyzer",
     ]
     binary = None
     for c in candidates:
@@ -65,9 +65,6 @@ def _fetch_teleport_session(session_id: str):
 def _find_current_session() -> str:
     """Find the JSONL file for the current Claude Code session."""
     claude_dir = Path.home() / ".claude" / "projects"
-    if not claude_dir.exists():
-        # Try /root
-        claude_dir = Path("/root/.claude/projects")
     if not claude_dir.exists():
         print("Could not find Claude Code session directory", file=sys.stderr)
         sys.exit(1)

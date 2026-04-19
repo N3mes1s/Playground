@@ -122,7 +122,7 @@ def _stats_from_file(path: str) -> dict:
 
 
 def _find_current_session() -> str:
-    for base in [Path("/root/.claude/projects"), Path.home() / ".claude" / "projects"]:
+    for base in [Path.home() / ".claude" / "projects"]:
         if base.exists():
             files = sorted(
                 [f for f in base.rglob("*.jsonl") if "subagents" not in str(f)],

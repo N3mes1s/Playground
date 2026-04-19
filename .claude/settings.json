@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /home/user/Playground/token-flamegraph/auto_optimize.py",
+            "command": "python3 ~/.claude/tools/token-flamegraph/auto_optimize.py",
             "timeout": 30,
             "statusMessage": "Analyzing token patterns..."
           }

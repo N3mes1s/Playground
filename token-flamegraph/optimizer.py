@@ -410,9 +410,7 @@ if __name__ == "__main__":
         path = positional[0]
     else:
         # Auto-find current session
-        claude_dir = Path("/root/.claude/projects")
-        if not claude_dir.exists():
-            claude_dir = Path.home() / ".claude" / "projects"
+        claude_dir = Path.home() / ".claude" / "projects"
         jsonl_files = sorted(
             [f for f in claude_dir.rglob("*.jsonl") if "subagents" not in str(f)],
             key=lambda p: p.stat().st_mtime, reverse=True
