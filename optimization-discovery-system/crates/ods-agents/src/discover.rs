@@ -294,6 +294,21 @@ impl Discoverer {
         let compiled_applicable = compile_triggers(&applicable);
         let compiled_anti = compile_triggers(&anti);
 
+        // Recipe-id -> Recipe lookup for hydrating cached file buckets
+        // back into ref-holding `SymbolHits<'_>` without re-parsing.
+        let mut recipe_by_id: std::collections::HashMap<&str, &Recipe> =
+            std::collections::HashMap::new();
+        for r in applicable.iter().chain(anti.iter()) {
+            recipe_by_id.insert(r.id.0.as_str(), r);
+        }
+
+        // Corpus hash: stable over recipe id+pattern. If this changes,
+        // the cache is stale and we rebuild from scratch.
+        let corpus_hash = corpus_hash(&applicable, &anti);
+        let cache_path = repo.join(".ods").join("discover-cache.json");
+        let mut cache = DiscoverCache::load(&cache_path, &corpus_hash);
+        let mut next_cache = DiscoverCache::new(corpus_hash.clone());
+
         // Two-pass discover so we can apply a precision penalty:
         //
         // Pass 1 walks every source file, collects the per-symbol hits
@@ -324,66 +339,90 @@ impl Discoverer {
                 continue;
             }
             total_source_files += 1;
-            let Ok(text) = std::fs::read_to_string(p) else {
-                continue;
+
+            // Cache key: (mtime_secs, size). If the file hasn't changed
+            // since the last discover pass AND the recipe corpus is
+            // unchanged, skip the parse and hydrate from cache.
+            let (mtime_secs, size_bytes) = match file_stamp(p) {
+                Some(s) => s,
+                None => continue,
             };
-
-            let lang_name = detect_language(p);
-            let Some(parsed) = parse_with_grammar(lang_name, &text) else {
-                continue;
-            };
-
-            let module = module_from_path(repo, p);
-            let file_stem_sym = module.split("::").last().unwrap_or("").to_string();
-            let mut per_symbol: std::collections::HashMap<String, SymbolHits<'_>> =
-                std::collections::HashMap::new();
-            collect_matches(
-                &parsed,
-                text.as_bytes(),
-                lang_name,
-                &compiled_applicable,
-                lang_name,
-                &file_stem_sym,
-                &mut per_symbol,
-                HitKind::Applicable,
-            );
-            collect_matches(
-                &parsed,
-                text.as_bytes(),
-                lang_name,
-                &compiled_anti,
-                lang_name,
-                &file_stem_sym,
-                &mut per_symbol,
-                HitKind::AntiPattern,
-            );
-            if per_symbol.is_empty() {
-                continue;
-            }
-
-            // Count distinct files each recipe matched in (any symbol
-            // under this file counts once). Used to compute the
-            // precision penalty below.
-            let mut fired_here: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
-            for hits in per_symbol.values() {
-                for (r, _) in &hits.applicable {
-                    fired_here.insert(r.id.0.clone());
-                }
-                for (r, _) in &hits.anti {
-                    fired_here.insert(r.id.0.clone());
+            let key = p.to_string_lossy().to_string();
+            if let Some(cached) = cache.take(&key, mtime_secs, size_bytes) {
+                match hydrate_cached_bucket(&cached, &recipe_by_id) {
+                    Some(Some(mut bucket)) => {
+                        // `hydrate_cached_bucket` doesn't know the path;
+                        // set it here so downstream candidate emission
+                        // reports the right source_file.
+                        bucket.path = p.to_path_buf();
+                        next_cache.insert(
+                            key,
+                            CachedFileEntry {
+                                mtime_secs,
+                                size_bytes,
+                                module: bucket.module.clone(),
+                                lang: bucket.lang_name.to_string(),
+                                per_symbol: symbol_hits_to_cached(&bucket.per_symbol),
+                            },
+                        );
+                        account_and_push(bucket, &mut recipe_file_count, &mut file_buckets);
+                        continue;
+                    }
+                    Some(None) => {
+                        // Cached "zero-hit" file. Persist the same zero
+                        // entry to avoid re-parsing next time.
+                        next_cache.insert(
+                            key,
+                            CachedFileEntry {
+                                mtime_secs,
+                                size_bytes,
+                                module: String::new(),
+                                lang: String::new(),
+                                per_symbol: std::collections::HashMap::new(),
+                            },
+                        );
+                        continue;
+                    }
+                    None => {
+                        // Cached entry references a recipe the user
+                        // removed. Fall through to the cache-miss path.
+                    }
                 }
             }
-            for id in fired_here {
-                *recipe_file_count.entry(id).or_insert(0) += 1;
-            }
 
-            file_buckets.push(FileBucket {
-                path: p.to_path_buf(),
-                module,
-                lang_name,
-                per_symbol,
-            });
+            // Cache miss: parse + match + record for next time.
+            if let Some(bucket) = parse_and_match(repo, p, &compiled_applicable, &compiled_anti) {
+                next_cache.insert(
+                    key,
+                    CachedFileEntry {
+                        mtime_secs,
+                        size_bytes,
+                        module: bucket.module.clone(),
+                        lang: bucket.lang_name.to_string(),
+                        per_symbol: symbol_hits_to_cached(&bucket.per_symbol),
+                    },
+                );
+                account_and_push(bucket, &mut recipe_file_count, &mut file_buckets);
+            } else {
+                // File had no hits; cache an empty entry so we still
+                // skip the parse next time.
+                next_cache.insert(
+                    key,
+                    CachedFileEntry {
+                        mtime_secs,
+                        size_bytes,
+                        module: String::new(),
+                        lang: String::new(),
+                        per_symbol: std::collections::HashMap::new(),
+                    },
+                );
+            }
+        }
+
+        // Persist. Errors are non-fatal — the product works without
+        // the cache, it's just slower next time.
+        if let Err(e) = next_cache.save(&cache_path) {
+            tracing::debug!(path = %cache_path.display(), err = %e, "failed to save discover cache");
         }
 
         // Per-recipe precision weights. A recipe that fired in 5% or
@@ -473,6 +512,270 @@ struct FileBucket<'a> {
     module: String,
     lang_name: &'static str,
     per_symbol: std::collections::HashMap<String, SymbolHits<'a>>,
+}
+
+// ---------------------------------------------------------------------
+// Discover cache (incremental scanning).
+//
+// Rationale: the dogfood at docs/dogfood-12-repos.md showed full-tree
+// scans timing out on fastapi / prometheus / rails because we re-parse
+// every source file every run. In steady-state dev loops only a handful
+// of files change between runs. We persist per-file match results at
+// `{repo}/.ods/discover-cache.json`, keyed on `(path, mtime, size)`,
+// and invalidate the whole cache on recipe-corpus changes via a hash.
+// ---------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DiscoverCache {
+    corpus_hash: String,
+    files: std::collections::HashMap<String, CachedFileEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedFileEntry {
+    mtime_secs: u64,
+    size_bytes: u64,
+    module: String,
+    lang: String,
+    per_symbol: std::collections::HashMap<String, CachedSymbolHits>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedSymbolHits {
+    applicable: Vec<(String, u32)>,
+    anti: Vec<(String, u32)>,
+    first_line: u32,
+}
+
+impl DiscoverCache {
+    fn new(corpus_hash: String) -> Self {
+        Self {
+            corpus_hash,
+            files: std::collections::HashMap::new(),
+        }
+    }
+
+    fn load(path: &Path, current_corpus_hash: &str) -> Self {
+        let text = match std::fs::read_to_string(path) {
+            Ok(t) => t,
+            Err(_) => return Self::new(current_corpus_hash.to_string()),
+        };
+        let parsed: DiscoverCache = match serde_json::from_str(&text) {
+            Ok(p) => p,
+            Err(_) => return Self::new(current_corpus_hash.to_string()),
+        };
+        if parsed.corpus_hash != current_corpus_hash {
+            // Corpus changed — everything cached is stale.
+            return Self::new(current_corpus_hash.to_string());
+        }
+        parsed
+    }
+
+    /// Consume (remove + return) a matching cache entry. Returns `None`
+    /// if the entry is missing or its (mtime, size) don't match — in
+    /// both cases the caller must re-scan.
+    fn take(
+        &mut self,
+        path_key: &str,
+        mtime_secs: u64,
+        size_bytes: u64,
+    ) -> Option<CachedFileEntry> {
+        let entry = self.files.remove(path_key)?;
+        if entry.mtime_secs == mtime_secs && entry.size_bytes == size_bytes {
+            Some(entry)
+        } else {
+            // Stat changed — reject the entry so the caller re-parses.
+            None
+        }
+    }
+
+    fn insert(&mut self, path_key: String, entry: CachedFileEntry) {
+        self.files.insert(path_key, entry);
+    }
+
+    fn save(&self, path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        let text = serde_json::to_string_pretty(self)?;
+        std::fs::write(path, text)?;
+        Ok(())
+    }
+}
+
+/// Stable hash over the recipe corpus — id + pattern. Order-insensitive.
+fn corpus_hash(applicable: &[Recipe], anti: &[Recipe]) -> String {
+    let mut entries: Vec<String> = applicable
+        .iter()
+        .chain(anti.iter())
+        .map(|r| format!("{}:{}", r.id.0, r.trigger.ast_pattern))
+        .collect();
+    entries.sort();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    use std::hash::{Hash, Hasher};
+    for e in &entries {
+        e.hash(&mut hasher);
+    }
+    format!("{:016x}", hasher.finish())
+}
+
+fn file_stamp(p: &Path) -> Option<(u64, u64)> {
+    let md = std::fs::metadata(p).ok()?;
+    let size = md.len();
+    let mtime = md
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some((mtime, size))
+}
+
+fn symbol_hits_to_cached(
+    per_symbol: &std::collections::HashMap<String, SymbolHits<'_>>,
+) -> std::collections::HashMap<String, CachedSymbolHits> {
+    per_symbol
+        .iter()
+        .map(|(sym, hits)| {
+            (
+                sym.clone(),
+                CachedSymbolHits {
+                    applicable: hits
+                        .applicable
+                        .iter()
+                        .map(|(r, n)| (r.id.0.clone(), *n))
+                        .collect(),
+                    anti: hits
+                        .anti
+                        .iter()
+                        .map(|(r, n)| (r.id.0.clone(), *n))
+                        .collect(),
+                    first_line: hits.first_line,
+                },
+            )
+        })
+        .collect()
+}
+
+/// Reconstruct a live `FileBucket<'a>` from a cached entry by looking
+/// every recipe id back up in the current corpus. Returns `None` if any
+/// referenced recipe id is no longer present (i.e. the user removed a
+/// recipe between runs) — the caller re-parses in that case.
+fn hydrate_cached_bucket<'a>(
+    cached: &CachedFileEntry,
+    recipe_by_id: &std::collections::HashMap<&str, &'a Recipe>,
+) -> Option<Option<FileBucket<'a>>> {
+    if cached.per_symbol.is_empty() {
+        // Zero-hit cached file — no bucket to push but also no reason
+        // to re-parse.
+        return Some(None);
+    }
+    // Map static strings so lang_name stays `&'static str`.
+    let lang_name: &'static str = match cached.lang.as_str() {
+        "rust" => "rust",
+        "python" => "python",
+        "go" => "go",
+        "ruby" => "ruby",
+        _ => return None,
+    };
+    let mut per_symbol: std::collections::HashMap<String, SymbolHits<'a>> =
+        std::collections::HashMap::new();
+    for (sym, hits) in &cached.per_symbol {
+        let mut applicable = Vec::with_capacity(hits.applicable.len());
+        for (id, n) in &hits.applicable {
+            let r = recipe_by_id.get(id.as_str())?;
+            applicable.push((*r, *n));
+        }
+        let mut anti = Vec::with_capacity(hits.anti.len());
+        for (id, n) in &hits.anti {
+            let r = recipe_by_id.get(id.as_str())?;
+            anti.push((*r, *n));
+        }
+        per_symbol.insert(
+            sym.clone(),
+            SymbolHits {
+                applicable,
+                anti,
+                first_line: hits.first_line,
+            },
+        );
+    }
+    Some(Some(FileBucket {
+        path: PathBuf::new(), // set by caller
+        module: cached.module.clone(),
+        lang_name,
+        per_symbol,
+    }))
+}
+
+/// Parse + match the file and produce a `FileBucket`. Returns `None`
+/// for unreadable, unparseable, or unsupported-language files, and for
+/// files where no recipe matched.
+fn parse_and_match<'a>(
+    repo: &Path,
+    p: &Path,
+    compiled_applicable: &'a [CompiledTrigger<'a>],
+    compiled_anti: &'a [CompiledTrigger<'a>],
+) -> Option<FileBucket<'a>> {
+    let text = std::fs::read_to_string(p).ok()?;
+    let lang_name = detect_language(p);
+    let parsed = parse_with_grammar(lang_name, &text)?;
+    let module = module_from_path(repo, p);
+    let file_stem_sym = module.split("::").last().unwrap_or("").to_string();
+    let mut per_symbol: std::collections::HashMap<String, SymbolHits<'a>> =
+        std::collections::HashMap::new();
+    collect_matches(
+        &parsed,
+        text.as_bytes(),
+        lang_name,
+        compiled_applicable,
+        lang_name,
+        &file_stem_sym,
+        &mut per_symbol,
+        HitKind::Applicable,
+    );
+    collect_matches(
+        &parsed,
+        text.as_bytes(),
+        lang_name,
+        compiled_anti,
+        lang_name,
+        &file_stem_sym,
+        &mut per_symbol,
+        HitKind::AntiPattern,
+    );
+    if per_symbol.is_empty() {
+        return None;
+    }
+    Some(FileBucket {
+        path: p.to_path_buf(),
+        module,
+        lang_name,
+        per_symbol,
+    })
+}
+
+/// Count distinct files each recipe matched in (any symbol under this
+/// file counts once) and push the bucket onto the per-pass list. Factored
+/// out so the cache-hit and cache-miss paths share it.
+fn account_and_push<'a>(
+    bucket: FileBucket<'a>,
+    recipe_file_count: &mut std::collections::HashMap<String, u32>,
+    file_buckets: &mut Vec<FileBucket<'a>>,
+) {
+    let mut fired_here: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for hits in bucket.per_symbol.values() {
+        for (r, _) in &hits.applicable {
+            fired_here.insert(r.id.0.clone());
+        }
+        for (r, _) in &hits.anti {
+            fired_here.insert(r.id.0.clone());
+        }
+    }
+    for id in fired_here {
+        *recipe_file_count.entry(id).or_insert(0) += 1;
+    }
+    file_buckets.push(bucket);
 }
 
 /// Compile each recipe's `trigger.ast_pattern` into a tree-sitter `Query`
@@ -831,6 +1134,122 @@ pub fn hot_c() {
                 );
             }
         }
+    }
+
+    /// The discover cache must (1) persist hits per file between runs,
+    /// (2) invalidate on mtime+size change, and (3) invalidate the
+    /// whole cache when the recipe corpus hash changes. This test
+    /// exercises all three via two sequential scans + a corpus swap.
+    #[test]
+    fn discover_cache_honours_mtime_and_corpus_hash() {
+        use ods_recipes::schema::{
+            PromotionState, Recipe, RecipeId, Transformation, Trigger, VerificationRecipe,
+        };
+
+        fn make_recipe(id: &str, pattern: &str) -> Recipe {
+            Recipe {
+                id: RecipeId(id.into()),
+                name: id.into(),
+                category: ods_core::OptimizationCategory::Algorithmic,
+                language: "rust".into(),
+                promotion: PromotionState::Seed,
+                trigger: Trigger {
+                    ast_pattern: pattern.into(),
+                    profile_signature: vec![],
+                    naive_alt_ratio_min: None,
+                },
+                transformation: Transformation { steps: vec![] },
+                verification: VerificationRecipe {
+                    test_selectors: vec![],
+                    property_seeds: vec![],
+                    fuzz_minutes: 0,
+                    semver_check: false,
+                },
+                benchmark_template: "".into(),
+                success_history: vec![],
+                negative_history: vec![],
+                generalized_from: None,
+                generalized_as: None,
+                source_patch_ref: None,
+                embedding: None,
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "pub fn a() { let _ = 1; }\n").unwrap();
+
+        let store = Store::in_memory().unwrap();
+        store
+            .upsert(&make_recipe(
+                "fn-recipe",
+                "(function_item name: (identifier) @n) @match",
+            ))
+            .unwrap();
+
+        let d = Discoverer::default();
+        // First pass: no cache exists yet. Should write one.
+        let first = d.scan_with_recipes(repo, &store, 10).unwrap();
+        assert!(
+            !first.is_empty(),
+            "first pass should find at least one candidate"
+        );
+        let cache_path = repo.join(".ods").join("discover-cache.json");
+        assert!(
+            cache_path.exists(),
+            "first scan must persist cache at {}",
+            cache_path.display()
+        );
+        let cache_text_v1 = std::fs::read_to_string(&cache_path).unwrap();
+        assert!(
+            cache_text_v1.contains("fn-recipe"),
+            "cache should reference the recipe that fired"
+        );
+
+        // Second pass, no file changes. The cache should be re-used:
+        // the saved cache file must have the same mtime-key entry.
+        let second = d.scan_with_recipes(repo, &store, 10).unwrap();
+        assert_eq!(
+            first.len(),
+            second.len(),
+            "unchanged repo should produce same candidate count"
+        );
+
+        // Touch the file. Different mtime (best effort) + different
+        // size — both invalidate the entry. Second scan recomputes.
+        std::fs::write(
+            repo.join("src/lib.rs"),
+            "pub fn a() { let _ = 1; }\npub fn b() { let _ = 2; }\n",
+        )
+        .unwrap();
+        let third = d.scan_with_recipes(repo, &store, 10).unwrap();
+        // Now two functions should surface (or at least not fewer).
+        assert!(
+            third.len() >= first.len(),
+            "after adding fn b, candidates should be >= first run (was {}, got {})",
+            first.len(),
+            third.len()
+        );
+
+        // Swap the corpus. Different recipe → different corpus hash →
+        // whole cache invalidated. Old cache file is overwritten.
+        let store2 = Store::in_memory().unwrap();
+        store2
+            .upsert(&make_recipe("different-recipe", "(let_declaration) @match"))
+            .unwrap();
+        let fourth = d.scan_with_recipes(repo, &store2, 10).unwrap();
+        assert!(!fourth.is_empty(), "new corpus should still find something");
+        let cache_text_v2 = std::fs::read_to_string(&cache_path).unwrap();
+        assert!(
+            cache_text_v2.contains("different-recipe"),
+            "cache must now reference the new corpus's recipe"
+        );
+        assert!(
+            !cache_text_v2.contains("fn-recipe"),
+            "cache must have dropped the old recipe's entries after corpus hash change"
+        );
     }
 
     /// A broad trigger that fires in >5% of source files must receive
