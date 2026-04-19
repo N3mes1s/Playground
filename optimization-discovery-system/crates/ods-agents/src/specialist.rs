@@ -88,8 +88,15 @@ impl SpecialistKind {
                  2. `read_file` on at least 3 source files that look hot \
                  (parsers, core loops, formatters, I/O paths).\n\
                  3. At least 2 `ast_query` calls targeting concrete \
-                 performance smells (loops, allocations, syscalls, \
-                 unchecked casts).\n\
+                 performance smells. `ast_query` takes a tree-sitter \
+                 S-expression pattern (NOT a regex) and returns one hit \
+                 per captured node with its enclosing-fn name. Examples: \
+                 `(call_expression function: (field_expression field: \
+                 (field_identifier) @m (#eq? @m \"clone\"))) @match` or \
+                 `(for_expression body: (block (expression_statement \
+                 (macro_invocation macro: (identifier) @m (#eq? @m \
+                 \"format\"))))) @match`. Every pattern must include at \
+                 least one `@capture` name.\n\
                  4. One `recipe_search` call to confirm you are not \
                  re-proposing something already in the corpus.\n\n\
                  Only after all four are done should you emit your final \
@@ -97,9 +104,9 @@ impl SpecialistKind {
                  iteration 1 without exploration is a failure mode -- do \
                  not take that shortcut.\n\n\
                  **Output.** Each pattern you propose describes a \
-                 reusable SHAPE (regex trigger + profile signature + \
-                 transformation steps + preserved invariants), not a \
-                 one-off fix for a specific function. Your final text \
+                 reusable SHAPE (tree-sitter S-expression trigger + \
+                 profile signature + transformation steps + preserved \
+                 invariants), not a one-off fix for a specific function. Your final text \
                  response is grammar-constrained to a JSON object matching \
                  the schema the tool harness has attached to this \
                  request; you do not need to worry about fences or \

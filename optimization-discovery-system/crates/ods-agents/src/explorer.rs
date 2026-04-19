@@ -72,9 +72,14 @@ pub async fn run_explorer(input: ExplorerInput<'_>) -> Result<ExplorerOutcome> {
          - `list_dir` on `.` and on the primary source directory.\n\
          - `read_file` on >=3 files that look hot (parsers, core loops, \
          formatters, I/O, hashing, string-heavy code).\n\
-         - >=2 `ast_query` calls looking for concrete smells (e.g. \
-         `for.*\\{{.*clone\\(\\)`, `Vec::new.*\\}}`, `fmt::write`, \
-         `HashMap::new.*loop`).\n\
+         - >=2 `ast_query` calls with tree-sitter S-expression patterns \
+         (NOT regex). Examples for rust: `(call_expression function: \
+         (scoped_identifier path: (identifier) @p (#eq? @p \"Vec\") \
+         name: (identifier) @m (#eq? @m \"new\"))) @match`, \
+         `(for_expression body: (block (expression_statement \
+         (call_expression function: (field_expression field: \
+         (field_identifier) @m (#eq? @m \"clone\")))))) @match`. Every \
+         pattern must include at least one `@capture` name.\n\
          - 1 `recipe_search` to avoid proposing duplicates of what's \
          already in the corpus.\n\n\
          Only THEN finalise. Skipping exploration and returning an empty \
@@ -85,7 +90,8 @@ pub async fn run_explorer(input: ExplorerInput<'_>) -> Result<ExplorerOutcome> {
          has: id, name, category (one of syscall-elimination, \
          alloc-reduction, fast-path-specialization, algorithmic, \
          validation-removal, caching, dependency-optimization), \
-         ast_pattern (regex), profile_signature (string[]), steps \
+         ast_pattern (tree-sitter S-expression query with at least one \
+         @capture), profile_signature (string[]), steps \
          (string[]), invariants (string[]). Don't worry about fences or \
          commas -- the schema constrains generation.",
         input.language, input.max_recipes
