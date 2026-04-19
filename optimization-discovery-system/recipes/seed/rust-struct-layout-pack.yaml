@@ -1,0 +1,61 @@
+id: rust-struct-layout-pack
+name: repack wide structs for cache density (field reordering / repr)
+category: algorithmic
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: |
+    (struct_item
+      name: (type_identifier) @sname
+      body: (field_declaration_list
+        (field_declaration)
+        (field_declaration)
+        (field_declaration)
+        (field_declaration))) @match
+  profile_signature:
+    - "cache:LLC-load-misses-high"
+    - "perf:instructions-per-byte-low"
+    - "hot:struct-field-access-in-loop"
+  naive_alt_ratio_min: 1.05
+transformation:
+  steps:
+    - "rustc PR #148789 (Dec 2025) reclaimed 30-38% icount on a stress benchmark by repacking the `Arguments` struct used by `format_args!()`. Small field-order changes paid for themselves."
+    - "Rust's default struct layout reorders fields for size (the `-Zprint-type-sizes` output reveals the final layout), but users can force `#[repr(C)]` or `#[repr(align(64))]` to pin a layout that matches the access pattern."
+    - "For a struct whose fields are co-accessed in a hot loop, group them together. For one rarely-read field adjacent to frequently-read ones, move the rarely-read field to the end."
+    - "When a struct is embedded in a long Vec / slice (a 'hot array of structs'), consider splitting into a struct-of-arrays: one Vec per field, iterated together. This trades spatial locality across entries for locality within a single field's iteration."
+    - "Measure BEFORE and AFTER with `perf stat -e LLC-load-misses,cycles` — the improvement is visible as fewer LLC misses, not necessarily fewer instructions."
+    - "Preserve the public API: the type may be `#[repr(Rust)]`-layout-sensitive for FFI or serde bincode compatibility. If so, add an internal struct and convert at the boundary instead of changing the public layout."
+verification:
+  test_selectors: []
+  property_seeds: [271828182845, 314159265358]
+  fuzz_minutes: 5
+  semver_check: true
+benchmark_template: |
+  use criterion::{black_box, criterion_group, criterion_main, Criterion};
+
+  // Example: 4-field struct iterated in a hot loop.
+  struct WideBefore { flag: bool, id: u64, tag: u8, payload: [u8; 32] }
+  struct WideAfter  { id: u64, payload: [u8; 32], tag: u8, flag: bool }
+
+  fn bench_layout(c: &mut Criterion) {
+      let n = 100_000;
+      let before: Vec<WideBefore> = (0..n).map(|i| WideBefore { flag: i & 1 == 0, id: i as u64, tag: (i & 0xff) as u8, payload: [0; 32] }).collect();
+      let after:  Vec<WideAfter>  = (0..n).map(|i| WideAfter  { id: i as u64, payload: [0; 32], tag: (i & 0xff) as u8, flag: i & 1 == 0 }).collect();
+      c.bench_function("wide_before", |b| b.iter(|| {
+          let s: u64 = before.iter().map(|e| e.id).sum();
+          black_box(s);
+      }));
+      c.bench_function("wide_after", |b| b.iter(|| {
+          let s: u64 = after.iter().map(|e| e.id).sum();
+          black_box(s);
+      }));
+  }
+
+  criterion_group!(benches, bench_layout);
+  criterion_main!(benches);
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:rust-lang/rust#148789,nnethercote-2025-12"
+embedding: null

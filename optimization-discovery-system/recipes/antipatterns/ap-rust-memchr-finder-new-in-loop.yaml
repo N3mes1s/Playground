@@ -1,0 +1,40 @@
+id: ap-rust-memchr-finder-new-in-loop
+name: memchr::memmem::Finder::new / aho_corasick::AhoCorasick::new inside a loop
+category: alloc-reduction
+language: rust
+promotion: anti-pattern
+trigger:
+  ast_pattern: |
+    (for_expression
+      body: (block
+        (let_declaration
+          value: (call_expression
+            function: (scoped_identifier
+              path: [
+                (identifier) @path
+                (scoped_identifier name: (identifier) @path)
+              ]
+              name: (identifier) @m (#eq? @m "new"))
+            (#match? @path "^(Finder|AhoCorasick|Regex)$"))) @match))
+  profile_signature:
+    - "alloc:searcher-rebuild-per-iteration"
+    - "hot:Finder::new"
+transformation:
+  steps:
+    - "`memchr::memmem::Finder::new(needle)` does non-trivial prefilter setup (SIMD prep, frequency-based byte selection). Calling it inside a loop re-pays that cost per iteration."
+    - "Hoist the construction above the loop: `let finder = memchr::memmem::Finder::new(needle);` then call `finder.find(haystack)` inside."
+    - "Same rule applies to `aho_corasick::AhoCorasickBuilder::build(&[…])` (builds a DFA) and `regex::Regex::new` (compiles a NFA/DFA). All three have a construction cost that dwarfs per-search cost for short haystacks."
+    - "If the needle itself varies per iteration, consider whether the outer loop can be restructured to amortise: group inputs by needle, build one Finder per group, then search each group's haystacks."
+    - "The `memchr::arch::all::packedpair::Finder` API is available when you want the same one-time setup but for a fixed pair of bytes (useful when searching for common delimiter pairs)."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

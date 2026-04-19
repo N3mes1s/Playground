@@ -1,0 +1,80 @@
+id: rust-fast-path-delegate-common-range
+name: carve a fast-path branch for the common numeric-bound case
+category: fast-path-specialization
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: |
+    (function_item
+      name: (identifier) @fname
+      body: (block
+        (expression_statement
+          (if_expression
+            condition: (binary_expression
+              operator: ["<" "<=" ">" ">=" "==" "!="])
+            consequence: (block)
+            alternative: (else_clause))))) @match
+  profile_signature:
+    - "hot:function-entry-branch-on-key"
+    - "branch:common-case-dominates"
+  naive_alt_ratio_min: 1.05
+transformation:
+  steps:
+    - "rustc PR #142095 (Dec 2025) added a fast path for keys that fit inside VecCache's first 4096-entry segment. The common case skipped the segment-index math. 4%+ icount reduction in the best case."
+    - "When a function opens with `if x < CONST { … } else { … }` and profiling shows the `true` branch taken >90% of the time, extract the consequence into an `#[inline]` fast path and leave the else branch in a separate `#[cold]` function."
+    - "The compiler can't always inline-then-split on its own because the consequence may depend on state the fast path doesn't touch; explicit carving makes the intent legible and lets LLVM specialise register allocation per arm."
+    - "Mark the cold arm `#[cold] #[inline(never)]` so the call target lives far from the hot icache line."
+    - "Preserve semantics: the fast path must observe the SAME invariants as the old code on its branch. Any shared mutable state mutation in the consequence needs to happen in the fast path too — don't accidentally lose a side effect."
+    - "Benchmark with input distributions matching production: a fast path only helps when the common case is actually common. Add a worst-case bench (always takes the cold path) to catch regressions."
+verification:
+  test_selectors: []
+  property_seeds: [1729, 65537, 4096]
+  fuzz_minutes: 5
+  semver_check: true
+benchmark_template: |
+  use criterion::{black_box, criterion_group, criterion_main, Criterion};
+
+  fn lookup_unified(key: u32) -> u32 {
+      if key < 4096 {
+          key.wrapping_mul(3).wrapping_add(7)
+      } else {
+          let segment = (key / 4096) as usize;
+          let offset = (key % 4096) as u32;
+          (segment as u32).wrapping_mul(offset).wrapping_add(7)
+      }
+  }
+
+  #[inline]
+  fn lookup_fast(key: u32) -> u32 {
+      if key < 4096 { key.wrapping_mul(3).wrapping_add(7) } else { lookup_cold(key) }
+  }
+
+  #[cold]
+  #[inline(never)]
+  fn lookup_cold(key: u32) -> u32 {
+      let segment = (key / 4096) as usize;
+      let offset = (key % 4096) as u32;
+      (segment as u32).wrapping_mul(offset).wrapping_add(7)
+  }
+
+  fn bench_fast_path(c: &mut Criterion) {
+      // 99% of keys fit the common case; 1% fall through.
+      let keys: Vec<u32> = (0..100_000).map(|i| if i % 100 == 0 { 10_000 + i } else { i % 4096 }).collect();
+      c.bench_function("unified", |b| b.iter(|| {
+          let s: u32 = keys.iter().copied().map(lookup_unified).sum();
+          black_box(s);
+      }));
+      c.bench_function("fast_path_delegate", |b| b.iter(|| {
+          let s: u32 = keys.iter().copied().map(lookup_fast).sum();
+          black_box(s);
+      }));
+  }
+
+  criterion_group!(benches, bench_fast_path);
+  criterion_main!(benches);
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:rust-lang/rust#142095,nnethercote-2025-12"
+embedding: null
