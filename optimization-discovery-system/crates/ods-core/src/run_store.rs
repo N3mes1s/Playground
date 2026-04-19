@@ -73,6 +73,15 @@ impl RunStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventRow {
+    pub seq: u64,
+    pub at: String,
+    pub stage: String,
+    pub kind: String,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunRecord {
     pub id: String,
     pub language: String,
@@ -202,6 +211,25 @@ impl RunStore {
         let mut out = Vec::new();
         while let Some(r) = rows.next()? {
             out.push(row_to_record(r)?);
+        }
+        Ok(out)
+    }
+
+    /// Read the full event timeline for a run, ordered by seq.
+    pub fn events(&self, id: &RunId) -> Result<Vec<EventRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT seq, at, stage, kind, detail FROM run_events WHERE run_id = ?1 ORDER BY seq ASC",
+        )?;
+        let mut rows = stmt.query(params![id.to_string()])?;
+        let mut out = Vec::new();
+        while let Some(r) = rows.next()? {
+            out.push(EventRow {
+                seq: r.get::<_, i64>(0)? as u64,
+                at: r.get(1)?,
+                stage: r.get(2)?,
+                kind: r.get(3)?,
+                detail: r.get(4)?,
+            });
         }
         Ok(out)
     }

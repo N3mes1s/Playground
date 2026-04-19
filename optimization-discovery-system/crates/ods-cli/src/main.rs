@@ -80,6 +80,11 @@ enum Command {
     Explain {
         repo: PathBuf,
         run_id: String,
+        /// Print the per-event timeline (specialist turns, tool calls,
+        /// reasoning blocks, verdicts) from the `.ods/runs.db` events table
+        /// instead of the JSON artifact.
+        #[arg(long)]
+        timeline: bool,
     },
 }
 
@@ -172,7 +177,7 @@ async fn main() -> Result<()> {
         Command::Verify { repo, patch } => cmd_verify(&repo, &patch).await,
         Command::Recipes { action } => cmd_recipes(action, &store_path).await,
         Command::Ci { action } => cmd_ci(action, &store_path).await,
-        Command::Explain { repo, run_id } => cmd_explain(&repo, &run_id),
+        Command::Explain { repo, run_id, timeline } => cmd_explain(&repo, &run_id, timeline),
     }
 }
 
@@ -616,12 +621,99 @@ async fn cmd_ci(action: CiAction, store_path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn cmd_explain(repo: &PathBuf, run_id: &str) -> Result<()> {
+fn cmd_explain(repo: &PathBuf, run_id: &str, timeline: bool) -> Result<()> {
+    if timeline {
+        let runs_db = repo.join(".ods").join("runs.db");
+        let store = ods_core::RunStore::open(&runs_db)
+            .with_context(|| format!("open {}", runs_db.display()))?;
+        let uuid = uuid::Uuid::parse_str(run_id)
+            .with_context(|| format!("parse run id `{run_id}`"))?;
+        let rid = ods_core::RunId(uuid);
+        let events = store.events(&rid)?;
+        if events.is_empty() {
+            println!("(no events recorded for run {run_id})");
+            return Ok(());
+        }
+        for ev in events {
+            // Compact, human-friendly line per event. Detail is JSON; we
+            // render key fields inline.
+            let detail = ev.detail.unwrap_or_default();
+            let summary = summarize_event(&ev.kind, &detail);
+            println!("[{}] {:>4} {:<22} {:<16} {}", ev.at, ev.seq, ev.stage, ev.kind, summary);
+        }
+        return Ok(());
+    }
     let path = repo.join(".ods").join("runs").join(format!("{run_id}.json"));
     let text = std::fs::read_to_string(&path)
         .with_context(|| format!("read {}", path.display()))?;
     println!("{text}");
     Ok(())
+}
+
+fn summarize_event(kind: &str, detail_json: &str) -> String {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(detail_json) else {
+        return String::new();
+    };
+    let field = |name: &str| -> String {
+        v.get(name)
+            .map(|x| match x {
+                serde_json::Value::String(s) => s.clone(),
+                _ => x.to_string(),
+            })
+            .unwrap_or_default()
+    };
+    match kind {
+        "race-start" => format!("specialists={}", field("specialists")),
+        "specialist-start" => format!(
+            "{} target={} hyp={} seed={}",
+            field("kind"),
+            field("target"),
+            field("hypothesis"),
+            field("seed_recipe_id")
+        ),
+        "turn" => format!(
+            "{} iter={} stop={} tok_in={} tok_out={}",
+            field("specialist"),
+            field("iteration"),
+            field("stop_reason"),
+            field("input_tokens"),
+            field("output_tokens")
+        ),
+        "reasoning" => format!("{} iter={} >> {}", field("specialist"), field("iteration"), field("text_preview")),
+        "tool-call" => format!(
+            "{} iter={} {}({})",
+            field("specialist"),
+            field("iteration"),
+            field("tool"),
+            field("input_preview")
+        ),
+        "tool-result" => format!(
+            "{} iter={} {} ok={} result={}",
+            field("specialist"),
+            field("iteration"),
+            field("tool"),
+            field("ok"),
+            field("result_preview")
+        ),
+        "patch-proposed" => format!("{} diff_bytes={}", field("specialist"), field("diff_bytes")),
+        "patch-rejected" => format!("{} reasons={}", field("specialist"), field("reasons")),
+        "specialist-finish" => format!(
+            "{} patch={} accepted={} cost=${} tok_in={} tok_out={}",
+            field("kind"),
+            field("patch_attempted"),
+            field("accepted"),
+            field("spent_usd"),
+            field("tokens_in"),
+            field("tokens_out")
+        ),
+        "race-finish" => format!(
+            "winner={} cost=${} budget_exhausted={}",
+            field("winner"),
+            field("total_spent_usd"),
+            field("budget_exhausted")
+        ),
+        _ => String::new(),
+    }
 }
 
 fn split_repo(full: &str) -> Result<(String, String)> {

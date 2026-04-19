@@ -15,4 +15,4 @@ pub use domain::{Hypothesis, OptimizationCategory, RunId, TargetSig};
 pub use git::{Worktree, WorktreeHandle};
 pub use loop_::{LoopError, LoopStage, Run};
 pub use mode::{Budget, Mode};
-pub use run_store::{RunRecord, RunStatus, RunStore};
+pub use run_store::{EventRow, RunRecord, RunStatus, RunStore};

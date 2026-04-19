@@ -57,7 +57,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap       = { version = "4", features = ["derive", "env"] }
 uuid       = { version = "1", features = ["v4", "serde"] }
 time       = { version = "0.3", features = ["serde", "formatting", "parsing"] }
-reqwest    = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "json"] }
+reqwest    = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "gzip", "json"] }
 rusqlite   = { version = "0.32", features = ["bundled"] }
 semver     = { version = "1", features = ["serde"] }
 regex      = "1"

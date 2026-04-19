@@ -14,6 +14,7 @@
 //! check.
 
 use crate::harvest;
+use crate::observe::{EventSink, SqliteEventSink};
 use crate::planner::Planner;
 use crate::race::{self, RaceInput};
 use anyhow::{Context, Result};
@@ -22,6 +23,7 @@ use ods_core::{
     loop_::LoopStage,
     Mode, Run, RunRecord, RunStatus, RunStore,
 };
+use std::sync::Mutex;
 use ods_lang::{BenchReport, LanguageAdapter, ProfileReport, TestReport, TestScope};
 use ods_measure::{compare, rerun, EnvFingerprint, RerunReport, Sample, SpeedupVerdict};
 use ods_recipes::{RecipeId, Store};
@@ -115,6 +117,13 @@ impl Orchestrator {
             std::fs::create_dir_all(parent).ok();
         }
         let run_store = RunStore::open(&runs_db).context("open run store")?;
+        // Build the observability sink on top of a second handle to the same
+        // SQLite file so per-event writes don't contend with the stage-level
+        // writer. SQLite with bundled features serialises writes.
+        let sink_store = RunStore::open(&runs_db).context("open sink store")?;
+        let sink: Arc<dyn EventSink> = Arc::new(SqliteEventSink::shared(Arc::new(Mutex::new(
+            sink_store,
+        ))));
         run_store.insert(&RunRecord {
             id: run_id.to_string(),
             language: self.adapter.name().into(),
@@ -180,8 +189,15 @@ impl Orchestrator {
                 mode: self.mode.clone(),
                 pre_bench: pre_bench.clone(),
                 recipe_snippets: collect_snippets(&self.store, &artifact.recipes_applied),
-                worktree_parent: self.repo.join(".ods").join("worktrees"),
+                // Worktrees must live OUTSIDE the source repo; otherwise the
+                // copy-based fallback recurses into the worktree dir it is
+                // currently writing to (File name too long, os error 36).
+                worktree_parent: std::env::temp_dir()
+                    .join("ods-worktrees")
+                    .join(run_id.to_string()),
                 fuzz_budget: Duration::from_secs(60),
+                sink: Some(sink.clone()),
+                run_id,
             };
             match race::run_specialists(input).await {
                 Ok(out) => {

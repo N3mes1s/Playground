@@ -9,6 +9,7 @@
 pub mod anthropic;
 pub mod discover;
 pub mod harvest;
+pub mod observe;
 pub mod orchestrator;
 pub mod planner;
 pub mod race;
@@ -18,6 +19,7 @@ pub mod tools;
 pub use anthropic::{AnthropicClient, Conversation, LoopStats, ToolCall, ToolResult, ToolUseLoop};
 pub use discover::{Candidate, Discoverer};
 pub use harvest::harvest as harvest_candidate;
+pub use observe::{AgentEvent, EventSink, InMemorySink, SqliteEventSink};
 pub use orchestrator::{Orchestrator, RunArtifact};
 pub use planner::Planner;
 pub use race::{run_specialists, RaceInput, RaceOutput, WinnerRecord};

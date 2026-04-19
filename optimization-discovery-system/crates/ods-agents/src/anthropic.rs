@@ -240,17 +240,31 @@ impl ToolUseLoop {
     /// Run the tool-use conversation until `stop_reason == "end_turn"` or the
     /// iteration cap is hit. Returns the accumulated stats plus the final
     /// assistant text (concatenation of any text blocks in the last turn).
+    ///
+    /// Observability: when `observer` is `Some`, structured events are
+    /// emitted for each turn, each tool call, and each assistant reasoning
+    /// block, with previews capped at a bounded length to keep logs readable.
     pub async fn run(
         &self,
         client: &AnthropicClient,
         system: &str,
         initial_user_msg: &str,
     ) -> Result<(LoopStats, String, Conversation)> {
+        self.run_observed(client, system, initial_user_msg, None).await
+    }
+
+    pub async fn run_observed(
+        &self,
+        client: &AnthropicClient,
+        system: &str,
+        initial_user_msg: &str,
+        observer: Option<&ConversationObserver<'_>>,
+    ) -> Result<(LoopStats, String, Conversation)> {
         let mut stats = LoopStats::default();
         let mut convo = Conversation::new();
         convo.push_user_text(initial_user_msg);
 
-        for _ in 0..self.max_iters {
+        for iter in 0..self.max_iters {
             stats.iterations += 1;
             let envelope = client
                 .send_messages(system, &convo.messages, &self.tool_specs, self.max_tokens)
@@ -259,6 +273,27 @@ impl ToolUseLoop {
             stats.output_tokens += envelope.usage.output_tokens;
             stats.cache_read_tokens += envelope.usage.cache_read_input_tokens;
             stats.cache_creation_tokens += envelope.usage.cache_creation_input_tokens;
+
+            // Observe the turn itself + any reasoning / tool-use blocks.
+            if let Some(obs) = observer {
+                obs.on_turn(
+                    iter + 1,
+                    envelope.stop_reason.clone(),
+                    envelope.usage.input_tokens,
+                    envelope.usage.output_tokens,
+                    envelope.usage.cache_read_input_tokens,
+                    envelope.usage.cache_creation_input_tokens,
+                );
+                for block in &envelope.content {
+                    match block {
+                        ContentBlock::Text { text } => obs.on_reasoning(iter + 1, text),
+                        ContentBlock::ToolUse { name, input, .. } => {
+                            obs.on_tool_call(iter + 1, name, input)
+                        }
+                        _ => {}
+                    }
+                }
+            }
 
             // Append assistant turn.
             convo.push_assistant(envelope.content.clone());
@@ -285,6 +320,9 @@ impl ToolUseLoop {
             let mut tool_results = Vec::with_capacity(calls.len());
             for call in &calls {
                 let r = self.dispatch(call).await;
+                if let Some(obs) = observer {
+                    obs.on_tool_result(iter + 1, &call.name, !r.is_error, &r.content);
+                }
                 tool_results.push(ContentBlock::ToolResult {
                     tool_use_id: r.call_id,
                     content: r.content,
@@ -293,8 +331,10 @@ impl ToolUseLoop {
             }
             convo.push_user(tool_results);
 
-            if matches!(envelope.stop_reason.as_deref(), Some("end_turn") | Some("stop_sequence"))
-                && calls.is_empty()
+            if matches!(
+                envelope.stop_reason.as_deref(),
+                Some("end_turn") | Some("stop_sequence")
+            ) && calls.is_empty()
             {
                 let text = extract_text(&envelope.content);
                 return Ok((stats, text, convo));
@@ -317,6 +357,39 @@ fn extract_text(blocks: &[ContentBlock]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Callback surface for observing a [`ToolUseLoop::run_observed`] conversation.
+/// Implemented by `race.rs` to fan events out to the agent event sink.
+pub struct ConversationObserver<'a> {
+    #[allow(clippy::type_complexity)]
+    pub on_turn: Box<dyn Fn(u32, Option<String>, u32, u32, u32, u32) + Send + Sync + 'a>,
+    pub on_reasoning: Box<dyn Fn(u32, &str) + Send + Sync + 'a>,
+    pub on_tool_call: Box<dyn Fn(u32, &str, &serde_json::Value) + Send + Sync + 'a>,
+    pub on_tool_result: Box<dyn Fn(u32, &str, bool, &str) + Send + Sync + 'a>,
+}
+
+impl<'a> ConversationObserver<'a> {
+    fn on_turn(
+        &self,
+        iter: u32,
+        stop: Option<String>,
+        tin: u32,
+        tout: u32,
+        cr: u32,
+        cc: u32,
+    ) {
+        (self.on_turn)(iter, stop, tin, tout, cr, cc);
+    }
+    fn on_reasoning(&self, iter: u32, text: &str) {
+        (self.on_reasoning)(iter, text);
+    }
+    fn on_tool_call(&self, iter: u32, tool: &str, input: &serde_json::Value) {
+        (self.on_tool_call)(iter, tool, input);
+    }
+    fn on_tool_result(&self, iter: u32, tool: &str, ok: bool, result: &str) {
+        (self.on_tool_result)(iter, tool, ok, result);
+    }
 }
 
 #[derive(Debug, Clone, Default)]

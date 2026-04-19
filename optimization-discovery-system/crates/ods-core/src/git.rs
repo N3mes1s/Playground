@@ -113,7 +113,17 @@ fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
         // rebuildable. Specialists will trigger fresh builds anyway.
         if matches!(
             name.to_str(),
-            Some(".git") | Some("target") | Some("node_modules") | Some("build-ods")
+            Some(".git")
+                | Some(".ods")
+                | Some("target")
+                | Some("node_modules")
+                | Some("build-ods")
+                | Some("build")
+                | Some("dist")
+                | Some(".venv")
+                | Some("venv")
+                | Some("__pycache__")
+                | Some("vendor")
         ) {
             continue;
         }

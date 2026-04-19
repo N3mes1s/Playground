@@ -6,7 +6,8 @@
 //! aborts outstanding work gracefully and the orchestrator persists a
 //! partial-result artifact rather than crashing.
 
-use crate::anthropic::{AnthropicClient, ToolUseLoop};
+use crate::anthropic::{AnthropicClient, ConversationObserver, ToolUseLoop};
+use crate::observe::{self, AgentEvent, EventSink};
 use crate::specialist::{Specialist, SpecialistKind, SpecialistOutcome};
 use crate::tools::{Sandbox, ToolHandlerMap};
 use anyhow::Result;
@@ -14,7 +15,7 @@ use ods_core::{
     domain::{Hypothesis, TargetSig},
     git::Worktree,
     mode::Mode,
-    LoopError, WorktreeHandle,
+    LoopError, LoopStage, RunId, WorktreeHandle,
 };
 use ods_lang::{BenchReport, LanguageAdapter, Patch, TestScope};
 use ods_measure::{compare, Sample, SpeedupVerdict};
@@ -33,6 +34,11 @@ pub struct RaceInput<'a> {
     pub recipe_snippets: Vec<String>,
     pub worktree_parent: PathBuf,
     pub fuzz_budget: Duration,
+    /// Optional observability sink. Every specialist turn, tool call, and
+    /// verdict is emitted both to tracing and (when present) this sink.
+    pub sink: Option<Arc<dyn EventSink>>,
+    /// Run id used for event persistence.
+    pub run_id: RunId,
 }
 
 pub struct RaceOutput {
@@ -61,11 +67,36 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
     let mut spent_usd = 0.0;
     let mut winners: Vec<WinnerRecord> = Vec::new();
     let mut budget_exhausted = false;
+    let sink = input.sink.as_ref();
+    let run_id = input.run_id;
+
+    observe::emit(
+        sink,
+        &run_id,
+        LoopStage::Transform,
+        AgentEvent::RaceStart {
+            specialists: input
+                .plan
+                .iter()
+                .map(|(k, _)| format!("{:?}", k))
+                .collect(),
+        },
+    );
 
     let api_key = match std::env::var("ANTHROPIC_API_KEY") {
         Ok(k) => k,
         Err(_) => {
             tracing::warn!("ANTHROPIC_API_KEY not set; race aborted (0 specialists)");
+            observe::emit(
+                sink,
+                &run_id,
+                LoopStage::Transform,
+                AgentEvent::RaceFinish {
+                    winner: None,
+                    total_spent_usd: 0.0,
+                    budget_exhausted: false,
+                },
+            );
             return Ok(RaceOutput {
                 outcomes,
                 winner: None,
@@ -98,13 +129,45 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
         let spec = Specialist::new(*kind);
         let initial = compose_user_prompt(kind, hyp, input.target, &input.recipe_snippets);
 
+        observe::emit(
+            sink,
+            &run_id,
+            LoopStage::Transform,
+            AgentEvent::SpecialistStart {
+                kind: kind_name(*kind),
+                target: input.target.to_string(),
+                hypothesis: hyp.rationale.clone(),
+                seed_recipe_id: hyp.seed_recipe_id.clone(),
+            },
+        );
+
+        let spec_name = kind_name(*kind);
+        let observer = build_observer(sink.cloned(), run_id, &spec_name);
         let (stats, final_text, _convo) = match loop_
-            .run(&client, spec.system_prompt(), &initial)
+            .run_observed(&client, spec.system_prompt(), &initial, Some(&observer))
             .await
         {
             Ok(v) => v,
             Err(e) => {
-                tracing::warn!(kind = %kind_name(*kind), err = %e, "specialist conversation failed");
+                tracing::warn!(
+                    kind = %kind_name(*kind),
+                    err = %e,
+                    err_chain = %format!("{e:#}"),
+                    "specialist conversation failed"
+                );
+                observe::emit(
+                    sink,
+                    &run_id,
+                    LoopStage::Transform,
+                    AgentEvent::SpecialistFinish {
+                        kind: kind_name(*kind),
+                        patch_attempted: false,
+                        accepted: false,
+                        spent_usd: 0.0,
+                        tokens_in: 0,
+                        tokens_out: 0,
+                    },
+                );
                 continue;
             }
         };
@@ -122,9 +185,31 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
         outcomes.push(outcome.clone());
 
         let Some(diff) = outcome.patch_diff.clone() else {
+            observe::emit(
+                sink,
+                &run_id,
+                LoopStage::Transform,
+                AgentEvent::SpecialistFinish {
+                    kind: kind_name(*kind),
+                    patch_attempted: false,
+                    accepted: false,
+                    spent_usd: cost,
+                    tokens_in: stats.input_tokens,
+                    tokens_out: stats.output_tokens,
+                },
+            );
             drop(wt);
             continue;
         };
+        observe::emit(
+            sink,
+            &run_id,
+            LoopStage::Transform,
+            AgentEvent::PatchProposed {
+                specialist: kind_name(*kind),
+                diff_bytes: diff.len(),
+            },
+        );
         // The apply_patch tool has already mutated the worktree during the
         // conversation; `diff` is a copy we keep for the artifact. Verify +
         // bench what's on disk now.
@@ -150,11 +235,16 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
                 skipped: 0,
                 log_path: None,
             });
+        // Only feed the fuzz report to the gate when fuzzing actually ran
+        // (minutes > 0). A zero-minute report means the adapter silently
+        // skipped (e.g. `cargo-fuzz` not installed) and should be treated as
+        // "no fuzz info" rather than "fuzzed for 0 minutes".
         let fuzz = input
             .adapter
             .fuzz(&build, input.target, input.fuzz_budget)
             .await
-            .ok();
+            .ok()
+            .filter(|r| r.minutes > 0);
         let gate_input = GateInput {
             tests,
             property_tests: None,
@@ -171,7 +261,28 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
                 reasons: vec!["gate evaluation failed".into()],
             });
         if !matches!(gate.decision, GateDecision::Pass) {
-            tracing::info!(reasons = ?gate.reasons, "specialist patch rejected by gate");
+            observe::emit(
+                sink,
+                &run_id,
+                LoopStage::Transform,
+                AgentEvent::PatchRejected {
+                    specialist: kind_name(*kind),
+                    reasons: gate.reasons.clone(),
+                },
+            );
+            observe::emit(
+                sink,
+                &run_id,
+                LoopStage::Transform,
+                AgentEvent::SpecialistFinish {
+                    kind: kind_name(*kind),
+                    patch_attempted: true,
+                    accepted: false,
+                    spent_usd: cost,
+                    tokens_in: stats.input_tokens,
+                    tokens_out: stats.output_tokens,
+                },
+            );
             drop(wt);
             continue;
         }
@@ -203,9 +314,36 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
             }
         };
         if !verdict.accepted {
+            observe::emit(
+                sink,
+                &run_id,
+                LoopStage::Transform,
+                AgentEvent::SpecialistFinish {
+                    kind: kind_name(*kind),
+                    patch_attempted: true,
+                    accepted: false,
+                    spent_usd: cost,
+                    tokens_in: stats.input_tokens,
+                    tokens_out: stats.output_tokens,
+                },
+            );
             drop(wt);
             continue;
         }
+
+        observe::emit(
+            sink,
+            &run_id,
+            LoopStage::Transform,
+            AgentEvent::SpecialistFinish {
+                kind: kind_name(*kind),
+                patch_attempted: true,
+                accepted: true,
+                spent_usd: cost,
+                tokens_in: stats.input_tokens,
+                tokens_out: stats.output_tokens,
+            },
+        );
 
         winners.push(WinnerRecord {
             outcome,
@@ -226,12 +364,99 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
     });
     let winner = winners.into_iter().next();
 
+    observe::emit(
+        sink,
+        &run_id,
+        LoopStage::Transform,
+        AgentEvent::RaceFinish {
+            winner: winner.as_ref().map(|w| format!("{:?}", w.outcome.kind)),
+            total_spent_usd: spent_usd,
+            budget_exhausted,
+        },
+    );
+
     Ok(RaceOutput {
         outcomes,
         winner,
         spent_usd,
         budget_exhausted,
     })
+}
+
+fn build_observer(
+    sink: Option<Arc<dyn EventSink>>,
+    run_id: RunId,
+    specialist: &str,
+) -> ConversationObserver<'static> {
+    let spec = specialist.to_string();
+    let sink_turn = sink.clone();
+    let sink_reason = sink.clone();
+    let sink_call = sink.clone();
+    let sink_result = sink.clone();
+    let spec_turn = spec.clone();
+    let spec_reason = spec.clone();
+    let spec_call = spec.clone();
+    let spec_result = spec.clone();
+    ConversationObserver {
+        on_turn: Box::new(move |iter, stop, tin, tout, cr, cc| {
+            observe::emit(
+                sink_turn.as_ref(),
+                &run_id,
+                LoopStage::Transform,
+                AgentEvent::Turn {
+                    specialist: spec_turn.clone(),
+                    iteration: iter,
+                    stop_reason: stop,
+                    input_tokens: tin,
+                    output_tokens: tout,
+                    cache_read_tokens: cr,
+                    cache_creation_tokens: cc,
+                },
+            );
+        }),
+        on_reasoning: Box::new(move |iter, text| {
+            if text.trim().is_empty() {
+                return;
+            }
+            observe::emit(
+                sink_reason.as_ref(),
+                &run_id,
+                LoopStage::Transform,
+                AgentEvent::Reasoning {
+                    specialist: spec_reason.clone(),
+                    iteration: iter,
+                    text_preview: observe::preview(text, 400),
+                },
+            );
+        }),
+        on_tool_call: Box::new(move |iter, tool, input| {
+            observe::emit(
+                sink_call.as_ref(),
+                &run_id,
+                LoopStage::Transform,
+                AgentEvent::ToolCall {
+                    specialist: spec_call.clone(),
+                    iteration: iter,
+                    tool: tool.to_string(),
+                    input_preview: observe::preview(&input.to_string(), 240),
+                },
+            );
+        }),
+        on_tool_result: Box::new(move |iter, tool, ok, result| {
+            observe::emit(
+                sink_result.as_ref(),
+                &run_id,
+                LoopStage::Transform,
+                AgentEvent::ToolResult {
+                    specialist: spec_result.clone(),
+                    iteration: iter,
+                    tool: tool.to_string(),
+                    ok,
+                    result_preview: observe::preview(result, 320),
+                },
+            );
+        }),
+    }
 }
 
 fn kind_name(k: SpecialistKind) -> String {

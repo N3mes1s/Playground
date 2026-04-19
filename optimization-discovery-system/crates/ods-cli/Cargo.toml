@@ -29,6 +29,7 @@ ods-ci         = { workspace = true }
 ods-report     = { workspace = true }
 anyhow         = { workspace = true }
 clap           = { workspace = true }
+uuid           = { workspace = true }
 reqwest        = { workspace = true }
 serde          = { workspace = true }
 serde_json     = { workspace = true }
