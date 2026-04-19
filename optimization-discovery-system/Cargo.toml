@@ -66,6 +66,11 @@ similar    = "2"
 tempfile   = "3"
 axum       = { version = "0.7", default-features = false, features = ["http1", "json", "tokio", "macros"] }
 async-trait = "0.1"
+hmac       = "0.12"
+sha2       = "0.10"
+rsa        = { version = "0.9", default-features = false, features = ["std", "sha2"] }
+pkcs8      = { version = "0.10", features = ["pem"] }
+pkcs1      = { version = "0.7", features = ["pem"] }
 
 [profile.release]
 opt-level   = 3

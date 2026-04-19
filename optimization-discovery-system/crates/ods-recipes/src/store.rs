@@ -60,7 +60,11 @@ impl Store {
     }
 
     pub fn upsert(&self, recipe: &Recipe) -> Result<()> {
-        let body = serde_json::to_string(recipe)?;
+        // Always (re)populate the embedding so downstream cosine search is
+        // consistent regardless of whether the recipe YAML shipped one.
+        let mut recipe = recipe.clone();
+        recipe.embedding = Some(crate::embed::embed_recipe(&recipe));
+        let body = serde_json::to_string(&recipe)?;
         let updated_at = time::OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Rfc3339)?;
         self.conn
@@ -86,6 +90,33 @@ impl Store {
             )
             .context("upsert recipe")?;
         Ok(())
+    }
+
+    /// Cosine-similarity vector search. Uses the hash-based embedding in
+    /// `ods_recipes::embed` and returns recipes sorted by descending score.
+    /// Callers can pre-filter with [`Self::search`] first for language /
+    /// category symbolic constraints.
+    pub fn vector_search(
+        &self,
+        query: &str,
+        candidates: &[Recipe],
+        limit: usize,
+    ) -> Vec<(Recipe, f32)> {
+        let q = crate::embed::embed_query(query);
+        let mut scored: Vec<(Recipe, f32)> = candidates
+            .iter()
+            .map(|r| {
+                let emb = r
+                    .embedding
+                    .clone()
+                    .unwrap_or_else(|| crate::embed::embed_recipe(r));
+                let sim = crate::embed::cosine(&q, &emb);
+                (r.clone(), sim)
+            })
+            .collect();
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        scored.truncate(limit);
+        scored
     }
 
     pub fn get(&self, id: &RecipeId) -> Result<Option<Recipe>> {

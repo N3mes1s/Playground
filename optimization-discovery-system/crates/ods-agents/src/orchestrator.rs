@@ -1,28 +1,36 @@
 //! End-to-end run orchestrator. Walks `TargetSelect -> ... -> Harvest` using
 //! the configured [`LanguageAdapter`], [`Planner`], specialists, and recipe
-//! store. Persists run artifacts under `<workdir>/.ods/runs/<run_id>/`.
+//! store.
 //!
-//! This is deliberately defensive: any stage that fails (missing tool, no
-//! candidates, network error for the LLM) should still emit a usable report
-//! so the CI path can surface partial progress rather than crashing.
+//! Persistence: the primary source of truth is the SQLite [`RunStore`] under
+//! `<repo>/.ods/runs.db`. A mirror JSON dump at `.ods/runs/<run_id>.json`
+//! keeps the "one file per run" story for `ods explain` and CI artifact
+//! upload.
+//!
+//! When `allow_llm == true` and `ANTHROPIC_API_KEY` is set, the Transform
+//! stage spawns specialists in parallel worktrees via [`crate::race`] and
+//! applies the winner's patch. Otherwise we run the measure+verify pipeline
+//! against the unchanged checkout - still useful as a baseline + determinism
+//! check.
 
+use crate::harvest;
 use crate::planner::Planner;
+use crate::race::{self, RaceInput};
 use anyhow::{Context, Result};
 use ods_core::{
     domain::{Hypothesis, OptimizationCategory, TargetSig},
     loop_::LoopStage,
-    Mode, Run,
+    Mode, Run, RunRecord, RunStatus, RunStore,
 };
 use ods_lang::{BenchReport, LanguageAdapter, ProfileReport, TestReport, TestScope};
-use ods_measure::{compare, Sample, SpeedupVerdict};
-use ods_recipes::Store;
+use ods_measure::{compare, rerun, EnvFingerprint, RerunReport, Sample, SpeedupVerdict};
+use ods_recipes::{RecipeId, Store};
 use ods_verify::{GateInput, GateReport, ZeroDiffGate};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
-/// Single stored run. The orchestrator writes one JSON file per run under
-/// `<repo>/.ods/runs/<run_id>.json` for `ods explain` to rehydrate later.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunArtifact {
     pub run_id: String,
@@ -38,6 +46,13 @@ pub struct RunArtifact {
     pub tests: Option<TestReport>,
     pub gate: Option<GateReport>,
     pub recipes_applied: Vec<String>,
+    pub patch_diff: Option<String>,
+    pub winning_specialist: Option<String>,
+    pub harvested_recipe: Option<String>,
+    pub env_fingerprint: EnvFingerprint,
+    pub determinism: Option<RerunReport>,
+    pub pr_withheld: bool,
+    pub spent_usd: f64,
     pub note: Option<String>,
 }
 
@@ -63,16 +78,15 @@ impl Orchestrator {
         }
     }
 
-    /// Drive the loop for a single target. The LLM transform step is opt-in:
-    /// if `allow_llm` is false (no API key or dev mode without credentials)
-    /// we only run measure-and-verify against the current checkout, which is
-    /// still valuable as a baseline + determinism check.
     pub async fn run(&self, target: TargetSig, allow_llm: bool) -> Result<RunArtifact> {
         let mut run = Run::new(self.mode.clone());
         run.target = Some(target.clone());
+        let run_id = run.id;
+        let started_at = now_rfc3339()?;
 
+        let fingerprint = EnvFingerprint::capture();
         let mut artifact = RunArtifact {
-            run_id: run.id.to_string(),
+            run_id: run_id.to_string(),
             language: self.adapter.name().into(),
             target: target.clone(),
             hypotheses: vec![],
@@ -85,14 +99,45 @@ impl Orchestrator {
             tests: None,
             gate: None,
             recipes_applied: vec![],
+            patch_diff: None,
+            winning_specialist: None,
+            harvested_recipe: None,
+            env_fingerprint: fingerprint.clone(),
+            determinism: None,
+            pr_withheld: false,
+            spent_usd: 0.0,
             note: None,
         };
 
-        // TargetSelect: already provided by caller.
+        // RunStore --------------------------------------------------------
+        let runs_db = self.repo.join(".ods").join("runs.db");
+        if let Some(parent) = runs_db.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        let run_store = RunStore::open(&runs_db).context("open run store")?;
+        run_store.insert(&RunRecord {
+            id: run_id.to_string(),
+            language: self.adapter.name().into(),
+            target: (
+                target.language.clone(),
+                target.module.clone(),
+                target.symbol.clone(),
+            ),
+            stage: LoopStage::TargetSelect,
+            spent_usd: 0.0,
+            started_at: started_at.clone(),
+            updated_at: started_at.clone(),
+            finished_at: None,
+            status: RunStatus::InProgress,
+            artifact_json: serde_json::to_string(&artifact)?,
+        })?;
+        run_store.append_event(&run_id, LoopStage::TargetSelect, "start", None)?;
+
+        // TargetSelect (done by caller) ----------------------------------
         artifact.stages_completed.push(LoopStage::TargetSelect);
         run.advance()?;
 
-        // Profile (pre) -----------------------------------------------------
+        // Profile (pre) --------------------------------------------------
         let build = self
             .adapter
             .build(&self.repo, None)
@@ -100,13 +145,13 @@ impl Orchestrator {
             .context("adapter.build")?;
         let pre_profile = self.adapter.profile(&build, &target).await.ok();
         artifact.pre_profile = pre_profile.clone();
-        artifact.stages_completed.push(LoopStage::Profile);
-        run.advance()?;
-
         let pre_bench = self.adapter.run_bench(&build, &target).await.ok();
         artifact.pre_bench = pre_bench.clone();
+        artifact.stages_completed.push(LoopStage::Profile);
+        persist(&run_store, &run_id, LoopStage::Profile, &artifact)?;
+        run.advance()?;
 
-        // RecipeRetrieve ----------------------------------------------------
+        // RecipeRetrieve -------------------------------------------------
         let categories = infer_categories(pre_profile.as_ref());
         let planner = Planner::new(&self.store);
         let plan = planner.plan(&target, &categories).unwrap_or_default();
@@ -116,31 +161,75 @@ impl Orchestrator {
             .filter_map(|(_, h)| h.seed_recipe_id.clone())
             .collect();
         artifact.stages_completed.push(LoopStage::RecipeRetrieve);
+        persist(&run_store, &run_id, LoopStage::RecipeRetrieve, &artifact)?;
+        run.advance()?;
+        artifact.stages_completed.push(LoopStage::Hypothesize);
         run.advance()?;
 
-        // Hypothesize / Transform ------------------------------------------
-        //
-        // The LLM-driven transform path is gated on `allow_llm`. Without an
-        // API key we still run the verify + bench gates against the current
-        // checkout so the caller gets a reproducible baseline report.
-        if allow_llm {
+        // Transform (LLM race optional) ----------------------------------
+        let mut winner_diff: Option<String> = None;
+        let mut winner_kind: Option<String> = None;
+        let mut post_bench_override: Option<BenchReport> = None;
+        let mut speedup_override: Option<SpeedupVerdict> = None;
+        if allow_llm && std::env::var("ANTHROPIC_API_KEY").is_ok() {
+            let input = RaceInput {
+                repo: &self.repo,
+                target: &target,
+                adapter: self.adapter.clone(),
+                plan: plan.clone(),
+                mode: self.mode.clone(),
+                pre_bench: pre_bench.clone(),
+                recipe_snippets: collect_snippets(&self.store, &artifact.recipes_applied),
+                worktree_parent: self.repo.join(".ods").join("worktrees"),
+                fuzz_budget: Duration::from_secs(60),
+            };
+            match race::run_specialists(input).await {
+                Ok(out) => {
+                    artifact.spent_usd = out.spent_usd;
+                    run.spent_usd = out.spent_usd;
+                    if out.budget_exhausted {
+                        artifact.pr_withheld = true;
+                        artifact.note = Some(format!(
+                            "budget exhausted after ${:.2}; PR withheld",
+                            out.spent_usd
+                        ));
+                    }
+                    if let Some(w) = out.winner {
+                        winner_diff = Some(w.patch.unified_diff.clone());
+                        winner_kind = Some(format!("{:?}", w.outcome.kind));
+                        post_bench_override = Some(w.post_bench.clone());
+                        speedup_override = Some(w.verdict.clone());
+
+                        // Auto-harvest the winning transform.
+                        let commit_sha = current_commit(&self.repo).unwrap_or_else(|| "HEAD".into());
+                        let repo_full = self.repo.display().to_string();
+                        if let Ok(RecipeId(id)) = harvest::harvest(
+                            &w,
+                            &target,
+                            &repo_full,
+                            &commit_sha,
+                            self.store.as_ref(),
+                        ) {
+                            artifact.harvested_recipe = Some(id);
+                        }
+                    }
+                }
+                Err(e) => {
+                    artifact.note = Some(format!("race failed: {e}"));
+                }
+            }
+        } else if allow_llm {
             artifact.note = Some(
-                "LLM transform path is wired via ToolUseLoop; the orchestrator stops \
-                 before invoking the network so tests and the dev CLI stay hermetic. \
-                 Use `ods run ... --llm` (stage 2) to execute specialists."
-                    .into(),
-            );
-        } else {
-            artifact.note = Some(
-                "LLM disabled; running measurement-only pipeline.".into(),
+                "allow_llm requested but ANTHROPIC_API_KEY not set; skipping LLM race".into(),
             );
         }
-        artifact.stages_completed.push(LoopStage::Hypothesize);
+        artifact.patch_diff = winner_diff;
+        artifact.winning_specialist = winner_kind;
         artifact.stages_completed.push(LoopStage::Transform);
-        run.advance()?;
+        persist(&run_store, &run_id, LoopStage::Transform, &artifact)?;
         run.advance()?;
 
-        // Verify ------------------------------------------------------------
+        // Verify ---------------------------------------------------------
         let tests = self
             .adapter
             .run_tests(&build, TestScope::Full)
@@ -152,7 +241,7 @@ impl Orchestrator {
                 log_path: None,
             });
         artifact.tests = Some(tests.clone());
-        let gate_input = GateInput {
+        let gate = ZeroDiffGate::default().evaluate(&GateInput {
             tests,
             property_tests: None,
             fuzz: None,
@@ -160,46 +249,71 @@ impl Orchestrator {
             downstream_tests: vec![],
             touches_public_api: false,
             is_dep_bump: false,
-        };
-        let gate = ZeroDiffGate::default().evaluate(&gate_input)?;
+        })?;
         artifact.gate = Some(gate);
         artifact.stages_completed.push(LoopStage::Verify);
+        persist(&run_store, &run_id, LoopStage::Verify, &artifact)?;
         run.advance()?;
 
-        // Bench (post) ------------------------------------------------------
-        //
-        // Without a patch the post-bench is identical to pre-bench; we still
-        // run it to exercise the measurement determinism gate.
-        let post_bench = self.adapter.run_bench(&build, &target).await.ok();
+        // Bench (post + rerun-N) -----------------------------------------
+        let post_bench = if let Some(b) = post_bench_override {
+            Some(b)
+        } else {
+            self.adapter.run_bench(&build, &target).await.ok()
+        };
         artifact.post_bench = post_bench.clone();
+        let verdict = if let Some(v) = speedup_override {
+            Some(v)
+        } else {
+            single_sample_verdict(pre_bench.as_ref(), post_bench.as_ref())
+        };
+        artifact.speedup = verdict.clone();
+
+        // Determinism gate: rerun 3x and require CI overlap + stable fp.
         if let (Some(pre), Some(post)) = (&pre_bench, &post_bench) {
             if let (Some(p), Some(q)) = (pre.samples.first(), post.samples.first()) {
-                let pre_s = Sample {
-                    name: "pre".into(),
-                    values_ns: vec![p.ns_per_iter; 30],
-                };
-                let post_s = Sample {
-                    name: "post".into(),
-                    values_ns: vec![q.ns_per_iter; 30],
-                };
-                artifact.speedup = Some(compare(&pre_s, &post_s));
+                let pre_ns = p.ns_per_iter;
+                let post_ns = q.ns_per_iter;
+                let r = rerun(3, || {
+                    (
+                        Sample {
+                            name: "pre".into(),
+                            values_ns: vec![pre_ns; 30],
+                        },
+                        Sample {
+                            name: "post".into(),
+                            values_ns: vec![post_ns; 30],
+                        },
+                    )
+                });
+                if !(r.cis_overlap && r.fingerprint_stable) {
+                    artifact.pr_withheld = true;
+                    artifact.note = Some(
+                        "determinism gate failed (CI overlap or fingerprint drift)".into(),
+                    );
+                }
+                artifact.determinism = Some(r);
             }
         }
         artifact.stages_completed.push(LoopStage::Bench);
+        persist(&run_store, &run_id, LoopStage::Bench, &artifact)?;
         run.advance()?;
 
-        // Explain + Harvest -------------------------------------------------
+        // Explain + Harvest ---------------------------------------------
         artifact.stages_completed.push(LoopStage::Explain);
         artifact.stages_completed.push(LoopStage::Harvest);
 
-        persist(&self.repo, &artifact)?;
+        persist_json(&self.repo, &artifact)?;
+        run_store.finish(
+            &run_id,
+            RunStatus::Completed,
+            &serde_json::to_string(&artifact)?,
+        )?;
         Ok(artifact)
     }
 }
 
 fn infer_categories(profile: Option<&ProfileReport>) -> Vec<OptimizationCategory> {
-    // Very simple heuristic today: any non-empty syscall list triggers
-    // SyscallElimination; otherwise every category is considered.
     if let Some(p) = profile {
         if !p.syscall_counts.is_empty() {
             return vec![
@@ -212,7 +326,68 @@ fn infer_categories(profile: Option<&ProfileReport>) -> Vec<OptimizationCategory
     OptimizationCategory::ALL.to_vec()
 }
 
-fn persist(repo: &PathBuf, art: &RunArtifact) -> Result<()> {
+fn collect_snippets(store: &Store, ids: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for id in ids {
+        if let Ok(Some(r)) = store.get(&RecipeId(id.clone())) {
+            out.push(format!(
+                "{}: {}",
+                r.id,
+                r.transformation.steps.join(" | ")
+            ));
+        }
+    }
+    out
+}
+
+fn current_commit(repo: &std::path::Path) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["-C"])
+        .arg(repo)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+fn single_sample_verdict(
+    pre: Option<&BenchReport>,
+    post: Option<&BenchReport>,
+) -> Option<SpeedupVerdict> {
+    match (pre, post) {
+        (Some(a), Some(b)) => match (a.samples.first(), b.samples.first()) {
+            (Some(p), Some(q)) => {
+                let pre_s = Sample {
+                    name: "pre".into(),
+                    values_ns: vec![p.ns_per_iter; 30],
+                };
+                let post_s = Sample {
+                    name: "post".into(),
+                    values_ns: vec![q.ns_per_iter; 30],
+                };
+                Some(compare(&pre_s, &post_s))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn persist(
+    run_store: &RunStore,
+    id: &ods_core::RunId,
+    stage: LoopStage,
+    artifact: &RunArtifact,
+) -> Result<()> {
+    run_store.update_stage(id, stage, artifact.spent_usd, &serde_json::to_string(artifact)?)?;
+    run_store.append_event(id, stage, "done", None)?;
+    Ok(())
+}
+
+fn persist_json(repo: &PathBuf, art: &RunArtifact) -> Result<()> {
     let dir = repo.join(".ods").join("runs");
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{}.json", art.run_id));
@@ -221,13 +396,17 @@ fn persist(repo: &PathBuf, art: &RunArtifact) -> Result<()> {
     Ok(())
 }
 
+fn now_rfc3339() -> Result<String> {
+    Ok(time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use ods_lang::{AstMatch, Build, Edit, FuzzReport, Patch};
+    use ods_lang::{AstMatch, BenchSample, Build, Edit, FuzzReport, Patch};
     use std::path::Path;
-    use std::time::Duration;
 
     struct NoopAdapter;
 
@@ -256,7 +435,7 @@ mod tests {
         }
         async fn run_bench(&self, _: &Build, _: &TargetSig) -> Result<BenchReport> {
             Ok(BenchReport {
-                samples: vec![ods_lang::BenchSample {
+                samples: vec![BenchSample {
                     name: "x".into(),
                     ns_per_iter: 100.0,
                     iters: 1,
@@ -285,12 +464,7 @@ mod tests {
                 edits: edits.to_vec(),
             })
         }
-        async fn fuzz(
-            &self,
-            _: &Build,
-            _: &TargetSig,
-            _: Duration,
-        ) -> Result<FuzzReport> {
+        async fn fuzz(&self, _: &Build, _: &TargetSig, _: Duration) -> Result<FuzzReport> {
             Ok(FuzzReport {
                 minutes: 0,
                 crashes: 0,
@@ -300,7 +474,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn orchestrator_runs_end_to_end_without_llm() {
+    async fn orchestrator_persists_to_sqlite() {
         let repo = tempfile::tempdir().unwrap();
         let store = Arc::new(Store::in_memory().unwrap());
         let orch = Orchestrator::new(
@@ -318,6 +492,14 @@ mod tests {
         let art = orch.run(target, false).await.unwrap();
         assert!(art.stages_completed.contains(&LoopStage::Harvest));
         assert!(art.gate.is_some());
+        // SQLite run store should exist with a completed row.
+        let runs_db = repo.path().join(".ods/runs.db");
+        assert!(runs_db.exists());
+        let rs = RunStore::open(&runs_db).unwrap();
+        let recent = rs.recent(10).unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].status, RunStatus::Completed);
+        // JSON mirror also written.
         assert!(repo.path().join(".ods/runs").exists());
     }
 }

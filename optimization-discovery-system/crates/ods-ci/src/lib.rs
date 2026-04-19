@@ -7,9 +7,13 @@
 //!   gating.
 
 pub mod api;
+pub mod app_auth;
 pub mod github_app;
+pub mod signature;
 pub mod webhook;
 
 pub use api::{BranchRef, GitHubClient, PullRequest};
+pub use app_auth::{AppCredentials, GitHubAppAuth};
 pub use github_app::{CiMode, OpenPrRequest, PrAllowlist};
+pub use signature::{sign as sign_webhook, verify as verify_webhook, SignatureVerdict};
 pub use webhook::{WebhookEvent, WebhookServer};

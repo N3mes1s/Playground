@@ -19,3 +19,9 @@ reqwest     = { workspace = true }
 tokio       = { workspace = true }
 axum        = { workspace = true }
 async-trait = { workspace = true }
+hmac        = { workspace = true }
+sha2        = { workspace = true }
+rsa         = { workspace = true }
+pkcs8       = { workspace = true }
+pkcs1       = { workspace = true }
+time        = { workspace = true }

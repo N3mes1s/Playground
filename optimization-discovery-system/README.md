@@ -106,17 +106,33 @@ Seeds are hand-authored YAML under `recipes/seed/`. Candidates are auto-harveste
 - **Stage 2 ✅** BM25 recipe retrieval (`ods recipes search`), auto-promotion rules (seed → candidate → validated → corpus) driven by success history, axum webhook server accepting `/ods optimize` comments with an `owner/repo` allowlist.
 - **Stage 3 ✅** `cargo-semver-checks` subprocess wrapper with breaking-change parser, downstream-consumer test runner for dep bumps (cargo/go/npm/pytest auto-pick), Go adapter (`go test`, `go test -bench`, `go test -fuzz`).
 - **Stage 4 ✅** Ruby, Python, C/C++, JS/TS, Java adapters (detect + build + test + bench output parsers for minitest / rspec / pytest / pytest-benchmark / ctest / jest / vitest / tinybench / mvn surefire / gradle / benchmark-ips).
+- **Stage 5 ✅ close-out** — wires the building blocks into one coherent product: SQLite-persisted runs (`.ods/runs.db`), budget accounting threaded through the Loop, orchestrator LLM race across parallel git worktrees, auto-harvest of winning transforms into candidate recipes, env fingerprint + rerun-N determinism gate, flame-graph SVG capture, Criterion JSON ingestion, differential/property harness, real `ods verify <repo> --patch`, real `ods scan` via a Discoverer, rich PR body via `render_pr_body`, optional GitHub App JWT auth, HMAC-SHA256 webhook signature verification, hash-embedding vector search for recipes, and an end-to-end integration smoke test.
 
 ## Status
 
-Stages 0–4 wired end-to-end. What's real vs. stubbed:
+Stages 0–5 shipped. What's real vs. stubbed:
 
-- **Real:** the Loop state machine + autonomy budget gate, orchestrator persistence to `.ods/runs/<run_id>.json`, recipe store + BM25 ranking + promotion, seven language adapters driving real toolchains through `ods-exec`, Linux profiler via `/usr/bin/time` + `strace -c` + `perf stat`, tool-use loop with dispatch + token accounting, GitHub REST client (branch create, file commit via Contents API, PR open), webhook server with comment allowlist, `cargo-semver-checks` + downstream-consumer gate wiring in the zero-diff verifier.
-- **Stubbed / seams only (for follow-on work):**
-  - AST queries use regex over lines today; a tree-sitter backend can slot in behind `LanguageAdapter::ast_query` with no caller changes.
-  - The LLM transform step exists (ToolUseLoop.run + specialist prompts + toolkit) but the orchestrator does not autonomously invoke it yet. Add `--llm` handling in the orchestrator to race specialists in worktrees.
-  - Webhook signature verification (`X-Hub-Signature-256`) is TODO.
-  - Criterion JSON ingestion is regex-based against stdout; a `--bench-json` path lands next.
+- **Real:**
+  - Loop state machine + autonomy budget gate; spend threaded via `LoopStats::estimated_cost_usd` into `Run.spent_usd`.
+  - SQLite-persisted runs (`RunStore` in `.ods/runs.db`) with event trail, resumable pending queries, JSON mirror under `.ods/runs/<id>.json`.
+  - Orchestrator LLM race: specialists run in parallel git worktrees, each with a sandbox toolkit, filtered by zero-diff gate, winner picked by highest speedup CI lower bound.
+  - Auto-harvest: winning specialist's transform is upserted as a candidate recipe, with monotonic auto-promotion.
+  - Env fingerprint from `/proc/cpuinfo` + governor + ASLR + turbo + `perf_event_paranoid`; `taskset` wrapper; rerun-N gate requiring pairwise CI overlap + stable fingerprint.
+  - Recipe corpus: BM25 + hash-embedding vector search (cosine similarity, swap-ready for `sqlite-vec`); `Recipe::embedding` auto-populated on `upsert`.
+  - Linux profiler via `/usr/bin/time` + `strace -c` + `perf stat`; flame-graph SVG via `cargo-flamegraph` or `perf record` + `stackcollapse-perf`.
+  - Criterion JSON ingestion (`target/criterion/**/new/estimates.json`) with real CIs, falling back to stdout regex.
+  - Zero-diff gate: tests + property-differential harness + fuzz minutes + `cargo-semver-checks` + downstream consumer tests.
+  - Real `ods verify <repo> --patch`: worktree + git apply + build + tests + fuzz + gate report.
+  - Real `ods scan`: enumerates Criterion / libtest / Go benchmarks + "naive alt exists" source hint.
+  - GitHub REST client; optional GitHub App auth via RS256 JWT (pure-Rust `rsa` + `pkcs1`/`pkcs8`, no `ring`) + installation-token exchange.
+  - Webhook server with constant-time HMAC-SHA256 signature verification before JSON parse.
+  - Rich PR body via `ods-report::render_pr_body` (headline speedup, CI bounds, syscall deltas, gate evidence, reproduction command).
+  - End-to-end smoke test covering the Orchestrator in dev mode.
+- **Stubbed / seams only (future work):**
+  - AST queries still regex-over-lines; a tree-sitter backend can slot in behind `LanguageAdapter::ast_query` with no caller changes.
+  - `sqlite-vec` substitution: the embedding + cosine path is in place; swapping the native index is a dependency addition, not a caller change.
+  - Per-adapter, per-language flame capture beyond Rust.
+  - Webhook server currently consumes events; routing them to a live `Orchestrator::run` under the App auth path is the obvious next increment.
 
 ## CLI reference
 

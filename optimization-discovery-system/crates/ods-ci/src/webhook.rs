@@ -4,14 +4,17 @@
 //! to an async channel; the HTTP handler only acknowledges receipt so GitHub
 //! doesn't time out.
 //!
-//! Signature verification is TODO (requires the App's webhook secret); we
-//! expose the raw payload so a later stage can verify `X-Hub-Signature-256`.
+//! `X-Hub-Signature-256` is verified in constant time before the payload
+//! is parsed, so attackers cannot force JSON parsing or trigger runs without
+//! knowing the App webhook secret.
 
+use crate::signature::{verify as verify_sig, SignatureVerdict};
 use axum::{
+    body::Bytes,
     extract::State,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     routing::{get, post},
-    Json, Router,
+    Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -27,11 +30,30 @@ pub struct WebhookEvent {
 
 pub struct WebhookServer {
     pub port: u16,
+    /// HMAC secret used to verify `X-Hub-Signature-256`. If `None`, signature
+    /// verification is skipped (local development only).
+    pub secret: Option<Vec<u8>>,
+}
+
+#[derive(Clone)]
+struct AppState {
+    tx: Arc<mpsc::UnboundedSender<WebhookEvent>>,
+    secret: Option<Arc<Vec<u8>>>,
 }
 
 impl WebhookServer {
     pub fn new(port: u16) -> Self {
-        Self { port }
+        Self {
+            port,
+            secret: std::env::var("ODS_WEBHOOK_SECRET")
+                .ok()
+                .map(|s| s.into_bytes()),
+        }
+    }
+
+    pub fn with_secret(mut self, secret: impl Into<Vec<u8>>) -> Self {
+        self.secret = Some(secret.into());
+        self
     }
 
     /// Run the HTTP listener until `cancel` is cancelled. Events parsed from
@@ -42,7 +64,10 @@ impl WebhookServer {
         cancel: tokio::sync::watch::Receiver<bool>,
     ) -> anyhow::Result<mpsc::UnboundedReceiver<WebhookEvent>> {
         let (tx, rx) = mpsc::unbounded_channel();
-        let state = Arc::new(tx);
+        let state = AppState {
+            tx: Arc::new(tx),
+            secret: self.secret.map(Arc::new),
+        };
         let app = Router::new()
             .route("/health", get(|| async { "ok" }))
             .route("/webhook", post(handle))
@@ -96,11 +121,32 @@ struct User {
 }
 
 async fn handle(
-    State(tx): State<Arc<mpsc::UnboundedSender<WebhookEvent>>>,
-    Json(payload): Json<serde_json::Value>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
 ) -> (StatusCode, &'static str) {
-    // We only care about comment-triggered events; any other payload shape
-    // should still return 200 to keep GitHub happy.
+    // Signature gate first - reject before parsing any JSON.
+    if let Some(secret) = &state.secret {
+        let sig = headers
+            .get("x-hub-signature-256")
+            .and_then(|v| v.to_str().ok());
+        match verify_sig(secret, &body, sig) {
+            SignatureVerdict::Ok => {}
+            SignatureVerdict::Missing => {
+                return (StatusCode::UNAUTHORIZED, "missing signature");
+            }
+            SignatureVerdict::Mismatch => {
+                return (StatusCode::UNAUTHORIZED, "bad signature");
+            }
+            SignatureVerdict::Malformed => {
+                return (StatusCode::BAD_REQUEST, "malformed signature");
+            }
+        }
+    }
+
+    let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&body) else {
+        return (StatusCode::BAD_REQUEST, "bad json");
+    };
     let Ok(parsed) = serde_json::from_value::<IssueCommentPayload>(payload) else {
         return (StatusCode::OK, "ignored");
     };
@@ -116,7 +162,7 @@ async fn handle(
         user: parsed.comment.user.login,
         body: parsed.comment.body,
     };
-    let _ = tx.send(event);
+    let _ = state.tx.send(event);
     (StatusCode::OK, "queued")
 }
 

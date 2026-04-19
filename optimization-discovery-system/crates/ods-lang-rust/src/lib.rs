@@ -98,13 +98,19 @@ impl LanguageAdapter for RustAdapter {
     async fn run_bench(&self, build: &Build, _target: &TargetSig) -> Result<BenchReport> {
         // Use `cargo bench --no-fail-fast` with libtest bencher output. Many
         // crates use Criterion; its default text output also contains lines
-        // we can parse (`name  time:  [low mid high]`). We try both.
+        // we can parse (`name  time:  [low mid high]`).
         let out = run(&Invocation::new("cargo")
             .args(["bench", "--workspace", "--no-fail-fast"].map(String::from))
             .cwd(&build.workdir)
             .timeout(self.bench_timeout)
             .allow_nonzero())
             .await?;
+        // Prefer Criterion's JSON artifacts when they exist - structured,
+        // not regex - and fall back to stdout parsing otherwise.
+        let crit = criterion_json::collect(&build.workdir).unwrap_or_default();
+        if !crit.is_empty() {
+            return Ok(criterion_json::to_bench_report(crit));
+        }
         Ok(parse_cargo_bench_output(&out.stdout))
     }
 
@@ -307,6 +313,8 @@ pub fn parse_cargo_bench_output(stdout: &str) -> BenchReport {
     BenchReport { samples }
 }
 
+pub mod criterion_json;
+pub mod flame;
 pub mod profile;
 
 #[cfg(test)]

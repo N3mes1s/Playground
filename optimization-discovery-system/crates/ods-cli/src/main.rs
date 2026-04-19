@@ -1,13 +1,15 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use ods_agents::Orchestrator;
+use ods_agents::{Discoverer, Orchestrator};
 use ods_ci::api::{b64_encode, GitHubClient};
-use ods_ci::PrAllowlist;
-use ods_core::{Budget, Mode};
+use ods_ci::{AppCredentials, GitHubAppAuth, PrAllowlist};
+use ods_core::{git::Worktree, Budget, Mode};
 use ods_lang::Registry;
 use ods_recipes::{
     score::score_recipes, PromotionState, RecipeQuery, Store,
 };
+use ods_report::{render_pr_body, ReportInputs};
+use ods_verify::{GateInput, ZeroDiffGate};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
@@ -189,20 +191,39 @@ fn build_registry() -> Registry {
 async fn cmd_scan(repo: &PathBuf, json: bool) -> Result<()> {
     let registry = build_registry();
     let adapter = registry.detect(repo).await.context("detect language")?;
+    let candidates = Discoverer::default().scan(repo)?;
     if json {
         println!(
             "{}",
             serde_json::json!({
                 "repo": repo.display().to_string(),
                 "language": adapter.name(),
-                "candidates": [],
-                "note": "candidate discovery is heuristic today (tree-sitter + bench-suite scan lands next)"
+                "candidates": candidates,
             })
         );
     } else {
         println!("repo:      {}", repo.display());
         println!("language:  {}", adapter.name());
-        println!("candidates: run `ods run {} --target <lang::mod::sym>` on a known hot primitive", repo.display());
+        if candidates.is_empty() {
+            println!("candidates: (none discovered; run tree of this repo has no bench harnesses we recognise)");
+        } else {
+            println!("candidates ({} found):", candidates.len());
+            println!("  score  language   module::symbol");
+            for c in candidates.iter().take(20) {
+                println!(
+                    "  {:>5.2}  {:<9}  {}::{}    [{}:{}]",
+                    c.score,
+                    c.language,
+                    c.module,
+                    c.symbol,
+                    c.source_file.display(),
+                    c.source_line
+                );
+                if let Some(hint) = &c.naive_alt_hint {
+                    println!("         hint: {}", hint);
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -277,11 +298,71 @@ async fn cmd_bench(repo: &PathBuf, target_raw: &str) -> Result<()> {
 async fn cmd_verify(repo: &PathBuf, patch: &PathBuf) -> Result<()> {
     let registry = build_registry();
     let adapter = registry.detect(repo).await?;
-    tracing::info!(
-        patch = %patch.display(),
-        lang = adapter.name(),
-        "verify stub: apply the patch in a worktree and run the zero-diff gate"
-    );
+    let patch_text = std::fs::read_to_string(patch)
+        .with_context(|| format!("read {}", patch.display()))?;
+
+    let parent = repo.join(".ods").join("verify");
+    let wt = Worktree::create(repo, "verify", &parent)?;
+
+    // Apply the patch inside the worktree.
+    let tmp = wt.path.join(".ods-verify.patch");
+    std::fs::write(&tmp, patch_text.as_bytes())?;
+    let apply = if wt.path.join(".git").exists() {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&wt.path)
+            .args(["apply", "--whitespace=fix"])
+            .arg(&tmp)
+            .status()
+    } else {
+        std::process::Command::new("patch")
+            .arg("-d")
+            .arg(&wt.path)
+            .args(["-p1", "-i"])
+            .arg(&tmp)
+            .status()
+    };
+    let _ = std::fs::remove_file(&tmp);
+    let status = apply.with_context(|| "run patch/git apply")?;
+    if !status.success() {
+        anyhow::bail!("patch application failed (exit={:?})", status.code());
+    }
+
+    // Build + tests + fuzz, then feed the zero-diff gate.
+    let build = adapter
+        .build(&wt.path, None)
+        .await
+        .context("build after patch")?;
+    let tests = adapter
+        .run_tests(&build, ods_lang::TestScope::Full)
+        .await
+        .unwrap_or(ods_lang::TestReport {
+            passed: 0,
+            failed: 1,
+            skipped: 0,
+            log_path: None,
+        });
+    let target = ods_core::TargetSig {
+        language: adapter.name().into(),
+        module: "verify".into(),
+        symbol: "target".into(),
+        arity: None,
+    };
+    let fuzz = adapter
+        .fuzz(&build, &target, std::time::Duration::from_secs(60))
+        .await
+        .ok();
+    let input = GateInput {
+        tests,
+        property_tests: None,
+        fuzz,
+        semver: None,
+        downstream_tests: vec![],
+        touches_public_api: false,
+        is_dep_bump: false,
+    };
+    let report = ZeroDiffGate::default().evaluate(&input)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
 }
 
@@ -392,9 +473,34 @@ async fn cmd_ci(action: CiAction, store_path: &PathBuf) -> Result<()> {
             let art = orch.run(target, false).await?;
 
             let (owner, repo_name) = split_repo(&github_repo)?;
-            let token = std::env::var("GITHUB_TOKEN")
-                .or_else(|_| std::env::var("ODS_GITHUB_TOKEN"))
-                .context("GITHUB_TOKEN / ODS_GITHUB_TOKEN must be set")?;
+            let token = if let (Ok(app_id), Ok(pem), Ok(install)) = (
+                std::env::var("ODS_APP_ID"),
+                std::env::var("ODS_APP_PRIVATE_KEY_PEM"),
+                std::env::var("ODS_APP_INSTALLATION_ID"),
+            ) {
+                let install_id: u64 = install
+                    .parse()
+                    .context("ODS_APP_INSTALLATION_ID must be numeric")?;
+                let creds = AppCredentials {
+                    app_id,
+                    private_key_pem: pem,
+                };
+                let http = reqwest::Client::builder().build()?;
+                GitHubAppAuth::installation_token(
+                    &http,
+                    "ods/0.1",
+                    &creds,
+                    install_id,
+                )
+                .await?
+            } else {
+                std::env::var("GITHUB_TOKEN")
+                    .or_else(|_| std::env::var("ODS_GITHUB_TOKEN"))
+                    .context(
+                        "authenticate with either GITHUB_TOKEN/ODS_GITHUB_TOKEN or the \
+                         ODS_APP_ID + ODS_APP_PRIVATE_KEY_PEM + ODS_APP_INSTALLATION_ID trio",
+                    )?
+            };
             let gh = GitHubClient::new(token)?;
 
             let base_branch = if let Some(b) = base {
@@ -424,11 +530,66 @@ async fn cmd_ci(action: CiAction, store_path: &PathBuf) -> Result<()> {
                 "ods: measurement report for {}::{}::{}",
                 art.target.language, art.target.module, art.target.symbol
             );
-            let body = format!(
-                "This PR carries an automated measurement run. Artifact at `docs/ods/runs/{}.json`.\n\n\
-                 - stages completed: {:?}\n- recipes applied: {:?}\n- zero-diff gate: {:?}\n",
-                art.run_id, art.stages_completed, art.recipes_applied, art.gate
+            // Rich PR body via ods-report.
+            let recipes_applied_ids: Vec<ods_recipes::RecipeId> = art
+                .recipes_applied
+                .iter()
+                .cloned()
+                .map(ods_recipes::RecipeId)
+                .collect();
+            let pre_profile = art
+                .pre_profile
+                .clone()
+                .unwrap_or(ods_lang::ProfileReport {
+                    wall: std::time::Duration::ZERO,
+                    cycles: None,
+                    instructions: None,
+                    llc_misses: None,
+                    branch_misses: None,
+                    syscall_counts: vec![],
+                    alloc_count: None,
+                    alloc_bytes: None,
+                    flame_svg_path: None,
+                });
+            let post_profile = art
+                .post_profile
+                .clone()
+                .unwrap_or_else(|| pre_profile.clone());
+            let gate = art.gate.clone().unwrap_or(ods_verify::GateReport {
+                decision: ods_verify::GateDecision::Pass,
+                reasons: vec!["no gate output".into()],
+            });
+            let speedup = art.speedup.clone().unwrap_or(ods_measure::SpeedupVerdict {
+                pre: ods_measure::ConfidenceInterval {
+                    lower: 0.0,
+                    point: 0.0,
+                    upper: 0.0,
+                    confidence: 0.99,
+                },
+                post: ods_measure::ConfidenceInterval {
+                    lower: 0.0,
+                    point: 0.0,
+                    upper: 0.0,
+                    confidence: 0.99,
+                },
+                speedup_point: 1.0,
+                speedup_lower: 1.0,
+                accepted: false,
+                note: "no bench samples".into(),
+            });
+            let repro = format!(
+                "ods run . --target {}::{}::{}",
+                art.target.language, art.target.module, art.target.symbol
             );
+            let body = render_pr_body(&ReportInputs {
+                target: &art.target,
+                recipes_applied: &recipes_applied_ids,
+                speedup: &speedup,
+                pre_profile: &pre_profile,
+                post_profile: &post_profile,
+                gate: &gate,
+                reproduction_cmd: &repro,
+            });
             let pr = gh
                 .open_pr(
                     &owner,
