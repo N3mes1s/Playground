@@ -137,6 +137,9 @@ enum RecipeAction {
     List {
         #[arg(long)]
         language: Option<String>,
+        /// Include Hypothesized and AntiPattern records (normally hidden).
+        #[arg(long)]
+        all: bool,
     },
     Show {
         id: String,
@@ -149,6 +152,12 @@ enum RecipeAction {
         limit: usize,
     },
     Import {
+        path: PathBuf,
+    },
+    /// Bulk import every `*.yaml` under a directory (non-recursive). Used to
+    /// load the anti-pattern library in one go:
+    ///   `ods recipes import-dir recipes/antipatterns`
+    ImportDir {
         path: PathBuf,
     },
     Export {
@@ -426,13 +435,29 @@ async fn cmd_recipes(action: RecipeAction, store_path: &PathBuf) -> Result<()> {
     ensure_parent(store_path)?;
     let store = Store::open(store_path)?;
     match action {
-        RecipeAction::List { language } => {
-            let hits = store.search(&RecipeQuery {
-                language,
+        RecipeAction::List { language, all } => {
+            let floor = if all {
+                PromotionState::Hypothesized
+            } else {
+                PromotionState::Seed
+            };
+            let mut hits = store.search(&RecipeQuery {
+                language: language.clone(),
                 category: None,
-                min_promotion: Some(PromotionState::Seed),
+                min_promotion: Some(floor),
                 limit: Some(200),
             })?;
+            if all {
+                // AntiPattern is outside the ordering ladder; fetch it
+                // separately and append.
+                let antis = store.search(&RecipeQuery {
+                    language,
+                    category: None,
+                    min_promotion: Some(PromotionState::AntiPattern),
+                    limit: Some(200),
+                })?;
+                hits.extend(antis);
+            }
             if hits.is_empty() {
                 println!("(no recipes. import seeds with `ods recipes import recipes/seed/<file>.yaml`)");
                 return Ok(());
@@ -473,6 +498,41 @@ async fn cmd_recipes(action: RecipeAction, store_path: &PathBuf) -> Result<()> {
                 .with_context(|| format!("parse {}", path.display()))?;
             store.upsert(&recipe)?;
             println!("imported {}", recipe.id);
+        }
+        RecipeAction::ImportDir { path } => {
+            let mut imported = 0u32;
+            let mut skipped = 0u32;
+            let mut failed = 0u32;
+            for entry in std::fs::read_dir(&path)
+                .with_context(|| format!("read_dir {}", path.display()))?
+            {
+                let Ok(entry) = entry else {
+                    continue;
+                };
+                let p = entry.path();
+                if p.extension().and_then(|e| e.to_str()) != Some("yaml") {
+                    continue;
+                }
+                match std::fs::read_to_string(&p)
+                    .and_then(|t| Ok(t))
+                    .ok()
+                    .and_then(|t| serde_yaml::from_str::<ods_recipes::Recipe>(&t).ok())
+                {
+                    Some(recipe) => {
+                        if store.get(&recipe.id)?.is_some() {
+                            skipped += 1;
+                        } else {
+                            store.upsert(&recipe)?;
+                            imported += 1;
+                        }
+                    }
+                    None => {
+                        failed += 1;
+                        tracing::warn!(file = %p.display(), "failed to parse recipe");
+                    }
+                }
+            }
+            println!("imported {imported}, skipped {skipped}, failed {failed}");
         }
         RecipeAction::Export { out } => {
             let all = store.search(&RecipeQuery {
@@ -637,6 +697,17 @@ async fn cmd_ci(action: CiAction, store_path: &PathBuf) -> Result<()> {
                 "ods run . --target {}::{}::{}",
                 art.target.language, art.target.module, art.target.symbol
             );
+            // Hydrate each applied recipe from the store so the PR body can
+            // disclose prior negative history to reviewers.
+            let hydrated_store = Store::open(store_path).ok();
+            let mut recipe_records: Vec<ods_recipes::Recipe> = Vec::new();
+            if let Some(hs) = &hydrated_store {
+                for id in &recipes_applied_ids {
+                    if let Ok(Some(r)) = hs.get(id) {
+                        recipe_records.push(r);
+                    }
+                }
+            }
             let mut body = render_pr_body(&ReportInputs {
                 target: &art.target,
                 recipes_applied: &recipes_applied_ids,
@@ -645,6 +716,7 @@ async fn cmd_ci(action: CiAction, store_path: &PathBuf) -> Result<()> {
                 post_profile: &post_profile,
                 gate: &gate,
                 reproduction_cmd: &repro,
+                recipe_records: &recipe_records,
             });
             // Scaffolded-bench callout: if we added a synthetic bench
             // harness, surface it so reviewers know to keep it.

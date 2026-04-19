@@ -1,0 +1,26 @@
+id: ap-rust-string-push-str-concat
+name: repeated String + &str concatenation
+category: alloc-reduction
+language: rust
+promotion: anti-pattern
+trigger:
+  ast_pattern: '\.push_str\s*\([^)]*\)[^;]*\.push_str\s*\('
+  profile_signature:
+    - "alloc:repeated-small-growth"
+transformation:
+  steps:
+    - "Compute the total length up front, call `String::with_capacity(total)`, then append pieces. This avoids repeated reallocations."
+    - "For joining slices of strings, prefer `<[&str]>::join` or `<[String]>::concat` -- the stdlib's impl allocates exactly once."
+    - "When appending to a `Vec<u8>`, `extend_from_slice` is faster than `push_str` through a `String` wrapper."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

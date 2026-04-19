@@ -1,0 +1,25 @@
+id: ap-rust-collect-then-iter
+name: collect to Vec only to iterate immediately
+category: alloc-reduction
+language: rust
+promotion: anti-pattern
+trigger:
+  ast_pattern: '\.collect::<Vec<[^>]*>>\(\)\s*\.iter\(\)'
+  profile_signature:
+    - "alloc:temporary-vec"
+transformation:
+  steps:
+    - "Drop the intermediate Vec. Chain the source iterator straight into the consuming `.iter()` -- or simply remove `.iter()` if the previous step already returned an iterator."
+    - "When the Vec is needed later, store it once and iterate by reference; do not re-collect each time."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

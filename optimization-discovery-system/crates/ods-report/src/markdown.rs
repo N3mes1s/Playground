@@ -1,7 +1,7 @@
 use ods_core::TargetSig;
 use ods_lang::ProfileReport;
 use ods_measure::SpeedupVerdict;
-use ods_recipes::RecipeId;
+use ods_recipes::{Recipe, RecipeId};
 use ods_verify::GateReport;
 use std::fmt::Write;
 
@@ -13,6 +13,10 @@ pub struct ReportInputs<'a> {
     pub post_profile: &'a ProfileReport,
     pub gate: &'a GateReport,
     pub reproduction_cmd: &'a str,
+    /// Optional hydrated recipe records for `recipes_applied`. When
+    /// present, we render each recipe's negative_history so reviewers can
+    /// see which other repos the pattern has failed on.
+    pub recipe_records: &'a [Recipe],
 }
 
 pub fn render_pr_body(i: &ReportInputs) -> String {
@@ -33,10 +37,61 @@ pub fn render_pr_body(i: &ReportInputs) -> String {
         writeln!(s, "- _none (cold-start discovery)_").ok();
     } else {
         for r in i.recipes_applied {
-            writeln!(s, "- `{}`", r).ok();
+            let hydrated = i.recipe_records.iter().find(|rec| rec.id == *r);
+            match hydrated {
+                Some(rec) => {
+                    writeln!(
+                        s,
+                        "- `{}` — {:?} · {} win(s), {} prior negative(s)",
+                        rec.id,
+                        rec.promotion,
+                        rec.success_history.len(),
+                        rec.negative_history.len(),
+                    )
+                    .ok();
+                }
+                None => {
+                    writeln!(s, "- `{}`", r).ok();
+                }
+            }
         }
     }
     writeln!(s).ok();
+
+    // Negative-history disclosure: if any retrieved recipe has a track
+    // record of failures, surface it so reviewers can weigh the risk.
+    let negatives: Vec<(&Recipe, usize)> = i
+        .recipe_records
+        .iter()
+        .map(|r| (r, r.negative_history.len()))
+        .filter(|(_, n)| *n > 0)
+        .collect();
+    if !negatives.is_empty() {
+        writeln!(s, "### Prior failures on retrieved recipes").ok();
+        writeln!(s, "These retrieved patterns have not helped on every codebase.")
+            .ok();
+        writeln!(s, "| recipe | prior negatives | most recent outcome | on repo |")
+            .ok();
+        writeln!(s, "|--------|-----------------|---------------------|---------|")
+            .ok();
+        for (recipe, _) in negatives {
+            let last = recipe.negative_history.last();
+            let (last_outcome, last_repo) = match last {
+                Some(n) => (format!("{:?}", n.outcome), n.repo.clone()),
+                None => ("—".into(), "—".into()),
+            };
+            writeln!(
+                s,
+                "| `{}` | {} | {} | {} |",
+                recipe.id,
+                recipe.negative_history.len(),
+                last_outcome,
+                last_repo
+            )
+            .ok();
+        }
+        writeln!(s).ok();
+    }
 
     writeln!(s, "### Timing").ok();
     writeln!(s, "|       | mean (ns) | CI lower | CI upper |").ok();
@@ -151,6 +206,7 @@ mod tests {
             post_profile: &post,
             gate: &gate,
             reproduction_cmd: "ods run . --target rust::std::fs::read_dir",
+            recipe_records: &[],
         });
         assert!(body.contains("2.00x"));
         assert!(body.contains("Syscalls"));
