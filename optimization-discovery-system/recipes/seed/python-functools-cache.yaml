@@ -7,7 +7,14 @@ trigger:
   ast_pattern: |
     (function_definition
       name: (identifier) @fn
-      body: (block (return_statement))) @match
+      body: (block
+        (return_statement
+          [
+            (call)
+            (binary_operator)
+            (conditional_expression)
+            (subscript)
+          ]))) @match
   profile_signature:
     - "cprofile:ncalls>>unique-inputs"
     - "hot:function-dominates-self-time"

@@ -5,9 +5,24 @@ language: rust
 promotion: seed
 trigger:
   ast_pattern: |
-    (call_expression
-      function: (field_expression
-        field: (field_identifier) @m (#match? @m "push|join")))
+    [
+      (call_expression
+        function: (field_expression
+          value: (call_expression
+            function: (scoped_identifier
+              path: (identifier) @ty (#match? @ty "^(PathBuf|Path)$")
+              name: (identifier) @ctor (#match? @ctor "^(new|from)$")))
+          field: (field_identifier) @m (#match? @m "^(push|join)$")))
+      (let_declaration
+        type: (type_identifier) @lty (#match? @lty "^(PathBuf|Path)$"))
+      (field_expression
+        value: [
+          (scoped_identifier
+            path: (identifier) @ty (#match? @ty "^(PathBuf|Path)$"))
+          (identifier) @bare (#match? @bare "^(path|p)$")
+        ]
+        field: (field_identifier) @m (#match? @m "^(push|join)$"))
+    ] @match
   profile_signature:
     - "hot:PathBuf::push"
     - "hot:Path::join"

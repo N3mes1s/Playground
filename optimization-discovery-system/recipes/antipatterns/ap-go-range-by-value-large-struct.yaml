@@ -6,7 +6,14 @@ promotion: anti-pattern
 trigger:
   ast_pattern: |
     (for_statement
-      (range_clause) @r) @match
+      (range_clause
+        left: (expression_list
+          (identifier)
+          (identifier) @iter))
+      body: (block
+        (_
+          (selector_expression
+            operand: (identifier) @use (#eq? @use @iter))))) @match
   profile_signature:
     - "alloc:range-copy"
 transformation:

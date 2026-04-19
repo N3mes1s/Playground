@@ -5,8 +5,20 @@ language: ruby
 promotion: anti-pattern
 trigger:
   ast_pattern: |
-    (call receiver: (constant) @c (#eq? @c "File")
-          method: (identifier) @m (#match? @m "^(directory\\?|file\\?|exist\\?|exists\\?)$")) @call
+    [
+      (do_block
+        body: (body_statement
+          (call
+            receiver: (constant) @c (#eq? @c "File")
+            method: (identifier) @m
+              (#match? @m "^(directory\\?|file\\?|exist\\?|exists\\?)$"))))
+      (block
+        body: (block_body
+          (call
+            receiver: (constant) @c (#eq? @c "File")
+            method: (identifier) @m
+              (#match? @m "^(directory\\?|file\\?|exist\\?|exists\\?)$"))))
+    ] @match
   profile_signature:
     - "syscall:stat-per-iteration"
     - "hot:File.directory?"

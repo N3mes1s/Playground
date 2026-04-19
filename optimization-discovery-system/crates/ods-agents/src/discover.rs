@@ -294,9 +294,26 @@ impl Discoverer {
         let compiled_applicable = compile_triggers(&applicable);
         let compiled_anti = compile_triggers(&anti);
 
-        // Walk source files; for each file, parse once with the matching
-        // tree-sitter grammar and run every recipe trigger whose language
-        // matches. Multi-language corpora share one discover pass.
+        // Two-pass discover so we can apply a precision penalty:
+        //
+        // Pass 1 walks every source file, collects the per-symbol hits
+        // locally, and maintains a distinct-file-count per recipe id.
+        // Dogfood against 12 OSS repos (docs/dogfood-12-repos.md) showed
+        // that when a recipe's trigger is too broad (matches >5% of
+        // files), the recipe floods the top of the ranked list and
+        // drowns out the genuine signals. Tracking file-count lets us
+        // assign each recipe a `precision_weight = min(1, threshold /
+        // match_rate)` that gets multiplied into its score contribution.
+        //
+        // Pass 2 emits candidates with the weighted scores. We intentionally
+        // still surface the hit so the user sees which broad recipe
+        // matched; we just don't let it win the ranking on noise alone.
+        const BROAD_MATCH_THRESHOLD: f64 = 0.05; // 5% of source files
+        let mut file_buckets: Vec<FileBucket<'_>> = Vec::new();
+        let mut recipe_file_count: std::collections::HashMap<String, u32> =
+            std::collections::HashMap::new();
+        let mut total_source_files: u32 = 0;
+
         for entry in WalkDir::new(repo)
             .into_iter()
             .filter_entry(|e| !is_ignored(e.path()))
@@ -306,6 +323,7 @@ impl Discoverer {
             if !p.is_file() || !is_source_file(p) {
                 continue;
             }
+            total_source_files += 1;
             let Ok(text) = std::fs::read_to_string(p) else {
                 continue;
             };
@@ -315,10 +333,6 @@ impl Discoverer {
                 continue;
             };
 
-            // Collect every pattern match with its enclosing-symbol name
-            // (the nearest fn / def / func ancestor of the matched node).
-            // Matches outside any function are attributed to the file stem
-            // so module-level patterns (e.g. `static X: Lazy`) still surface.
             let module = module_from_path(repo, p);
             let file_stem_sym = module.split("::").last().unwrap_or("").to_string();
             let mut per_symbol: std::collections::HashMap<String, SymbolHits<'_>> =
@@ -347,24 +361,84 @@ impl Discoverer {
                 continue;
             }
 
+            // Count distinct files each recipe matched in (any symbol
+            // under this file counts once). Used to compute the
+            // precision penalty below.
+            let mut fired_here: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for hits in per_symbol.values() {
+                for (r, _) in &hits.applicable {
+                    fired_here.insert(r.id.0.clone());
+                }
+                for (r, _) in &hits.anti {
+                    fired_here.insert(r.id.0.clone());
+                }
+            }
+            for id in fired_here {
+                *recipe_file_count.entry(id).or_insert(0) += 1;
+            }
+
+            file_buckets.push(FileBucket {
+                path: p.to_path_buf(),
+                module,
+                lang_name,
+                per_symbol,
+            });
+        }
+
+        // Per-recipe precision weights. A recipe that fired in 5% or
+        // fewer source files keeps weight 1.0; anything above gets
+        // linearly down-weighted so a recipe matching 50% of files
+        // contributes 1/10th of its raw score.
+        let precision_weights: std::collections::HashMap<String, f64> = if total_source_files == 0 {
+            std::collections::HashMap::new()
+        } else {
+            recipe_file_count
+                .iter()
+                .map(|(id, cnt)| {
+                    let rate = *cnt as f64 / total_source_files as f64;
+                    let w = if rate > BROAD_MATCH_THRESHOLD {
+                        (BROAD_MATCH_THRESHOLD / rate).max(0.01)
+                    } else {
+                        1.0
+                    };
+                    (id.clone(), w)
+                })
+                .collect()
+        };
+
+        // Pass 2: emit candidates with precision-weighted scores.
+        for bucket in file_buckets {
+            let FileBucket {
+                path: p,
+                module,
+                lang_name,
+                per_symbol,
+            } = bucket;
             for (symbol, hits) in per_symbol {
-                let fan_in = estimate_fan_in(repo, &symbol);
+                let fan_in = estimate_fan_in(&repo, &symbol);
                 let recipe_score: f64 = hits
                     .applicable
                     .iter()
-                    .map(|(r, n)| retrieval_score(r, 5) * (*n as f64).min(5.0))
+                    .map(|(r, n)| {
+                        let pw = precision_weights.get(&r.id.0).copied().unwrap_or(1.0);
+                        retrieval_score(r, 5) * (*n as f64).min(5.0) * pw
+                    })
                     .sum();
                 let anti_score: f64 = hits
                     .anti
                     .iter()
-                    .map(|(_, n)| (*n as f64).min(5.0) * 0.5)
+                    .map(|(r, n)| {
+                        let pw = precision_weights.get(&r.id.0).copied().unwrap_or(1.0);
+                        (*n as f64).min(5.0) * 0.5 * pw
+                    })
                     .sum();
                 let fan_in_score = ((fan_in + 1) as f64).ln() * 0.3;
                 candidates.push(Candidate {
                     language: lang_name.to_string(),
                     module: module.clone(),
                     symbol,
-                    source_file: p.to_path_buf(),
+                    source_file: p.clone(),
                     source_line: hits.first_line,
                     bench_files: vec![],
                     naive_alt_hint: None,
@@ -388,6 +462,17 @@ struct CompiledTrigger<'a> {
     recipe: &'a Recipe,
     language: &'static str,
     query: Query,
+}
+
+/// One source file's accumulated hits, buffered between pass 1 (the
+/// file walk) and pass 2 (candidate emission with precision weights).
+/// The `'a` lifetime borrows into the `applicable` / `anti` recipe
+/// slices owned by `scan_with_recipes`.
+struct FileBucket<'a> {
+    path: PathBuf,
+    module: String,
+    lang_name: &'static str,
+    per_symbol: std::collections::HashMap<String, SymbolHits<'a>>,
 }
 
 /// Compile each recipe's `trigger.ast_pattern` into a tree-sitter `Query`
@@ -745,6 +830,137 @@ pub fn hot_c() {
                     c.source_line
                 );
             }
+        }
+    }
+
+    /// A broad trigger that fires in >5% of source files must receive
+    /// a precision penalty so it doesn't crowd out more-specific
+    /// recipes on the final ranking. This test sets up a fixture with
+    /// two recipes: one narrow (fires once), one broad (fires in every
+    /// file). After ranking, the narrow recipe's candidate must score
+    /// higher.
+    #[test]
+    fn broad_recipes_are_precision_penalized() {
+        use ods_recipes::schema::{
+            PromotionState, Recipe, RecipeId, Transformation, Trigger, VerificationRecipe,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        // 10 files, each with one `fn foo() {}` and one `HashMap::new()`.
+        // The "every function" trigger fires 10×; the "HashMap::new"
+        // trigger also fires 10× — so both are "broad" by file-count.
+        // To make the test discriminating, ONE file has a unique narrow
+        // trigger.
+        for i in 0..10 {
+            let content = format!("pub fn foo_{i}() {{ let _ = {i}; }}");
+            std::fs::write(repo.join(format!("src/file_{i}.rs")), content).unwrap();
+        }
+        std::fs::write(
+            repo.join("src/unique.rs"),
+            "pub fn narrow_hit() { let _ = memchr::memmem::Finder::new(b\"xyz\"); }",
+        )
+        .unwrap();
+
+        let store = Store::in_memory().unwrap();
+        // Broad: matches every `fn` declaration.
+        store
+            .upsert(&Recipe {
+                id: RecipeId("rust-broad-fn".into()),
+                name: "every function".into(),
+                category: ods_core::OptimizationCategory::FastPathSpecialization,
+                language: "rust".into(),
+                promotion: PromotionState::Seed,
+                trigger: Trigger {
+                    ast_pattern: "(function_item name: (identifier) @n) @match".into(),
+                    profile_signature: vec![],
+                    naive_alt_ratio_min: None,
+                },
+                transformation: Transformation { steps: vec![] },
+                verification: VerificationRecipe {
+                    test_selectors: vec![],
+                    property_seeds: vec![],
+                    fuzz_minutes: 0,
+                    semver_check: false,
+                },
+                benchmark_template: "".into(),
+                success_history: vec![],
+                negative_history: vec![],
+                generalized_from: None,
+                generalized_as: None,
+                source_patch_ref: None,
+                embedding: None,
+            })
+            .unwrap();
+        // Narrow: matches `Finder::new`.
+        store
+            .upsert(&Recipe {
+                id: RecipeId("rust-narrow-finder".into()),
+                name: "Finder::new".into(),
+                category: ods_core::OptimizationCategory::AllocReduction,
+                language: "rust".into(),
+                promotion: PromotionState::Seed,
+                trigger: Trigger {
+                    ast_pattern: "(call_expression function: (scoped_identifier \
+                                  path: (scoped_identifier) name: (identifier) @m \
+                                  (#eq? @m \"new\"))) @match"
+                        .into(),
+                    profile_signature: vec![],
+                    naive_alt_ratio_min: None,
+                },
+                transformation: Transformation { steps: vec![] },
+                verification: VerificationRecipe {
+                    test_selectors: vec![],
+                    property_seeds: vec![],
+                    fuzz_minutes: 0,
+                    semver_check: false,
+                },
+                benchmark_template: "".into(),
+                success_history: vec![],
+                negative_history: vec![],
+                generalized_from: None,
+                generalized_as: None,
+                source_patch_ref: None,
+                embedding: None,
+            })
+            .unwrap();
+
+        let d = Discoverer::default();
+        let cands = d.scan_with_recipes(repo, &store, 50).unwrap();
+        // The narrow-only candidate (only matched by rust-narrow-finder
+        // in 1 file out of 11) must score ABOVE at least one of the
+        // broad-only candidates (matched by rust-broad-fn in every file,
+        // so penalty = 1/11 ≈ 0.09).
+        let narrow_hit = cands
+            .iter()
+            .find(|c| {
+                c.matched_recipes
+                    .iter()
+                    .any(|r| r.0 == "rust-narrow-finder")
+            })
+            .expect("narrow recipe must produce at least one candidate");
+        let broad_only = cands
+            .iter()
+            .filter(|c| {
+                c.matched_recipes.iter().any(|r| r.0 == "rust-broad-fn")
+                    && !c
+                        .matched_recipes
+                        .iter()
+                        .any(|r| r.0 == "rust-narrow-finder")
+            })
+            .collect::<Vec<_>>();
+        assert!(!broad_only.is_empty(), "expected broad-only candidates");
+        for b in &broad_only {
+            assert!(
+                narrow_hit.score >= b.score,
+                "narrow candidate ({}, score={:.3}) should rank >= broad ({}, score={:.3}) \
+                 after precision penalty",
+                narrow_hit.symbol,
+                narrow_hit.score,
+                b.symbol,
+                b.score
+            );
         }
     }
 

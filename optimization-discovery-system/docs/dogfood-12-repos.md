@@ -155,6 +155,48 @@ Two orthogonal improvements would help:
 - **Multi-language dispatch.** Zero crashes across 12 repos and
   4 grammars. The tree-sitter wiring is solid.
 
+## Appendix: re-run after tightening the four noisy recipes + precision penalty
+
+After the tightening + the precision-penalty ranker (down-weight
+recipes firing on >5% of files), we re-ran discover on the same 12
+repos. **All 12 top-5 by-score lists changed.** Candidate counts
+dropped sharply where noise used to dominate:
+
+| Repo        | v1 cands | v2 cands | drop  |
+| ----------- | -------- | -------- | ----- |
+| gin         |     129  |      24  | -81%  |
+| cobra       |     111  |      30  | -73%  |
+| requests    |     190  |      86  | -55%  |
+| fastapi     |     199  |      95  | -52%  |
+| rails       |     101  |      62  | -39%  |
+| bootsnap    |      23  |      15  | -35%  |
+| jekyll      |      76  |      50  | -34%  |
+| ripgrep     |     200  |     200  |     0 (still capped; fewer recipes hitting hard)|
+| clap        |     200  |     200  |     0 |
+| tokio       |     200  |     200  |     0 |
+| flask       |     200  |     200  |     0 |
+| prometheus  |     200  |     200  |     0 |
+
+New top-5 examples showing the real signal surfacing:
+
+- **jekyll**: now `test_utils → ruby-dir-each-child-over-glob-stat` at
+  top (7.5), `safe_glob → dir-each-child + file-join-string-interp`
+  at #3. Exactly the Bootsnap-shape pattern.
+- **cobra**: `ap-go-range-by-value-large-struct` gone entirely — the
+  tightened trigger now requires field-access on the iter var.
+  `ap-go-append-to-nil-slice` surfaces at modest scores instead.
+- **fastapi**: `python-functools-cache` no longer at top. Replaced by
+  `get_flat_dependant → ap-python-list-comp-over-append +
+  ap-python-attribute-lookup-in-loop` — both plausibly actionable.
+- **flask**: still shows `python-functools-cache` in top-5 but at
+  score 2.19 (was 9.30). The penalty reduced its dominance by ~4×,
+  and the ranker now treats it as one weak signal among many.
+
+Top score magnitudes dropped as expected — ripgrep's top went from
+15.0 to 4.9, bootsnap's from 7.7 to 2.2, clap's from 19.4 to 15.7.
+Lower absolute scores don't mean worse signal; they mean the
+scale no longer reflects how often a broad recipe managed to fire.
+
 ## Next work this motivates
 
 1. **Tighten those four recipes.** Small, cheap, high leverage. Should
