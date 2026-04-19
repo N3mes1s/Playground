@@ -487,10 +487,23 @@ fn compose_user_prompt(
     s.push_str(
         "\nGuidelines:\n\
          1. Use read_file/list_dir/ast_query to explore the target.\n\
-         2. Produce a minimal unified-diff patch.\n\
-         3. Call apply_patch with your diff, then run_tests to verify.\n\
-         4. Finish with a short rationale and include the final unified diff \
-         verbatim in a ```diff code block so the race can extract it.\n",
+         2. If the project has an existing bench that exercises the target, \
+         use it via run_bench. If `benches/ods_auto_*.rs` exists and contains \
+         a `black_box(())` no-op placeholder, you MUST rewrite its `b.iter(...)` \
+         block via apply_patch to actually invoke the target function with \
+         realistic inputs — otherwise the pre/post comparison is pure noise \
+         and the race will reject your patch regardless of correctness.\n\
+         3. Produce a minimal unified-diff patch that implements your \
+         optimization hypothesis.\n\
+         4. Call apply_patch with your diff, then run_tests to verify \
+         semantics are preserved.\n\
+         5. Call run_bench to confirm a measurable improvement before \
+         finishing the turn.\n\
+         6. If you conclude the hypothesis does not apply to this target, \
+         return a final turn with NO `diff` code block - the race will treat \
+         it as a principled abstain rather than a forced bad patch.\n\
+         7. When you do patch, include the final unified diff verbatim in \
+         a ```diff code block so the race can extract it.\n",
     );
     s
 }

@@ -281,11 +281,15 @@ async fn cmd_run(
     if let Some(gate) = &art.gate {
         println!("zero-diff gate: {:?}", gate.decision);
     }
-    if let Some(v) = &art.speedup {
-        println!(
-            "speedup: {:.2}x (lower {:.2}x, accepted: {})",
-            v.speedup_point, v.speedup_lower, v.accepted
-        );
+    match (&art.winning_specialist, &art.speedup) {
+        (Some(kind), Some(v)) => println!(
+            "winner: {} ({:.2}x, lower {:.2}x, accepted: {})",
+            kind, v.speedup_point, v.speedup_lower, v.accepted
+        ),
+        (None, _) => println!(
+            "winner: none (race did not select a specialist; no source change applied)"
+        ),
+        (Some(kind), None) => println!("winner: {} (no speedup verdict persisted)", kind),
     }
     Ok(())
 }

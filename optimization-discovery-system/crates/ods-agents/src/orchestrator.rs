@@ -298,7 +298,7 @@ impl Orchestrator {
             );
         }
         artifact.patch_diff = winner_diff;
-        artifact.winning_specialist = winner_kind;
+        artifact.winning_specialist = winner_kind.clone();
         artifact.stages_completed.push(LoopStage::Transform);
         persist(&run_store, &run_id, LoopStage::Transform, &artifact)?;
         run.advance()?;
@@ -330,43 +330,63 @@ impl Orchestrator {
         run.advance()?;
 
         // Bench (post + rerun-N) -----------------------------------------
-        let post_bench = if let Some(b) = post_bench_override {
-            Some(b)
+        //
+        // We only re-measure post-bench when a specialist actually won the
+        // race AND produced a post_bench_override sourced from the patched
+        // worktree. Without a winner, the main repo is unchanged and
+        // re-running the bench here just measures the pre-bench a second
+        // time; any "speedup" reported would be pure variance (we observed
+        // a ~1.41x noise reading in one dogfood against a no-op scaffolded
+        // bench). Reporting that would be a lie.
+        let had_winner = winner_kind.is_some();
+        let post_bench = if had_winner {
+            if let Some(b) = post_bench_override {
+                Some(b)
+            } else {
+                self.adapter.run_bench(&build, &target).await.ok()
+            }
         } else {
-            self.adapter.run_bench(&build, &target).await.ok()
+            None
         };
         artifact.post_bench = post_bench.clone();
-        let verdict = if let Some(v) = speedup_override {
-            Some(v)
+        let verdict = if had_winner {
+            if let Some(v) = speedup_override {
+                Some(v)
+            } else {
+                single_sample_verdict(pre_bench.as_ref(), post_bench.as_ref())
+            }
         } else {
-            single_sample_verdict(pre_bench.as_ref(), post_bench.as_ref())
+            None
         };
         artifact.speedup = verdict.clone();
 
         // Determinism gate: rerun 3x and require CI overlap + stable fp.
-        if let (Some(pre), Some(post)) = (&pre_bench, &post_bench) {
-            if let (Some(p), Some(q)) = (pre.samples.first(), post.samples.first()) {
-                let pre_ns = p.ns_per_iter;
-                let post_ns = q.ns_per_iter;
-                let r = rerun(3, || {
-                    (
-                        Sample {
-                            name: "pre".into(),
-                            values_ns: vec![pre_ns; 30],
-                        },
-                        Sample {
-                            name: "post".into(),
-                            values_ns: vec![post_ns; 30],
-                        },
-                    )
-                });
-                if !(r.cis_overlap && r.fingerprint_stable) {
-                    artifact.pr_withheld = true;
-                    artifact.note = Some(
-                        "determinism gate failed (CI overlap or fingerprint drift)".into(),
-                    );
+        // Only meaningful when a winner produced a real speedup claim.
+        if had_winner {
+            if let (Some(pre), Some(post)) = (&pre_bench, &post_bench) {
+                if let (Some(p), Some(q)) = (pre.samples.first(), post.samples.first()) {
+                    let pre_ns = p.ns_per_iter;
+                    let post_ns = q.ns_per_iter;
+                    let r = rerun(3, || {
+                        (
+                            Sample {
+                                name: "pre".into(),
+                                values_ns: vec![pre_ns; 30],
+                            },
+                            Sample {
+                                name: "post".into(),
+                                values_ns: vec![post_ns; 30],
+                            },
+                        )
+                    });
+                    if !(r.cis_overlap && r.fingerprint_stable) {
+                        artifact.pr_withheld = true;
+                        artifact.note = Some(
+                            "determinism gate failed (CI overlap or fingerprint drift)".into(),
+                        );
+                    }
+                    artifact.determinism = Some(r);
                 }
-                artifact.determinism = Some(r);
             }
         }
         artifact.stages_completed.push(LoopStage::Bench);
