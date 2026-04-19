@@ -1,16 +1,11 @@
 //! Rust language adapter backed by real subprocess invocations of `cargo`.
 //!
-//! `ast_query` accepts two dialects, chosen transparently by the caller's
-//! query string:
-//! - If the string starts with `(` it is parsed as a `tree-sitter-rust`
-//!   S-expression query and executed against the parsed AST. Matches
-//!   inside comments, string literals, and macro bodies are filtered out
-//!   by the grammar, so recipes get structural triggers instead of
-//!   prose-overmatching regex.
-//! - Otherwise the string is treated as a line-anchored regex. This keeps
-//!   every existing recipe (~50+) that ships regex triggers working
-//!   verbatim. `Discoverer`'s bulk trigger-scan still uses regex directly;
-//!   only the agent-facing `ast_query` tool path gained the AST mode.
+//! `ast_query` parses the file with `tree-sitter-rust` and executes the
+//! caller's S-expression query against the AST. The grammar filters out
+//! matches inside comments, string literals, and macro bodies. There is
+//! no regex fallback: all Rust recipes ship structural triggers, and
+//! giving agents two query dialects to reason about was a perpetual
+//! source of over-matching bugs (comments / string literals / macros).
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -128,11 +123,7 @@ impl LanguageAdapter for RustAdapter {
         let text = tokio::fs::read_to_string(file)
             .await
             .with_context(|| format!("read {}", file.display()))?;
-        if query.trim_start().starts_with('(') {
-            tree_sitter_ast_query(file, &text, query)
-        } else {
-            regex_ast_query(file, &text, query)
-        }
+        tree_sitter_ast_query(file, &text, query)
     }
 
     fn emit_patch(&self, edits: &[Edit]) -> Result<Patch> {
@@ -210,28 +201,10 @@ impl LanguageAdapter for RustAdapter {
     }
 }
 
-/// Structural `tree-sitter-rust` query path. Captures in the query are
-/// ignored — every matched node becomes one [`AstMatch`] whose line range
-/// tracks the node's byte range. Comments, string literals, and macro bodies
-/// are filtered automatically because they appear as their own tree-sitter
-/// node types, not as the `function_item`/`call_expression`/etc. nodes
-/// recipes actually target.
-fn regex_ast_query(file: &Path, text: &str, query: &str) -> Result<Vec<AstMatch>> {
-    let re = Regex::new(query).context("compile ast_query regex")?;
-    let mut out = Vec::new();
-    for (i, line) in text.lines().enumerate() {
-        if re.is_match(line) {
-            out.push(AstMatch {
-                file: file.to_path_buf(),
-                start_line: (i + 1) as u32,
-                end_line: (i + 1) as u32,
-                text: line.to_string(),
-            });
-        }
-    }
-    Ok(out)
-}
-
+/// Structural `tree-sitter-rust` query. Captures in the query are surfaced
+/// as one [`AstMatch`] per captured node, with line numbers sourced from
+/// the node's `Range`. If the query has no named captures, every *pattern
+/// match* contributes the root node of that match.
 fn tree_sitter_ast_query(file: &Path, text: &str, query: &str) -> Result<Vec<AstMatch>> {
     let mut parser = tree_sitter::Parser::new();
     parser
@@ -369,6 +342,13 @@ pub mod criterion_json;
 pub mod flame;
 pub mod profile;
 
+/// Expose the tree-sitter-rust grammar so callers (e.g. the Discoverer) can
+/// run batched queries without re-entering the `LanguageAdapter::ast_query`
+/// file-IO path.
+pub fn tree_sitter_language() -> tree_sitter::Language {
+    tree_sitter_rust::language()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,17 +377,6 @@ mod tests {
         let r = parse_cargo_bench_output(out);
         assert_eq!(r.samples.len(), 1);
         assert!((r.samples[0].ns_per_iter - 1200.0).abs() < 1e-6);
-    }
-
-    #[tokio::test]
-    async fn ast_query_matches_regex() {
-        let dir = tempfile::tempdir().unwrap();
-        let p = dir.path().join("x.rs");
-        std::fs::write(&p, "fn a() {}\nfn read_dir() {}\nfn b() {}\n").unwrap();
-        let a = RustAdapter::new();
-        let hits = a.ast_query(&p, r"fn read_dir\b").await.unwrap();
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].start_line, 2);
     }
 
     #[tokio::test]

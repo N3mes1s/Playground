@@ -4,7 +4,12 @@ category: algorithmic
 language: rust
 promotion: seed
 trigger:
-  ast_pattern: '\.iter\s*\(\s*\)\s*\.(sum|map\s*\([^)]*\)\s*\.sum|filter\s*\([^)]*\)\s*\.count)\s*\(\s*\)'
+  ast_pattern: |
+    (call_expression
+      function: (field_expression
+        value: (call_expression
+          function: (field_expression field: (field_identifier) @m1 (#eq? @m1 "iter")))
+        field: (field_identifier) @m2 (#match? @m2 "^(sum|count)$"))) @match
   profile_signature:
     - "disasm:scalar-addss-addq"
     - "perf:fp_arith_inst_retired.scalar-dominates-256b_packed"

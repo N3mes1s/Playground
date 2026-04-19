@@ -4,7 +4,13 @@ category: algorithmic
 language: rust
 promotion: anti-pattern
 trigger:
-  ast_pattern: 'for\s+[^{]+\{[^}]*\.contains\s*\('
+  ast_pattern: |
+    (for_expression
+      body: (block
+        (expression_statement
+          (call_expression
+            function: (field_expression field: (field_identifier) @m
+              (#eq? @m "contains")))))) @match
   profile_signature:
     - "hot:O(n^2)-membership-check"
 transformation:

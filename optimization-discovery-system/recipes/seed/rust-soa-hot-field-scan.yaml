@@ -4,7 +4,11 @@ category: algorithmic
 language: rust
 promotion: seed
 trigger:
-  ast_pattern: 'for\s+\w+\s+in\s+&?\w+\s*\{[^}]*\w+\.\w+'
+  ast_pattern: |
+    (for_expression
+      value: (reference_expression)
+      body: (block
+        (expression_statement (field_expression) @f))) @match
   profile_signature:
     - "cache:L1-dcache-load-miss-dominant"
     - "perf:IPC-below-1.0"

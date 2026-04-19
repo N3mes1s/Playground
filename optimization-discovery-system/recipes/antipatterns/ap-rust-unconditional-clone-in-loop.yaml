@@ -4,7 +4,13 @@ category: alloc-reduction
 language: rust
 promotion: anti-pattern
 trigger:
-  ast_pattern: 'for\s+[^{]+\{[^}]*\.clone\(\)'
+  ast_pattern: |
+    (for_expression
+      body: (block
+        (expression_statement
+          (call_expression
+            function: (field_expression field: (field_identifier) @m
+              (#eq? @m "clone")))))) @match
   profile_signature:
     - "alloc:per-iteration-clone"
 transformation:

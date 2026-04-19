@@ -4,7 +4,11 @@ category: alloc-reduction
 language: rust
 promotion: anti-pattern
 trigger:
-  ast_pattern: '"[^"]*"\.to_string\(\)|&str[^;]*\.to_string\(\)'
+  ast_pattern: |
+    (call_expression
+      function: (field_expression
+        value: (string_literal)
+        field: (field_identifier) @m (#eq? @m "to_string"))) @match
   profile_signature:
     - "alloc:unnecessary-owned-string"
 transformation:

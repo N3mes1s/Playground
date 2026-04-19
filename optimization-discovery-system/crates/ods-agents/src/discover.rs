@@ -23,6 +23,7 @@ use ods_recipes::{
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use tree_sitter::{Language, Parser, Query, QueryCursor};
 use walkdir::WalkDir;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -293,8 +294,9 @@ impl Discoverer {
         let compiled_applicable = compile_triggers(&applicable);
         let compiled_anti = compile_triggers(&anti);
 
-        // Walk source files; for each file, run every recipe trigger. Each
-        // match spawns / updates a Candidate keyed on the file+line.
+        // Walk source files; for each file, parse once with the matching
+        // tree-sitter grammar and run every recipe trigger whose language
+        // matches. Multi-language corpora share one discover pass.
         for entry in WalkDir::new(repo)
             .into_iter()
             .filter_entry(|e| !is_ignored(e.path()))
@@ -308,20 +310,29 @@ impl Discoverer {
                 continue;
             };
 
-            // Track per-file recipe hits to avoid spawning a Candidate per
-            // line — we want one candidate per (file, symbol-ish group).
+            let lang_name = detect_language(p);
+            let Some(parsed) = parse_with_grammar(lang_name, &text) else {
+                continue;
+            };
+
             let mut recipe_hits: Vec<(&Recipe, u32)> = Vec::new();
             let mut anti_hits: Vec<(&Recipe, u32)> = Vec::new();
-            for (recipe, re) in &compiled_applicable {
-                if re_matches_any_line(re, &text) {
-                    let n = re_match_count(re, &text);
-                    recipe_hits.push((recipe, n));
+            for trigger in &compiled_applicable {
+                if trigger.language != lang_name {
+                    continue;
+                }
+                let n = count_query_matches(&parsed, &trigger.query, text.as_bytes());
+                if n > 0 {
+                    recipe_hits.push((trigger.recipe, n));
                 }
             }
-            for (recipe, re) in &compiled_anti {
-                if re_matches_any_line(re, &text) {
-                    let n = re_match_count(re, &text);
-                    anti_hits.push((recipe, n));
+            for trigger in &compiled_anti {
+                if trigger.language != lang_name {
+                    continue;
+                }
+                let n = count_query_matches(&parsed, &trigger.query, text.as_bytes());
+                if n > 0 {
+                    anti_hits.push((trigger.recipe, n));
                 }
             }
             if recipe_hits.is_empty() && anti_hits.is_empty() {
@@ -368,25 +379,72 @@ impl Discoverer {
     }
 }
 
-fn compile_triggers(recipes: &[Recipe]) -> Vec<(&Recipe, Regex)> {
-    recipes
-        .iter()
-        .filter_map(|r| {
-            // Skip empty patterns (they'd match everything).
-            if r.trigger.ast_pattern.trim().is_empty() {
-                return None;
-            }
-            Regex::new(&r.trigger.ast_pattern).ok().map(|re| (r, re))
-        })
-        .collect()
+struct CompiledTrigger<'a> {
+    recipe: &'a Recipe,
+    language: &'static str,
+    query: Query,
 }
 
-fn re_matches_any_line(re: &Regex, text: &str) -> bool {
-    text.lines().any(|l| re.is_match(l))
+/// Compile each recipe's `trigger.ast_pattern` into a tree-sitter `Query`
+/// bound to the recipe's language grammar. Recipes whose language isn't one
+/// of the three supported grammars, whose pattern is empty, or whose pattern
+/// fails to compile are dropped with a warning.
+fn compile_triggers(recipes: &[Recipe]) -> Vec<CompiledTrigger<'_>> {
+    let mut out = Vec::new();
+    for r in recipes {
+        if r.trigger.ast_pattern.trim().is_empty() {
+            continue;
+        }
+        let Some((name, lang)) = language_for_recipe(&r.language) else {
+            tracing::warn!(
+                recipe = %r.id.0,
+                language = %r.language,
+                "no tree-sitter grammar for recipe language; skipping trigger"
+            );
+            continue;
+        };
+        match Query::new(&lang, &r.trigger.ast_pattern) {
+            Ok(q) => out.push(CompiledTrigger {
+                recipe: r,
+                language: name,
+                query: q,
+            }),
+            Err(e) => tracing::warn!(
+                recipe = %r.id.0,
+                err = %e,
+                pattern = %r.trigger.ast_pattern,
+                "failed to compile recipe trigger as tree-sitter query",
+            ),
+        }
+    }
+    out
 }
 
-fn re_match_count(re: &Regex, text: &str) -> u32 {
-    text.lines().filter(|l| re.is_match(l)).count() as u32
+fn language_for_recipe(recipe_lang: &str) -> Option<(&'static str, Language)> {
+    match recipe_lang {
+        "rust" => Some(("rust", ods_lang_rust::tree_sitter_language())),
+        "python" => Some(("python", ods_lang_python::tree_sitter_language())),
+        "go" => Some(("go", ods_lang_go::tree_sitter_language())),
+        _ => None,
+    }
+}
+
+/// Parse `text` with the grammar associated with `lang_name`. Returns
+/// `None` for unsupported languages or parser failures so the caller can
+/// skip the file without surfacing an error.
+fn parse_with_grammar(lang_name: &str, text: &str) -> Option<tree_sitter::Tree> {
+    let (_, lang) = language_for_recipe(lang_name)?;
+    let mut parser = Parser::new();
+    parser.set_language(&lang).ok()?;
+    parser.parse(text, None)
+}
+
+/// Count the number of pattern matches (NOT captures) — this is how often
+/// the trigger's shape appears in the file. A query with multiple captures
+/// still contributes one count per match.
+fn count_query_matches(tree: &tree_sitter::Tree, query: &Query, bytes: &[u8]) -> u32 {
+    let mut cursor = QueryCursor::new();
+    cursor.matches(query, tree.root_node(), bytes).count() as u32
 }
 
 fn module_from_path(repo: &Path, file: &Path) -> String {
@@ -514,5 +572,62 @@ fn bench_join(c: &mut Criterion) {
         let d = Discoverer::default();
         let cands = d.scan(dir.path()).unwrap();
         assert!(cands.iter().any(|c| c.symbol == "BenchmarkJoin"));
+    }
+
+    /// Every shipped recipe YAML must have an `ast_pattern` that compiles
+    /// cleanly against the tree-sitter grammar for its `language` field.
+    /// If this test fails, either the pattern is malformed or a node name
+    /// drifted with a grammar upgrade — both are real bugs, not flakes.
+    #[test]
+    fn every_shipped_recipe_compiles_as_tree_sitter_query() {
+        let roots = [
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join("recipes/seed"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join("recipes/antipatterns"),
+        ];
+        let mut checked = 0usize;
+        let mut failures: Vec<String> = Vec::new();
+        for root in &roots {
+            let Ok(entries) = std::fs::read_dir(root) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) != Some("yaml") {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap();
+                let recipe: ods_recipes::schema::Recipe = serde_yaml::from_str(&text)
+                    .unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
+                if recipe.trigger.ast_pattern.trim().is_empty() {
+                    continue;
+                }
+                let Some((_, lang)) = language_for_recipe(&recipe.language) else {
+                    // No grammar for this language yet — skip without failing.
+                    continue;
+                };
+                if let Err(e) = Query::new(&lang, &recipe.trigger.ast_pattern) {
+                    failures.push(format!(
+                        "{}: {e}\n---\n{}",
+                        path.display(),
+                        recipe.trigger.ast_pattern
+                    ));
+                }
+                checked += 1;
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "{} recipes failed to compile:\n{}",
+            failures.len(),
+            failures.join("\n\n")
+        );
+        assert!(
+            checked > 40,
+            "expected 40+ recipes with patterns, saw {checked}"
+        );
     }
 }

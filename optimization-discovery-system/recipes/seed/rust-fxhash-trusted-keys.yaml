@@ -4,7 +4,11 @@ category: algorithmic
 language: rust
 promotion: seed
 trigger:
-  ast_pattern: 'HashMap\s*<\s*(u8|u16|u32|u64|usize|i\d+|&str|String|PathBuf|Path)\b'
+  ast_pattern: |
+    (generic_type
+      type: (type_identifier) @t (#eq? @t "HashMap")
+      type_arguments: (type_arguments . (type_identifier) @k
+        (#match? @k "^(u8|u16|u32|u64|usize|i8|i16|i32|i64|isize|String|PathBuf|Path)$"))) @match
   profile_signature:
     - "hot:SipHasher13"
     - "hot:HashMap::(insert|get|contains_key)"

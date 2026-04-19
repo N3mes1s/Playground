@@ -4,7 +4,13 @@ category: algorithmic
 language: rust
 promotion: seed
 trigger:
-  ast_pattern: 'for\s+\w+\s+in\s+0\.\.\w+\s*\{[^}]*for\s+\w+\s+in\s+0\.\.\w+\s*\{[^}]*\w+\[\w+\]\[\w+\]'
+  ast_pattern: |
+    (for_expression
+      body: (block
+        (for_expression
+          body: (block
+            (expression_statement
+              (index_expression (index_expression))))))) @match
   profile_signature:
     - "perf:LLC-load-miss-rate->30%"
     - "pcm-memory:DRAM-BW->80%-saturated"

@@ -4,7 +4,13 @@ category: alloc-reduction
 language: python
 promotion: anti-pattern
 trigger:
-  ast_pattern: 'for\s+[^:]+:\s*\n\s+\w+\.append\('
+  ast_pattern: |
+    (for_statement
+      body: (block
+        (expression_statement
+          (call
+            function: (attribute attribute: (identifier) @m
+              (#eq? @m "append")))))) @match
   profile_signature:
     - "alloc:list-growth-per-iteration"
 transformation:

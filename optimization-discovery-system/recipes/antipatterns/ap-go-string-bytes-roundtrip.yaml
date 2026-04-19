@@ -4,7 +4,12 @@ category: alloc-reduction
 language: go
 promotion: anti-pattern
 trigger:
-  ast_pattern: 'for\s+[^{]+\{[^}]*\bstring\(\[\]byte|\b\[\]byte\(\s*\w+\s*\)'
+  ast_pattern: |
+    (for_statement
+      body: (block
+        (expression_statement
+          (call_expression
+            function: (identifier) @f (#eq? @f "string"))))) @match
   profile_signature:
     - "alloc:string-byte-copy"
 transformation:

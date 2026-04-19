@@ -19,3 +19,5 @@ tokio     = { workspace = true }
 tracing   = { workspace = true }
 serde     = { workspace = true }
 serde_json = { workspace = true }
+tree-sitter = "0.22"
+tree-sitter-python = "0.21"

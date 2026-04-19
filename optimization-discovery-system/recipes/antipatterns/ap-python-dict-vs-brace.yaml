@@ -4,7 +4,11 @@ category: alloc-reduction
 language: python
 promotion: anti-pattern
 trigger:
-  ast_pattern: '=\s*dict\s*\(\s*\)'
+  ast_pattern: |
+    (assignment
+      right: (call
+        function: (identifier) @f (#eq? @f "dict")
+        arguments: (argument_list))) @match
   profile_signature:
     - "hot:dict-ctor"
 transformation:

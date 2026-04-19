@@ -4,7 +4,13 @@ category: alloc-reduction
 language: rust
 promotion: anti-pattern
 trigger:
-  ast_pattern: '\.push_str\s*\([^)]*\)[^;]*\.push_str\s*\('
+  ast_pattern: |
+    (call_expression
+      function: (field_expression
+        value: (call_expression
+          function: (field_expression field: (field_identifier) @m1
+            (#eq? @m1 "push_str")))
+        field: (field_identifier) @m2 (#eq? @m2 "push_str"))) @match
   profile_signature:
     - "alloc:repeated-small-growth"
 transformation:

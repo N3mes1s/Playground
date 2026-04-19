@@ -4,7 +4,16 @@ category: alloc-reduction
 language: rust
 promotion: seed
 trigger:
-  ast_pattern: 'Option\s*<\s*(Box<|&|NonNull<|u32|u64|usize|i32|i64|NonZero)'
+  ast_pattern: |
+    (generic_type
+      type: (type_identifier) @opt (#eq? @opt "Option")
+      type_arguments: (type_arguments
+        [
+          (generic_type type: (type_identifier) @inner
+            (#match? @inner "^(Box|NonNull|NonZero)"))
+          (reference_type)
+          (primitive_type) @p
+        ])) @match
   profile_signature:
     - "size_of:T-strictly-exceeds-sum-of-fields"
     - "cachegrind:L1-D-miss-rate-proportional-to-type-size"

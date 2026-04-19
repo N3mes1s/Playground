@@ -4,7 +4,9 @@ category: alloc-reduction
 language: go
 promotion: anti-pattern
 trigger:
-  ast_pattern: 'for\s+\w+\s*,\s*\w+\s*:=\s*range\s+\w+\s*\{'
+  ast_pattern: |
+    (for_statement
+      (range_clause) @r) @match
   profile_signature:
     - "alloc:range-copy"
 transformation:

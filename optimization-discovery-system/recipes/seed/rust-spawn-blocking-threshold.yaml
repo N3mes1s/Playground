@@ -4,7 +4,15 @@ category: algorithmic
 language: rust
 promotion: seed
 trigger:
-  ast_pattern: 'async\s+fn\s+[^{]+\{[^}]*(serde_json::from_str|compress|decompress|\.hash\(|block_in_place\s*\()'
+  ast_pattern: |
+    (function_item
+      (function_modifiers)
+      name: (identifier) @fn
+      body: (block
+        (expression_statement
+          (call_expression function: (scoped_identifier
+            name: (identifier) @m
+            (#match? @m "^(from_str|from_slice|compress|decompress)$")))))) @match
   profile_signature:
     - "tokio-console:poll_duration_p99>1ms"
     - "runtime:scheduler-park-latency-rising"

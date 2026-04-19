@@ -4,7 +4,12 @@ category: caching
 language: python
 promotion: anti-pattern
 trigger:
-  ast_pattern: 'for\s+[^:]+:[^#]*\n[^#]*\w+\.\w+\.\w+\('
+  ast_pattern: |
+    (for_statement
+      body: (block
+        (expression_statement
+          (call
+            function: (attribute object: (attribute) @inner))))) @match
   profile_signature:
     - "hot:attr-lookup-per-iteration"
 transformation:

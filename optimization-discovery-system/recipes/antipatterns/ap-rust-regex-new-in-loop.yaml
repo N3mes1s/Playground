@@ -4,7 +4,14 @@ category: caching
 language: rust
 promotion: anti-pattern
 trigger:
-  ast_pattern: 'for\s+[^{]+\{[^}]*Regex::new\s*\('
+  ast_pattern: |
+    (for_expression
+      body: (block
+        (expression_statement
+          (call_expression
+            function: (scoped_identifier
+              path: (identifier) @t (#eq? @t "Regex")
+              name: (identifier) @m (#eq? @m "new")))))) @match
   profile_signature:
     - "hot:regex-compile-per-iteration"
 transformation:

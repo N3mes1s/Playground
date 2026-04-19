@@ -4,7 +4,15 @@ category: caching
 language: python
 promotion: anti-pattern
 trigger:
-  ast_pattern: 'for\s+[^:]+:[^#]*\n[^#]*\bre\.(compile|match|search|findall|sub)\s*\('
+  ast_pattern: |
+    (for_statement
+      body: (block
+        (expression_statement
+          (call
+            function: (attribute
+              object: (identifier) @pkg (#eq? @pkg "re")
+              attribute: (identifier) @m
+              (#match? @m "^(compile|match|search|findall|sub)$")))))) @match
   profile_signature:
     - "hot:regex-compile-per-iteration"
 transformation:

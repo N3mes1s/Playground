@@ -4,7 +4,10 @@ category: algorithmic
 language: rust
 promotion: seed
 trigger:
-  ast_pattern: '\b\w+\s*\*\s*\w+\s*\+\s*\w+\b'
+  ast_pattern: |
+    (binary_expression
+      left: (binary_expression operator: "*")
+      operator: "+") @match
   profile_signature:
     - "disasm:vmulps-then-vaddps-where-vfmadd231ps-fits"
     - "perf:fp_arith_inst_retired.256b_packed-at-half-expected-rate"

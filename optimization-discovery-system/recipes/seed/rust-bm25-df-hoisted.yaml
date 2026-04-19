@@ -6,7 +6,9 @@ promotion: seed
 trigger:
   ast_pattern: |
     (for_expression
-      value: (for_expression))
+      body: (block
+        (expression_statement
+          (for_expression)))) @match
   profile_signature:
     - "hot:scoring-loop"
     - "hot:BM25"

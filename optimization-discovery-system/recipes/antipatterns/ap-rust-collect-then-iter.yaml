@@ -4,7 +4,14 @@ category: alloc-reduction
 language: rust
 promotion: anti-pattern
 trigger:
-  ast_pattern: '\.collect::<Vec<[^>]*>>\(\)\s*\.iter\(\)'
+  ast_pattern: |
+    (call_expression
+      function: (field_expression
+        value: (call_expression
+          function: (generic_function
+            function: (field_expression field: (field_identifier) @m1
+              (#eq? @m1 "collect"))))
+        field: (field_identifier) @m2 (#eq? @m2 "iter"))) @match
   profile_signature:
     - "alloc:temporary-vec"
 transformation:

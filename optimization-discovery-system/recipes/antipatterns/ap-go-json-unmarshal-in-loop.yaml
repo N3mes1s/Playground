@@ -4,7 +4,14 @@ category: caching
 language: go
 promotion: anti-pattern
 trigger:
-  ast_pattern: 'for\s+[^{]+\{[^}]*json\.Unmarshal\s*\('
+  ast_pattern: |
+    (for_statement
+      body: (block
+        (expression_statement
+          (call_expression
+            function: (selector_expression
+              operand: (identifier) @p (#eq? @p "json")
+              field: (field_identifier) @m (#eq? @m "Unmarshal")))))) @match
   profile_signature:
     - "alloc:reflection-per-iteration"
     - "hot:json-decode"

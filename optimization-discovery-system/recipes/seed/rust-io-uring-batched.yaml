@@ -4,7 +4,13 @@ category: syscall-elimination
 language: rust
 promotion: seed
 trigger:
-  ast_pattern: 'for\s+[^{]+\{[^}]*(std::fs::(File::open|read|write)|tokio::io::(AsyncReadExt|AsyncWriteExt))'
+  ast_pattern: |
+    (for_expression
+      body: (block
+        (expression_statement
+          (call_expression function: (scoped_identifier
+            path: (scoped_identifier name: (identifier) @m1 (#eq? @m1 "fs"))
+            name: (identifier) @m2 (#match? @m2 "^(read|write|File)$")))))) @match
   profile_signature:
     - "syscalls:per-second>100k"
     - "strace:majority-time-in-read-write-futex"

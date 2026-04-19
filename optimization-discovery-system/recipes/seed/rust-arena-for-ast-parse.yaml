@@ -4,7 +4,13 @@ category: alloc-reduction
 language: rust
 promotion: seed
 trigger:
-  ast_pattern: '(Box::new|Rc::new|Arc::new)\s*\(\s*\w+Node'
+  ast_pattern: |
+    (call_expression
+      function: (scoped_identifier
+        path: (identifier) @p (#match? @p "^(Box|Rc|Arc)$")
+        name: (identifier) @m (#eq? @m "new"))
+      arguments: (arguments (call_expression
+        function: (identifier) @t (#match? @t "Node$")))) @match
   profile_signature:
     - "hot:malloc/free-in-top-10"
     - "alloc:millions-of-sub-64B-allocations"

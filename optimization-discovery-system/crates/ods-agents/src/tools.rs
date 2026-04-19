@@ -111,12 +111,14 @@ impl ToolHandlerMap {
             ToolSpec {
                 name: "ast_query".into(),
                 description:
-                    "Query a sandbox-relative source file. If `pattern` starts with `(` it is \
-                     parsed as a tree-sitter-rust S-expression query over the AST (e.g. \
-                     `(call_expression function: (field_expression field: (field_identifier) @m))`); \
-                     matches inside comments, string literals, and macro bodies are filtered out \
-                     automatically. Otherwise `pattern` is treated as a line-anchored regex. \
-                     Returns one entry per match with 1-based line numbers and the matched text."
+                    "Query a sandbox-relative source file with a tree-sitter S-expression over \
+                     the parsed AST. Example: \
+                     `(call_expression function: (field_expression field: (field_identifier) @m))`. \
+                     Matches inside comments, string literals, and macro bodies are filtered out \
+                     by the grammar. Every pattern MUST include at least one named capture \
+                     (`@name`) — the tool returns one entry per captured node with 1-based line \
+                     numbers and the node's source text. Grammar is selected from the file \
+                     extension (rust, python, go)."
                         .into(),
                 input_schema: serde_json::json!({
                     "type": "object",

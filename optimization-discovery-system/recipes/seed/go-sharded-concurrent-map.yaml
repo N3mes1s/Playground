@@ -4,7 +4,12 @@ category: algorithmic
 language: go
 promotion: seed
 trigger:
-  ast_pattern: 'sync\.(Mutex|RWMutex)[^}]*map\[[^]]+\][^}]*\.(Lock|RLock)\(\)'
+  ast_pattern: |
+    (struct_type
+      (field_declaration_list
+        (field_declaration type: (qualified_type
+          package: (package_identifier) @p (#eq? @p "sync")
+          name: (type_identifier) @t (#match? @t "^(Mutex|RWMutex)$"))))) @match
   profile_signature:
     - "mutex:contention-on-map-mutex"
     - "hot:runtime.mapassign"

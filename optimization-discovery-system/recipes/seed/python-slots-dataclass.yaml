@@ -4,7 +4,11 @@ category: alloc-reduction
 language: python
 promotion: seed
 trigger:
-  ast_pattern: '@dataclass(\s*\))'
+  ast_pattern: |
+    [
+      (decorator (identifier) @d (#eq? @d "dataclass"))
+      (decorator (call function: (identifier) @d (#eq? @d "dataclass")))
+    ] @match
   profile_signature:
     - "alloc:instance-__dict__-per-object"
     - "hot:LOAD_ATTR"

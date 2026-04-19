@@ -4,7 +4,13 @@ category: alloc-reduction
 language: python
 promotion: anti-pattern
 trigger:
-  ast_pattern: 'for\s+[^:]+:[^#\n]*\n[^#]*\+\s*=\s*[''\"]'
+  ast_pattern: |
+    (for_statement
+      body: (block
+        (expression_statement
+          (augmented_assignment
+            left: (identifier) @lhs
+            operator: "+=")))) @match
   profile_signature:
     - "alloc:string-growth-per-iteration"
 transformation:

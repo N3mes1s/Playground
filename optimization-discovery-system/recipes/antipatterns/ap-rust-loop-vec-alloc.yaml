@@ -4,7 +4,14 @@ category: alloc-reduction
 language: rust
 promotion: anti-pattern
 trigger:
-  ast_pattern: 'for\s+[^{]+\{[^}]*Vec::(new|with_capacity)\s*\('
+  ast_pattern: |
+    (for_expression
+      body: (block
+        (expression_statement
+          (call_expression
+            function: (scoped_identifier
+              path: (identifier) @t (#eq? @t "Vec")
+              name: (identifier) @m (#match? @m "^(new|with_capacity)$")))))) @match
   profile_signature:
     - "alloc:loop-vec"
     - "hot:per-iteration-allocation"

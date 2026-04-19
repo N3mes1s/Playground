@@ -4,7 +4,13 @@ category: syscall-elimination
 language: rust
 promotion: anti-pattern
 trigger:
-  ast_pattern: 'for\s+[^{]+\{[^}]*(std::)?fs::read_to_string\s*\('
+  ast_pattern: |
+    (for_expression
+      body: (block
+        (expression_statement
+          (call_expression
+            function: (scoped_identifier
+              name: (identifier) @m (#eq? @m "read_to_string")))))) @match
   profile_signature:
     - "syscall:open+read+close-per-iteration"
 transformation:

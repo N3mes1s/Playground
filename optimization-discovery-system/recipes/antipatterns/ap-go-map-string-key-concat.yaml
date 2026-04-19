@@ -4,7 +4,11 @@ category: alloc-reduction
 language: go
 promotion: anti-pattern
 trigger:
-  ast_pattern: '\[\s*\w+\s*\+\s*"[^"]*"\s*\+\s*\w+\s*\]'
+  ast_pattern: |
+    (index_expression
+      index: (binary_expression
+        left: (binary_expression operator: "+")
+        operator: "+")) @match
   profile_signature:
     - "alloc:map-key-per-lookup"
 transformation:

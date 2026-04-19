@@ -4,7 +4,15 @@ category: caching
 language: go
 promotion: anti-pattern
 trigger:
-  ast_pattern: 'for\s+[^{]+\{[^}]*regexp\.(MustCompile|Compile)\s*\('
+  ast_pattern: |
+    (for_statement
+      body: (block
+        (expression_statement
+          (call_expression
+            function: (selector_expression
+              operand: (identifier) @p (#eq? @p "regexp")
+              field: (field_identifier) @m
+              (#match? @m "^(Compile|MustCompile)$")))))) @match
   profile_signature:
     - "hot:regex-compile-per-iteration"
 transformation:

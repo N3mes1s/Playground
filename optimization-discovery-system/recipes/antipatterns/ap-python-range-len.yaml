@@ -4,7 +4,12 @@ category: algorithmic
 language: python
 promotion: anti-pattern
 trigger:
-  ast_pattern: 'for\s+\w+\s+in\s+range\s*\(\s*len\s*\('
+  ast_pattern: |
+    (for_statement
+      right: (call
+        function: (identifier) @f1 (#eq? @f1 "range")
+        arguments: (argument_list
+          (call function: (identifier) @f2 (#eq? @f2 "len"))))) @match
   profile_signature:
     - "hot:indexed-iteration"
 transformation:

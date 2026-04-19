@@ -4,7 +4,11 @@ category: alloc-reduction
 language: rust
 promotion: seed
 trigger:
-  ast_pattern: 'Vec::(new|with_capacity)\s*\(\s*(1|2|3|4|8|16)?\s*\)'
+  ast_pattern: |
+    (call_expression
+      function: (scoped_identifier
+        path: (identifier) @p (#eq? @p "Vec")
+        name: (identifier) @m (#match? @m "^(new|with_capacity)$"))) @match
   profile_signature:
     - "alloc:high-frequency-site"
     - "alloc:avg-bytes-below-128"

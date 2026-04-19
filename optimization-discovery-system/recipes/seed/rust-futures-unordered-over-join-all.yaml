@@ -4,7 +4,13 @@ category: algorithmic
 language: rust
 promotion: seed
 trigger:
-  ast_pattern: '(futures::future::)?(try_)?join_all\s*\('
+  ast_pattern: |
+    (call_expression
+      function: [
+        (identifier) @m
+        (scoped_identifier name: (identifier) @m)
+      ]
+      (#match? @m "^(join_all|try_join_all)$")) @match
   profile_signature:
     - "tokio-console:single-task-huge-poll-duration"
     - "memory:spike-proportional-to-N"

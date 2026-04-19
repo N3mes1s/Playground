@@ -18,3 +18,5 @@ similar   = { workspace = true }
 tokio     = { workspace = true }
 tracing   = { workspace = true }
 serde     = { workspace = true }
+tree-sitter = "0.22"
+tree-sitter-go = "0.21"

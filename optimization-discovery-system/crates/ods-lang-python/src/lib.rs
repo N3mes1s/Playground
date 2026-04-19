@@ -118,19 +118,7 @@ impl LanguageAdapter for PythonAdapter {
 
     async fn ast_query(&self, file: &Path, query: &str) -> Result<Vec<AstMatch>> {
         let text = tokio::fs::read_to_string(file).await?;
-        let re = Regex::new(query)?;
-        let mut out = Vec::new();
-        for (i, line) in text.lines().enumerate() {
-            if re.is_match(line) {
-                out.push(AstMatch {
-                    file: file.to_path_buf(),
-                    start_line: (i + 1) as u32,
-                    end_line: (i + 1) as u32,
-                    text: line.to_string(),
-                });
-            }
-        }
-        Ok(out)
+        tree_sitter_ast_query(file, &text, query)
     }
 
     fn emit_patch(&self, edits: &[Edit]) -> Result<Patch> {
@@ -152,6 +140,40 @@ impl LanguageAdapter for PythonAdapter {
             seed_corpus_size: 0,
         })
     }
+}
+
+pub fn tree_sitter_language() -> tree_sitter::Language {
+    tree_sitter_python::language()
+}
+
+fn tree_sitter_ast_query(file: &Path, text: &str, query: &str) -> Result<Vec<AstMatch>> {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_python::language())
+        .map_err(|e| anyhow::anyhow!("load tree-sitter-python grammar: {e}"))?;
+    let Some(tree) = parser.parse(text, None) else {
+        anyhow::bail!("tree-sitter failed to parse {}", file.display());
+    };
+    let q = tree_sitter::Query::new(&tree_sitter_python::language(), query)
+        .map_err(|e| anyhow::anyhow!("compile tree-sitter query `{query}`: {e}"))?;
+    let mut cursor = tree_sitter::QueryCursor::new();
+    let mut out = Vec::new();
+    let bytes = text.as_bytes();
+    for m in cursor.matches(&q, tree.root_node(), bytes) {
+        for cap in m.captures {
+            let node = cap.node;
+            let start = node.start_position();
+            let end = node.end_position();
+            let matched = node.utf8_text(bytes).unwrap_or("").to_string();
+            out.push(AstMatch {
+                file: file.to_path_buf(),
+                start_line: (start.row + 1) as u32,
+                end_line: (end.row + 1) as u32,
+                text: matched,
+            });
+        }
+    }
+    Ok(out)
 }
 
 fn make_diff(edits: &[Edit]) -> String {

@@ -4,7 +4,11 @@ category: alloc-reduction
 language: rust
 promotion: anti-pattern
 trigger:
-  ast_pattern: 'for\s+[^{]+\{[^}]*format!\s*\('
+  ast_pattern: |
+    (for_expression
+      body: (block
+        (expression_statement
+          (macro_invocation macro: (identifier) @m (#eq? @m "format"))))) @match
   profile_signature:
     - "alloc:loop-string"
     - "hot:format!-per-iteration"

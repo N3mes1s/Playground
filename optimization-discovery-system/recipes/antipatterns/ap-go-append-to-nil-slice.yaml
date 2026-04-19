@@ -4,7 +4,10 @@ category: alloc-reduction
 language: go
 promotion: anti-pattern
 trigger:
-  ast_pattern: 'var\s+\w+\s+\[\]\w+\s*\n[^}]*append\('
+  ast_pattern: |
+    (var_spec
+      name: (identifier) @n
+      type: (slice_type)) @match
   profile_signature:
     - "alloc:slice-growth"
 transformation:

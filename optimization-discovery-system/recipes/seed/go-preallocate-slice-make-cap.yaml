@@ -4,7 +4,12 @@ category: alloc-reduction
 language: go
 promotion: seed
 trigger:
-  ast_pattern: '(var\s+\w+\s+\[\]\w+|\w+\s*:=\s*\[\]\w+\{\})[^}]*for\s+[^{]+range\s+\w+\s*\{[^}]*append\('
+  ast_pattern: |
+    (for_statement
+      body: (block
+        (expression_statement
+          (call_expression
+            function: (identifier) @f (#eq? @f "append"))))) @match
   profile_signature:
     - "allocs/op:>1"
     - "hot:runtime.growslice"

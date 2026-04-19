@@ -4,7 +4,15 @@ category: algorithmic
 language: rust
 promotion: seed
 trigger:
-  ast_pattern: 'return\s+Err\s*\(\s*\w+::\w+\s*\{|Err\s*\(\s*format!\s*\(|Err\s*\(\s*Box::new\s*\('
+  ast_pattern: |
+    [
+      (return_expression
+        (call_expression function: (identifier) @e (#eq? @e "Err")))
+      (call_expression
+        function: (identifier) @e (#eq? @e "Err")
+        arguments: (arguments (macro_invocation macro: (identifier) @m
+          (#eq? @m "format"))))
+    ] @match
   profile_signature:
     - "icache:L1-icache-load-miss->1%"
     - "itlb:miss-rate-elevated"

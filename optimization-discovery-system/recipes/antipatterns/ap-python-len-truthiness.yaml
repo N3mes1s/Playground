@@ -4,7 +4,10 @@ category: algorithmic
 language: python
 promotion: anti-pattern
 trigger:
-  ast_pattern: '\blen\s*\([^)]+\)\s*(==|!=)\s*0\b'
+  ast_pattern: |
+    (comparison_operator
+      (call function: (identifier) @f (#eq? @f "len"))
+      (integer) @z (#eq? @z "0")) @match
   profile_signature:
     - "hot:truthiness-check"
 transformation:

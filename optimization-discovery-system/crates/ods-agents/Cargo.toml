@@ -12,6 +12,8 @@ ods-core    = { workspace = true }
 ods-recipes = { workspace = true }
 ods-lang    = { workspace = true }
 ods-lang-rust = { workspace = true }
+ods-lang-python = { workspace = true }
+ods-lang-go = { workspace = true }
 ods-measure = { workspace = true }
 ods-verify  = { workspace = true }
 ods-exec    = { workspace = true }
@@ -27,6 +29,8 @@ regex       = { workspace = true }
 walkdir     = { workspace = true }
 similar     = { workspace = true }
 time        = { workspace = true }
+tree-sitter = "0.22"
 
 [dev-dependencies]
 tempfile = { workspace = true }
+serde_yaml = { workspace = true }

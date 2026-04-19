@@ -4,7 +4,9 @@ category: algorithmic
 language: go
 promotion: anti-pattern
 trigger:
-  ast_pattern: 'for\s+[^{]+\{[^}]*\bdefer\s+'
+  ast_pattern: |
+    (for_statement
+      body: (block (defer_statement) @d)) @match
   profile_signature:
     - "hot:defer-schedule-per-iteration"
 transformation:

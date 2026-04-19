@@ -4,7 +4,13 @@ category: syscall-elimination
 language: rust
 promotion: anti-pattern
 trigger:
-  ast_pattern: '\.metadata\(\)[^;]*\.is_(dir|file|symlink)\(\)'
+  ast_pattern: |
+    (call_expression
+      function: (field_expression
+        value: (call_expression
+          function: (field_expression field: (field_identifier) @m1
+            (#eq? @m1 "metadata")))
+        field: (field_identifier) @m2 (#match? @m2 "^is_(dir|file|symlink)$"))) @match
   profile_signature:
     - "syscall:stat-on-readdir-entry"
 transformation:

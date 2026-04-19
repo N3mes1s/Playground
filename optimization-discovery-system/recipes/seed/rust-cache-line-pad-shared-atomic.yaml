@@ -4,7 +4,11 @@ category: algorithmic
 language: rust
 promotion: seed
 trigger:
-  ast_pattern: 'struct\s+\w+\s*\{[^}]*Atomic(U|I)(8|16|32|64|size)[^}]*Atomic'
+  ast_pattern: |
+    (struct_item
+      body: (field_declaration_list
+        (field_declaration type: (type_identifier) @t1 (#match? @t1 "^Atomic"))
+        (field_declaration type: (type_identifier) @t2 (#match? @t2 "^Atomic")))) @match
   profile_signature:
     - "cache:L1-dcache-load-miss-spike"
     - "hot:HITM-on-struct-address"

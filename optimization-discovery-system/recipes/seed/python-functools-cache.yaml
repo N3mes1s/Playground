@@ -4,7 +4,10 @@ category: caching
 language: python
 promotion: seed
 trigger:
-  ast_pattern: 'def\s+\w+\s*\([^)]*\)\s*:\s*\n(?:[^\n]*\n){0,40}[^\n]*return\s+'
+  ast_pattern: |
+    (function_definition
+      name: (identifier) @fn
+      body: (block (return_statement))) @match
   profile_signature:
     - "cprofile:ncalls>>unique-inputs"
     - "hot:function-dominates-self-time"

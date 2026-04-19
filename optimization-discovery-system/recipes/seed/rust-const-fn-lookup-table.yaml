@@ -4,7 +4,13 @@ category: caching
 language: rust
 promotion: seed
 trigger:
-  ast_pattern: '(lazy_static!|static\s+\w+\s*:\s*(Lazy|OnceCell|OnceLock))'
+  ast_pattern: |
+    [
+      (macro_invocation macro: (identifier) @m (#eq? @m "lazy_static"))
+      (static_item
+        type: (generic_type type: (type_identifier) @t
+          (#match? @t "^(Lazy|OnceCell|OnceLock)$")))
+    ] @match
   profile_signature:
     - "cold-start:init-takes-ms"
     - "perf:Once::call_once-in-first-invocations"

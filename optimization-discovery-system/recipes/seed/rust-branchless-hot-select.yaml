@@ -4,7 +4,14 @@ category: algorithmic
 language: rust
 promotion: seed
 trigger:
-  ast_pattern: 'for\s+[^{]+\{[^}]*if\s+\w+\s*[<>!=]=?\s*\w+\s*\{[^}]*\}\s*else\s*\{'
+  ast_pattern: |
+    (for_expression
+      body: (block
+        (expression_statement
+          (if_expression
+            condition: (binary_expression)
+            consequence: (block)
+            alternative: (else_clause (block)))))) @match
   profile_signature:
     - "branch:misprediction-rate->5%"
     - "lbr:specific-branch->20%-mispredict"

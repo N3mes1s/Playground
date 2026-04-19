@@ -4,7 +4,13 @@ category: caching
 language: rust
 promotion: seed
 trigger:
-  ast_pattern: '\.contains\s*\(\s*\w+\s*\)[^;]*\|\|[^;]*\.contains\s*\(|strings\.Contains\s*\([^)]*\)\s*\|\|'
+  ast_pattern: |
+    (binary_expression
+      left: (call_expression
+        function: (field_expression field: (field_identifier) @m1 (#eq? @m1 "contains")))
+      operator: "||"
+      right: (call_expression
+        function: (field_expression field: (field_identifier) @m2 (#eq? @m2 "contains")))) @match
   profile_signature:
     - "hot:N-fold-repeated-substring-scan"
     - "flamegraph:str::pattern|strings.Contains-sampled-many-times-per-outer-iter"

@@ -1199,6 +1199,8 @@ dependencies = [
  "ods-core",
  "ods-exec",
  "ods-lang",
+ "ods-lang-go",
+ "ods-lang-python",
  "ods-lang-rust",
  "ods-measure",
  "ods-recipes",
@@ -1207,12 +1209,14 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "serde_yaml",
  "similar",
  "tempfile",
  "thiserror 1.0.69",
  "time",
  "tokio",
  "tracing",
+ "tree-sitter",
  "walkdir",
 ]
 
@@ -1340,6 +1344,8 @@ dependencies = [
  "similar",
  "tokio",
  "tracing",
+ "tree-sitter",
+ "tree-sitter-go",
 ]
 
 [[package]]
@@ -1389,6 +1395,8 @@ dependencies = [
  "similar",
  "tokio",
  "tracing",
+ "tree-sitter",
+ "tree-sitter-python",
 ]
 
 [[package]]
@@ -2563,6 +2571,26 @@ checksum = "df7cc499ceadd4dcdf7ec6d4cbc34ece92c3fa07821e287aedecd4416c516dca"
 dependencies = [
  "cc",
  "regex",
+]
+
+[[package]]
+name = "tree-sitter-go"
+version = "0.21.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8d702a98d3c7e70e466456e58ff2b1ac550bf1e29b97e5770676d2fdabec00d"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-python"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4066c6cf678f962f8c2c4561f205945c84834cce73d981e71392624fdc390a9"
+dependencies = [
+ "cc",
+ "tree-sitter",
 ]
 
 [[package]]
