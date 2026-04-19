@@ -126,6 +126,13 @@ impl LanguageAdapter for RustAdapter {
         tree_sitter_ast_query(file, &text, query)
     }
 
+    async fn ast_query_batch(&self, file: &Path, queries: &[&str]) -> Result<Vec<Vec<AstMatch>>> {
+        let text = tokio::fs::read_to_string(file)
+            .await
+            .with_context(|| format!("read {}", file.display()))?;
+        tree_sitter_ast_query_batch(file, &text, queries)
+    }
+
     fn emit_patch(&self, edits: &[Edit]) -> Result<Patch> {
         let mut diff = String::new();
         for e in edits {
@@ -206,34 +213,50 @@ impl LanguageAdapter for RustAdapter {
 /// the node's `Range`. If the query has no named captures, every *pattern
 /// match* contributes the root node of that match.
 fn tree_sitter_ast_query(file: &Path, text: &str, query: &str) -> Result<Vec<AstMatch>> {
+    let results = tree_sitter_ast_query_batch(file, text, &[query])?;
+    Ok(results.into_iter().next().unwrap_or_default())
+}
+
+/// Parse `text` once, then execute every query in `queries` against the
+/// shared tree. Returns one `Vec<AstMatch>` per query, in input order.
+fn tree_sitter_ast_query_batch(
+    file: &Path,
+    text: &str,
+    queries: &[&str],
+) -> Result<Vec<Vec<AstMatch>>> {
+    let lang = tree_sitter_rust::language();
     let mut parser = tree_sitter::Parser::new();
     parser
-        .set_language(&tree_sitter_rust::language())
+        .set_language(&lang)
         .context("load tree-sitter-rust grammar")?;
     let Some(tree) = parser.parse(text, None) else {
         anyhow::bail!("tree-sitter failed to parse {}", file.display());
     };
-    let q = tree_sitter::Query::new(&tree_sitter_rust::language(), query)
-        .with_context(|| format!("compile tree-sitter query: {query}"))?;
-    let mut cursor = tree_sitter::QueryCursor::new();
-    let mut out = Vec::new();
     let bytes = text.as_bytes();
-    for m in cursor.matches(&q, tree.root_node(), bytes) {
-        for cap in m.captures {
-            let node = cap.node;
-            let start = node.start_position();
-            let end = node.end_position();
-            let matched = node.utf8_text(bytes).unwrap_or("").to_string();
-            out.push(AstMatch {
-                file: file.to_path_buf(),
-                start_line: (start.row + 1) as u32,
-                end_line: (end.row + 1) as u32,
-                text: matched,
-                enclosing_symbol: enclosing_symbol(node, bytes),
-            });
+    let mut results = Vec::with_capacity(queries.len());
+    for query in queries {
+        let q = tree_sitter::Query::new(&lang, query)
+            .with_context(|| format!("compile tree-sitter query: {query}"))?;
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let mut out = Vec::new();
+        for m in cursor.matches(&q, tree.root_node(), bytes) {
+            for cap in m.captures {
+                let node = cap.node;
+                let start = node.start_position();
+                let end = node.end_position();
+                let matched = node.utf8_text(bytes).unwrap_or("").to_string();
+                out.push(AstMatch {
+                    file: file.to_path_buf(),
+                    start_line: (start.row + 1) as u32,
+                    end_line: (end.row + 1) as u32,
+                    text: matched,
+                    enclosing_symbol: enclosing_symbol(node, bytes),
+                });
+            }
         }
+        results.push(out);
     }
-    Ok(out)
+    Ok(results)
 }
 
 /// Walk `node.parent()` until we hit a Rust function-like declaration and
@@ -456,6 +479,58 @@ const TOP: &str = "hi";
                 .map(|h| (h.start_line, h.enclosing_symbol.clone()))
                 .collect::<Vec<_>>()
         );
+    }
+
+    /// The batch variant must produce identical results to running each
+    /// query individually via `ast_query` — the parse-reuse
+    /// optimisation must not quietly lose or reorder hits.
+    #[tokio::test]
+    async fn ast_query_batch_matches_individual_calls() {
+        let src = r#"
+fn foo() {
+    let v: Vec<u8> = Vec::new();
+    let s = format!("hi");
+    let _ = (v, s);
+}
+
+fn bar() {
+    for _ in 0..10 {
+        let _ = "clone".to_string();
+    }
+}
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("b.rs");
+        std::fs::write(&p, src).unwrap();
+        let a = RustAdapter::new();
+        let queries = [
+            "(call_expression function: (scoped_identifier path: (identifier) @p (#eq? @p \"Vec\") name: (identifier) @m (#eq? @m \"new\"))) @match",
+            "(macro_invocation macro: (identifier) @m (#eq? @m \"format\")) @match",
+            "(for_expression) @match",
+        ];
+        let mut individual: Vec<Vec<AstMatch>> = Vec::new();
+        for q in &queries {
+            individual.push(a.ast_query(&p, q).await.unwrap());
+        }
+        let batch = a.ast_query_batch(&p, &queries).await.unwrap();
+        assert_eq!(batch.len(), queries.len());
+        for (i, (b, ind)) in batch.iter().zip(individual.iter()).enumerate() {
+            assert_eq!(
+                b.len(),
+                ind.len(),
+                "pattern {i}: batch len {} != individual len {}",
+                b.len(),
+                ind.len()
+            );
+            for (bh, ih) in b.iter().zip(ind.iter()) {
+                assert_eq!(bh.start_line, ih.start_line);
+                assert_eq!(bh.end_line, ih.end_line);
+                assert_eq!(bh.enclosing_symbol, ih.enclosing_symbol);
+                assert_eq!(bh.text, ih.text);
+            }
+        }
+        assert!(!batch[0].is_empty(), "expected Vec::new match");
+        assert!(!batch[1].is_empty(), "expected format! match");
     }
 
     #[test]

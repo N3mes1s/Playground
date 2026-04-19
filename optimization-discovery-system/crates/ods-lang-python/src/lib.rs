@@ -121,6 +121,11 @@ impl LanguageAdapter for PythonAdapter {
         tree_sitter_ast_query(file, &text, query)
     }
 
+    async fn ast_query_batch(&self, file: &Path, queries: &[&str]) -> Result<Vec<Vec<AstMatch>>> {
+        let text = tokio::fs::read_to_string(file).await?;
+        tree_sitter_ast_query_batch(file, &text, queries)
+    }
+
     fn emit_patch(&self, edits: &[Edit]) -> Result<Patch> {
         Ok(Patch {
             unified_diff: make_diff(edits),
@@ -147,34 +152,48 @@ pub fn tree_sitter_language() -> tree_sitter::Language {
 }
 
 fn tree_sitter_ast_query(file: &Path, text: &str, query: &str) -> Result<Vec<AstMatch>> {
+    let results = tree_sitter_ast_query_batch(file, text, &[query])?;
+    Ok(results.into_iter().next().unwrap_or_default())
+}
+
+fn tree_sitter_ast_query_batch(
+    file: &Path,
+    text: &str,
+    queries: &[&str],
+) -> Result<Vec<Vec<AstMatch>>> {
+    let lang = tree_sitter_python::language();
     let mut parser = tree_sitter::Parser::new();
     parser
-        .set_language(&tree_sitter_python::language())
+        .set_language(&lang)
         .map_err(|e| anyhow::anyhow!("load tree-sitter-python grammar: {e}"))?;
     let Some(tree) = parser.parse(text, None) else {
         anyhow::bail!("tree-sitter failed to parse {}", file.display());
     };
-    let q = tree_sitter::Query::new(&tree_sitter_python::language(), query)
-        .map_err(|e| anyhow::anyhow!("compile tree-sitter query `{query}`: {e}"))?;
-    let mut cursor = tree_sitter::QueryCursor::new();
-    let mut out = Vec::new();
     let bytes = text.as_bytes();
-    for m in cursor.matches(&q, tree.root_node(), bytes) {
-        for cap in m.captures {
-            let node = cap.node;
-            let start = node.start_position();
-            let end = node.end_position();
-            let matched = node.utf8_text(bytes).unwrap_or("").to_string();
-            out.push(AstMatch {
-                file: file.to_path_buf(),
-                start_line: (start.row + 1) as u32,
-                end_line: (end.row + 1) as u32,
-                text: matched,
-                enclosing_symbol: enclosing_symbol(node, bytes),
-            });
+    let mut results = Vec::with_capacity(queries.len());
+    for query in queries {
+        let q = tree_sitter::Query::new(&lang, query)
+            .map_err(|e| anyhow::anyhow!("compile tree-sitter query `{query}`: {e}"))?;
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let mut out = Vec::new();
+        for m in cursor.matches(&q, tree.root_node(), bytes) {
+            for cap in m.captures {
+                let node = cap.node;
+                let start = node.start_position();
+                let end = node.end_position();
+                let matched = node.utf8_text(bytes).unwrap_or("").to_string();
+                out.push(AstMatch {
+                    file: file.to_path_buf(),
+                    start_line: (start.row + 1) as u32,
+                    end_line: (end.row + 1) as u32,
+                    text: matched,
+                    enclosing_symbol: enclosing_symbol(node, bytes),
+                });
+            }
         }
+        results.push(out);
     }
-    Ok(out)
+    Ok(results)
 }
 
 /// Find the nearest enclosing `def` and return its name. Returns `None`

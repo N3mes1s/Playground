@@ -131,6 +131,37 @@ impl ToolHandlerMap {
             },
             Box::new(AstQuery { sandbox: sb.clone() }),
         );
+
+        loop_.register(
+            ToolSpec {
+                name: "ast_query_batch".into(),
+                description:
+                    "Run several tree-sitter queries against the SAME file in one call. Same \
+                     semantics as `ast_query` per individual pattern, but parses the file once \
+                     and returns a structured list of hits per pattern. Use this when you want \
+                     to probe multiple shapes in one source file (e.g. `for x in y.clone()` AND \
+                     `format!()` AND `Vec::new()`) without paying N LLM turns. Every pattern \
+                     MUST include at least one `@capture`. Output shape: one section per \
+                     pattern, labelled `# pattern N: …` with its hits underneath."
+                        .into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" },
+                        "patterns": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "minItems": 1,
+                            "maxItems": 16
+                        }
+                    },
+                    "required": ["path", "patterns"]
+                }),
+            },
+            Box::new(AstQueryBatch {
+                sandbox: sb.clone(),
+            }),
+        );
     }
 
     /// Register mutating tools: apply_patch, run_bench, run_tests. These
@@ -283,6 +314,76 @@ impl ToolHandler for AstQuery {
             lines.push(format!("… and {} more hits", hits.len() - 50));
         }
         Ok(lines.join("\n"))
+    }
+}
+
+/// ast_query_batch --------------------------------------------------------
+struct AstQueryBatch {
+    sandbox: Arc<Sandbox>,
+}
+#[derive(Deserialize)]
+struct AstQueryBatchIn {
+    path: String,
+    patterns: Vec<String>,
+}
+#[async_trait::async_trait]
+impl ToolHandler for AstQueryBatch {
+    async fn call(&self, input: &serde_json::Value) -> Result<String> {
+        use ods_lang::LanguageAdapter;
+        let arg: AstQueryBatchIn = serde_json::from_value(input.clone())?;
+        if arg.patterns.is_empty() {
+            anyhow::bail!("ast_query_batch: `patterns` must contain at least one query");
+        }
+        let file = self.sandbox.resolve(&arg.path)?;
+        let adapter: Box<dyn LanguageAdapter> = match file.extension().and_then(|s| s.to_str()) {
+            Some("rs") => Box::new(ods_lang_rust::RustAdapter::new()),
+            Some("py") => Box::new(ods_lang_python::PythonAdapter::new()),
+            Some("go") => Box::new(ods_lang_go::GoAdapter::new()),
+            Some("rb") => Box::new(ods_lang_ruby::RubyAdapter::new()),
+            other => {
+                anyhow::bail!(
+                    "ast_query_batch: no tree-sitter grammar for extension {other:?}; \
+                     supported: .rs / .py / .go / .rb"
+                );
+            }
+        };
+        let pattern_refs: Vec<&str> = arg.patterns.iter().map(|s| s.as_str()).collect();
+        let results = adapter.ast_query_batch(&file, &pattern_refs).await?;
+
+        let mut out = String::new();
+        for (idx, (pattern, hits)) in arg.patterns.iter().zip(results.iter()).enumerate() {
+            if idx > 0 {
+                out.push_str("\n\n");
+            }
+            // One-line header with a preview of the pattern so the agent
+            // can correlate each section back to its input.
+            let preview = pattern
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .take(1)
+                .collect::<Vec<_>>()
+                .join(" ");
+            let preview_short: String = preview.chars().take(100).collect();
+            out.push_str(&format!("# pattern {}: {preview_short}\n", idx + 1));
+            if hits.is_empty() {
+                out.push_str("  no matches");
+                continue;
+            }
+            for h in hits.iter().take(50) {
+                let loc = if let Some(sym) = &h.enclosing_symbol {
+                    format!("{}:{}-{} (in fn {sym})", arg.path, h.start_line, h.end_line)
+                } else {
+                    format!("{}:{}-{}", arg.path, h.start_line, h.end_line)
+                };
+                let preview = h.text.lines().next().unwrap_or("").trim();
+                out.push_str(&format!("  {loc}: {preview}\n"));
+            }
+            if hits.len() > 50 {
+                out.push_str(&format!("  … and {} more hits\n", hits.len() - 50));
+            }
+        }
+        Ok(out)
     }
 }
 

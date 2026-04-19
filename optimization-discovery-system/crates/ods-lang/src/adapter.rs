@@ -108,6 +108,20 @@ pub trait LanguageAdapter: Send + Sync {
 
     async fn ast_query(&self, file: &Path, query: &str) -> Result<Vec<AstMatch>>;
 
+    /// Run N queries against the same file. The default implementation
+    /// loops over `ast_query`, re-reading and re-parsing the file each
+    /// time. Adapters backed by a tree-sitter grammar override this to
+    /// parse once and execute every query against the shared tree —
+    /// the parser reuse amortises, and more importantly the agent
+    /// saves an LLM turn per extra pattern it wants to probe.
+    async fn ast_query_batch(&self, file: &Path, queries: &[&str]) -> Result<Vec<Vec<AstMatch>>> {
+        let mut out = Vec::with_capacity(queries.len());
+        for q in queries {
+            out.push(self.ast_query(file, q).await?);
+        }
+        Ok(out)
+    }
+
     fn emit_patch(&self, edits: &[Edit]) -> Result<Patch>;
 
     async fn fuzz(&self, build: &Build, target: &TargetSig, budget: Duration)
