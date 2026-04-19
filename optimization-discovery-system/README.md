@@ -63,17 +63,24 @@ ods explain  <run-id>                            # regenerate the data-backed re
 
 ```
 crates/
-  ods-cli/        single binary entry (subcommand router)
-  ods-core/       domain types + the LoopStage state machine
-  ods-agents/     Anthropic tool-use loop, planner, 7 specialists
-  ods-measure/    profiler + Criterion-style bootstrap CI stats + env fingerprint
-  ods-verify/     zero-diff compat gate, semver + downstream tests
-  ods-recipes/    corpus schema + SQLite/vec retrieval + promotion pipeline
-  ods-lang/       LanguageAdapter trait + registry
-  ods-lang-rust/  Rust adapter (MVP: Cargo / Criterion / cargo-fuzz / tree-sitter)
-  ods-ci/         GitHub Actions one-shot + GitHub App webhook server
-  ods-report/     PR body renderer (numbers, deltas, evidence, repro cmd)
-recipes/seed/     hand-authored starter recipes
+  ods-cli/          single binary entry (subcommand router)
+  ods-core/         domain types + LoopStage state machine + git-worktree helpers
+  ods-exec/         subprocess primitive with timeout + structured capture
+  ods-agents/       Anthropic tool-use loop, orchestrator, planner, 7 specialists, typed toolkit
+  ods-measure/      profiler + Criterion-style bootstrap CI stats + env fingerprint
+  ods-verify/       zero-diff compat gate, cargo-semver-checks + downstream runner
+  ods-recipes/      corpus schema + SQLite store + BM25 scoring + auto-promotion
+  ods-lang/         LanguageAdapter trait + registry
+  ods-lang-rust/    Rust adapter (cargo build/test/bench/fuzz + perf/strace profiler)
+  ods-lang-go/      Go adapter (go test, go test -bench, go test -fuzz)
+  ods-lang-ruby/    Ruby adapter (bundle + minitest/rspec + benchmark-ips)
+  ods-lang-python/  Python adapter (pytest + pytest-benchmark)
+  ods-lang-c/       C/C++ adapter (cmake/make + ctest + google-benchmark)
+  ods-lang-js/      JS/TS adapter (npm test + jest/vitest/tinybench)
+  ods-lang-java/    Java adapter (mvn/gradle + surefire/JMH)
+  ods-ci/           GitHub REST API client + Actions one-shot + App webhook server
+  ods-report/       PR body renderer (numbers, deltas, evidence, repro cmd)
+recipes/seed/       hand-authored starter recipes
 ```
 
 ## The recipe corpus
@@ -94,12 +101,37 @@ Seeds are hand-authored YAML under `recipes/seed/`. Candidates are auto-harveste
 
 ## Stages of delivery
 
-- **Stage 0 (this commit):** workspace scaffolding, typed LoopStage, CLI surface, recipe schema + store, Rust adapter trait, 2 seed recipes, release workflow.
-- **Stage 1:** real Rust adapter (Cargo/Criterion/cargo-fuzz wiring), real profiler (perf_event_open + eBPF), tool-use loop executing on a live target, Actions one-shot PR open.
-- **Stage 2:** remaining 5 specialists, recipe retrieval online, promotion pipeline, GitHub App mode with repo allowlist.
-- **Stage 3:** `DependencyOptimizer` with cargo-semver-checks + downstream tests; Go adapter.
-- **Stage 4:** Ruby (replays the blog post natively as validation), Python, C/C++, JS, Java.
+- **Stage 0 ✅** workspace scaffolding, typed LoopStage, CLI surface, recipe schema + store, Rust adapter trait, 2 seed recipes, release workflow.
+- **Stage 1 ✅** real Rust adapter over subprocess (`cargo build/test/bench/fuzz`), profiler wrapping `/usr/bin/time` + `strace -c` + `perf stat`, typed Anthropic tool-use loop with conversation runner + token accounting + prompt-cache aware stats, typed specialist toolkit (`read_file`, `list_dir`, `ast_query`, `apply_patch`, `run_tests`, `run_bench`) behind a path-sandbox gate, git-worktree helper, orchestrator walking `TargetSelect → … → Harvest` with JSON artifact persistence, GitHub REST client + `ods ci action` opening PRs.
+- **Stage 2 ✅** BM25 recipe retrieval (`ods recipes search`), auto-promotion rules (seed → candidate → validated → corpus) driven by success history, axum webhook server accepting `/ods optimize` comments with an `owner/repo` allowlist.
+- **Stage 3 ✅** `cargo-semver-checks` subprocess wrapper with breaking-change parser, downstream-consumer test runner for dep bumps (cargo/go/npm/pytest auto-pick), Go adapter (`go test`, `go test -bench`, `go test -fuzz`).
+- **Stage 4 ✅** Ruby, Python, C/C++, JS/TS, Java adapters (detect + build + test + bench output parsers for minitest / rspec / pytest / pytest-benchmark / ctest / jest / vitest / tinybench / mvn surefire / gradle / benchmark-ips).
 
 ## Status
 
-Stage 0 — scaffolding. The binary builds and the CLI surface is wired end-to-end; real stage execution lands in stage 1.
+Stages 0–4 wired end-to-end. What's real vs. stubbed:
+
+- **Real:** the Loop state machine + autonomy budget gate, orchestrator persistence to `.ods/runs/<run_id>.json`, recipe store + BM25 ranking + promotion, seven language adapters driving real toolchains through `ods-exec`, Linux profiler via `/usr/bin/time` + `strace -c` + `perf stat`, tool-use loop with dispatch + token accounting, GitHub REST client (branch create, file commit via Contents API, PR open), webhook server with comment allowlist, `cargo-semver-checks` + downstream-consumer gate wiring in the zero-diff verifier.
+- **Stubbed / seams only (for follow-on work):**
+  - AST queries use regex over lines today; a tree-sitter backend can slot in behind `LanguageAdapter::ast_query` with no caller changes.
+  - The LLM transform step exists (ToolUseLoop.run + specialist prompts + toolkit) but the orchestrator does not autonomously invoke it yet. Add `--llm` handling in the orchestrator to race specialists in worktrees.
+  - Webhook signature verification (`X-Hub-Signature-256`) is TODO.
+  - Criterion JSON ingestion is regex-based against stdout; a `--bench-json` path lands next.
+
+## CLI reference
+
+```
+ods scan     <repo> [--json]
+ods run      <repo> --target <lang::mod::sym> [--mode dev|ci] [--wall-cap-s N] [--spend-cap-usd N] [--llm]
+ods bench    <repo> --target <lang::mod::sym>
+ods verify   <repo> --patch <path>
+ods recipes  list   [--language <lang>]
+ods recipes  show   <id>
+ods recipes  search <query> [--language <lang>] [--limit N]
+ods recipes  import <path.yaml>
+ods recipes  export <out.yaml>
+ods recipes  promote <id> --to seed|candidate|validated|corpus
+ods ci       action <repo> --target <sig> --github-repo <owner/name> [--base <branch>] [--allowlist owner/a,owner/b]
+ods ci       serve  [--port 8787]
+ods explain  <repo> <run-id>
+```

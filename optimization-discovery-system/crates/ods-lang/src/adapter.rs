@@ -1,4 +1,5 @@
 use anyhow::Result;
+use async_trait::async_trait;
 use ods_core::TargetSig;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -86,22 +87,28 @@ pub struct FuzzReport {
 }
 
 /// Everything the loop needs from a concrete language to run end-to-end.
+#[async_trait]
 pub trait LanguageAdapter: Send + Sync {
     fn name(&self) -> &'static str;
 
-    fn detect(&self, repo: &Path) -> Result<bool>;
+    async fn detect(&self, repo: &Path) -> Result<bool>;
 
-    fn build(&self, repo: &Path, patch: Option<&Patch>) -> Result<Build>;
+    async fn build(&self, repo: &Path, patch: Option<&Patch>) -> Result<Build>;
 
-    fn run_tests(&self, build: &Build, scope: TestScope) -> Result<TestReport>;
+    async fn run_tests(&self, build: &Build, scope: TestScope) -> Result<TestReport>;
 
-    fn run_bench(&self, build: &Build, target: &TargetSig) -> Result<BenchReport>;
+    async fn run_bench(&self, build: &Build, target: &TargetSig) -> Result<BenchReport>;
 
-    fn profile(&self, build: &Build, target: &TargetSig) -> Result<ProfileReport>;
+    async fn profile(&self, build: &Build, target: &TargetSig) -> Result<ProfileReport>;
 
-    fn ast_query(&self, file: &Path, query: &str) -> Result<Vec<AstMatch>>;
+    async fn ast_query(&self, file: &Path, query: &str) -> Result<Vec<AstMatch>>;
 
     fn emit_patch(&self, edits: &[Edit]) -> Result<Patch>;
 
-    fn fuzz(&self, build: &Build, target: &TargetSig, budget: Duration) -> Result<FuzzReport>;
+    async fn fuzz(
+        &self,
+        build: &Build,
+        target: &TargetSig,
+        budget: Duration,
+    ) -> Result<FuzzReport>;
 }

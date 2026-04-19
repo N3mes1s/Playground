@@ -6,9 +6,11 @@
 //!  Verify -> Bench -> Explain -> Harvest`
 
 pub mod domain;
+pub mod git;
 pub mod loop_;
 pub mod mode;
 
 pub use domain::{Hypothesis, OptimizationCategory, RunId, TargetSig};
+pub use git::{Worktree, WorktreeHandle};
 pub use loop_::{LoopError, LoopStage, Run};
 pub use mode::{Budget, Mode};

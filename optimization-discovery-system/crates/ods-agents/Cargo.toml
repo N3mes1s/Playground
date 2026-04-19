@@ -11,6 +11,9 @@ publish               = false
 ods-core    = { workspace = true }
 ods-recipes = { workspace = true }
 ods-lang    = { workspace = true }
+ods-measure = { workspace = true }
+ods-verify  = { workspace = true }
+ods-exec    = { workspace = true }
 anyhow      = { workspace = true }
 thiserror   = { workspace = true }
 serde       = { workspace = true }
@@ -18,3 +21,8 @@ serde_json  = { workspace = true }
 tracing     = { workspace = true }
 reqwest     = { workspace = true }
 tokio       = { workspace = true }
+async-trait = { workspace = true }
+regex       = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

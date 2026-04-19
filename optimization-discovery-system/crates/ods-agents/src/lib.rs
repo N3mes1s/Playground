@@ -7,9 +7,13 @@
 //! CLI, keeping the musl single-binary story intact.
 
 pub mod anthropic;
+pub mod orchestrator;
 pub mod planner;
 pub mod specialist;
+pub mod tools;
 
-pub use anthropic::{AnthropicClient, ToolCall, ToolResult, ToolUseLoop};
+pub use anthropic::{AnthropicClient, Conversation, LoopStats, ToolCall, ToolResult, ToolUseLoop};
+pub use orchestrator::{Orchestrator, RunArtifact};
 pub use planner::Planner;
 pub use specialist::{Specialist, SpecialistKind, SpecialistOutcome};
+pub use tools::{SpecialistToolkit, ToolHandlerMap};

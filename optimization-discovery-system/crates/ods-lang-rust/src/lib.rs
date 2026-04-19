@@ -1,22 +1,36 @@
-//! Rust language adapter. MVP detects a Cargo workspace and wires Criterion /
-//! cargo-test / cargo-fuzz / perf / cargo-flamegraph. The concrete tool
-//! invocations land in stage 1; today we expose a typed skeleton so the loop
-//! compiles end-to-end.
+//! Rust language adapter backed by real subprocess invocations of `cargo`.
+//!
+//! The adapter intentionally avoids linking against `tree-sitter` today: the
+//! grammar adds ~40s of `cc` to every `cargo build` and we can do useful AST
+//! matching with line-anchored regex queries for the MVP. Stage 2+ can swap in
+//! `tree-sitter-rust` behind the same [`LanguageAdapter::ast_query`] seam
+//! without a user-visible change.
 
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use ods_core::TargetSig;
+use ods_exec::{run, which, Invocation};
 use ods_lang::{
-    AstMatch, BenchReport, Build, Edit, FuzzReport, LanguageAdapter, Patch, ProfileReport,
-    TestReport, TestScope,
+    AstMatch, BenchReport, BenchSample, Build, Edit, FuzzReport, LanguageAdapter, Patch,
+    ProfileReport, TestReport, TestScope,
 };
-use std::path::{Path, PathBuf};
+use regex::Regex;
+use std::path::Path;
 use std::time::Duration;
 
-pub struct RustAdapter;
+pub struct RustAdapter {
+    pub test_timeout: Duration,
+    pub bench_timeout: Duration,
+    pub build_timeout: Duration,
+}
 
 impl RustAdapter {
     pub fn new() -> Self {
-        Self
+        Self {
+            test_timeout: Duration::from_secs(600),
+            bench_timeout: Duration::from_secs(600),
+            build_timeout: Duration::from_secs(600),
+        }
     }
 }
 
@@ -26,22 +40,33 @@ impl Default for RustAdapter {
     }
 }
 
+#[async_trait]
 impl LanguageAdapter for RustAdapter {
     fn name(&self) -> &'static str {
         "rust"
     }
 
-    fn detect(&self, repo: &Path) -> Result<bool> {
+    async fn detect(&self, repo: &Path) -> Result<bool> {
         Ok(repo.join("Cargo.toml").exists())
     }
 
-    fn build(&self, repo: &Path, _patch: Option<&Patch>) -> Result<Build> {
-        // Stage 1 will apply the patch into a worktree and run `cargo build
-        // --release`. For now we only assert the layout exists.
-        let manifest = repo.join("Cargo.toml");
-        if !manifest.exists() {
+    async fn build(&self, repo: &Path, _patch: Option<&Patch>) -> Result<Build> {
+        if !repo.join("Cargo.toml").exists() {
             anyhow::bail!("not a cargo workspace: {}", repo.display());
         }
+        if which("cargo").is_none() {
+            anyhow::bail!("cargo not found on PATH");
+        }
+        // `cargo build --release` warms the target dir; downstream steps
+        // rely on it existing.
+        run(&Invocation::new("cargo")
+            .args(["build", "--release", "--workspace", "--all-targets"].map(String::from))
+            .cwd(repo)
+            .timeout(self.build_timeout)
+            .allow_nonzero())
+            .await
+            .context("cargo build")?;
+
         Ok(Build {
             workdir: repo.to_path_buf(),
             artifact: None,
@@ -49,53 +74,131 @@ impl LanguageAdapter for RustAdapter {
         })
     }
 
-    fn run_tests(&self, _build: &Build, _scope: TestScope) -> Result<TestReport> {
-        // Stage 1: `cargo test --no-fail-fast --message-format=json`.
-        Ok(TestReport {
-            passed: 0,
-            failed: 0,
-            skipped: 0,
-            log_path: None,
-        })
+    async fn run_tests(&self, build: &Build, scope: TestScope) -> Result<TestReport> {
+        let mut args = vec![
+            "test".to_string(),
+            "--workspace".into(),
+            "--no-fail-fast".into(),
+            "--quiet".into(),
+        ];
+        match scope {
+            TestScope::Unit => args.push("--lib".into()),
+            TestScope::Integration => args.push("--tests".into()),
+            TestScope::Full => {}
+        }
+        let out = run(&Invocation::new("cargo")
+            .args(args)
+            .cwd(&build.workdir)
+            .timeout(self.test_timeout)
+            .allow_nonzero())
+            .await?;
+        Ok(parse_cargo_test_output(&out.stdout, &out.stderr))
     }
 
-    fn run_bench(&self, _build: &Build, _target: &TargetSig) -> Result<BenchReport> {
-        // Stage 1: `cargo bench --bench <name> -- --output-format bencher`.
-        Ok(BenchReport { samples: vec![] })
+    async fn run_bench(&self, build: &Build, _target: &TargetSig) -> Result<BenchReport> {
+        // Use `cargo bench --no-fail-fast` with libtest bencher output. Many
+        // crates use Criterion; its default text output also contains lines
+        // we can parse (`name  time:  [low mid high]`). We try both.
+        let out = run(&Invocation::new("cargo")
+            .args(["bench", "--workspace", "--no-fail-fast"].map(String::from))
+            .cwd(&build.workdir)
+            .timeout(self.bench_timeout)
+            .allow_nonzero())
+            .await?;
+        Ok(parse_cargo_bench_output(&out.stdout))
     }
 
-    fn profile(&self, _build: &Build, _target: &TargetSig) -> Result<ProfileReport> {
-        // Stage 1: perf_event_open + aya eBPF for syscalls and allocs.
-        Ok(ProfileReport {
-            wall: Duration::ZERO,
-            cycles: None,
-            instructions: None,
-            llc_misses: None,
-            branch_misses: None,
-            syscall_counts: vec![],
-            alloc_count: None,
-            alloc_bytes: None,
-            flame_svg_path: None,
-        })
+    async fn profile(&self, build: &Build, target: &TargetSig) -> Result<ProfileReport> {
+        crate::profile::profile_target(&build.workdir, target).await
     }
 
-    fn ast_query(&self, _file: &Path, _query: &str) -> Result<Vec<AstMatch>> {
-        // Stage 1: tree-sitter-rust with the tree-sitter crate.
-        Ok(vec![])
+    async fn ast_query(&self, file: &Path, query: &str) -> Result<Vec<AstMatch>> {
+        let text = tokio::fs::read_to_string(file)
+            .await
+            .with_context(|| format!("read {}", file.display()))?;
+        let re = Regex::new(query).context("compile ast_query regex")?;
+        let mut out = Vec::new();
+        for (i, line) in text.lines().enumerate() {
+            if re.is_match(line) {
+                out.push(AstMatch {
+                    file: file.to_path_buf(),
+                    start_line: (i + 1) as u32,
+                    end_line: (i + 1) as u32,
+                    text: line.to_string(),
+                });
+            }
+        }
+        Ok(out)
     }
 
     fn emit_patch(&self, edits: &[Edit]) -> Result<Patch> {
+        let mut diff = String::new();
+        for e in edits {
+            let rel = e.file.display().to_string();
+            diff.push_str(&format!("--- a/{rel}\n+++ b/{rel}\n"));
+            let text_diff = similar::TextDiff::from_lines(&e.before, &e.after);
+            for hunk in text_diff.unified_diff().header("before", "after").iter_hunks() {
+                diff.push_str(&hunk.to_string());
+            }
+        }
         Ok(Patch {
-            unified_diff: unified_diff_stub(edits),
+            unified_diff: diff,
             edits: edits.to_vec(),
         })
     }
 
-    fn fuzz(&self, _build: &Build, _target: &TargetSig, budget: Duration) -> Result<FuzzReport> {
-        // Stage 1: `cargo fuzz run <target> -- -max_total_time=<budget>`.
+    async fn fuzz(
+        &self,
+        build: &Build,
+        _target: &TargetSig,
+        budget: Duration,
+    ) -> Result<FuzzReport> {
+        if which("cargo-fuzz").is_none() {
+            tracing::warn!("cargo-fuzz not installed; skipping fuzz step");
+            return Ok(FuzzReport {
+                minutes: 0,
+                crashes: 0,
+                seed_corpus_size: 0,
+            });
+        }
+        let fuzz_dir = build.workdir.join("fuzz");
+        if !fuzz_dir.exists() {
+            return Ok(FuzzReport {
+                minutes: 0,
+                crashes: 0,
+                seed_corpus_size: 0,
+            });
+        }
+        let targets = discover_fuzz_targets(&fuzz_dir)?;
+        let Some(first) = targets.first() else {
+            return Ok(FuzzReport {
+                minutes: 0,
+                crashes: 0,
+                seed_corpus_size: 0,
+            });
+        };
+        let out = run(&Invocation::new("cargo")
+            .args(
+                [
+                    "fuzz".to_string(),
+                    "run".to_string(),
+                    first.clone(),
+                    "--".to_string(),
+                    format!("-max_total_time={}", budget.as_secs()),
+                ],
+            )
+            .cwd(&build.workdir)
+            .timeout(budget + Duration::from_secs(30))
+            .allow_nonzero())
+            .await?;
+        let crashes = if out.stdout.contains("crash-") || out.stderr.contains("crash-") {
+            1
+        } else {
+            0
+        };
         Ok(FuzzReport {
-            minutes: budget.as_secs() as u32 / 60,
-            crashes: 0,
+            minutes: (budget.as_secs() / 60) as u32,
+            crashes,
             seed_corpus_size: 0,
         })
     }
@@ -117,25 +220,148 @@ fn detect_toolchain(repo: &Path) -> Option<String> {
     None
 }
 
-fn unified_diff_stub(edits: &[Edit]) -> String {
-    // Full unified-diff emission lands in stage 1 via `similar` crate. For now
-    // produce a deterministic header-only skeleton so downstream consumers can
-    // roundtrip the Patch struct.
-    let mut out = String::new();
-    for e in edits {
-        out.push_str(&format!("--- a/{}\n", display_path(&e.file)));
-        out.push_str(&format!("+++ b/{}\n", display_path(&e.file)));
+fn discover_fuzz_targets(fuzz_dir: &Path) -> Result<Vec<String>> {
+    let targets_dir = fuzz_dir.join("fuzz_targets");
+    if !targets_dir.exists() {
+        return Ok(vec![]);
     }
-    out
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(&targets_dir)? {
+        let e = e?;
+        if let Some(name) = e.path().file_stem().and_then(|s| s.to_str()) {
+            out.push(name.to_string());
+        }
+    }
+    Ok(out)
 }
 
-fn display_path(p: &PathBuf) -> String {
-    p.display().to_string()
+/// Parse `cargo test --quiet` output. libtest emits lines like:
+///   `test result: ok. 42 passed; 0 failed; 1 ignored; 0 measured;`
+pub fn parse_cargo_test_output(stdout: &str, stderr: &str) -> TestReport {
+    let re = Regex::new(
+        r"test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored",
+    )
+    .expect("static regex");
+    let mut passed = 0u32;
+    let mut failed = 0u32;
+    let mut skipped = 0u32;
+    for hay in [stdout, stderr] {
+        for caps in re.captures_iter(hay) {
+            passed += caps[1].parse::<u32>().unwrap_or(0);
+            failed += caps[2].parse::<u32>().unwrap_or(0);
+            skipped += caps[3].parse::<u32>().unwrap_or(0);
+        }
+    }
+    TestReport {
+        passed,
+        failed,
+        skipped,
+        log_path: None,
+    }
 }
 
-pub fn sanity_check(repo: &Path) -> Result<()> {
-    RustAdapter::new()
-        .detect(repo)
-        .context("detect rust project")?;
-    Ok(())
+/// Parse `cargo bench` output, accepting both libtest bencher format
+/// (`test bench_name ... bench:  1,234 ns/iter (+/- 56)`) and Criterion's
+/// default text (`bench_name  time:   [1.1 us 1.2 us 1.3 us]`).
+pub fn parse_cargo_bench_output(stdout: &str) -> BenchReport {
+    let mut samples = Vec::new();
+
+    let libtest_re = Regex::new(
+        r"test\s+(?P<name>\S+)\s+\.\.\.\s+bench:\s+([\d,]+)\s+ns/iter",
+    )
+    .unwrap();
+    for caps in libtest_re.captures_iter(stdout) {
+        let name = caps.name("name").unwrap().as_str().to_string();
+        let raw = caps.get(2).unwrap().as_str().replace(',', "");
+        if let Ok(ns) = raw.parse::<f64>() {
+            samples.push(BenchSample {
+                name,
+                ns_per_iter: ns,
+                iters: 1,
+            });
+        }
+    }
+
+    let crit_re = Regex::new(
+        r"(?m)^(?P<name>\S[^\n]*?)\s+time:\s+\[([\d\.]+)\s+(?P<unit>ns|us|µs|ms|s)\s+([\d\.]+)\s+\S+\s+([\d\.]+)\s+\S+\]",
+    )
+    .unwrap();
+    for caps in crit_re.captures_iter(stdout) {
+        let name = caps.name("name").unwrap().as_str().trim().to_string();
+        let mid: f64 = caps.get(4).and_then(|m| m.as_str().parse().ok()).unwrap_or(0.0);
+        let unit = caps.name("unit").unwrap().as_str();
+        let ns = match unit {
+            "ns" => mid,
+            "us" | "µs" => mid * 1_000.0,
+            "ms" => mid * 1_000_000.0,
+            "s" => mid * 1_000_000_000.0,
+            _ => mid,
+        };
+        samples.push(BenchSample {
+            name,
+            ns_per_iter: ns,
+            iters: 1,
+        });
+    }
+
+    BenchReport { samples }
+}
+
+pub mod profile;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_libtest_results() {
+        let out = "test result: ok. 12 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s";
+        let r = parse_cargo_test_output(out, "");
+        assert_eq!(r.passed, 12);
+        assert_eq!(r.failed, 0);
+        assert_eq!(r.skipped, 1);
+    }
+
+    #[test]
+    fn parses_libtest_bench() {
+        let out = "test foo::bench_a ... bench:  1,234 ns/iter (+/- 56)";
+        let r = parse_cargo_bench_output(out);
+        assert_eq!(r.samples.len(), 1);
+        assert_eq!(r.samples[0].ns_per_iter, 1234.0);
+        assert_eq!(r.samples[0].name, "foo::bench_a");
+    }
+
+    #[test]
+    fn parses_criterion_bench() {
+        let out = "group/scan/10000   time:   [1.1 us 1.2 us 1.3 us]";
+        let r = parse_cargo_bench_output(out);
+        assert_eq!(r.samples.len(), 1);
+        assert!((r.samples[0].ns_per_iter - 1200.0).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn ast_query_matches_regex() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("x.rs");
+        std::fs::write(&p, "fn a() {}\nfn read_dir() {}\nfn b() {}\n").unwrap();
+        let a = RustAdapter::new();
+        let hits = a.ast_query(&p, r"fn read_dir\b").await.unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].start_line, 2);
+    }
+
+    #[test]
+    fn emit_patch_produces_unified_diff() {
+        let a = RustAdapter::new();
+        let edits = vec![Edit {
+            file: std::path::PathBuf::from("src/lib.rs"),
+            before: "a\nb\n".into(),
+            after: "a\nB\n".into(),
+        }];
+        let patch = a.emit_patch(&edits).unwrap();
+        assert!(patch.unified_diff.contains("---"));
+        assert!(patch.unified_diff.contains("+++"));
+        assert!(patch.unified_diff.contains("-b"));
+        assert!(patch.unified_diff.contains("+B"));
+    }
 }

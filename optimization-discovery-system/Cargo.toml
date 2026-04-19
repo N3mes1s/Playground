@@ -7,8 +7,15 @@ members = [
     "crates/ods-measure",
     "crates/ods-verify",
     "crates/ods-recipes",
+    "crates/ods-exec",
     "crates/ods-lang",
     "crates/ods-lang-rust",
+    "crates/ods-lang-go",
+    "crates/ods-lang-ruby",
+    "crates/ods-lang-python",
+    "crates/ods-lang-c",
+    "crates/ods-lang-js",
+    "crates/ods-lang-java",
     "crates/ods-ci",
     "crates/ods-report",
 ]
@@ -27,8 +34,15 @@ ods-agents    = { path = "crates/ods-agents" }
 ods-measure   = { path = "crates/ods-measure" }
 ods-verify    = { path = "crates/ods-verify" }
 ods-recipes   = { path = "crates/ods-recipes" }
+ods-exec      = { path = "crates/ods-exec" }
 ods-lang      = { path = "crates/ods-lang" }
 ods-lang-rust = { path = "crates/ods-lang-rust" }
+ods-lang-go   = { path = "crates/ods-lang-go" }
+ods-lang-ruby = { path = "crates/ods-lang-ruby" }
+ods-lang-python = { path = "crates/ods-lang-python" }
+ods-lang-c    = { path = "crates/ods-lang-c" }
+ods-lang-js   = { path = "crates/ods-lang-js" }
+ods-lang-java = { path = "crates/ods-lang-java" }
 ods-ci        = { path = "crates/ods-ci" }
 ods-report    = { path = "crates/ods-report" }
 
@@ -37,7 +51,7 @@ thiserror  = "1"
 serde      = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
-tokio      = { version = "1", features = ["rt-multi-thread", "macros", "fs", "process", "time", "sync", "signal"] }
+tokio      = { version = "1", features = ["rt-multi-thread", "macros", "fs", "process", "time", "sync", "signal", "net", "io-util"] }
 tracing    = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap       = { version = "4", features = ["derive", "env"] }
@@ -46,6 +60,12 @@ time       = { version = "0.3", features = ["serde", "formatting", "parsing"] }
 reqwest    = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "json"] }
 rusqlite   = { version = "0.32", features = ["bundled"] }
 semver     = { version = "1", features = ["serde"] }
+regex      = "1"
+walkdir    = "2"
+similar    = "2"
+tempfile   = "3"
+axum       = { version = "0.7", default-features = false, features = ["http1", "json", "tokio", "macros"] }
+async-trait = "0.1"
 
 [profile.release]
 opt-level   = 3

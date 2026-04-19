@@ -1,5 +1,5 @@
 [package]
-name        = "ods-verify"
+name        = "ods-lang-java"
 version.workspace     = true
 edition.workspace     = true
 rust-version.workspace = true
@@ -12,13 +12,9 @@ ods-core  = { workspace = true }
 ods-lang  = { workspace = true }
 ods-exec  = { workspace = true }
 anyhow    = { workspace = true }
-thiserror = { workspace = true }
-serde     = { workspace = true }
-serde_json = { workspace = true }
-tracing   = { workspace = true }
-semver    = { workspace = true }
+async-trait = { workspace = true }
 regex     = { workspace = true }
+similar   = { workspace = true }
 tokio     = { workspace = true }
-
-[dev-dependencies]
-tempfile = { workspace = true }
+tracing   = { workspace = true }
+serde     = { workspace = true }

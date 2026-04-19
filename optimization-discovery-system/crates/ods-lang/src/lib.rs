@@ -6,7 +6,7 @@ pub mod adapter;
 pub mod registry;
 
 pub use adapter::{
-    AstMatch, BenchReport, Build, Edit, FuzzReport, LanguageAdapter, Patch, ProfileReport,
-    TestReport, TestScope,
+    AstMatch, BenchReport, BenchSample, Build, Edit, FuzzReport, LanguageAdapter, Patch,
+    ProfileReport, TestReport, TestScope,
 };
 pub use registry::Registry;

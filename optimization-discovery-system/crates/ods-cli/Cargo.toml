@@ -19,6 +19,12 @@ ods-verify     = { workspace = true }
 ods-recipes    = { workspace = true }
 ods-lang       = { workspace = true }
 ods-lang-rust  = { workspace = true }
+ods-lang-go    = { workspace = true }
+ods-lang-ruby  = { workspace = true }
+ods-lang-python = { workspace = true }
+ods-lang-c     = { workspace = true }
+ods-lang-js    = { workspace = true }
+ods-lang-java  = { workspace = true }
 ods-ci         = { workspace = true }
 ods-report     = { workspace = true }
 anyhow         = { workspace = true }

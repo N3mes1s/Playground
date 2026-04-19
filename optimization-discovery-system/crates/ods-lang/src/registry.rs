@@ -17,9 +17,9 @@ impl Registry {
         self.adapters.push(adapter);
     }
 
-    pub fn detect(&self, repo: &Path) -> Result<Arc<dyn LanguageAdapter>> {
+    pub async fn detect(&self, repo: &Path) -> Result<Arc<dyn LanguageAdapter>> {
         for adapter in &self.adapters {
-            if adapter.detect(repo)? {
+            if adapter.detect(repo).await? {
                 return Ok(adapter.clone());
             }
         }
