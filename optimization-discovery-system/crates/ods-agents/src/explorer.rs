@@ -24,6 +24,9 @@ pub struct ExplorerOutcome {
     pub tokens_in: u32,
     pub tokens_out: u32,
     pub iterations: u32,
+    /// Raw final text from the assistant. Kept around so callers can
+    /// diagnose parse failures without re-running the whole conversation.
+    pub final_text: String,
 }
 
 #[derive(Debug, Clone)]
@@ -45,32 +48,40 @@ pub async fn run_explorer(input: ExplorerInput<'_>) -> Result<ExplorerOutcome> {
     // toolkit - no apply_patch, no run_tests, no run_bench.
     let mut loop_ = ToolUseLoop::default();
     loop_.max_iters = input.max_iters;
+    // Grammar-constrain the final text block so the model CANNOT return
+    // prose, markdown fences that fail to parse, or out-of-schema fields.
+    // See https://platform.claude.com/docs/en/build-with-claude/structured-outputs.
+    // Works on Opus 4.7/4.6, Sonnet 4.6/4.5, Haiku 4.5. Composes with
+    // tools: the model uses tools freely during intermediate turns, and
+    // the final text response is schema-valid by construction.
+    loop_.output_schema = Some(explorer_output_schema());
     ToolHandlerMap::register_read_only(&mut loop_, Sandbox::new(input.repo.to_path_buf()));
 
     let spec = Specialist::new(SpecialistKind::Explorer);
     let system = spec.system_prompt();
     let user = format!(
-        "Survey this {} codebase for performance-optimisation patterns that \
-         could apply across many similar crates. Repo root is `.`. \
-         Propose up to {} reusable patterns.\n\n\
-         **Hard constraints on your final answer:**\n\
-         1. Your LAST turn MUST contain a single fenced ```json block and \
-         NOTHING ELSE outside it. No commentary, no prose.\n\
-         2. Inside the block, emit exactly this shape (the parser ignores \
-         everything else):\n\
-         ```json\n\
-         {{\n  \"recipes\": [\n    {{\n      \"id\": \"hyp-<slug>\",\n      \
-         \"name\": \"<pattern name>\",\n      \"category\": \"<one of: \
-         syscall-elimination, alloc-reduction, fast-path-specialization, \
-         algorithmic, validation-removal, caching, \
-         dependency-optimization>\",\n      \"ast_pattern\": \"<regex>\",\n      \
-         \"profile_signature\": [\"...\"],\n      \"steps\": [\"...\"],\n      \
-         \"invariants\": [\"...\"]\n    }}\n  ]\n}}\n```\n\
-         3. If you find nothing worth proposing, emit the block with an \
-         empty `recipes: []` and finish -- do not keep searching beyond \
-         the iteration budget.\n\
-         4. Patterns must describe a SHAPE (regex trigger + what to do), \
-         not a one-off fix for a specific function in this repo.",
+        "Survey this {} codebase for reusable performance-optimisation \
+         patterns. Repo root is `.`. Target up to {} proposals.\n\n\
+         **Do the survey first.** Required before your final response:\n\
+         - `list_dir` on `.` and on the primary source directory.\n\
+         - `read_file` on >=3 files that look hot (parsers, core loops, \
+         formatters, I/O, hashing, string-heavy code).\n\
+         - >=2 `ast_query` calls looking for concrete smells (e.g. \
+         `for.*\\{{.*clone\\(\\)`, `Vec::new.*\\}}`, `fmt::write`, \
+         `HashMap::new.*loop`).\n\
+         - 1 `recipe_search` to avoid proposing duplicates of what's \
+         already in the corpus.\n\n\
+         Only THEN finalise. Skipping exploration and returning an empty \
+         list on iteration 1 is the wrong move -- there are almost \
+         always patterns worth proposing in a real codebase.\n\n\
+         **Output format.** Your final text response is grammar-constrained \
+         to a JSON object of shape `{{\"recipes\": [...]}}` where each item \
+         has: id, name, category (one of syscall-elimination, \
+         alloc-reduction, fast-path-specialization, algorithmic, \
+         validation-removal, caching, dependency-optimization), \
+         ast_pattern (regex), profile_signature (string[]), steps \
+         (string[]), invariants (string[]). Don't worry about fences or \
+         commas -- the schema constrains generation.",
         input.language, input.max_recipes
     );
 
@@ -83,6 +94,61 @@ pub async fn run_explorer(input: ExplorerInput<'_>) -> Result<ExplorerOutcome> {
         tokens_in: stats.input_tokens,
         tokens_out: stats.output_tokens,
         iterations: stats.iterations,
+        final_text: text,
+    })
+}
+
+/// JSON Schema we pass to Claude's `output_config.format.json_schema.schema`
+/// so the final text block is grammar-constrained to match.
+///
+/// Anthropic's structured-outputs docs require `additionalProperties: false`
+/// on every object. Recursive schemas, numeric bounds, and string-length
+/// constraints are NOT supported -- we enumerate categories and leave
+/// string fields unconstrained.
+pub(crate) fn explorer_output_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["recipes"],
+        "properties": {
+            "recipes": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["id", "name", "category", "ast_pattern"],
+                    "properties": {
+                        "id": {"type": "string"},
+                        "name": {"type": "string"},
+                        "category": {
+                            "type": "string",
+                            "enum": [
+                                "syscall-elimination",
+                                "alloc-reduction",
+                                "fast-path-specialization",
+                                "algorithmic",
+                                "validation-removal",
+                                "caching",
+                                "dependency-optimization"
+                            ]
+                        },
+                        "ast_pattern": {"type": "string"},
+                        "profile_signature": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        },
+                        "steps": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        },
+                        "invariants": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        }
+                    }
+                }
+            }
+        }
     })
 }
 

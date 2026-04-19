@@ -69,13 +69,42 @@ impl AnthropicClient {
         tools: &[ToolSpec],
         max_tokens: u32,
     ) -> Result<ResponseEnvelope> {
-        let body = serde_json::json!({
+        self.send_messages_with_schema(system, messages, tools, max_tokens, None)
+            .await
+    }
+
+    /// Variant of [`send_messages`] that sets the `output_config.format`
+    /// field so Claude's grammar-constrained decoder guarantees the final
+    /// text block is schema-valid JSON.
+    ///
+    /// See https://platform.claude.com/docs/en/build-with-claude/structured-outputs.
+    /// Generally available on Claude Opus 4.7 / 4.6, Sonnet 4.6 / 4.5,
+    /// Haiku 4.5. No beta header required. Works even when tools are in
+    /// play - the model uses tools freely during intermediate turns and
+    /// the FINAL text block is what gets constrained.
+    pub async fn send_messages_with_schema(
+        &self,
+        system: &str,
+        messages: &[Message],
+        tools: &[ToolSpec],
+        max_tokens: u32,
+        output_schema: Option<&serde_json::Value>,
+    ) -> Result<ResponseEnvelope> {
+        let mut body = serde_json::json!({
             "model": self.model,
             "max_tokens": max_tokens,
             "system": system,
             "messages": messages,
             "tools": tools,
         });
+        if let Some(schema) = output_schema {
+            body["output_config"] = serde_json::json!({
+                "format": {
+                    "type": "json_schema",
+                    "schema": schema,
+                },
+            });
+        }
         let resp = self
             .http
             .post(API_URL)
@@ -186,6 +215,11 @@ pub struct ToolUseLoop {
     pub max_iters: u32,
     pub max_tokens: u32,
     pub tool_specs: Vec<ToolSpec>,
+    /// When `Some`, forwarded as `output_config.format.json_schema.schema`
+    /// on every API request. The final `text` content block is grammar-
+    /// constrained to match this schema -- no parser-of-last-resort
+    /// needed for callers that want structured output.
+    pub output_schema: Option<serde_json::Value>,
     handlers: HashMap<String, Box<dyn ToolHandler>>,
 }
 
@@ -200,6 +234,7 @@ impl Default for ToolUseLoop {
             max_iters: 24,
             max_tokens: 4096,
             tool_specs: Vec::new(),
+            output_schema: None,
             handlers: HashMap::new(),
         }
     }
@@ -267,7 +302,13 @@ impl ToolUseLoop {
         for iter in 0..self.max_iters {
             stats.iterations += 1;
             let envelope = client
-                .send_messages(system, &convo.messages, &self.tool_specs, self.max_tokens)
+                .send_messages_with_schema(
+                    system,
+                    &convo.messages,
+                    &self.tool_specs,
+                    self.max_tokens,
+                    self.output_schema.as_ref(),
+                )
                 .await?;
             stats.input_tokens += envelope.usage.input_tokens;
             stats.output_tokens += envelope.usage.output_tokens;

@@ -903,6 +903,23 @@ async fn cmd_explore(
         outcome.tokens_in,
         outcome.tokens_out
     );
+    if outcome.proposed_recipes.is_empty() {
+        let preview: String = outcome.final_text.chars().take(800).collect();
+        let tail: String = outcome
+            .final_text
+            .chars()
+            .rev()
+            .take(200)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
+        eprintln!("--- final text ({} chars) ---", outcome.final_text.len());
+        eprintln!("head: {preview}");
+        if outcome.final_text.chars().count() > 1000 {
+            eprintln!("tail: {tail}");
+        }
+    }
     if dry_run {
         for r in &outcome.proposed_recipes {
             println!(
