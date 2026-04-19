@@ -18,7 +18,10 @@ use rsa::signature::{RandomizedSigner, SignatureEncoding};
 use rsa::RsaPrivateKey;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppCredentials {
@@ -29,7 +32,7 @@ pub struct AppCredentials {
 #[derive(Debug, Deserialize)]
 struct InstallationTokenResp {
     token: String,
-    #[allow(dead_code)]
+    #[serde(default)]
     expires_at: Option<String>,
 }
 
@@ -64,12 +67,28 @@ impl GitHubAppAuth {
     }
 
     /// Exchange the JWT for an installation token via the GitHub API.
+    /// Returns (token, optional expiry in RFC3339). Prefer
+    /// [`InstallationTokenCache::get`] for any code path that runs more
+    /// than once per process — installation tokens are valid for ~1h
+    /// and there's no reason to mint a new one per request.
     pub async fn installation_token(
         client: &reqwest::Client,
         user_agent: &str,
         creds: &AppCredentials,
         installation_id: u64,
     ) -> Result<String> {
+        let (token, _expires_at) =
+            Self::installation_token_with_expiry(client, user_agent, creds, installation_id)
+                .await?;
+        Ok(token)
+    }
+
+    async fn installation_token_with_expiry(
+        client: &reqwest::Client,
+        user_agent: &str,
+        creds: &AppCredentials,
+        installation_id: u64,
+    ) -> Result<(String, Option<String>)> {
         let jwt = Self::jwt(creds, Duration::from_secs(600))?;
         let url =
             format!("https://api.github.com/app/installations/{installation_id}/access_tokens");
@@ -82,7 +101,141 @@ impl GitHubAppAuth {
             .await?
             .error_for_status()?;
         let parsed: InstallationTokenResp = resp.json().await?;
-        Ok(parsed.token)
+        Ok((parsed.token, parsed.expires_at))
+    }
+}
+
+/// Cached installation token. Valid until `expires_at_local` (an `Instant`
+/// aligned to the local monotonic clock, so DST / wall-clock jumps don't
+/// cause false renewals).
+#[derive(Debug, Clone)]
+struct CachedToken {
+    token: String,
+    expires_at_local: Instant,
+}
+
+/// Per-installation cache of GitHub App installation tokens.
+///
+/// GitHub issues these with a 1-hour TTL. Minting one costs an API round
+/// trip + an RSA signature; under the webhook server's comment-triggered
+/// workflow that's one call per `/ods optimize` comment, which we can
+/// collapse to one call per hour per installation by caching.
+///
+/// The cache holds a safety margin (default 5 minutes) before the stated
+/// expiry to avoid returning a token that will expire mid-request.
+#[derive(Debug, Clone)]
+pub struct InstallationTokenCache {
+    inner: Arc<Mutex<HashMap<u64, CachedToken>>>,
+    safety_margin: Duration,
+}
+
+impl Default for InstallationTokenCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl InstallationTokenCache {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+            safety_margin: Duration::from_secs(5 * 60),
+        }
+    }
+
+    pub fn with_safety_margin(mut self, margin: Duration) -> Self {
+        self.safety_margin = margin;
+        self
+    }
+
+    /// Return a valid installation token for `installation_id`, minting a
+    /// new one only when the cache is empty or the cached entry is within
+    /// `safety_margin` of its expiry. Serialises concurrent refreshes for
+    /// the same installation so N simultaneous webhooks produce exactly
+    /// one API call.
+    pub async fn get(
+        &self,
+        client: &reqwest::Client,
+        user_agent: &str,
+        creds: &AppCredentials,
+        installation_id: u64,
+    ) -> Result<String> {
+        let mut guard = self.inner.lock().await;
+        if let Some(entry) = guard.get(&installation_id) {
+            if entry.expires_at_local > Instant::now() + self.safety_margin {
+                return Ok(entry.token.clone());
+            }
+        }
+        // Miss or expired — mint a fresh one. We hold the lock across the
+        // network call so a burst of N concurrent requests blocks on one
+        // refresh instead of racing to mint N tokens.
+        let (token, expires_at) = GitHubAppAuth::installation_token_with_expiry(
+            client,
+            user_agent,
+            creds,
+            installation_id,
+        )
+        .await?;
+        let ttl = expires_at
+            .as_deref()
+            .and_then(parse_rfc3339_to_remaining)
+            .unwrap_or_else(|| Duration::from_secs(55 * 60));
+        let entry = CachedToken {
+            token: token.clone(),
+            expires_at_local: Instant::now() + ttl,
+        };
+        guard.insert(installation_id, entry);
+        Ok(token)
+    }
+
+    /// Drop any cached entry for `installation_id`. Use after a 401 to
+    /// force a refresh on the next call.
+    pub async fn invalidate(&self, installation_id: u64) {
+        self.inner.lock().await.remove(&installation_id);
+    }
+
+    /// Test-only: pre-populate the cache with a synthetic entry so the
+    /// hit/expiry branches can be exercised without talking to GitHub.
+    #[doc(hidden)]
+    pub async fn insert_for_test(
+        &self,
+        installation_id: u64,
+        token: String,
+        expires_at_local: Instant,
+    ) {
+        self.inner.lock().await.insert(
+            installation_id,
+            CachedToken {
+                token,
+                expires_at_local,
+            },
+        );
+    }
+
+    /// Test-only: peek at the cached token for `installation_id` without
+    /// triggering a refresh.
+    #[doc(hidden)]
+    pub async fn peek(&self, installation_id: u64) -> Option<String> {
+        self.inner
+            .lock()
+            .await
+            .get(&installation_id)
+            .map(|e| e.token.clone())
+    }
+}
+
+/// Parse GitHub's RFC3339 `expires_at` string (e.g. "2024-01-15T12:34:56Z")
+/// and return the duration from *now* until that instant. Returns `None`
+/// for malformed input or expiries already in the past.
+fn parse_rfc3339_to_remaining(s: &str) -> Option<Duration> {
+    let expires =
+        time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok()?;
+    let now = time::OffsetDateTime::now_utc();
+    let remaining = expires - now;
+    if remaining.is_negative() {
+        None
+    } else {
+        Some(Duration::from_secs(remaining.whole_seconds() as u64))
     }
 }
 
@@ -171,5 +324,109 @@ mod tests {
         assert_eq!(b64url(b"foobar"), "Zm9vYmFy");
         assert_eq!(b64url(b"fo"), "Zm8");
         assert_eq!(b64url(b"f"), "Zg");
+    }
+
+    #[test]
+    fn parse_rfc3339_returns_positive_duration_for_future() {
+        // 10 minutes in the future (plus a skew tolerance).
+        let ts = time::OffsetDateTime::now_utc() + time::Duration::seconds(10 * 60);
+        let s = ts
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        let remaining = parse_rfc3339_to_remaining(&s).unwrap();
+        assert!(remaining.as_secs() > 9 * 60 && remaining.as_secs() <= 10 * 60);
+    }
+
+    #[test]
+    fn parse_rfc3339_returns_none_for_past() {
+        let ts = time::OffsetDateTime::now_utc() - time::Duration::seconds(60);
+        let s = ts
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        assert!(parse_rfc3339_to_remaining(&s).is_none());
+    }
+
+    #[test]
+    fn parse_rfc3339_returns_none_for_malformed() {
+        assert!(parse_rfc3339_to_remaining("not a date").is_none());
+        assert!(parse_rfc3339_to_remaining("").is_none());
+    }
+
+    /// A fresh-enough cache entry must be returned without refreshing.
+    /// Proving this requires that `get()` short-circuit *before* any
+    /// network call; we pass an intentionally unreachable HTTP client to
+    /// force a failure if `get()` ever attempts a refresh.
+    #[tokio::test]
+    async fn cache_hit_short_circuits_without_refresh() {
+        let cache = InstallationTokenCache::new();
+        // Token that expires 30 minutes from now — well past the 5-minute
+        // safety margin.
+        cache
+            .insert_for_test(
+                42,
+                "cached-token".into(),
+                Instant::now() + Duration::from_secs(30 * 60),
+            )
+            .await;
+        // Client pointed at a black-hole port so any network call would
+        // fail; the test must succeed purely from cache.
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_millis(1))
+            .build()
+            .unwrap();
+        let creds = AppCredentials {
+            app_id: "1".into(),
+            private_key_pem: "unused".into(),
+        };
+        let got = cache.get(&http, "ua", &creds, 42).await.unwrap();
+        assert_eq!(got, "cached-token");
+    }
+
+    /// A cached entry within the safety margin must NOT short-circuit —
+    /// the cache has to attempt a refresh. We verify by observing that
+    /// the network call is attempted (and fails against a black-hole
+    /// client). A successful "Ok" here would be a correctness bug.
+    #[tokio::test]
+    async fn cache_within_safety_margin_attempts_refresh() {
+        let cache = InstallationTokenCache::new().with_safety_margin(Duration::from_secs(60));
+        // Token technically still valid for 10s, but inside the 60s safety
+        // margin — we must refresh.
+        cache
+            .insert_for_test(
+                7,
+                "about-to-expire".into(),
+                Instant::now() + Duration::from_secs(10),
+            )
+            .await;
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_millis(1))
+            .build()
+            .unwrap();
+        let creds = AppCredentials {
+            app_id: "1".into(),
+            private_key_pem: "-----BEGIN INVALID-----\n-----END INVALID-----".into(),
+        };
+        // The refresh will fail (either at key-parse or at network), but
+        // it MUST try — meaning `get()` returns Err, not the stale token.
+        let got = cache.get(&http, "ua", &creds, 7).await;
+        assert!(
+            got.is_err(),
+            "cache returned stale token inside safety margin: {got:?}",
+        );
+    }
+
+    #[tokio::test]
+    async fn invalidate_drops_cached_entry() {
+        let cache = InstallationTokenCache::new();
+        cache
+            .insert_for_test(
+                99,
+                "stale".into(),
+                Instant::now() + Duration::from_secs(60 * 60),
+            )
+            .await;
+        assert!(cache.peek(99).await.is_some());
+        cache.invalidate(99).await;
+        assert!(cache.peek(99).await.is_none());
     }
 }

@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use ods_agents::{Discoverer, Orchestrator};
 use ods_ci::api::{b64_encode, GitHubClient};
-use ods_ci::{AppCredentials, GitHubAppAuth, PrAllowlist};
+use ods_ci::{AppCredentials, PrAllowlist};
 use ods_core::{git::Worktree, Budget, Mode};
 use ods_lang::Registry;
 use ods_recipes::{score::score_recipes, PromotionState, RecipeQuery, Store};
@@ -650,7 +650,13 @@ async fn cmd_ci(action: CiAction, store_path: &PathBuf) -> Result<()> {
                     private_key_pem: pem,
                 };
                 let http = reqwest::Client::builder().build()?;
-                GitHubAppAuth::installation_token(&http, "ods/0.1", &creds, install_id).await?
+                // Route through the per-installation token cache. A single
+                // `ods ci action` invocation typically only mints once
+                // anyway, but the cache lets long-running processes
+                // (webhook server, test harnesses) share one token.
+                ods_ci::InstallationTokenCache::new()
+                    .get(&http, "ods/0.1", &creds, install_id)
+                    .await?
             } else {
                 std::env::var("GITHUB_TOKEN")
                     .or_else(|_| std::env::var("ODS_GITHUB_TOKEN"))
