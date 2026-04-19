@@ -400,10 +400,20 @@ impl ToolHandler for ApplyPatch {
     async fn call(&self, input: &serde_json::Value) -> Result<String> {
         let arg: ApplyPatchIn = serde_json::from_value(input.clone())?;
         let root: &Path = &self.sandbox.root;
-        // git apply when possible; otherwise `patch -p1`.
+
+        // Two-stage application:
+        //
+        // 1. Try `git apply` (or `patch -p1`) — strict, perfect output
+        //    when it succeeds, but rejects any context drift.
+        // 2. On failure, fall back to the in-process tolerant applier
+        //    in `crate::diff_apply` which normalises typographic chars
+        //    (em-dash → hyphen, curly quotes → straight) and searches
+        //    around the hunk-header line hint. Documented in
+        //    `docs/first-end-to-end-win.md` as the top observed
+        //    failure mode for specialist-generated diffs.
         let tmp = root.join(".ods-tmp.patch");
         tokio::fs::write(&tmp, arg.diff.as_bytes()).await?;
-        let result = if root.join(".git").exists() {
+        let strict_result = if root.join(".git").exists() {
             run(&Invocation::new("git")
                 .args([
                     "apply".to_string(),
@@ -426,15 +436,34 @@ impl ToolHandler for ApplyPatch {
             .await
         };
         let _ = tokio::fs::remove_file(&tmp).await;
-        let out = result?;
-        if out.success() {
-            Ok("applied".into())
-        } else {
-            Err(anyhow::anyhow!(
-                "apply_patch failed: status={} stderr={}",
-                out.status,
-                out.stderr.chars().take(800).collect::<String>()
-            ))
+
+        match strict_result {
+            Ok(out) if out.success() => Ok("applied (strict)".into()),
+            Ok(out) => {
+                let strict_stderr = out.stderr.chars().take(400).collect::<String>();
+                match crate::diff_apply::apply_unified_diff(root, &arg.diff) {
+                    Ok(n) => Ok(format!(
+                        "applied ({n} hunks via fuzzy fallback after git/patch rejected)"
+                    )),
+                    Err(fuzzy_err) => Err(anyhow::anyhow!(
+                        "apply_patch failed: strict status={} ({strict_stderr}); fuzzy fallback: {fuzzy_err:#}",
+                        out.status,
+                    )),
+                }
+            }
+            Err(strict_err) => {
+                // Strict tool wasn't even runnable (no git, no patch).
+                // The fuzzy applier is self-contained — give it a try.
+                match crate::diff_apply::apply_unified_diff(root, &arg.diff) {
+                    Ok(n) => Ok(format!(
+                        "applied ({n} hunks via fuzzy fallback; strict tool unavailable)"
+                    )),
+                    Err(fuzzy_err) => Err(anyhow::anyhow!(
+                        "apply_patch failed: strict tool errored ({strict_err:#}); \
+                         fuzzy fallback: {fuzzy_err:#}"
+                    )),
+                }
+            }
         }
     }
 }

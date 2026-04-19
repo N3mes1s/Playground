@@ -328,9 +328,16 @@ pub fn parse_cargo_test_output(stdout: &str, stderr: &str) -> TestReport {
     }
 }
 
-/// Parse `cargo bench` output, accepting both libtest bencher format
-/// (`test bench_name ... bench:  1,234 ns/iter (+/- 56)`) and Criterion's
-/// default text (`bench_name  time:   [1.1 us 1.2 us 1.3 us]`).
+/// Parse `cargo bench` output, accepting:
+/// - libtest bencher format (`test bench_name ... bench: 1,234 ns/iter (+/- 56)`)
+/// - Criterion default text (`bench_name  time: [1.1 us 1.2 us 1.3 us]`)
+/// - **divan** (`├─ bench_name  370.7 ns │ … │ 389.7 ns │ 573.9 ns │ … `).
+///   Divan tables are box-drawing-character separated; each leaf row
+///   has six columns: name, fastest, slowest, median, mean, samples,
+///   iters. We use median as `ns_per_iter`. Group header rows (no
+///   numeric columns) are skipped. Added because clap moved to divan
+///   and our prior parser returned zero samples on its output —
+///   blocked the end-to-end run on clap-class repos.
 pub fn parse_cargo_bench_output(stdout: &str) -> BenchReport {
     let mut samples = Vec::new();
 
@@ -373,7 +380,180 @@ pub fn parse_cargo_bench_output(stdout: &str) -> BenchReport {
         });
     }
 
+    samples.extend(parse_divan_table(stdout));
+
     BenchReport { samples }
+}
+
+/// Parse divan's box-drawing benchmark table. Returns one sample per
+/// leaf row with `ns_per_iter` set to the row's MEDIAN column (most
+/// representative against tail outliers).
+///
+/// Divan's column structure on each row is:
+///     <prefix>  <name>  <fastest>  │  <slowest>  │  <median>  │  <mean>  │  <samples>  │  <iters>
+///
+/// Group rows (named ancestors with no values) are skipped because
+/// their value columns are empty. We approximate group qualification
+/// by remembering the most recent non-leaf "group" name seen at a
+/// shallower indent, joining `group::leaf`.
+fn parse_divan_table(stdout: &str) -> Vec<BenchSample> {
+    let mut out = Vec::new();
+    // Track ancestor groups by tree-depth (column where the name
+    // starts). Each ancestor stays valid until a sibling/leaf at the
+    // same or shallower indent appears.
+    let mut group_stack: Vec<(usize, String)> = Vec::new();
+    for line in stdout.lines() {
+        // A divan row contains at least 5 of the box-drawing column
+        // separators `│`. Anything less is regular text we ignore.
+        if line.matches('│').count() < 5 {
+            continue;
+        }
+        let cols: Vec<&str> = line.split('│').collect();
+        // Divan rows have the shape:
+        //   col[0] = "<prefix><name>     <fastest_value>"
+        //   col[1] = " <slowest> "
+        //   col[2] = " <median> "    ← we use this
+        //   col[3] = " <mean> "
+        //   col[4] = " <samples> "
+        //   col[5] = " <iters> "
+        // …so we need at least 6 bar-separated columns for a leaf row.
+        if cols.len() < 6 {
+            continue;
+        }
+        // Skip the table header row. Divan prints column titles
+        // (`fastest │ slowest │ median │ …`) above data; the title
+        // tokens are bar-separated like data, so a naive parser
+        // treats the header as a group row and pollutes every nested
+        // leaf with `fastest::` as an ancestor.
+        let is_header = cols.iter().any(|c| {
+            matches!(
+                c.trim(),
+                "slowest" | "median" | "mean" | "samples" | "iters"
+            )
+        });
+        if is_header {
+            continue;
+        }
+        // Split col[0] at the boundary between name and fastest value.
+        // Use the LAST run of 2+ spaces as the separator — names can
+        // contain single spaces but the column padding is always wider.
+        let head = cols[0];
+        let (indent, name_with_value) = strip_divan_tree_prefix(head);
+        let name = head_name_only(&name_with_value);
+        if name.is_empty() {
+            continue;
+        }
+        let median_raw = cols.get(2).map(|s| s.trim()).unwrap_or("");
+        // A leaf row has a non-empty median value column. A group
+        // header row (e.g. `╰─ startup`) shows blank value columns.
+        let Some(ns) = parse_value_with_unit(median_raw) else {
+            // Pure group row — push onto stack at this indent and
+            // pop any deeper-or-equal entries first.
+            while group_stack
+                .last()
+                .map(|(d, _)| *d >= indent)
+                .unwrap_or(false)
+            {
+                group_stack.pop();
+            }
+            group_stack.push((indent, name));
+            continue;
+        };
+        // Pop ancestors that are NOT a strict prefix of this row.
+        while group_stack
+            .last()
+            .map(|(d, _)| *d >= indent)
+            .unwrap_or(false)
+        {
+            group_stack.pop();
+        }
+        let qualified = if group_stack.is_empty() {
+            name.clone()
+        } else {
+            let parents: Vec<String> = group_stack.iter().map(|(_, n)| n.clone()).collect();
+            format!("{}::{}", parents.join("::"), name)
+        };
+        out.push(BenchSample {
+            name: qualified,
+            ns_per_iter: ns,
+            iters: 1,
+        });
+    }
+    out
+}
+
+/// Extract just the leaf name from divan's combined "<name>   <fastest>"
+/// first-column text. Splits at the LAST run of 2+ spaces — names may
+/// contain a single space but column padding is always wider.
+fn head_name_only(s: &str) -> String {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    // Find the rightmost split point at 2+ spaces.
+    let bytes = trimmed.as_bytes();
+    let mut split_at: Option<usize> = None;
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b' ' && bytes[i + 1] == b' ' {
+            split_at = Some(i);
+            // Skip over the whole run of spaces.
+            while i < bytes.len() && bytes[i] == b' ' {
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    match split_at {
+        Some(idx) => trimmed[..idx].trim().to_string(),
+        None => trimmed.to_string(),
+    }
+}
+
+/// Strip box-drawing tree prefix characters and return `(indent_col,
+/// name)`. The indent_col is the byte column where the name starts —
+/// useful for nesting detection.
+fn strip_divan_tree_prefix(s: &str) -> (usize, String) {
+    let mut chars = s.char_indices().peekable();
+    let mut last_prefix_end = 0;
+    while let Some(&(_, ch)) = chars.peek() {
+        match ch {
+            ' ' | '├' | '╰' | '─' | '┬' | '│' | '┌' | '└' | '┼' | '┤' | '┴' | '╭' | '╮' | '╯' =>
+            {
+                let (i, _) = chars.next().unwrap();
+                last_prefix_end = i + ch.len_utf8();
+            }
+            _ => break,
+        }
+    }
+    let rest = &s[last_prefix_end..];
+    let name = rest.trim().to_string();
+    (last_prefix_end, name)
+}
+
+fn parse_value_with_unit(s: &str) -> Option<f64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    // Format: `<number><whitespace?><unit>` where unit ∈ {ns, µs, us, ms, s}.
+    let (num_part, unit_part) = match s.split_once(|c: char| c.is_whitespace()) {
+        Some((n, u)) => (n, u.trim()),
+        None => {
+            // No unit at all — bail.
+            return None;
+        }
+    };
+    let n: f64 = num_part.parse().ok()?;
+    let mul = match unit_part {
+        "ns" => 1.0,
+        "µs" | "us" => 1_000.0,
+        "ms" => 1_000_000.0,
+        "s" => 1_000_000_000.0,
+        _ => return None,
+    };
+    Some(n * mul)
 }
 
 pub mod bench_scaffold;
@@ -416,6 +596,57 @@ mod tests {
         let r = parse_cargo_bench_output(out);
         assert_eq!(r.samples.len(), 1);
         assert!((r.samples[0].ns_per_iter - 1200.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn parses_divan_table_with_groups_and_leaves() {
+        // Captured verbatim from `cargo bench --bench simple` on
+        // /tmp/ods-dogfood/clap/clap_bench. The `startup` row is a
+        // group header (no values) with three children. Test lines
+        // are joined with explicit `\n` (not Rust's `\` continuation,
+        // which would silently eat the leading-space indent on the
+        // nested rows and turn this into a fake-passing test).
+        let lines: &[&str] = &[
+            "Timer precision: 28 ns",
+            "simple          fastest       │ slowest       │ median        │ mean          │ samples │ iters",
+            "├─ build        370.7 ns      │ 4.471 µs      │ 389.7 ns      │ 573.9 ns      │ 100     │ 100",
+            "├─ render_help  7.001 µs      │ 52 µs         │ 7.074 µs      │ 7.911 µs      │ 100     │ 100",
+            "╰─ startup                    │               │               │               │         │",
+            "   ├─ flag      1.878 µs      │ 42.56 µs      │ 2.061 µs      │ 2.484 µs      │ 100     │ 100",
+            "   ├─ opt       2.219 µs      │ 23.16 µs      │ 2.331 µs      │ 2.795 µs      │ 100     │ 100",
+            "   ╰─ pos       2.156 µs      │ 5.115 µs      │ 2.276 µs      │ 2.3 µs        │ 100     │ 100",
+        ];
+        let out = lines.join("\n");
+        let out = out.as_str();
+        let r = parse_cargo_bench_output(out);
+        let by_name: std::collections::HashMap<&str, f64> = r
+            .samples
+            .iter()
+            .map(|s| (s.name.as_str(), s.ns_per_iter))
+            .collect();
+        // Five leaf rows (build, render_help, startup::flag, ::opt, ::pos);
+        // the "startup" line is a group header → no entry.
+        let dump = r
+            .samples
+            .iter()
+            .map(|s| (s.name.clone(), s.ns_per_iter))
+            .collect::<Vec<_>>();
+        assert_eq!(r.samples.len(), 5, "expected 5 samples, got {dump:?}");
+        assert!(by_name.contains_key("build"), "missing 'build' in {dump:?}");
+        assert!((by_name["build"] - 389.7).abs() < 0.01);
+        assert!((by_name["render_help"] - 7074.0).abs() < 0.1);
+        let dump = r
+            .samples
+            .iter()
+            .map(|s| (s.name.clone(), s.ns_per_iter))
+            .collect::<Vec<_>>();
+        assert!(
+            by_name.contains_key("startup::flag"),
+            "missing startup::flag in {dump:?}"
+        );
+        assert!((by_name["startup::flag"] - 2061.0).abs() < 0.1);
+        assert!((by_name["startup::opt"] - 2331.0).abs() < 0.1);
+        assert!((by_name["startup::pos"] - 2276.0).abs() < 0.1);
     }
 
     #[tokio::test]

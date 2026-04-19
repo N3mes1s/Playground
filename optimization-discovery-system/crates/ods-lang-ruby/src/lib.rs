@@ -87,15 +87,52 @@ impl LanguageAdapter for RubyAdapter {
         if !build.workdir.join("benchmark").exists() {
             return Ok(BenchReport { samples: vec![] });
         }
-        // benchmark-ips prints a report block; we attempt to aggregate.
+        // Two execution paths in priority order. Both feed
+        // `parse_benchmark_ips_output`, which expects the standard
+        // benchmark-ips report block.
+        //
+        // 1. `bundle exec rake bench` — works when the project ships a
+        //    `bench` rake task. Most third-party Ruby gems don't;
+        //    bootsnap notably doesn't.
+        // 2. Direct invocation of `benchmark/ods_auto_*.rb` files we
+        //    scaffolded ourselves (see `bench_scaffold`). One file
+        //    per target. We `bundle exec ruby` so benchmark-ips
+        //    resolves through the project's Gemfile, which the
+        //    scaffold ensures lists it.
         if which("bundle").is_some() {
-            let out = run(&Invocation::new("bundle")
-                .args(["exec", "rake", "bench"].map(String::from))
-                .cwd(&build.workdir)
-                .timeout(Duration::from_secs(600))
-                .allow_nonzero())
-            .await?;
-            return Ok(parse_benchmark_ips_output(&out.stdout));
+            // Try rake first (no-op when the task is missing).
+            if build.workdir.join("Rakefile").exists() {
+                let out = run(&Invocation::new("bundle")
+                    .args(["exec", "rake", "bench"].map(String::from))
+                    .cwd(&build.workdir)
+                    .timeout(Duration::from_secs(600))
+                    .allow_nonzero())
+                .await?;
+                let report = parse_benchmark_ips_output(&out.stdout);
+                if !report.samples.is_empty() {
+                    return Ok(report);
+                }
+            }
+            // Fall back to direct invocation of ods-scaffolded files.
+            let mut samples = Vec::new();
+            if let Ok(entries) = std::fs::read_dir(build.workdir.join("benchmark")) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let name = match path.file_name().and_then(|n| n.to_str()) {
+                        Some(n) if n.starts_with("ods_auto_") && n.ends_with(".rb") => n,
+                        _ => continue,
+                    };
+                    let rel = format!("benchmark/{name}");
+                    let out = run(&Invocation::new("bundle")
+                        .args(["exec", "ruby", &rel].map(String::from))
+                        .cwd(&build.workdir)
+                        .timeout(Duration::from_secs(600))
+                        .allow_nonzero())
+                    .await?;
+                    samples.extend(parse_benchmark_ips_output(&out.stdout).samples);
+                }
+            }
+            return Ok(BenchReport { samples });
         }
         Ok(BenchReport { samples: vec![] })
     }
@@ -246,6 +283,8 @@ fn make_diff(edits: &[Edit]) -> String {
 pub fn tree_sitter_language() -> tree_sitter::Language {
     tree_sitter_ruby::language()
 }
+
+pub mod bench_scaffold;
 
 fn tree_sitter_ast_query(file: &Path, text: &str, query: &str) -> Result<Vec<AstMatch>> {
     let results = tree_sitter_ast_query_batch(file, text, &[query])?;

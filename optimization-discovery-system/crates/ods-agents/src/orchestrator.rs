@@ -210,6 +210,49 @@ impl Orchestrator {
                     tracing::warn!(err = %e, "bench scaffold failed; continuing without");
                 }
             }
+        } else if self.adapter.name() == "ruby" && bench_empty {
+            // Mirror of the Rust path. Bootsnap and most Ruby gems
+            // don't ship `benchmark/` so without this the run hits
+            // the bench stage with empty samples and the gate rejects
+            // every patch on lack of evidence.
+            match ods_lang_ruby::bench_scaffold::scaffold(&self.repo, &target) {
+                Ok(outcome) => {
+                    artifact.scaffolded_bench = Some(ScaffoldSummary {
+                        bench_name: outcome.bench_name.clone(),
+                        bench_file: outcome.bench_file.display().to_string(),
+                        created_files: outcome
+                            .created_files
+                            .iter()
+                            .map(|p| p.display().to_string())
+                            .collect(),
+                        modified_files: outcome
+                            .modified_files
+                            .iter()
+                            .map(|p| p.display().to_string())
+                            .collect(),
+                        // The Ruby scaffolder reports `benchmark-ips`
+                        // additions; we reuse the Rust-named field
+                        // here since the artifact shape is shared
+                        // and "added_criterion_dep" reads as
+                        // "added a bench dep" in the PR body.
+                        added_criterion_dep: outcome.added_benchmark_ips_dep,
+                    });
+                    tracing::info!(
+                        bench = %outcome.bench_name,
+                        "scaffolded ruby benchmark-ips harness; re-running pre-bench"
+                    );
+                    let build2 = self
+                        .adapter
+                        .build(&self.repo, None)
+                        .await
+                        .unwrap_or(build.clone());
+                    pre_bench = self.adapter.run_bench(&build2, &target).await.ok();
+                    artifact.pre_bench = pre_bench.clone();
+                }
+                Err(e) => {
+                    tracing::warn!(err = %e, "ruby bench scaffold failed; continuing without");
+                }
+            }
         } else {
             artifact.pre_bench = pre_bench.clone();
         }
