@@ -170,10 +170,25 @@ fn tree_sitter_ast_query(file: &Path, text: &str, query: &str) -> Result<Vec<Ast
                 start_line: (start.row + 1) as u32,
                 end_line: (end.row + 1) as u32,
                 text: matched,
+                enclosing_symbol: enclosing_symbol(node, bytes),
             });
         }
     }
     Ok(out)
+}
+
+/// Find the nearest enclosing `def` and return its name. Returns `None`
+/// for matches at module scope (a bare statement outside any function).
+pub fn enclosing_symbol(node: tree_sitter::Node, bytes: &[u8]) -> Option<String> {
+    let mut cursor = Some(node);
+    while let Some(n) = cursor {
+        if n.kind() == "function_definition" {
+            let name = n.child_by_field_name("name")?;
+            return Some(name.utf8_text(bytes).ok()?.to_string());
+        }
+        cursor = n.parent();
+    }
+    None
 }
 
 fn make_diff(edits: &[Edit]) -> String {

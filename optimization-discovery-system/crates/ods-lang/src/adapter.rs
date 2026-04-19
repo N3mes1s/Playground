@@ -77,6 +77,11 @@ pub struct AstMatch {
     pub start_line: u32,
     pub end_line: u32,
     pub text: String,
+    /// Name of the nearest enclosing function / method / def, extracted
+    /// by the language adapter via a tree-sitter ancestor walk. `None`
+    /// when the match is at module scope.
+    #[serde(default)]
+    pub enclosing_symbol: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

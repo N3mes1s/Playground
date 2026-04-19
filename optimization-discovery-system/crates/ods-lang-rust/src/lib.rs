@@ -229,10 +229,26 @@ fn tree_sitter_ast_query(file: &Path, text: &str, query: &str) -> Result<Vec<Ast
                 start_line: (start.row + 1) as u32,
                 end_line: (end.row + 1) as u32,
                 text: matched,
+                enclosing_symbol: enclosing_symbol(node, bytes),
             });
         }
     }
     Ok(out)
+}
+
+/// Walk `node.parent()` until we hit a Rust function-like declaration and
+/// return its `name` field. Returns `None` at module scope. Exposed so the
+/// Discoverer can share one implementation with the agent-facing tool.
+pub fn enclosing_symbol(node: tree_sitter::Node, bytes: &[u8]) -> Option<String> {
+    let mut cursor = Some(node);
+    while let Some(n) = cursor {
+        if matches!(n.kind(), "function_item" | "function_signature_item") {
+            let name = n.child_by_field_name("name")?;
+            return Some(name.utf8_text(bytes).ok()?.to_string());
+        }
+        cursor = n.parent();
+    }
+    None
 }
 
 fn detect_toolchain(repo: &Path) -> Option<String> {
@@ -406,6 +422,39 @@ fn foo_real() {}
             hits[0].text.contains("foo_real"),
             "captured wrong node: {:?}",
             hits[0].text
+        );
+    }
+
+    #[tokio::test]
+    async fn ast_query_attaches_enclosing_symbol_when_inside_fn() {
+        let src = r#"
+fn outer() {
+    let v: Vec<u8> = Vec::new();
+}
+const TOP: &str = "hi";
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("z.rs");
+        std::fs::write(&p, src).unwrap();
+        let a = RustAdapter::new();
+        let hits = a
+            .ast_query(
+                &p,
+                "(call_expression function: (scoped_identifier \
+                 path: (identifier) @_ (#eq? @_ \"Vec\") \
+                 name: (identifier) @m (#eq? @m \"new\"))) @call",
+            )
+            .await
+            .unwrap();
+        let inside_fn = hits
+            .iter()
+            .find(|h| h.enclosing_symbol.as_deref() == Some("outer"));
+        assert!(
+            inside_fn.is_some(),
+            "expected a match with enclosing_symbol=outer; got {:?}",
+            hits.iter()
+                .map(|h| (h.start_line, h.enclosing_symbol.clone()))
+                .collect::<Vec<_>>()
         );
     }
 

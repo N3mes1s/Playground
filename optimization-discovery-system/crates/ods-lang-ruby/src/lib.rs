@@ -245,6 +245,7 @@ async fn regex_line_match(file: &Path, query: &str) -> Result<Vec<AstMatch>> {
                 start_line: (i + 1) as u32,
                 end_line: (i + 1) as u32,
                 text: line.to_string(),
+                enclosing_symbol: None,
             });
         }
     }

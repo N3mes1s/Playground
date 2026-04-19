@@ -507,32 +507,16 @@ fn collect_matches<'a>(
     }
 }
 
-/// Walk up from `node` until we find the nearest enclosing function-like
-/// declaration, then extract its name. Returns `None` for matches at
-/// module scope (e.g. a top-level `static X: Lazy<…>`).
+/// Dispatch to the matching adapter's `enclosing_symbol` helper so the
+/// Discoverer and the agent-facing `ast_query` tool share one source of
+/// truth per language. Returns `None` at module scope.
 fn enclosing_symbol(node: tree_sitter::Node, bytes: &[u8], lang: &str) -> Option<String> {
-    let mut cursor = Some(node);
-    while let Some(n) = cursor {
-        match (lang, n.kind()) {
-            ("rust", "function_item") => return name_field(n, "name", bytes),
-            ("rust", "function_signature_item") => return name_field(n, "name", bytes),
-            ("rust", "impl_item") => {
-                // Fall through; we prefer the inner fn if we're inside one,
-                // but for method-less impls there's no better symbol.
-            }
-            ("python", "function_definition") => return name_field(n, "name", bytes),
-            ("go", "function_declaration") => return name_field(n, "name", bytes),
-            ("go", "method_declaration") => return name_field(n, "name", bytes),
-            _ => {}
-        }
-        cursor = n.parent();
+    match lang {
+        "rust" => ods_lang_rust::enclosing_symbol(node, bytes),
+        "python" => ods_lang_python::enclosing_symbol(node, bytes),
+        "go" => ods_lang_go::enclosing_symbol(node, bytes),
+        _ => None,
     }
-    None
-}
-
-fn name_field(node: tree_sitter::Node, field: &str, bytes: &[u8]) -> Option<String> {
-    let name = node.child_by_field_name(field)?;
-    Some(name.utf8_text(bytes).ok()?.to_string())
 }
 
 fn module_from_path(repo: &Path, file: &Path) -> String {

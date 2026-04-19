@@ -150,6 +150,7 @@ impl LanguageAdapter for JavaAdapter {
                     start_line: (i + 1) as u32,
                     end_line: (i + 1) as u32,
                     text: line.to_string(),
+                    enclosing_symbol: None,
                 });
             }
         }

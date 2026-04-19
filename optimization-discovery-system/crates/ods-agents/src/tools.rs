@@ -243,17 +243,45 @@ struct AstQueryIn {
 #[async_trait::async_trait]
 impl ToolHandler for AstQuery {
     async fn call(&self, input: &serde_json::Value) -> Result<String> {
+        use ods_lang::LanguageAdapter;
         let arg: AstQueryIn = serde_json::from_value(input.clone())?;
         let file = self.sandbox.resolve(&arg.path)?;
-        let text = tokio::fs::read_to_string(&file).await?;
-        let re = regex::Regex::new(&arg.pattern)?;
-        let mut out = Vec::new();
-        for (i, line) in text.lines().enumerate() {
-            if re.is_match(line) {
-                out.push(format!("{}:{}: {}", arg.path, i + 1, line));
+        // Dispatch to the right language adapter by file extension. This
+        // is the same set the Discoverer supports (rust / python / go).
+        let adapter: Box<dyn LanguageAdapter> = match file.extension().and_then(|s| s.to_str()) {
+            Some("rs") => Box::new(ods_lang_rust::RustAdapter::new()),
+            Some("py") => Box::new(ods_lang_python::PythonAdapter::new()),
+            Some("go") => Box::new(ods_lang_go::GoAdapter::new()),
+            other => {
+                anyhow::bail!(
+                    "ast_query: no tree-sitter grammar for extension {other:?}; \
+                     supported: .rs / .py / .go"
+                );
             }
+        };
+        let hits = adapter.ast_query(&file, &arg.pattern).await?;
+        if hits.is_empty() {
+            return Ok("no matches".into());
         }
-        Ok(out.join("\n"))
+        // Surface (path, line range, enclosing fn, matched text) so the
+        // agent can point a follow-up tool call (read_file) at a precise
+        // location instead of scanning the whole file by hand.
+        let mut lines = Vec::with_capacity(hits.len());
+        for h in hits.iter().take(50) {
+            let loc = if let Some(sym) = &h.enclosing_symbol {
+                format!("{}:{}-{} (in fn {sym})", arg.path, h.start_line, h.end_line)
+            } else {
+                format!("{}:{}-{}", arg.path, h.start_line, h.end_line)
+            };
+            // Inline text is one line of preview to keep the tool output
+            // scannable; agents can always read_file for context.
+            let preview = h.text.lines().next().unwrap_or("").trim();
+            lines.push(format!("{loc}: {preview}"));
+        }
+        if hits.len() > 50 {
+            lines.push(format!("… and {} more hits", hits.len() - 50));
+        }
+        Ok(lines.join("\n"))
     }
 }
 
