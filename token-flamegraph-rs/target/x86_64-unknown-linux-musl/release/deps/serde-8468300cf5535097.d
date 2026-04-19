@@ -1,0 +1,14 @@
+/home/user/Playground/token-flamegraph-rs/target/x86_64-unknown-linux-musl/release/deps/serde-8468300cf5535097.d: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/user/Playground/token-flamegraph-rs/target/x86_64-unknown-linux-musl/release/build/serde-da1f4d77cc2cece0/out/private.rs
+
+/home/user/Playground/token-flamegraph-rs/target/x86_64-unknown-linux-musl/release/deps/libserde-8468300cf5535097.rlib: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/user/Playground/token-flamegraph-rs/target/x86_64-unknown-linux-musl/release/build/serde-da1f4d77cc2cece0/out/private.rs
+
+/home/user/Playground/token-flamegraph-rs/target/x86_64-unknown-linux-musl/release/deps/libserde-8468300cf5535097.rmeta: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/user/Playground/token-flamegraph-rs/target/x86_64-unknown-linux-musl/release/build/serde-da1f4d77cc2cece0/out/private.rs
+
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/home/user/Playground/token-flamegraph-rs/target/x86_64-unknown-linux-musl/release/build/serde-da1f4d77cc2cece0/out/private.rs:
+
+# env-dep:OUT_DIR=/home/user/Playground/token-flamegraph-rs/target/x86_64-unknown-linux-musl/release/build/serde-da1f4d77cc2cece0/out

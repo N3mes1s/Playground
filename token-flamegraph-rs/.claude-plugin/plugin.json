@@ -1,0 +1,34 @@
+{
+  "name": "token-flamegraph",
+  "version": "0.1.0",
+  "description": "Session analysis for Claude Code — visualize token usage, detect waste, auto-generate optimization rules",
+  "skills": {
+    "flamegraph": {
+      "description": "Analyze token usage for Claude Code sessions",
+      "argumentHint": "[command] [args...]"
+    }
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "token-flamegraph --hook",
+            "timeout": 30,
+            "statusMessage": "Analyzing token patterns..."
+          }
+        ]
+      }
+    ]
+  },
+  "setup": {
+    "steps": [
+      {
+        "type": "command",
+        "command": "bash install.sh",
+        "description": "Install token-flamegraph binary and skill"
+      }
+    ]
+  }
+}

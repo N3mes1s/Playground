@@ -1,0 +1,22 @@
+[package]
+name = "token-flamegraph"
+version = "0.1.0"
+edition = "2021"
+description = "Session analysis toolkit for Claude Code — visualize token usage, detect waste, auto-generate optimization rules"
+license = "MIT"
+
+[[bin]]
+name = "token-flamegraph"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+sha2 = "0.10"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"
