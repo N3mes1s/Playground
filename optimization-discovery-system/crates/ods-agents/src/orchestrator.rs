@@ -307,11 +307,17 @@ impl Orchestrator {
                         if self.store.get(&r.id).ok().flatten().is_some() {
                             continue; // already in corpus from a prior run
                         }
-                        // Validation gate. A Hypothesized recipe with an
-                        // uncompilable pattern does nothing but waste
-                        // Discoverer cycles every run; reject at the
-                        // write boundary so the store only ever holds
-                        // grammar-valid queries.
+                        // Two-stage validation gate:
+                        //   1. The pattern must compile against the
+                        //      language's tree-sitter grammar.
+                        //   2. The pattern must match ≥1 file in the
+                        //      repo the Explorer just surveyed. A
+                        //      proposal that doesn't fire on its OWN
+                        //      source material is LLM-hallucinated; it
+                        //      would waste Discoverer cycles forever.
+                        // Both checks reject at the write boundary so
+                        // the store only holds patterns we've proven
+                        // are grammar-valid AND empirically grounded.
                         if let Err(e) = crate::recipe_validate::validate_pattern_compiles(
                             &r.language,
                             &r.trigger.ast_pattern,
@@ -324,7 +330,26 @@ impl Orchestrator {
                                 crate::observe::AgentEvent::RecipeRejected {
                                     source: "explorer".into(),
                                     recipe_id: r.id.0.clone(),
-                                    reason: format!("{e:#}"),
+                                    reason: format!("compile: {e:#}"),
+                                },
+                            );
+                            continue;
+                        }
+                        if !pattern_matches_any_repo_file(
+                            &self.repo,
+                            &r.language,
+                            &r.trigger.ast_pattern,
+                        ) {
+                            rejected += 1;
+                            crate::observe::emit(
+                                Some(&sink),
+                                &run_id,
+                                LoopStage::RecipeRetrieve,
+                                crate::observe::AgentEvent::RecipeRejected {
+                                    source: "explorer".into(),
+                                    recipe_id: r.id.0.clone(),
+                                    reason: "compiled but matched no file in the surveyed repo"
+                                        .into(),
                                 },
                             );
                             continue;
@@ -657,6 +682,63 @@ fn persist_json(repo: &PathBuf, art: &RunArtifact) -> Result<()> {
 
 fn now_rfc3339() -> Result<String> {
     Ok(time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?)
+}
+
+/// Walk `repo` for source files matching `language` and return true as
+/// soon as `pattern` produces ≥1 tree-sitter match in any of them.
+///
+/// Used as the stricter second stage of the Explorer validation gate:
+/// a pattern that compiles but doesn't fire on the repo the Explorer
+/// just surveyed is almost certainly a hallucination; accepting it
+/// would waste Discoverer cycles forever. Short-circuits on the first
+/// hit so typical success cost is bounded by a couple of file reads.
+fn pattern_matches_any_repo_file(
+    repo: &std::path::Path,
+    language: &str,
+    pattern: &str,
+) -> bool {
+    let ext: &[&str] = match language {
+        "rust" => &["rs"],
+        "python" => &["py"],
+        "go" => &["go"],
+        "ruby" => &["rb"],
+        _ => return false,
+    };
+    for entry in walkdir::WalkDir::new(repo)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        // Skip vendored/generated trees that blow up walk cost and
+        // aren't representative of the repo's code under optimization.
+        if path.components().any(|c| {
+            matches!(
+                c.as_os_str().to_str(),
+                Some("target" | "node_modules" | ".git" | "vendor" | "dist" | "build")
+            )
+        }) {
+            continue;
+        }
+        let Some(file_ext) = path.extension().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if !ext.contains(&file_ext) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        if matches!(
+            crate::recipe_validate::validate_pattern_matches_source(language, pattern, &text),
+            Ok(true)
+        ) {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]

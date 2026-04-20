@@ -448,6 +448,24 @@ impl Store {
         Ok(out)
     }
 
+    /// Same as `all()`, but returns `(Recipe, updated_at_rfc3339)` pairs.
+    /// `updated_at` is the STORE's column — the per-row timestamp the
+    /// upsert writes — NOT anything on the Recipe struct. Used by
+    /// `ods recipes gc --stale-days` to retire Hypothesized recipes
+    /// that have sat in the store too long without any success.
+    pub fn all_with_updated_at(&self) -> Result<Vec<(Recipe, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT body, updated_at FROM recipes ORDER BY updated_at DESC LIMIT 1000000")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (body, ts) = row?;
+            out.push((serde_json::from_str(&body)?, ts));
+        }
+        Ok(out)
+    }
+
     pub fn count(&self) -> Result<u64> {
         let n: i64 = self
             .conn

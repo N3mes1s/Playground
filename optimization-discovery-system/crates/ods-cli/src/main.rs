@@ -650,18 +650,24 @@ async fn cmd_recipes(action: RecipeAction, store_path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-/// Walk every recipe, apply `promote_on_negative`. Prints one line
-/// per affected recipe. `--stale-days` is accepted for forward-compat
-/// but currently a no-op: `Recipe` doesn't carry its own `updated_at`
-/// (only the store row does), so stale-age retirement needs a
-/// `Store::updated_at(id)` helper that lands separately.
-fn gc_corpus(store: &ods_recipes::Store, _stale_days: u32, dry_run: bool) -> Result<()> {
+/// Walk every recipe, apply `promote_on_negative`, AND retire
+/// Hypothesized recipes that are older than `stale_days` with zero
+/// successes. The stale-sweep closes the last hand-waved gap
+/// documented in Stage 17's commit: recipes proposed by the Explorer
+/// but never useful should eventually get cleaned up even if they
+/// never accumulated 3 distinct-repo negatives.
+///
+/// `stale_days == 0` disables the sweep.
+fn gc_corpus(store: &ods_recipes::Store, stale_days: u32, dry_run: bool) -> Result<()> {
     use ods_recipes::promote::{promote_on_negative, PromotionOutcome, PromotionRules};
+    use ods_recipes::schema::PromotionState;
     let rules = PromotionRules::default();
-    let all = store.all()?;
+    let all = store.all_with_updated_at()?;
     let mut demoted = 0u32;
     let mut retired = 0u32;
-    for mut r in all {
+    let mut stale = 0u32;
+    let now = time::OffsetDateTime::now_utc();
+    for (mut r, updated_at) in all {
         match promote_on_negative(&r, &rules) {
             PromotionOutcome::Retire => {
                 println!(
@@ -674,6 +680,7 @@ fn gc_corpus(store: &ods_recipes::Store, _stale_days: u32, dry_run: bool) -> Res
                 if !dry_run {
                     store.delete(&r.id)?;
                 }
+                continue;
             }
             PromotionOutcome::Demote { from, to } => {
                 println!("[DEMOTE] {}  {:?} → {:?}", r.id, from, to);
@@ -682,14 +689,40 @@ fn gc_corpus(store: &ods_recipes::Store, _stale_days: u32, dry_run: bool) -> Res
                     r.promotion = to;
                     store.upsert(&r)?;
                 }
+                continue;
             }
             _ => {}
+        }
+        // Stale sweep. Only applies to Hypothesized recipes with
+        // zero successes. A single success means the recipe earned
+        // its keep, even if it's been sitting in the store a long
+        // time; we don't punish recipes for "not having fired lately."
+        if stale_days > 0
+            && matches!(r.promotion, PromotionState::Hypothesized)
+            && r.success_history.is_empty()
+        {
+            if let Ok(then) = time::OffsetDateTime::parse(
+                &updated_at,
+                &time::format_description::well_known::Rfc3339,
+            ) {
+                let age_days = (now - then).whole_days();
+                if age_days >= stale_days as i64 {
+                    println!(
+                        "[STALE]  {}  (Hypothesized, {} days old, no wins)",
+                        r.id, age_days
+                    );
+                    stale += 1;
+                    if !dry_run {
+                        store.delete(&r.id)?;
+                    }
+                }
+            }
         }
     }
     let verb = if dry_run { "would affect" } else { "affected" };
     println!(
-        "gc: {verb} {} recipes total ({retired} retired, {demoted} demoted)",
-        retired + demoted
+        "gc: {verb} {} recipes total ({retired} retired, {demoted} demoted, {stale} stale)",
+        retired + demoted + stale
     );
     Ok(())
 }

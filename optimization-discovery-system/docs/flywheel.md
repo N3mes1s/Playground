@@ -127,3 +127,39 @@ Concrete check on whether the flywheel is doing work:
 
 We don't have the data yet — the infrastructure shipped this commit
 is what MAKES those numbers observable.
+
+## Calibration note (Stage 18)
+
+Three flywheel constants ship with hand-picked defaults and will stay
+guesses until we have >50 runs of real data to tune them:
+
+1. **Cross-repo boost** — `0.25 per distinct repo in a recipe's
+   success_history, capped at +2.0` (in `ods-recipes::store`). Too
+   low and a recipe proven on 5 repos gets ranked below a Seed with
+   no history; too high and one lucky cross-repo win drowns out
+   better-fitting recipes.
+2. **Precision penalty** — `sqrt(rejections / proposals), applied at
+   0.5x weight` (in `ods-agents::discover::precision_penalty`).
+   Calibrated once against the 12-repo dogfood pass but not
+   re-tested since the corpus grew.
+3. **Demote threshold** — `5 negatives with 0 successes triggers
+   AntiPattern demotion` (in `ods-recipes::promote`). Picked to be
+   stricter than the `3-repos-with-0-wins` retire rule for
+   Hypothesized but still forgiving enough that one bad run won't
+   kill a seeded pattern.
+
+**Unblocking the calibration.** `ods recipes stats` (shipped Stage 17)
+now aggregates per-recipe wins, distinct-repos, negatives, and median
+speedup. Run it after each batch of runs lands and eyeball the
+distribution. Specifically: once any recipe has `distinct_repos >= 3`
+with `speedup_median >= 1.5x`, compare its retrieval rank with and
+without the cross-repo boost to see whether the boost is earning its
+keep or dominating the score. Then tune.
+
+**Gate 2 behaviour confirmed.** Stage 18 added a second Explorer
+validation step: proposals that compile against the language grammar
+but don't match **any** file in the repo the Explorer just surveyed
+are rejected at the write boundary. That closes the last silent
+pollution path; the `AgentEvent::RecipeRejected` event is emitted
+with a reason string so per-run diagnostics are visible in the
+artifact.
