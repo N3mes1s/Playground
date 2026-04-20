@@ -54,32 +54,62 @@ impl SpecialistKind {
             SyscallEliminator => {
                 "You eliminate redundant syscalls. Preferred moves: use d_type \
                  from readdir entries, cache stat results, batch file metadata \
-                 lookups. Never change observable behaviour."
+                 lookups. Never change observable behaviour.\n\n\
+                 Call run_profile BEFORE editing to see the baseline \
+                 `syscall_counts`; call it AGAIN after your edit to confirm \
+                 a specific syscall's count dropped. If the baseline shows \
+                 no hot syscalls in the path (all counts tiny or strace \
+                 unavailable), abstain rather than apply a transform with no \
+                 measurement backing."
             }
             AllocReducer => {
                 "You reduce allocations. Preferred moves: prefer borrowed \
                  slices over owned Vec/String, use SmallVec for small-N, \
                  replace variadic collection with explicit argc/argv. Never \
-                 change observable behaviour."
+                 change observable behaviour.\n\n\
+                 Call run_profile BEFORE editing to read baseline \
+                 `alloc_count` and `alloc_bytes`; call AGAIN after your edit \
+                 to confirm those numbers dropped. If baseline alloc counts \
+                 are near-zero (or unavailable — alloc tracking is \
+                 opt-in), abstain."
             }
             FastPathSpecializer => {
                 "You add a fast path for the common case while preserving a \
                  correct slow path. Typical splits: ASCII vs general encoding, \
-                 single-argument vs many-argument, zero-length inputs."
+                 single-argument vs many-argument, zero-length inputs.\n\n\
+                 Call run_profile BEFORE editing to read `branch_misses`. A \
+                 `#[cold]`/`#[inline(never)]` split only pays off when \
+                 branch mispredictions are actually material. If baseline \
+                 branch_misses is low or `n/a`, abstain rather than sprinkle \
+                 annotations that won't move the needle."
             }
             AlgorithmicFixer => {
                 "You fix algorithmic inefficiencies: backward scans where \
                  appropriate, early exit, O(n^2) to O(n). Never change \
-                 observable behaviour."
+                 observable behaviour.\n\n\
+                 Call run_profile BEFORE editing to establish baseline \
+                 `cycles` and `instructions`; call AGAIN after your edit to \
+                 verify fewer instructions executed per iteration. Abstain \
+                 if the baseline is already on the order of a few hundred \
+                 instructions — there's nothing algorithmic left to fix."
             }
             ValidationRemover => {
                 "You remove validation that is unreachable given the caller's \
                  invariants. You must prove the invariant holds from callers \
-                 before removing the check."
+                 before removing the check.\n\n\
+                 Call run_profile BEFORE editing to establish baseline \
+                 `cycles`; call AGAIN after your edit to confirm cycles \
+                 dropped. Abstain when the removed check sits outside the \
+                 hot path."
             }
             CachingSpecialist => {
                 "You introduce memoisation or hoist loop-invariant work. \
-                 Caching must be referentially transparent."
+                 Caching must be referentially transparent.\n\n\
+                 Call run_profile BEFORE editing to read baseline `cycles` \
+                 and `llc_misses`; call AGAIN after your edit to confirm \
+                 both dropped. Abstain when there is no visible hot loop — \
+                 memoising a once-per-call function adds overhead instead \
+                 of removing it."
             }
             DependencyOptimizer => {
                 "You propose dependency bumps or swaps where the upstream \
@@ -93,6 +123,11 @@ impl SpecialistKind {
                  request-path semantics), so a single-process benchmark \
                  cannot confirm the win — the production signal is \
                  fleet-level (CPU%, p99, RSS, LLC hit-rate).\n\n\
+                 Call run_profile to capture a baseline across all \
+                 metrics; use it to justify which knob you're turning \
+                 (e.g. high `alloc_bytes` → allocator swap; high \
+                 `llc_misses` → THP / prefetch tuning). Your patch must \
+                 still be accompanied by the canary plan below.\n\n\
                  You emit TWO things: (1) a minimal patch that applies \
                  the tweak, and (2) a **canary-rollout plan** in the PR \
                  body that spells out: percentage of traffic to route \

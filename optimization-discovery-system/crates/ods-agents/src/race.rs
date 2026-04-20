@@ -17,7 +17,7 @@ use ods_core::{
     mode::Mode,
     LoopError, LoopStage, RunId, WorktreeHandle,
 };
-use ods_lang::{BenchReport, LanguageAdapter, Patch, TestScope};
+use ods_lang::{BenchReport, LanguageAdapter, Patch, ProfileReport, TestScope};
 use ods_measure::{compare, Sample, SpeedupVerdict};
 use ods_verify::{GateDecision, GateInput, ZeroDiffGate};
 use std::path::{Path, PathBuf};
@@ -31,6 +31,11 @@ pub struct RaceInput<'a> {
     pub plan: Vec<(SpecialistKind, Hypothesis)>,
     pub mode: Mode,
     pub pre_bench: Option<BenchReport>,
+    /// Baseline profile captured by the orchestrator's Profile stage.
+    /// Threaded here so specialists see measured syscall / alloc /
+    /// branch-miss data in their opening user prompt, saving them a
+    /// round-trip to `run_profile` just to read the baseline.
+    pub pre_profile: Option<ProfileReport>,
     pub recipe_snippets: Vec<String>,
     pub worktree_parent: PathBuf,
     pub fuzz_budget: Duration,
@@ -156,12 +161,24 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
         let mut loop_ = ToolUseLoop::default();
         ToolHandlerMap::register_read_only(&mut loop_, sandbox.clone());
         ToolHandlerMap::register_mutating(&mut loop_, sandbox.clone());
+        ToolHandlerMap::register_profile(
+            &mut loop_,
+            sandbox.clone(),
+            input.adapter.clone(),
+            input.target.clone(),
+        );
         if let Some(t) = input.budget_tracker.as_ref() {
             loop_ = loop_.with_budget_tracker(t.clone());
         }
 
         let spec = Specialist::new(*kind);
-        let initial = compose_user_prompt(kind, hyp, input.target, &input.recipe_snippets);
+        let initial = compose_user_prompt(
+            kind,
+            hyp,
+            input.target,
+            input.pre_profile.as_ref(),
+            &input.recipe_snippets,
+        );
 
         observe::emit(
             sink,
@@ -558,6 +575,7 @@ fn compose_user_prompt(
     kind: &SpecialistKind,
     hyp: &Hypothesis,
     target: &TargetSig,
+    pre_profile: Option<&ProfileReport>,
     recipe_snippets: &[String],
 ) -> String {
     let mut s = String::new();
@@ -568,6 +586,10 @@ fn compose_user_prompt(
     s.push_str(&format!("Hypothesis: {}\n", hyp.rationale));
     if let Some(id) = &hyp.seed_recipe_id {
         s.push_str(&format!("Suggested recipe: {}\n", id));
+    }
+    if let Some(p) = pre_profile {
+        s.push_str("\nBaseline profile (pre-edit):\n");
+        s.push_str(&format_baseline_profile(p));
     }
     if !recipe_snippets.is_empty() {
         s.push_str("\nRelevant recipe snippets:\n");
@@ -591,12 +613,56 @@ fn compose_user_prompt(
          4. After every edit, call run_tests to verify semantics are \
          preserved.\n\
          5. Call run_bench to confirm a measurable improvement before \
-         finishing the turn.\n\
+         finishing the turn. Call run_profile to see WHERE time is \
+         actually spent (syscalls / allocs / branch-misses / cycles) — \
+         use it pre-edit to validate the hypothesis fits this target, \
+         and again post-edit to confirm your specific metric moved.\n\
          6. If you conclude the hypothesis does not apply to this target, \
          finish with NO edits — the race treats a clean worktree as a \
          principled abstain rather than a forced bad patch.\n",
     );
     s
+}
+
+/// Render a pre-edit `ProfileReport` as a short block for the opening
+/// user prompt. Keep it compact — this ships on every specialist's
+/// first turn. Missing metrics render as `n/a` so the block adapts to
+/// whatever the CI host's privileges allowed.
+fn format_baseline_profile(r: &ProfileReport) -> String {
+    let mut s = String::new();
+    s.push_str(&format!(
+        "  wall={:.3}s  cycles={}  instructions={}\n",
+        r.wall.as_secs_f64(),
+        fmt_opt(r.cycles),
+        fmt_opt(r.instructions),
+    ));
+    if r.syscall_counts.is_empty() {
+        s.push_str("  top syscalls: n/a\n");
+    } else {
+        let mut sorted: Vec<_> = r.syscall_counts.iter().collect();
+        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        let preview: Vec<String> = sorted
+            .iter()
+            .take(6)
+            .map(|(n, c)| format!("{n}={c}"))
+            .collect();
+        s.push_str(&format!("  top syscalls: {}\n", preview.join(" ")));
+    }
+    s.push_str(&format!(
+        "  allocs: count={} bytes={}\n",
+        fmt_opt(r.alloc_count),
+        fmt_opt(r.alloc_bytes),
+    ));
+    s.push_str(&format!(
+        "  branch_misses={}  llc_misses={}\n",
+        fmt_opt(r.branch_misses),
+        fmt_opt(r.llc_misses),
+    ));
+    s
+}
+
+fn fmt_opt(v: Option<u64>) -> String {
+    v.map(|n| n.to_string()).unwrap_or_else(|| "n/a".into())
 }
 
 /// After the specialist conversation ends, the worktree filesystem
@@ -735,7 +801,13 @@ mod tests {
             rationale: "why".into(),
             seed_recipe_id: Some("r1".into()),
         };
-        let p = compose_user_prompt(&SpecialistKind::SyscallEliminator, &hyp, &hyp.target, &[]);
+        let p = compose_user_prompt(
+            &SpecialistKind::SyscallEliminator,
+            &hyp,
+            &hyp.target,
+            None,
+            &[],
+        );
         assert!(p.contains("SyscallEliminator"));
         assert!(p.contains("rust::m::s"));
         assert!(p.contains("r1"));

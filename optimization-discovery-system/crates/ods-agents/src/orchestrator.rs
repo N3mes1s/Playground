@@ -408,6 +408,7 @@ impl Orchestrator {
                 plan: plan.clone(),
                 mode: self.mode.clone(),
                 pre_bench: pre_bench.clone(),
+                pre_profile: pre_profile.clone(),
                 recipe_snippets: collect_snippets(&self.store, &artifact.recipes_applied),
                 // Worktrees must live OUTSIDE the source repo; otherwise the
                 // copy-based fallback recurses into the worktree dir it is

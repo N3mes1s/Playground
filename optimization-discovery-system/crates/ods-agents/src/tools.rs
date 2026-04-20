@@ -7,7 +7,9 @@
 
 use crate::anthropic::{ToolHandler, ToolSpec, ToolUseLoop};
 use anyhow::Result;
+use ods_core::TargetSig;
 use ods_exec::{run, Invocation};
+use ods_lang::{Build, LanguageAdapter, ProfileReport};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -247,6 +249,47 @@ impl ToolHandlerMap {
             },
             Box::new(RunBench {
                 sandbox: sb.clone(),
+            }),
+        );
+    }
+
+    /// Register the `run_profile` tool. Profile invocations require a
+    /// language adapter (to shell out to the right profiler pipeline) and
+    /// the current target sig (the bench filter is derived from the
+    /// target's `symbol`). Both are race-scoped, so we take them as
+    /// arguments rather than embedding a registry. Explorer deliberately
+    /// does not call this — a ~30-second profile per survey candidate
+    /// would blow up its budget.
+    pub fn register_profile(
+        loop_: &mut ToolUseLoop,
+        sandbox: Sandbox,
+        adapter: Arc<dyn LanguageAdapter>,
+        target: TargetSig,
+    ) {
+        let sb = Arc::new(sandbox);
+        loop_.register(
+            ToolSpec {
+                name: "run_profile".into(),
+                description:
+                    "Profile the target under instrumentation (time, strace, perf stat) and \
+                     return measured syscall counts, cycles/instructions, branch/LLC misses, \
+                     and allocation totals. Call this BEFORE editing to see the baseline \
+                     distribution of work, and AGAIN after your edit to verify the metric \
+                     relevant to your specialist actually moved. If the relevant metric is \
+                     not visibly hot in the baseline (e.g. no syscalls for a SyscallEliminator, \
+                     low branch-misses for a FastPathSpecializer), abstain rather than apply \
+                     the transform anyway. No arguments — the target sig is pinned for this \
+                     race."
+                        .into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+            Box::new(RunProfile {
+                sandbox: sb,
+                adapter,
+                target,
             }),
         );
     }
@@ -581,6 +624,81 @@ impl ToolHandler for RunBench {
     }
 }
 
+/// run_profile ------------------------------------------------------------
+struct RunProfile {
+    sandbox: Arc<Sandbox>,
+    adapter: Arc<dyn LanguageAdapter>,
+    target: TargetSig,
+}
+#[async_trait::async_trait]
+impl ToolHandler for RunProfile {
+    async fn call(&self, _input: &serde_json::Value) -> Result<String> {
+        let build = Build {
+            workdir: self.sandbox.root.clone(),
+            artifact: None,
+            toolchain: "stable".into(),
+        };
+        let report = self.adapter.profile(&build, &self.target).await?;
+        Ok(format_profile_report(&report))
+    }
+}
+
+/// Compact scannable header followed by pretty JSON. Missing metrics
+/// render as `n/a` so partial profiling (e.g. `perf_event_paranoid=2`
+/// blocks perf counters but `strace` still works) degrades gracefully
+/// instead of erroring out the whole call.
+fn format_profile_report(r: &ProfileReport) -> String {
+    let mut s = String::new();
+    s.push_str(&format!("wall={:.3}s", r.wall.as_secs_f64()));
+    s.push_str(&format!(
+        "  cycles={}  instructions={}",
+        fmt_count(r.cycles),
+        fmt_count(r.instructions),
+    ));
+    s.push('\n');
+
+    if r.syscall_counts.is_empty() {
+        s.push_str("top syscalls: n/a (strace unavailable or bench never issued any)\n");
+    } else {
+        let mut sorted: Vec<_> = r.syscall_counts.iter().collect();
+        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        let preview: Vec<String> = sorted
+            .iter()
+            .take(8)
+            .map(|(name, count)| format!("{name}={count}"))
+            .collect();
+        s.push_str(&format!("top syscalls: {}\n", preview.join(" ")));
+    }
+
+    s.push_str(&format!(
+        "allocs: count={} bytes={}\n",
+        fmt_count(r.alloc_count),
+        fmt_count(r.alloc_bytes),
+    ));
+    s.push_str(&format!(
+        "branch_misses={}  llc_misses={}\n",
+        fmt_count(r.branch_misses),
+        fmt_count(r.llc_misses),
+    ));
+    if let Some(p) = &r.flame_svg_path {
+        s.push_str(&format!("flame svg: {}\n", p.display()));
+    }
+
+    s.push_str("\n---json---\n");
+    match serde_json::to_string_pretty(r) {
+        Ok(j) => s.push_str(&j),
+        Err(_) => s.push_str("<json serialization failed>"),
+    }
+    s
+}
+
+fn fmt_count(v: Option<u64>) -> String {
+    match v {
+        Some(n) => n.to_string(),
+        None => "n/a".into(),
+    }
+}
+
 fn truncate(s: &str, n: usize) -> String {
     if s.len() <= n {
         s.to_string()
@@ -592,6 +710,11 @@ fn truncate(s: &str, n: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use ods_lang::{
+        AstMatch, BenchReport, Edit as AdapterEdit, FuzzReport, Patch, TestReport, TestScope,
+    };
+    use std::time::Duration;
 
     #[test]
     fn sandbox_rejects_parent_escape() {
@@ -669,5 +792,133 @@ mod tests {
         .unwrap();
         let on_disk = std::fs::read_to_string(tmp.path().join("sub/dir/new.rs")).unwrap();
         assert_eq!(on_disk, "fn x() {}\n");
+    }
+
+    struct StubAdapter {
+        report: ProfileReport,
+    }
+    #[async_trait]
+    impl LanguageAdapter for StubAdapter {
+        fn name(&self) -> &'static str {
+            "stub"
+        }
+        async fn detect(&self, _: &Path) -> Result<bool> {
+            Ok(true)
+        }
+        async fn build(&self, p: &Path, _: Option<&Patch>) -> Result<Build> {
+            Ok(Build {
+                workdir: p.to_path_buf(),
+                artifact: None,
+                toolchain: "stub".into(),
+            })
+        }
+        async fn run_tests(&self, _: &Build, _: TestScope) -> Result<TestReport> {
+            Ok(TestReport {
+                passed: 0,
+                failed: 0,
+                skipped: 0,
+                log_path: None,
+            })
+        }
+        async fn run_bench(&self, _: &Build, _: &TargetSig) -> Result<BenchReport> {
+            Ok(BenchReport { samples: vec![] })
+        }
+        async fn profile(&self, _: &Build, _: &TargetSig) -> Result<ProfileReport> {
+            Ok(self.report.clone())
+        }
+        async fn ast_query(&self, _: &Path, _: &str) -> Result<Vec<AstMatch>> {
+            Ok(vec![])
+        }
+        fn emit_patch(&self, edits: &[AdapterEdit]) -> Result<Patch> {
+            Ok(Patch {
+                unified_diff: String::new(),
+                edits: edits.to_vec(),
+            })
+        }
+        async fn fuzz(&self, _: &Build, _: &TargetSig, _: Duration) -> Result<FuzzReport> {
+            Ok(FuzzReport {
+                minutes: 0,
+                crashes: 0,
+                seed_corpus_size: 0,
+            })
+        }
+    }
+
+    fn stub_target() -> TargetSig {
+        TargetSig {
+            language: "rust".into(),
+            module: "m".into(),
+            symbol: "s".into(),
+            arity: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn run_profile_emits_summary_header_and_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let report = ProfileReport {
+            wall: Duration::from_millis(234),
+            cycles: Some(87_000_000),
+            instructions: Some(410_000_000),
+            llc_misses: Some(4_800),
+            branch_misses: Some(1_200_000),
+            syscall_counts: vec![
+                ("write".into(), 3421),
+                ("read".into(), 891),
+                ("openat".into(), 17),
+            ],
+            alloc_count: Some(1247),
+            alloc_bytes: Some(312_000),
+            flame_svg_path: None,
+        };
+        let tool = RunProfile {
+            sandbox: Arc::new(Sandbox::new(tmp.path())),
+            adapter: Arc::new(StubAdapter {
+                report: report.clone(),
+            }),
+            target: stub_target(),
+        };
+        let out = tool.call(&serde_json::json!({})).await.unwrap();
+        // Header should be compact + scannable, json payload should follow.
+        assert!(out.starts_with("wall=0.234s"));
+        assert!(out.contains("cycles=87000000"));
+        // Syscalls sorted by count descending.
+        assert!(out.contains("top syscalls: write=3421 read=891 openat=17"));
+        assert!(out.contains("allocs: count=1247 bytes=312000"));
+        assert!(out.contains("branch_misses=1200000"));
+        assert!(out.contains("---json---"));
+        // Round-trip the JSON half to confirm it parses.
+        let (_hdr, json) = out.split_once("---json---").unwrap();
+        let parsed: ProfileReport = serde_json::from_str(json.trim()).unwrap();
+        assert_eq!(parsed.cycles, Some(87_000_000));
+        assert_eq!(parsed.alloc_count, Some(1247));
+    }
+
+    #[tokio::test]
+    async fn run_profile_renders_na_for_missing_metrics() {
+        let tmp = tempfile::tempdir().unwrap();
+        let report = ProfileReport {
+            wall: Duration::from_millis(12),
+            cycles: None,
+            instructions: None,
+            llc_misses: None,
+            branch_misses: None,
+            syscall_counts: vec![],
+            alloc_count: None,
+            alloc_bytes: None,
+            flame_svg_path: None,
+        };
+        let tool = RunProfile {
+            sandbox: Arc::new(Sandbox::new(tmp.path())),
+            adapter: Arc::new(StubAdapter { report }),
+            target: stub_target(),
+        };
+        let out = tool.call(&serde_json::json!({})).await.unwrap();
+        assert!(out.contains("cycles=n/a"));
+        assert!(out.contains("instructions=n/a"));
+        assert!(out.contains("top syscalls: n/a"));
+        assert!(out.contains("allocs: count=n/a bytes=n/a"));
+        assert!(out.contains("branch_misses=n/a"));
+        // Partial-data should not fail the call; only the metrics go n/a.
     }
 }
