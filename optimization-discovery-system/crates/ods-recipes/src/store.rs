@@ -5,6 +5,13 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 use std::sync::OnceLock;
 
+// Bundled recipe corpus embedded at build time — `recipes/seed/*.yaml`
+// and `recipes/antipatterns/*.yaml` baked into the static binary. Used
+// to bootstrap a fresh global store (`~/.ods/recipes.db`) so the
+// cross-repo flywheel has a non-empty starting corpus out of the box,
+// even for a musl single-binary deploy with no source tree available.
+include!(concat!(env!("OUT_DIR"), "/bundled_recipes.rs"));
+
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS recipes (
     id          TEXT PRIMARY KEY,
@@ -110,7 +117,49 @@ impl Store {
             .context("initialise vec schema")?;
         let store = Self { conn };
         store.backfill_vec_index_if_empty()?;
+        store.bootstrap_bundled_recipes_if_empty()?;
         Ok(store)
+    }
+
+    /// On first-open of an empty store, ingest the bundled corpus
+    /// (`recipes/seed/*.yaml` + `recipes/antipatterns/*.yaml` embedded
+    /// at build time via `build.rs`). Makes the default `~/.ods/recipes.db`
+    /// useful out of the box — no `ods recipes import-dir` required.
+    /// No-op when the store already has rows, so subsequent opens are
+    /// free and don't clobber the user's harvested recipes.
+    fn bootstrap_bundled_recipes_if_empty(&self) -> Result<()> {
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM recipes", [], |r| r.get(0))?;
+        if count > 0 {
+            return Ok(());
+        }
+        if BUNDLED_RECIPES.is_empty() {
+            return Ok(());
+        }
+        let mut ok = 0usize;
+        let mut bad = 0usize;
+        for (name, yaml) in BUNDLED_RECIPES.iter() {
+            match serde_yaml::from_str::<Recipe>(yaml) {
+                Ok(recipe) => match self.upsert(&recipe) {
+                    Ok(_) => ok += 1,
+                    Err(e) => {
+                        tracing::warn!(name = %name, err = %e, "bundled recipe upsert failed");
+                        bad += 1;
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!(name = %name, err = %e, "bundled recipe YAML parse failed");
+                    bad += 1;
+                }
+            }
+        }
+        tracing::info!(
+            ingested = ok,
+            failed = bad,
+            "bootstrapped bundled recipe corpus into empty store"
+        );
+        Ok(())
     }
 
     pub fn in_memory() -> Result<Self> {
@@ -777,6 +826,36 @@ mod tests {
         assert!(
             after.is_empty(),
             "expected empty after delete, got {after:?}"
+        );
+    }
+
+    #[test]
+    fn bootstrap_loads_bundled_corpus_on_empty_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("recipes.db");
+        let store = Store::open(&path).unwrap();
+        // Bundled manifest is populated by build.rs at every build.
+        // We expect >= the known hand-authored count (31 seed + 30
+        // antipatterns = 61 at time of writing). Conservative lower
+        // bound guards against accidentally dropping files without
+        // noticing but still passes when new recipes are added.
+        let all = store.all().unwrap();
+        assert!(
+            all.len() >= 50,
+            "expected bundled corpus >=50 rows, got {}",
+            all.len()
+        );
+        // Flywheel contract: a SECOND open of the same path must NOT
+        // re-insert the seeds (would clobber any harvested recipes).
+        drop(store);
+        let store2 = Store::open(&path).unwrap();
+        let all2 = store2.all().unwrap();
+        assert_eq!(
+            all.len(),
+            all2.len(),
+            "re-open should be idempotent; expected {} rows, got {}",
+            all.len(),
+            all2.len()
         );
     }
 }

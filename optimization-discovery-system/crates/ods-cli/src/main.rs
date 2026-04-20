@@ -19,7 +19,10 @@ use tracing_subscriber::EnvFilter;
     about = "Optimization Discovery System - CI-integrated, agent-driven perf wins across languages"
 )]
 struct Cli {
-    /// Path to the recipe store (SQLite). Defaults to ./.ods/recipes.db.
+    /// Path to the recipe store (SQLite). Defaults to
+    /// `$HOME/.ods/recipes.db` — the global corpus that makes the
+    /// cross-repo flywheel work. Pass a per-repo path (e.g.
+    /// `.ods/recipes.db`) to isolate a single run from global state.
     #[arg(long, env = "ODS_STORE", global = true)]
     store: Option<PathBuf>,
 
@@ -239,10 +242,17 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-    let store_path = cli
-        .store
-        .clone()
-        .unwrap_or_else(|| PathBuf::from(".ods/recipes.db"));
+    // Default store path is `$HOME/.ods/recipes.db` — the global
+    // corpus that makes the cross-repo flywheel work. Recipes
+    // harvested from one repo are retrievable from every subsequent
+    // run, across any target. Users who want per-repo isolation can
+    // still pass `--store .ods/recipes.db` explicitly.
+    let store_path = cli.store.clone().unwrap_or_else(|| {
+        std::env::var("HOME")
+            .ok()
+            .map(|h| PathBuf::from(h).join(".ods/recipes.db"))
+            .unwrap_or_else(|| PathBuf::from(".ods/recipes.db"))
+    });
 
     match cli.command {
         Command::Scan { repo, json } => cmd_scan(&repo, json).await,

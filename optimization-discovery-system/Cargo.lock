@@ -1467,6 +1467,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sqlite-vec",
+ "tempfile",
  "thiserror 1.0.69",
  "time",
  "tracing",
