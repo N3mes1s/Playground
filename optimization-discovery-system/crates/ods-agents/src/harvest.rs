@@ -102,12 +102,54 @@ pub fn harvest_full(
     let _ = promote_on_success(&mut recipe, &PromotionRules::default());
 
     // Phase 2: optional Generalizer call.
+    //
+    // The LLM produces a tree-sitter S-expression `ast_pattern` which
+    // we NEVER upsert without first checking (a) that it compiles
+    // against the grammar, and (b) that it actually matches at least
+    // one file the winning patch modified. Without this gate every
+    // hallucinated pattern would permanently pollute retrieval.
+    // Rejections log at WARN with the truncated pattern so operators
+    // can see the quality signal.
     let mut generalized_id: Option<RecipeId> = None;
     if let Some(c) = client {
         if let Ok(Some(general)) = run_generalizer(c, winner, target, &recipe.id) {
-            store.upsert(&general)?;
-            generalized_id = Some(general.id.clone());
-            recipe.generalized_as = Some(general.id.clone());
+            match crate::recipe_validate::validate_pattern_compiles(
+                &general.language,
+                &general.trigger.ast_pattern,
+            ) {
+                Ok(()) => {
+                    let matches_diff =
+                        diff_pre_texts(&winner.patch.unified_diff)
+                            .iter()
+                            .any(|src| {
+                                crate::recipe_validate::validate_pattern_matches_source(
+                                    &general.language,
+                                    &general.trigger.ast_pattern,
+                                    src,
+                                )
+                                .unwrap_or(false)
+                            });
+                    if matches_diff {
+                        store.upsert(&general)?;
+                        generalized_id = Some(general.id.clone());
+                        recipe.generalized_as = Some(general.id.clone());
+                    } else {
+                        tracing::warn!(
+                            recipe_id = %general.id.0,
+                            pattern = %truncate_to(&general.trigger.ast_pattern, 200),
+                            "generalizer pattern compiled but did not match the winning diff; rejected"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        recipe_id = %general.id.0,
+                        err = %e,
+                        pattern = %truncate_to(&general.trigger.ast_pattern, 200),
+                        "generalizer produced uncompilable pattern; rejected"
+                    );
+                }
+            }
         }
     }
 
@@ -228,6 +270,59 @@ fn run_generalizer(
 
 fn truncate_to(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
+}
+
+/// Reconstruct the "before" text of every file touched by a unified
+/// diff. Used by the Generalizer validation gate to confirm a proposed
+/// pattern actually matches the source the diff describes — a tighter
+/// bar than "the pattern compiles."
+///
+/// Walks hunks and stitches together each file's context + `-` lines
+/// (the lines that existed PRE-patch). Skips `+++` lines. Returns one
+/// String per file.
+fn diff_pre_texts(diff: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut current: Option<String> = None;
+    for line in diff.lines() {
+        if line.starts_with("--- ") {
+            if let Some(s) = current.take() {
+                out.push(s);
+            }
+            current = Some(String::new());
+        } else if line.starts_with("+++ ")
+            || line.starts_with("diff --git")
+            || line.starts_with("index ")
+        {
+            // headers — ignore
+        } else if line.starts_with("@@") {
+            // hunk header — insert a blank separator so the
+            // reconstructed text has consistent line boundaries
+            // between hunks even if their ranges weren't contiguous.
+            if let Some(s) = current.as_mut() {
+                if !s.is_empty() && !s.ends_with('\n') {
+                    s.push('\n');
+                }
+            }
+        } else if let Some(body) = line.strip_prefix(' ') {
+            if let Some(s) = current.as_mut() {
+                s.push_str(body);
+                s.push('\n');
+            }
+        } else if let Some(body) = line.strip_prefix('-') {
+            // `-` (remove) lines existed PRE-patch, so they belong.
+            if !body.starts_with("-- ") {
+                if let Some(s) = current.as_mut() {
+                    s.push_str(body);
+                    s.push('\n');
+                }
+            }
+        }
+        // `+` (additions) are post-patch and get dropped.
+    }
+    if let Some(s) = current.take() {
+        out.push(s);
+    }
+    out
 }
 
 fn extract_json_object(text: &str) -> Option<String> {

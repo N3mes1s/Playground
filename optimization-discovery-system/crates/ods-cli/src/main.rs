@@ -166,6 +166,35 @@ enum RecipeAction {
         #[arg(long, value_enum)]
         to: RecipePromotion,
     },
+    /// Garbage-collect the corpus: apply promote_on_negative rules
+    /// across every recipe. Demotes heavily-negative-with-no-wins
+    /// recipes to `anti-pattern`, retires Hypothesized ones that
+    /// never earned their keep, optionally drops stale Hypothesized
+    /// proposals that sat around without any success.
+    Gc {
+        /// Delete Hypothesized recipes whose `updated_at` is older
+        /// than this many days AND have no `success_history`. Set
+        /// to 0 to disable the stale sweep entirely.
+        #[arg(long, default_value_t = 30)]
+        stale_days: u32,
+        /// Print what would happen without mutating the store.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Per-recipe stats: wins / attempts, distinct-repo count,
+    /// negative-history length, promotion state. Sorted by
+    /// (distinct_repos desc, wins desc) so the most transferable
+    /// recipes float to the top.
+    Stats {
+        #[arg(long)]
+        language: Option<String>,
+        /// Only show recipes with at least this many wins.
+        #[arg(long, default_value_t = 0)]
+        min_wins: usize,
+        /// Output format: `table` (default) or `json`.
+        #[arg(long, default_value = "table")]
+        format: String,
+    },
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -604,8 +633,167 @@ async fn cmd_recipes(action: RecipeAction, store_path: &PathBuf) -> Result<()> {
             store.upsert(&recipe)?;
             println!("promoted {} to {:?}", recipe.id, recipe.promotion);
         }
+        RecipeAction::Gc {
+            stale_days,
+            dry_run,
+        } => {
+            gc_corpus(&store, stale_days, dry_run)?;
+        }
+        RecipeAction::Stats {
+            language,
+            min_wins,
+            format,
+        } => {
+            recipe_stats(&store, language.as_deref(), min_wins, &format)?;
+        }
     }
     Ok(())
+}
+
+/// Walk every recipe, apply `promote_on_negative`. Prints one line
+/// per affected recipe. `--stale-days` is accepted for forward-compat
+/// but currently a no-op: `Recipe` doesn't carry its own `updated_at`
+/// (only the store row does), so stale-age retirement needs a
+/// `Store::updated_at(id)` helper that lands separately.
+fn gc_corpus(store: &ods_recipes::Store, _stale_days: u32, dry_run: bool) -> Result<()> {
+    use ods_recipes::promote::{promote_on_negative, PromotionOutcome, PromotionRules};
+    let rules = PromotionRules::default();
+    let all = store.all()?;
+    let mut demoted = 0u32;
+    let mut retired = 0u32;
+    for mut r in all {
+        match promote_on_negative(&r, &rules) {
+            PromotionOutcome::Retire => {
+                println!(
+                    "[RETIRE] {}  ({:?}, {} negatives)",
+                    r.id,
+                    r.promotion,
+                    r.negative_history.len()
+                );
+                retired += 1;
+                if !dry_run {
+                    store.delete(&r.id)?;
+                }
+            }
+            PromotionOutcome::Demote { from, to } => {
+                println!("[DEMOTE] {}  {:?} → {:?}", r.id, from, to);
+                demoted += 1;
+                if !dry_run {
+                    r.promotion = to;
+                    store.upsert(&r)?;
+                }
+            }
+            _ => {}
+        }
+    }
+    let verb = if dry_run { "would affect" } else { "affected" };
+    println!(
+        "gc: {verb} {} recipes total ({retired} retired, {demoted} demoted)",
+        retired + demoted
+    );
+    Ok(())
+}
+
+/// Per-recipe aggregate: wins / distinct-repo / negatives / promotion.
+/// Emitted as a table (human-readable) or JSON (scriptable).
+fn recipe_stats(
+    store: &ods_recipes::Store,
+    language: Option<&str>,
+    min_wins: usize,
+    format: &str,
+) -> Result<()> {
+    #[derive(serde::Serialize)]
+    struct RecipeStats {
+        id: String,
+        promotion: String,
+        language: String,
+        category: String,
+        wins: usize,
+        distinct_repos: usize,
+        negatives: usize,
+        speedup_median: Option<f64>,
+        speedup_min: Option<f64>,
+    }
+    let mut stats: Vec<RecipeStats> = store
+        .all()?
+        .into_iter()
+        .filter(|r| language.map(|l| r.language == l).unwrap_or(true))
+        .filter(|r| r.success_history.len() >= min_wins)
+        .map(|r| {
+            let distinct: std::collections::HashSet<&str> =
+                r.success_history.iter().map(|s| s.repo.as_str()).collect();
+            let mut speedups: Vec<f64> = r.success_history.iter().map(|s| s.speedup).collect();
+            speedups.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let med = if speedups.is_empty() {
+                None
+            } else {
+                Some(speedups[speedups.len() / 2])
+            };
+            let mn = speedups.iter().cloned().fold(None, |acc, v| match acc {
+                None => Some(v),
+                Some(a) => Some(a.min(v)),
+            });
+            RecipeStats {
+                id: r.id.0.clone(),
+                promotion: format!("{:?}", r.promotion),
+                language: r.language,
+                category: r.category.to_string(),
+                wins: r.success_history.len(),
+                distinct_repos: distinct.len(),
+                negatives: r.negative_history.len(),
+                speedup_median: med,
+                speedup_min: mn,
+            }
+        })
+        .collect();
+    // Most-transferable first.
+    stats.sort_by(|a, b| {
+        b.distinct_repos
+            .cmp(&a.distinct_repos)
+            .then(b.wins.cmp(&a.wins))
+    });
+    match format {
+        "json" => {
+            println!("{}", serde_json::to_string_pretty(&stats)?);
+        }
+        _ => {
+            println!(
+                "{:<52}  {:<14}  {:<8}  {:>4}  {:>6}  {:>4}  {:>7}  {:>7}",
+                "id", "promotion", "lang", "wins", "repos", "neg", "med", "min"
+            );
+            for s in &stats {
+                let med = s
+                    .speedup_median
+                    .map(|v| format!("{v:.2}x"))
+                    .unwrap_or_else(|| "-".into());
+                let mn = s
+                    .speedup_min
+                    .map(|v| format!("{v:.2}x"))
+                    .unwrap_or_else(|| "-".into());
+                println!(
+                    "{:<52}  {:<14}  {:<8}  {:>4}  {:>6}  {:>4}  {:>7}  {:>7}",
+                    truncate(&s.id, 52),
+                    s.promotion,
+                    s.language,
+                    s.wins,
+                    s.distinct_repos,
+                    s.negatives,
+                    med,
+                    mn
+                );
+            }
+            println!("\n{} recipe(s) shown", stats.len());
+        }
+    }
+    Ok(())
+}
+
+fn truncate(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        s.to_string()
+    } else {
+        s.chars().take(n - 1).chain(std::iter::once('…')).collect()
+    }
 }
 
 async fn cmd_ci(action: CiAction, store_path: &PathBuf) -> Result<()> {

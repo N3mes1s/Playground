@@ -431,6 +431,23 @@ impl Store {
         Ok(out)
     }
 
+    /// Return every Recipe in the store with no filter, including
+    /// AntiPattern rows (which the promotion-ordered `search` excludes).
+    /// Used by `ods corpus gc` and `ods recipes stats`, both of which
+    /// need to walk the whole corpus. Bounded to 1M rows.
+    pub fn all(&self) -> Result<Vec<Recipe>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT body FROM recipes ORDER BY updated_at DESC LIMIT 1000000")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for body in rows {
+            let body = body?;
+            out.push(serde_json::from_str(&body)?);
+        }
+        Ok(out)
+    }
+
     pub fn count(&self) -> Result<u64> {
         let n: i64 = self
             .conn

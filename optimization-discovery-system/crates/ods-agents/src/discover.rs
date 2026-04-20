@@ -813,7 +813,7 @@ fn compile_triggers(recipes: &[Recipe]) -> Vec<CompiledTrigger<'_>> {
     out
 }
 
-fn language_for_recipe(recipe_lang: &str) -> Option<(&'static str, Language)> {
+pub(crate) fn language_for_recipe(recipe_lang: &str) -> Option<(&'static str, Language)> {
     match recipe_lang {
         "rust" => Some(("rust", ods_lang_rust::tree_sitter_language())),
         "python" => Some(("python", ods_lang_python::tree_sitter_language())),

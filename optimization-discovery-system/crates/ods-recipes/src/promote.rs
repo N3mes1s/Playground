@@ -23,6 +23,13 @@ pub struct PromotionRules {
     /// this many distinct-repo negatives with zero successes. Guards
     /// against Explorer churn.
     pub hypothesized_delete_distinct_repos: u32,
+    /// A Seed/Candidate/Validated recipe is auto-demoted to
+    /// `AntiPattern` when its negative-history length reaches this
+    /// count AND it has zero successes. Covers the case where
+    /// Hypothesized got promoted quickly via a single accidental
+    /// success then kept failing — Retire would be wrong (we'd
+    /// lose the history) but leaving it in retrieval is worse.
+    pub demote_on_negative_count_without_wins: u32,
 }
 
 impl Default for PromotionRules {
@@ -33,6 +40,7 @@ impl Default for PromotionRules {
             validated_min_lower_bound: 1.15,
             corpus_extra_successes: 2,
             hypothesized_delete_distinct_repos: 3,
+            demote_on_negative_count_without_wins: 5,
         }
     }
 }
@@ -47,6 +55,15 @@ pub enum PromotionOutcome {
     /// The recipe should be deleted from the corpus (Hypothesized-only
     /// outcome after sustained negatives with zero wins).
     Retire,
+    /// A non-Hypothesized recipe with sustained negatives and zero
+    /// wins should be flipped to AntiPattern: preserved for
+    /// historical reference, but no longer part of retrieval's
+    /// "apply this" pool. Callers write this by setting
+    /// `recipe.promotion = AntiPattern` and upserting.
+    Demote {
+        from: PromotionState,
+        to: PromotionState,
+    },
 }
 
 /// Consider promoting a recipe given its current success history. Returns
@@ -68,14 +85,29 @@ pub fn promote_on_success(recipe: &mut Recipe, rules: &PromotionRules) -> Promot
     }
 }
 
-/// Consider demoting / retiring a Hypothesized recipe in light of its
-/// negative history. Recipes that are already Seed or higher are never
-/// automatically demoted - they carry enough provenance that a human
-/// should decide.
+/// Consider demoting / retiring a recipe in light of its negative
+/// history.
+///
+/// Two rules fire in priority order:
+/// 1. `Retire` — Hypothesized + 0 successes + ≥N distinct-repo
+///    negatives. The recipe never earned its keep; delete it.
+/// 2. `Demote` — Seed/Candidate/Validated + 0 successes + ≥M total
+///    negatives. Flips to AntiPattern so the retrieval pool drops
+///    it but provenance survives. A human can re-promote if they
+///    disagree.
+///
+/// Corpus/AntiPattern recipes are never auto-changed. Successful
+/// recipes (any `success_history`) are never demoted — a single win
+/// already earned at least candidate tier.
 pub fn promote_on_negative(recipe: &Recipe, rules: &PromotionRules) -> PromotionOutcome {
-    if !matches!(recipe.promotion, PromotionState::Hypothesized) {
+    // Corpus / AntiPattern never auto-change.
+    if matches!(
+        recipe.promotion,
+        PromotionState::Corpus | PromotionState::AntiPattern
+    ) {
         return PromotionOutcome::Unchanged;
     }
+    // Any success at all protects from demotion.
     if !recipe.success_history.is_empty() {
         return PromotionOutcome::Unchanged;
     }
@@ -92,11 +124,26 @@ pub fn promote_on_negative(recipe: &Recipe, rules: &PromotionRules) -> Promotion
         })
         .map(|n| n.repo.as_str())
         .collect();
-    if distinct.len() as u32 >= rules.hypothesized_delete_distinct_repos {
-        PromotionOutcome::Retire
-    } else {
-        PromotionOutcome::Unchanged
+
+    // Rule 1: Retire Hypothesized.
+    if matches!(recipe.promotion, PromotionState::Hypothesized)
+        && distinct.len() as u32 >= rules.hypothesized_delete_distinct_repos
+    {
+        return PromotionOutcome::Retire;
     }
+
+    // Rule 2: Demote Seed/Candidate/Validated with sustained negatives.
+    if matches!(
+        recipe.promotion,
+        PromotionState::Seed | PromotionState::Candidate | PromotionState::Validated
+    ) && (recipe.negative_history.len() as u32) >= rules.demote_on_negative_count_without_wins
+    {
+        return PromotionOutcome::Demote {
+            from: recipe.promotion,
+            to: PromotionState::AntiPattern,
+        };
+    }
+    PromotionOutcome::Unchanged
 }
 
 fn rank(s: PromotionState) -> u8 {
@@ -270,9 +317,59 @@ mod tests {
 
     #[test]
     fn seed_never_auto_retires() {
+        // Retire is Hypothesized-only; Seed gets the Demote path or
+        // stays Unchanged, never Retire.
         let mut r = base();
         r.promotion = PromotionState::Seed;
-        for repo in ["a/b", "c/d", "e/f", "g/h"] {
+        for repo in ["a/b", "c/d", "e/f"] {
+            r.negative_history
+                .push(mk_neg(repo, NegativeOutcome::Abstained));
+        }
+        // 3 negatives < demote threshold (5) → Unchanged.
+        assert_eq!(
+            promote_on_negative(&r, &PromotionRules::default()),
+            PromotionOutcome::Unchanged
+        );
+    }
+
+    #[test]
+    fn seed_demotes_to_antipattern_after_five_negatives_and_zero_wins() {
+        let mut r = base();
+        r.promotion = PromotionState::Seed;
+        for repo in ["a", "b", "c", "d", "e"] {
+            r.negative_history
+                .push(mk_neg(repo, NegativeOutcome::Abstained));
+        }
+        match promote_on_negative(&r, &PromotionRules::default()) {
+            PromotionOutcome::Demote { from, to } => {
+                assert_eq!(from, PromotionState::Seed);
+                assert_eq!(to, PromotionState::AntiPattern);
+            }
+            other => panic!("expected Demote, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_single_success_protects_from_demotion() {
+        let mut r = base();
+        r.promotion = PromotionState::Seed;
+        r.success_history
+            .push(mk_success("won/here", 1.8, true, 1.6));
+        for repo in ["a", "b", "c", "d", "e", "f", "g"] {
+            r.negative_history
+                .push(mk_neg(repo, NegativeOutcome::Abstained));
+        }
+        assert_eq!(
+            promote_on_negative(&r, &PromotionRules::default()),
+            PromotionOutcome::Unchanged
+        );
+    }
+
+    #[test]
+    fn corpus_tier_never_auto_changes() {
+        let mut r = base();
+        r.promotion = PromotionState::Corpus;
+        for repo in ["a", "b", "c", "d", "e"] {
             r.negative_history
                 .push(mk_neg(repo, NegativeOutcome::Abstained));
         }

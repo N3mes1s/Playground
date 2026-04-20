@@ -302,9 +302,32 @@ impl Orchestrator {
             match crate::explorer::run_explorer(input).await {
                 Ok(outcome) => {
                     let mut added = 0usize;
+                    let mut rejected = 0usize;
                     for r in &outcome.proposed_recipes {
                         if self.store.get(&r.id).ok().flatten().is_some() {
                             continue; // already in corpus from a prior run
+                        }
+                        // Validation gate. A Hypothesized recipe with an
+                        // uncompilable pattern does nothing but waste
+                        // Discoverer cycles every run; reject at the
+                        // write boundary so the store only ever holds
+                        // grammar-valid queries.
+                        if let Err(e) = crate::recipe_validate::validate_pattern_compiles(
+                            &r.language,
+                            &r.trigger.ast_pattern,
+                        ) {
+                            rejected += 1;
+                            crate::observe::emit(
+                                Some(&sink),
+                                &run_id,
+                                LoopStage::RecipeRetrieve,
+                                crate::observe::AgentEvent::RecipeRejected {
+                                    source: "explorer".into(),
+                                    recipe_id: r.id.0.clone(),
+                                    reason: format!("{e:#}"),
+                                },
+                            );
+                            continue;
                         }
                         if self.store.upsert(r).is_ok() {
                             added += 1;
@@ -313,6 +336,7 @@ impl Orchestrator {
                     tracing::info!(
                         proposed = outcome.proposed_recipes.len(),
                         added,
+                        rejected,
                         cost_usd = outcome.spent_usd,
                         "explorer survey complete; hypothesized recipes added to corpus"
                     );

@@ -87,6 +87,17 @@ pub enum AgentEvent {
         total_spent_usd: f64,
         budget_exhausted: bool,
     },
+    /// A recipe proposed by an LLM source (Generalizer or Explorer)
+    /// was rejected by the pre-upsert validation gate. Tracked so
+    /// operators can see the quality signal without grepping logs.
+    RecipeRejected {
+        /// Where the recipe came from — `"generalizer"` or
+        /// `"explorer"`, both string constants.
+        source: String,
+        recipe_id: String,
+        /// The tree-sitter error or "did not match source diff", etc.
+        reason: String,
+    },
 }
 
 /// Persists events into `run_events`.
@@ -300,6 +311,19 @@ fn emit_trace(event: &AgentEvent) {
                 "race finish"
             );
         }
+        AgentEvent::RecipeRejected {
+            source,
+            recipe_id,
+            reason,
+        } => {
+            tracing::warn!(
+                target: "ods::agents",
+                source = %source,
+                recipe_id = %recipe_id,
+                reason = %preview(reason, 200),
+                "recipe rejected by validation gate"
+            );
+        }
     }
 }
 
@@ -315,6 +339,7 @@ fn event_kind(e: &AgentEvent) -> &'static str {
         AgentEvent::PatchRejected { .. } => "patch-rejected",
         AgentEvent::SpecialistFinish { .. } => "specialist-finish",
         AgentEvent::RaceFinish { .. } => "race-finish",
+        AgentEvent::RecipeRejected { .. } => "recipe-rejected",
     }
 }
 

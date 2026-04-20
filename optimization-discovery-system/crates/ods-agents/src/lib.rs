@@ -15,6 +15,7 @@ pub mod observe;
 pub mod orchestrator;
 pub mod planner;
 pub mod race;
+pub mod recipe_validate;
 pub mod schedule;
 pub mod specialist;
 pub mod tools;
