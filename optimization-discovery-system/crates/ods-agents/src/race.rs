@@ -119,7 +119,7 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
     let client = AnthropicClient::new(api_key)?;
     std::fs::create_dir_all(&input.worktree_parent)?;
 
-    for (kind, hyp) in &input.plan {
+    for (specialist_idx, (kind, hyp)) in input.plan.iter().enumerate() {
         // CI-mode budget check before each specialist. Uses the shared
         // tracker when present so parallel specialists see each other's
         // spend; falls back to local `spent_usd` for Dev-mode runs.
@@ -139,7 +139,17 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
             }
         }
 
-        let tag = format!("{:?}-{}", kind, hyp.category);
+        // Include specialist_idx so multiple specialists with the same
+        // (kind, category) — e.g. three FastPathSpecializer runs in one
+        // race — get DISTINCT worktree directories. Without the idx
+        // suffix, Worktree::create's `if target.exists() { remove_dir_all }`
+        // would wipe the previous specialist's worktree before running
+        // the next one. That's catastrophic when an earlier specialist
+        // was the winner: the rerun-3× determinism gate later calls
+        // adapter.build against `winner.worktree_path`, which by then
+        // has been clobbered. Observable symptom: `determinism: None` in
+        // every artifact even though the stage-21 rerun code ran.
+        let tag = format!("{:?}-{}-{}", kind, hyp.category, specialist_idx);
         let wt = Worktree::create(input.repo, &tag, &input.worktree_parent)?;
         let sandbox = Sandbox::new(wt.path.clone());
 
