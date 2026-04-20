@@ -24,7 +24,7 @@ use ods_core::{
     Mode, Run, RunRecord, RunStatus, RunStore,
 };
 use ods_lang::{BenchReport, LanguageAdapter, ProfileReport, TestReport, TestScope};
-use ods_measure::{compare, rerun, EnvFingerprint, RerunReport, Sample, SpeedupVerdict};
+use ods_measure::{compare, EnvFingerprint, RerunReport, Sample, SpeedupVerdict};
 use ods_recipes::{RecipeId, Store};
 use ods_verify::{GateInput, GateReport, ZeroDiffGate};
 use serde::{Deserialize, Serialize};
@@ -391,6 +391,11 @@ impl Orchestrator {
         let mut winner_kind: Option<String> = None;
         let mut post_bench_override: Option<BenchReport> = None;
         let mut speedup_override: Option<SpeedupVerdict> = None;
+        let mut winner_worktree: Option<PathBuf> = None;
+        // Winner's WorktreeHandle kept alive for the duration of the
+        // bench + rerun-N determinism gate. Dropped when orchestrator
+        // returns so cleanup still happens.
+        let mut _winner_handle: Option<ods_core::WorktreeHandle> = None;
         if allow_llm && std::env::var("ANTHROPIC_API_KEY").is_ok() {
             // One shared tracker per run. Its Instant-based wall clock
             // starts here so the full LLM race shares the same wall budget
@@ -443,6 +448,7 @@ impl Orchestrator {
                         winner_kind = Some(format!("{:?}", w.outcome.kind));
                         post_bench_override = Some(w.post_bench.clone());
                         speedup_override = Some(w.verdict.clone());
+                        winner_worktree = Some(w.worktree_path.clone());
 
                         // Auto-harvest the winning transform. Phase 1 writes
                         // a specific per-target Candidate (provenance). Phase 2
@@ -476,6 +482,12 @@ impl Orchestrator {
                                 tracing::warn!(err = %e, "harvest failed; continuing without");
                             }
                         }
+
+                        // Preserve the worktree alive past the race so the
+                        // determinism rerun gate below can actually
+                        // re-measure against the patched build. Done last so
+                        // harvest_full can still read `&w`.
+                        _winner_handle = Some(w._handle);
                     }
                 }
                 Err(e) => {
@@ -549,33 +561,98 @@ impl Orchestrator {
         };
         artifact.speedup = verdict.clone();
 
-        // Determinism gate: rerun 3x and require CI overlap + stable fp.
-        // Only meaningful when a winner produced a real speedup claim.
-        if had_winner {
-            if let (Some(pre), Some(post)) = (&pre_bench, &post_bench) {
-                if let (Some(p), Some(q)) = (pre.samples.first(), post.samples.first()) {
-                    let pre_ns = p.ns_per_iter;
-                    let post_ns = q.ns_per_iter;
-                    let r = rerun(3, || {
-                        (
-                            Sample {
-                                name: "pre".into(),
-                                values_ns: vec![pre_ns; 30],
-                            },
-                            Sample {
-                                name: "post".into(),
-                                values_ns: vec![post_ns; 30],
-                            },
-                        )
-                    });
-                    if !(r.cis_overlap && r.fingerprint_stable) {
-                        artifact.pr_withheld = true;
-                        artifact.note = Some(
-                            "determinism gate failed (CI overlap or fingerprint drift)".into(),
-                        );
-                    }
-                    artifact.determinism = Some(r);
+        // Determinism gate: re-measure pre+post N times and require CI
+        // overlap + stable env fingerprint before accepting the speedup.
+        //
+        // The previous implementation stuffed `vec![pre_ns; 30]` into
+        // each closure — trivially deterministic by construction and
+        // told us nothing about actual measurement noise. The real
+        // gate below re-runs the bench against the original
+        // `build` (pristine pre) and a Build rebuilt from the
+        // winner's still-alive worktree (patched post) once per
+        // iteration.
+        //
+        // Cost: ~3× bench wall-time. Runs only when a winner exists,
+        // the winner's worktree is still alive (we held _winner_handle),
+        // and a non-empty pre_bench was captured.
+        if had_winner && winner_worktree.is_some() && pre_bench.is_some() {
+            let wt_path = winner_worktree.as_ref().expect("checked").clone();
+            // Re-use the pristine `build` from pre-profile for the pre
+            // side; build the winner's worktree once here so we don't
+            // pay a rebuild cost per iteration.
+            let post_build = match self.adapter.build(&wt_path, None).await {
+                Ok(b) => Some(b),
+                Err(e) => {
+                    tracing::warn!(err = %e, "rerun: rebuilding winner worktree failed; skipping determinism gate");
+                    None
                 }
+            };
+
+            if let Some(post_build) = post_build {
+                const N: u32 = 3;
+                let fingerprint = EnvFingerprint::capture();
+                let mut verdicts: Vec<SpeedupVerdict> = Vec::with_capacity(N as usize);
+                let mut fingerprint_stable = true;
+                for i in 0..N {
+                    let fp_now = EnvFingerprint::capture();
+                    if !fp_now.diff(&fingerprint).is_empty() {
+                        fingerprint_stable = false;
+                    }
+                    let pre_bench_i = match self.adapter.run_bench(&build, &target).await {
+                        Ok(b) => b,
+                        Err(e) => {
+                            tracing::warn!(
+                                iter = i,
+                                err = %e,
+                                "rerun: pre bench failed"
+                            );
+                            continue;
+                        }
+                    };
+                    let post_bench_i = match self.adapter.run_bench(&post_build, &target).await {
+                        Ok(b) => b,
+                        Err(e) => {
+                            tracing::warn!(
+                                iter = i,
+                                err = %e,
+                                "rerun: post bench failed"
+                            );
+                            continue;
+                        }
+                    };
+                    let (Some(pp), Some(qq)) =
+                        (pre_bench_i.samples.first(), post_bench_i.samples.first())
+                    else {
+                        continue;
+                    };
+                    let pre_sample = Sample {
+                        name: "pre".into(),
+                        values_ns: vec![pp.ns_per_iter],
+                    };
+                    let post_sample = Sample {
+                        name: "post".into(),
+                        values_ns: vec![qq.ns_per_iter],
+                    };
+                    verdicts.push(compare(&pre_sample, &post_sample));
+                }
+                let all_accepted = !verdicts.is_empty() && verdicts.iter().all(|v| v.accepted);
+                let cis_overlap = cis_overlap(&verdicts);
+                let r = RerunReport {
+                    n: N,
+                    verdicts,
+                    fingerprint,
+                    fingerprint_stable,
+                    all_accepted,
+                    cis_overlap,
+                };
+                if !(r.cis_overlap && r.fingerprint_stable && r.all_accepted) {
+                    artifact.pr_withheld = true;
+                    artifact.note = Some(
+                        "determinism gate failed (CI overlap, fingerprint drift, or non-accepted rerun)"
+                            .into(),
+                    );
+                }
+                artifact.determinism = Some(r);
             }
         }
         artifact.stages_completed.push(LoopStage::Bench);
@@ -682,6 +759,25 @@ fn persist_json(repo: &PathBuf, art: &RunArtifact) -> Result<()> {
 
 fn now_rfc3339() -> Result<String> {
     Ok(time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?)
+}
+
+/// Every pair of post-CIs must overlap for the rerun gate to accept.
+/// Local helper because `ods_measure::rerun::cis_overlap` is
+/// module-private — we run the rerun loop inline against real benches
+/// here instead of going through the helper.
+fn cis_overlap(verdicts: &[SpeedupVerdict]) -> bool {
+    for i in 0..verdicts.len() {
+        for j in (i + 1)..verdicts.len() {
+            let a = &verdicts[i].post;
+            let b = &verdicts[j].post;
+            let lo = a.lower.max(b.lower);
+            let hi = a.upper.min(b.upper);
+            if lo > hi {
+                return false;
+            }
+        }
+    }
+    !verdicts.is_empty()
 }
 
 /// Walk `repo` for source files matching `language` and return true as

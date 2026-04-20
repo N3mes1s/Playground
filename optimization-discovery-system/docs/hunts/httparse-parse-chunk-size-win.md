@@ -96,19 +96,18 @@ the same $7 cap.
 
 ## What didn't work
 
-- **`determinism_ok` is `None`** in the artifact. The 3-rerun gate
-  didn't fire because the race hit `budget_exhausted=true` before
-  the orchestrator reached the rerun stage. The single-sample
-  Criterion result (pre/post lower==point==upper) is sound
-  (Criterion ran 200 samples internally with bootstrap CIs); what's
-  missing is the cross-environment rerun check. For an eventual PR
-  to upstream we'd want a fresh run with higher budget or pre-reserved
-  rerun spend.
-- **`tests` field is `None`** in the JSON artifact even though the
-  specialist ran `cargo test` twice (iter 12 + iter 16) with 263/263
-  passing both times. That's a serialization gap in the artifact
-  writer, not a real failure — but it means the PR body template
-  would currently read "tests: unknown" rather than the real number.
+- **Determinism gate was fake.** The artifact shows
+  `determinism.all_accepted = true`, `cis_overlap = true`, and 3
+  identical verdicts. Those identical verdicts are the giveaway:
+  the rerun closure in `orchestrator.rs` was stuffing `vec![pre_ns; 30]`
+  (same number, 30 times) into each iteration and calling `compare`
+  on that. Trivially "deterministic" because nothing was re-measured.
+  **Fixed in the same commit batch:** the rerun now calls
+  `adapter.run_bench` three times against the winner's still-alive
+  worktree (we keep its `WorktreeHandle` past the race) and reports
+  three independent measurements. CI overlap now means what it says.
+  Re-run this hunt with the fix to produce an honest determinism
+  report.
 - **FastPathSpecializer got budget-capped** mid-edit. It had just
   finished writing the fast-path into `src/lib.rs` (iter 11's
   edit_file succeeded: 9 lines → 74 lines) when the next-call
@@ -118,11 +117,18 @@ the same $7 cap.
   suggests budgeting more headroom for the second/third specialist,
   or making the race more willing to verify a patch landed by a
   budget-exhausted specialist.
+- **Earlier commentary in this file claimed `tests` and `gate`
+  were missing from the artifact.** That was wrong — they were
+  there all along (`tests: 369 passed / 0 failed / 0 skipped`,
+  `gate: Pass / reasons: []`); my inspection script had a bug that
+  made them look absent. Corrected.
 
 ## Next steps
 
-1. Fix the `tests` / `determinism_ok` serialization so the artifact
-   reflects reality.
+1. Re-run with the real-rerun fix (the one that actually calls
+   `adapter.run_bench` 3× against the winner's worktree) and
+   capture an honest determinism report with 3 independent
+   measurements.
 2. Re-run with budget ~$12 to let all 3 specialists complete verify
    and see which one produces the larger speedup when given room.
 3. Once numbers are clean, open a PR upstream to `seanmonstar/httparse`
