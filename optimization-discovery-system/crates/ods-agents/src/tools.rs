@@ -273,13 +273,16 @@ impl ToolHandlerMap {
                 description:
                     "Profile the target under instrumentation (time, strace, perf stat) and \
                      return measured syscall counts, cycles/instructions, branch/LLC misses, \
-                     and allocation totals. Call this BEFORE editing to see the baseline \
-                     distribution of work, and AGAIN after your edit to verify the metric \
-                     relevant to your specialist actually moved. If the relevant metric is \
-                     not visibly hot in the baseline (e.g. no syscalls for a SyscallEliminator, \
-                     low branch-misses for a FastPathSpecializer), abstain rather than apply \
-                     the transform anyway. No arguments — the target sig is pinned for this \
-                     race."
+                     and allocation totals.\n\n\
+                     EXPENSIVE: one call runs `cargo bench` THREE times sequentially under \
+                     different tooling (~5-10 wall-clock minutes on a mid-size workspace). \
+                     The orchestrator has already captured a pre-edit baseline and provided \
+                     it in your user prompt — do NOT call run_profile pre-edit. Call it \
+                     AT MOST ONCE, and only after your edit, to verify your specific \
+                     metric moved. Metrics rendered as `n/a` mean the corresponding \
+                     profiling tool is unavailable on this host; that is a measurement \
+                     gap, not a signal that the value is zero. No arguments — the target \
+                     sig is pinned for this race."
                         .into(),
                 input_schema: serde_json::json!({
                     "type": "object",
@@ -643,10 +646,13 @@ impl ToolHandler for RunProfile {
     }
 }
 
-/// Compact scannable header followed by pretty JSON. Missing metrics
-/// render as `n/a` so partial profiling (e.g. `perf_event_paranoid=2`
-/// blocks perf counters but `strace` still works) degrades gracefully
-/// instead of erroring out the whole call.
+/// Compact scannable header. Missing metrics render as `n/a` so
+/// partial profiling (e.g. `perf_event_paranoid=2` blocks perf counters
+/// but `strace` still works) degrades gracefully instead of erroring
+/// out the whole call. We deliberately do NOT append the full JSON —
+/// the header carries every metric, and a raw `syscall_counts` dump
+/// from strace can balloon past 10 KB and burn tokens on every
+/// subsequent conversation turn.
 fn format_profile_report(r: &ProfileReport) -> String {
     let mut s = String::new();
     s.push_str(&format!("wall={:.3}s", r.wall.as_secs_f64()));
@@ -662,9 +668,11 @@ fn format_profile_report(r: &ProfileReport) -> String {
     } else {
         let mut sorted: Vec<_> = r.syscall_counts.iter().collect();
         sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        // Top 12 syscalls is enough for any specialist's purposes. strace
+        // typical output has 50+ rows; the tail is glibc startup noise.
         let preview: Vec<String> = sorted
             .iter()
-            .take(8)
+            .take(12)
             .map(|(name, count)| format!("{name}={count}"))
             .collect();
         s.push_str(&format!("top syscalls: {}\n", preview.join(" ")));
@@ -682,12 +690,6 @@ fn format_profile_report(r: &ProfileReport) -> String {
     ));
     if let Some(p) = &r.flame_svg_path {
         s.push_str(&format!("flame svg: {}\n", p.display()));
-    }
-
-    s.push_str("\n---json---\n");
-    match serde_json::to_string_pretty(r) {
-        Ok(j) => s.push_str(&j),
-        Err(_) => s.push_str("<json serialization failed>"),
     }
     s
 }
@@ -854,7 +856,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_profile_emits_summary_header_and_json() {
+    async fn run_profile_emits_compact_header_only() {
         let tmp = tempfile::tempdir().unwrap();
         let report = ProfileReport {
             wall: Duration::from_millis(234),
@@ -879,19 +881,19 @@ mod tests {
             target: stub_target(),
         };
         let out = tool.call(&serde_json::json!({})).await.unwrap();
-        // Header should be compact + scannable, json payload should follow.
         assert!(out.starts_with("wall=0.234s"));
         assert!(out.contains("cycles=87000000"));
         // Syscalls sorted by count descending.
         assert!(out.contains("top syscalls: write=3421 read=891 openat=17"));
         assert!(out.contains("allocs: count=1247 bytes=312000"));
         assert!(out.contains("branch_misses=1200000"));
-        assert!(out.contains("---json---"));
-        // Round-trip the JSON half to confirm it parses.
-        let (_hdr, json) = out.split_once("---json---").unwrap();
-        let parsed: ProfileReport = serde_json::from_str(json.trim()).unwrap();
-        assert_eq!(parsed.cycles, Some(87_000_000));
-        assert_eq!(parsed.alloc_count, Some(1247));
+        // We deliberately dropped the JSON tail: header carries every
+        // metric the specialist needs, and a full strace dump can
+        // balloon context tokens on every later turn.
+        assert!(!out.contains("---json---"));
+        assert!(!out.contains("\"wall\""));
+        // Output should be compact enough to fit in a few hundred bytes.
+        assert!(out.len() < 500, "tool output unexpectedly large: {}", out.len());
     }
 
     #[tokio::test]

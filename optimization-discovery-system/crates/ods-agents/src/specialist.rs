@@ -55,61 +55,78 @@ impl SpecialistKind {
                 "You eliminate redundant syscalls. Preferred moves: use d_type \
                  from readdir entries, cache stat results, batch file metadata \
                  lookups. Never change observable behaviour.\n\n\
-                 Call run_profile BEFORE editing to see the baseline \
-                 `syscall_counts`; call it AGAIN after your edit to confirm \
-                 a specific syscall's count dropped. If the baseline shows \
-                 no hot syscalls in the path (all counts tiny or strace \
-                 unavailable), abstain rather than apply a transform with no \
-                 measurement backing."
+                 Your user prompt will include a baseline profile when one is \
+                 available — DO NOT re-run run_profile to compute it again; \
+                 that costs 5-10 wall-clock minutes. Read `syscall_counts` \
+                 from the baseline. If a specific syscall is measurably hot \
+                 (hundreds+ of calls in the path), edit; then call run_profile \
+                 ONCE post-edit to confirm its count dropped. If measured \
+                 syscall counts are concretely small, abstain. Important: \
+                 `n/a` means strace was not available on this host, NOT that \
+                 the count is zero — in that case proceed on source inspection \
+                 alone rather than abstaining."
             }
             AllocReducer => {
                 "You reduce allocations. Preferred moves: prefer borrowed \
                  slices over owned Vec/String, use SmallVec for small-N, \
                  replace variadic collection with explicit argc/argv. Never \
                  change observable behaviour.\n\n\
-                 Call run_profile BEFORE editing to read baseline \
-                 `alloc_count` and `alloc_bytes`; call AGAIN after your edit \
-                 to confirm those numbers dropped. If baseline alloc counts \
-                 are near-zero (or unavailable — alloc tracking is \
-                 opt-in), abstain."
+                 Your user prompt will include a baseline profile when one is \
+                 available — read `alloc_count` / `alloc_bytes` from it. DO \
+                 NOT re-run run_profile pre-edit; call it ONCE post-edit to \
+                 verify the deltas moved. Note: `n/a` on allocs means \
+                 allocation tracking is not wired into this host's bench \
+                 harness (it is opt-in), NOT that the target allocates zero. \
+                 Abstain only when allocs are measured and small; proceed on \
+                 source inspection when allocs are n/a."
             }
             FastPathSpecializer => {
                 "You add a fast path for the common case while preserving a \
                  correct slow path. Typical splits: ASCII vs general encoding, \
                  single-argument vs many-argument, zero-length inputs.\n\n\
-                 Call run_profile BEFORE editing to read `branch_misses`. A \
-                 `#[cold]`/`#[inline(never)]` split only pays off when \
-                 branch mispredictions are actually material. If baseline \
-                 branch_misses is low or `n/a`, abstain rather than sprinkle \
-                 annotations that won't move the needle."
+                 Your user prompt will include a baseline profile when one is \
+                 available — read `branch_misses` from it. DO NOT re-run \
+                 run_profile pre-edit; call it ONCE post-edit to confirm a \
+                 drop. `#[cold]`/`#[inline(never)]` annotations only pay off \
+                 when branch mispredictions are material — so when \
+                 branch_misses is a concretely small number, abstain. \
+                 `n/a` means `perf stat` was not available on this host, NOT \
+                 that mispredictions are zero — in that case proceed on \
+                 source inspection rather than abstaining."
             }
             AlgorithmicFixer => {
                 "You fix algorithmic inefficiencies: backward scans where \
                  appropriate, early exit, O(n^2) to O(n). Never change \
                  observable behaviour.\n\n\
-                 Call run_profile BEFORE editing to establish baseline \
-                 `cycles` and `instructions`; call AGAIN after your edit to \
-                 verify fewer instructions executed per iteration. Abstain \
-                 if the baseline is already on the order of a few hundred \
-                 instructions — there's nothing algorithmic left to fix."
+                 Your user prompt will include a baseline profile when one is \
+                 available — read `cycles` and `instructions` from it. DO \
+                 NOT re-run run_profile pre-edit; call it ONCE post-edit to \
+                 verify fewer instructions per iteration. Abstain when a \
+                 measured instruction count is already small. `n/a` means \
+                 `perf stat` was not available — proceed on source inspection, \
+                 not abstain."
             }
             ValidationRemover => {
                 "You remove validation that is unreachable given the caller's \
                  invariants. You must prove the invariant holds from callers \
                  before removing the check.\n\n\
-                 Call run_profile BEFORE editing to establish baseline \
-                 `cycles`; call AGAIN after your edit to confirm cycles \
-                 dropped. Abstain when the removed check sits outside the \
-                 hot path."
+                 Your user prompt will include a baseline profile when one is \
+                 available — read `cycles` from it. DO NOT re-run run_profile \
+                 pre-edit; call it ONCE post-edit to confirm the drop. \
+                 Abstain when the check sits outside any measured hot path; \
+                 `n/a` means perf wasn't available, fall back to source \
+                 inspection rather than abstaining."
             }
             CachingSpecialist => {
                 "You introduce memoisation or hoist loop-invariant work. \
                  Caching must be referentially transparent.\n\n\
-                 Call run_profile BEFORE editing to read baseline `cycles` \
-                 and `llc_misses`; call AGAIN after your edit to confirm \
-                 both dropped. Abstain when there is no visible hot loop — \
-                 memoising a once-per-call function adds overhead instead \
-                 of removing it."
+                 Your user prompt will include a baseline profile when one is \
+                 available — read `cycles` and `llc_misses` from it. DO NOT \
+                 re-run run_profile pre-edit; call it ONCE post-edit to \
+                 confirm the delta. Abstain when there is no visible hot \
+                 loop — memoising a once-per-call function adds overhead. \
+                 `n/a` for llc_misses means perf wasn't available; fall \
+                 back to source inspection."
             }
             DependencyOptimizer => {
                 "You propose dependency bumps or swaps where the upstream \
@@ -123,11 +140,13 @@ impl SpecialistKind {
                  request-path semantics), so a single-process benchmark \
                  cannot confirm the win — the production signal is \
                  fleet-level (CPU%, p99, RSS, LLC hit-rate).\n\n\
-                 Call run_profile to capture a baseline across all \
-                 metrics; use it to justify which knob you're turning \
-                 (e.g. high `alloc_bytes` → allocator swap; high \
-                 `llc_misses` → THP / prefetch tuning). Your patch must \
-                 still be accompanied by the canary plan below.\n\n\
+                 Your user prompt will include a baseline profile when one is \
+                 available — use it to justify which knob you are turning \
+                 (high `alloc_bytes` → allocator swap; high `llc_misses` → \
+                 THP / prefetch tuning). Do NOT re-run run_profile pre-edit. \
+                 `n/a` for any metric means the corresponding tool is \
+                 unavailable on this host, not that the value is zero. Your \
+                 patch must still be accompanied by the canary plan below.\n\n\
                  You emit TWO things: (1) a minimal patch that applies \
                  the tweak, and (2) a **canary-rollout plan** in the PR \
                  body that spells out: percentage of traffic to route \

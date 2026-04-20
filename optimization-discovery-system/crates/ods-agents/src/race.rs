@@ -161,22 +161,41 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
         let mut loop_ = ToolUseLoop::default();
         ToolHandlerMap::register_read_only(&mut loop_, sandbox.clone());
         ToolHandlerMap::register_mutating(&mut loop_, sandbox.clone());
-        ToolHandlerMap::register_profile(
-            &mut loop_,
-            sandbox.clone(),
-            input.adapter.clone(),
-            input.target.clone(),
-        );
+        // Only expose run_profile + baseline block when the adapter
+        // actually produced measurement data. Stub adapters (all non-Rust
+        // today) return an all-None ProfileReport; wiring run_profile in
+        // that case would give the agent nothing but `n/a` and tempt it
+        // to abstain on every call per the specialist prompt. A Rust host
+        // missing strace / perf / time looks identical to a stub from
+        // here — in that case profile data is genuinely unavailable, so
+        // falling back to the pre-Stage-25 behaviour is correct too.
+        let profile_has_signal = input
+            .pre_profile
+            .as_ref()
+            .map_or(false, |p| !is_stub_profile(p));
+        if profile_has_signal {
+            ToolHandlerMap::register_profile(
+                &mut loop_,
+                sandbox.clone(),
+                input.adapter.clone(),
+                input.target.clone(),
+            );
+        }
         if let Some(t) = input.budget_tracker.as_ref() {
             loop_ = loop_.with_budget_tracker(t.clone());
         }
 
         let spec = Specialist::new(*kind);
+        let pre_profile_for_prompt = if profile_has_signal {
+            input.pre_profile.as_ref()
+        } else {
+            None
+        };
         let initial = compose_user_prompt(
             kind,
             hyp,
             input.target,
-            input.pre_profile.as_ref(),
+            pre_profile_for_prompt,
             &input.recipe_snippets,
         );
 
@@ -613,10 +632,13 @@ fn compose_user_prompt(
          4. After every edit, call run_tests to verify semantics are \
          preserved.\n\
          5. Call run_bench to confirm a measurable improvement before \
-         finishing the turn. Call run_profile to see WHERE time is \
-         actually spent (syscalls / allocs / branch-misses / cycles) — \
-         use it pre-edit to validate the hypothesis fits this target, \
-         and again post-edit to confirm your specific metric moved.\n\
+         finishing the turn. If a baseline profile was provided above, \
+         reuse its numbers — do NOT re-run run_profile pre-edit (it is \
+         expensive: ~5-10 wall-clock minutes per call). Call run_profile \
+         AT MOST ONCE, and only after your edit, to verify your specific \
+         metric moved. When no baseline profile was provided (profiling \
+         unavailable on this host), rely on source inspection — do not \
+         treat missing profile data as a signal to abstain.\n\
          6. If you conclude the hypothesis does not apply to this target, \
          finish with NO edits — the race treats a clean worktree as a \
          principled abstain rather than a forced bad patch.\n",
@@ -663,6 +685,24 @@ fn format_baseline_profile(r: &ProfileReport) -> String {
 
 fn fmt_opt(v: Option<u64>) -> String {
     v.map(|n| n.to_string()).unwrap_or_else(|| "n/a".into())
+}
+
+/// True when a `ProfileReport` carries no signal at all: wall is zero
+/// and every metric is unset. Matches the stub that every non-Rust
+/// adapter returns today, and also matches the output of the Rust
+/// adapter when it runs on a host missing `time -v`, `strace`, and
+/// `perf`. In both cases exposing run_profile to specialists provides
+/// nothing useful, so we skip registering it and omit the baseline
+/// block from the user prompt.
+fn is_stub_profile(r: &ProfileReport) -> bool {
+    r.wall.is_zero()
+        && r.cycles.is_none()
+        && r.instructions.is_none()
+        && r.llc_misses.is_none()
+        && r.branch_misses.is_none()
+        && r.alloc_count.is_none()
+        && r.alloc_bytes.is_none()
+        && r.syscall_counts.is_empty()
 }
 
 /// After the specialist conversation ends, the worktree filesystem
@@ -811,5 +851,122 @@ mod tests {
         assert!(p.contains("SyscallEliminator"));
         assert!(p.contains("rust::m::s"));
         assert!(p.contains("r1"));
+    }
+
+    #[test]
+    fn is_stub_profile_detects_empty_report() {
+        // Every non-Rust adapter today returns a report that looks exactly
+        // like this (hard-coded stub). is_stub_profile must return true so
+        // the race skips both registering run_profile and injecting the
+        // baseline block into the user prompt.
+        let stub = ProfileReport {
+            wall: std::time::Duration::ZERO,
+            cycles: None,
+            instructions: None,
+            llc_misses: None,
+            branch_misses: None,
+            syscall_counts: vec![],
+            alloc_count: None,
+            alloc_bytes: None,
+            flame_svg_path: None,
+        };
+        assert!(is_stub_profile(&stub));
+    }
+
+    #[test]
+    fn is_stub_profile_rejects_reports_with_any_signal() {
+        let base = ProfileReport {
+            wall: std::time::Duration::ZERO,
+            cycles: None,
+            instructions: None,
+            llc_misses: None,
+            branch_misses: None,
+            syscall_counts: vec![],
+            alloc_count: None,
+            alloc_bytes: None,
+            flame_svg_path: None,
+        };
+        // wall alone → not a stub (time -v worked, strace/perf didn't).
+        assert!(!is_stub_profile(&ProfileReport {
+            wall: std::time::Duration::from_millis(1),
+            ..base.clone()
+        }));
+        // syscall counts alone → not a stub (strace worked).
+        assert!(!is_stub_profile(&ProfileReport {
+            syscall_counts: vec![("read".into(), 1)],
+            ..base.clone()
+        }));
+        // cycles alone → not a stub (perf worked).
+        assert!(!is_stub_profile(&ProfileReport {
+            cycles: Some(1),
+            ..base.clone()
+        }));
+    }
+
+    #[test]
+    fn prompt_omits_baseline_block_when_pre_profile_is_none() {
+        // When the adapter is a stub or profiling is unavailable,
+        // race.rs passes None here. The user prompt must then omit the
+        // baseline block so specialists fall back to source-inspection
+        // behaviour instead of seeing a misleading all-n/a baseline.
+        let hyp = Hypothesis {
+            category: ods_core::OptimizationCategory::AllocReduction,
+            target: TargetSig {
+                language: "python".into(),
+                module: "m".into(),
+                symbol: "s".into(),
+                arity: None,
+            },
+            rationale: "why".into(),
+            seed_recipe_id: None,
+        };
+        let p = compose_user_prompt(
+            &SpecialistKind::AllocReducer,
+            &hyp,
+            &hyp.target,
+            None,
+            &[],
+        );
+        assert!(!p.contains("Baseline profile"));
+        assert!(!p.contains("top syscalls"));
+    }
+
+    #[test]
+    fn prompt_renders_baseline_block_when_signal_present() {
+        let hyp = Hypothesis {
+            category: ods_core::OptimizationCategory::SyscallElimination,
+            target: TargetSig {
+                language: "rust".into(),
+                module: "m".into(),
+                symbol: "s".into(),
+                arity: None,
+            },
+            rationale: "why".into(),
+            seed_recipe_id: None,
+        };
+        let report = ProfileReport {
+            wall: std::time::Duration::from_millis(12),
+            cycles: Some(100),
+            instructions: Some(200),
+            llc_misses: None,
+            branch_misses: None,
+            syscall_counts: vec![("read".into(), 5), ("write".into(), 3)],
+            alloc_count: None,
+            alloc_bytes: None,
+            flame_svg_path: None,
+        };
+        let p = compose_user_prompt(
+            &SpecialistKind::SyscallEliminator,
+            &hyp,
+            &hyp.target,
+            Some(&report),
+            &[],
+        );
+        assert!(p.contains("Baseline profile"));
+        // Rendered in descending count order.
+        assert!(p.contains("read=5 write=3"));
+        assert!(p.contains("cycles=100"));
+        // Unavailable metrics fall through as n/a without erroring.
+        assert!(p.contains("branch_misses=n/a"));
     }
 }
