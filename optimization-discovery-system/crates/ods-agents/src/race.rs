@@ -211,9 +211,20 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
         let cost = stats.estimated_cost_usd();
         spent_usd += cost;
 
+        // PRIMARY patch capture: ask git what changed on disk in the
+        // specialist's worktree. This is guaranteed well-formed because
+        // git produced it from the actual filesystem state — eliminating
+        // the entire class of "agent emitted a malformed diff" failures
+        // that historically blocked apply_patch.
+        //
+        // Fallback to fenced ```diff``` extraction from the final text
+        // is kept for the case where the specialist somehow mutated the
+        // worktree without git noticing (e.g. .gitignore drift) or for
+        // backward-compat with older specialist prompts.
+        let captured = capture_worktree_diff(&wt.path).or_else(|| extract_last_diff(&final_text));
         let outcome = SpecialistOutcome {
             kind: *kind,
-            patch_diff: extract_last_diff(&final_text),
+            patch_diff: captured,
             rationale: final_text.clone(),
             tokens_in: stats.input_tokens,
             tokens_out: stats.output_tokens,
@@ -565,30 +576,86 @@ fn compose_user_prompt(
          2. If the project has an existing bench that exercises the target, \
          use it via run_bench. If `benches/ods_auto_*.rs` exists and contains \
          a `black_box(())` no-op placeholder, you MUST rewrite its `b.iter(...)` \
-         block via apply_patch to actually invoke the target function with \
+         block via edit_file to actually invoke the target function with \
          realistic inputs — otherwise the pre/post comparison is pure noise \
          and the race will reject your patch regardless of correctness.\n\
-         3. Produce a minimal unified-diff patch that implements your \
-         optimization hypothesis.\n\
-         4. Call apply_patch with your diff, then run_tests to verify \
-         semantics are preserved.\n\
+         3. PREFER edit_file (string replace) and write_file (full file \
+         overwrite) over apply_patch. The race captures the canonical diff \
+         via `git diff` after your conversation ends, so you do NOT need to \
+         hand-format a unified diff. Use apply_patch only when you already \
+         have a verbatim unified diff and the change spans many files.\n\
+         4. After every edit, call run_tests to verify semantics are \
+         preserved.\n\
          5. Call run_bench to confirm a measurable improvement before \
          finishing the turn.\n\
          6. If you conclude the hypothesis does not apply to this target, \
-         return a final turn with NO `diff` code block - the race will treat \
-         it as a principled abstain rather than a forced bad patch.\n\
-         7. When you do patch, include the final unified diff verbatim in \
-         a ```diff code block so the race can extract it.\n",
+         return a final turn with NO edits and NO ```diff code block — \
+         the race will treat that as a principled abstain rather than a \
+         forced bad patch.\n",
     );
     s
 }
 
 /// Extract the last fenced ```diff``` block from the final assistant text.
+/// Defense-in-depth fallback only — the primary path is now
+/// [`capture_worktree_diff`] which asks git for the actual on-disk delta.
 fn extract_last_diff(text: &str) -> Option<String> {
     let re = regex::Regex::new(r"(?s)```diff\n(.*?)```").ok()?;
     re.captures_iter(text)
         .last()
         .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
+}
+
+/// PRIMARY patch-extraction path. After the specialist conversation
+/// ends, the worktree filesystem reflects every edit_file / write_file
+/// / apply_patch call the agent made. We ask git for the canonical
+/// unified diff against the worktree's HEAD — which is guaranteed
+/// well-formed because git produced it. Returns `None` when the
+/// worktree is clean (specialist abstained or made only no-op edits).
+fn capture_worktree_diff(worktree: &Path) -> Option<String> {
+    use std::process::Command;
+    let out = Command::new("git")
+        .args([
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            // Include untracked files so newly-created sources land
+            // in the diff too. `-N` (intent-to-add) is the standard
+            // trick: it makes `git diff` treat untracked files as
+            // empty additions.
+            "HEAD",
+        ])
+        .current_dir(worktree)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let mut diff = String::from_utf8(out.stdout).ok()?;
+    // Catch newly-created files that `git diff HEAD` skips.
+    let _ = Command::new("git")
+        .args(["add", "-N", "."])
+        .current_dir(worktree)
+        .output();
+    let untracked = Command::new("git")
+        .args(["diff", "--no-color", "--no-ext-diff"])
+        .current_dir(worktree)
+        .output()
+        .ok()?;
+    if untracked.status.success() {
+        let extra = String::from_utf8_lossy(&untracked.stdout);
+        if !extra.trim().is_empty() && !diff.contains(extra.trim()) {
+            if !diff.is_empty() && !diff.ends_with('\n') {
+                diff.push('\n');
+            }
+            diff.push_str(&extra);
+        }
+    }
+    if diff.trim().is_empty() {
+        None
+    } else {
+        Some(diff)
+    }
 }
 
 pub fn budget_exceeded(mode: &Mode, spent: f64) -> Option<LoopError> {

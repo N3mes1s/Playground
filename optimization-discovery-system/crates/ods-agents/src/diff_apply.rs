@@ -175,10 +175,131 @@ pub fn apply_parsed_diff(repo: &Path, parsed: &ParsedDiff) -> Result<usize> {
     Ok(applied)
 }
 
-/// Convenience wrapper: parse + apply.
+/// Convenience wrapper: parse + apply. If the input carries the
+/// `*** Begin Patch / *** Update File:` envelope markers, translate
+/// it into a standard unified diff first — that's the format frontier
+/// LLMs default to when asked for "a patch" and historically blocked
+/// us at apply_patch time.
 pub fn apply_unified_diff(repo: &Path, diff: &str) -> Result<usize> {
-    let parsed = parse_unified_diff(diff)?;
+    let translated;
+    let effective: &str = if let Some(t) = translate_envelope_format(diff) {
+        translated = t;
+        &translated
+    } else {
+        diff
+    };
+    let parsed = parse_unified_diff(effective)?;
+    if parsed.files.is_empty() {
+        anyhow::bail!("parse_unified_diff: no files in input");
+    }
     apply_parsed_diff(repo, &parsed)
+}
+
+/// Translate the `*** Begin Patch / *** Update File: <path>` envelope
+/// format that LLMs frequently emit into a standard unified diff.
+///
+/// Input shape we accept:
+/// ```text
+/// *** Begin Patch
+/// *** Update File: path/to/file.rs
+/// @@ context anchor (optional, ignored)
+///  context line
+/// -removed line
+/// +added line
+/// *** End Patch
+/// ```
+///
+/// Behaviour:
+/// - `*** Update File: <path>` opens a file block (becomes `--- a/<path>` /
+///   `+++ b/<path>` headers).
+/// - `*** Add File: <path>` is treated like Update File: against an empty
+///   pre-file (re-uses the pure-insertion hunk path).
+/// - `*** Delete File: <path>` is intentionally NOT supported — file
+///   removal should go through `git apply`.
+/// - `*** Begin Patch` / `*** End Patch` are stripped.
+/// - `@@` lines are kept as hunk headers but with a synthesised
+///   `-1,N +1,N` range so the existing fuzzy applier's location search
+///   takes over.
+///
+/// Returns `None` when the input doesn't look like an envelope, so the
+/// caller can keep its original error message for unrelated parse
+/// failures.
+pub fn translate_envelope_format(input: &str) -> Option<String> {
+    if !input.contains("*** Begin Patch") && !input.contains("*** Update File:") {
+        return None;
+    }
+    let mut out = String::new();
+    let mut in_file = false;
+    let mut current_hunk_body: Vec<String> = Vec::new();
+    let mut hunks_emitted_for_file = 0usize;
+
+    let flush_hunk = |body: &mut Vec<String>, sink: &mut String, count: &mut usize| {
+        if body.is_empty() {
+            return;
+        }
+        let pre = body
+            .iter()
+            .filter(|l| !l.starts_with('+'))
+            .count();
+        let post = body
+            .iter()
+            .filter(|l| !l.starts_with('-'))
+            .count();
+        sink.push_str(&format!("@@ -1,{pre} +1,{post} @@\n"));
+        for line in body.drain(..) {
+            sink.push_str(&line);
+            sink.push('\n');
+        }
+        *count += 1;
+    };
+
+    for raw in input.lines() {
+        let line = raw;
+        if line.starts_with("*** Begin Patch") || line.starts_with("*** End Patch") {
+            continue;
+        }
+        if let Some(path) = line
+            .strip_prefix("*** Update File: ")
+            .or_else(|| line.strip_prefix("*** Add File: "))
+        {
+            // Close any prior file: flush the open hunk first.
+            flush_hunk(&mut current_hunk_body, &mut out, &mut hunks_emitted_for_file);
+            let path = path.trim();
+            out.push_str(&format!("--- a/{path}\n+++ b/{path}\n"));
+            in_file = true;
+            hunks_emitted_for_file = 0;
+            continue;
+        }
+        if line.starts_with("*** Delete File:") {
+            // Not supported; let the caller fall through to a strict
+            // applier that knows how to handle deletions properly.
+            return None;
+        }
+        if !in_file {
+            continue;
+        }
+        if line.starts_with("@@") {
+            // Hunk boundary in the envelope. Flush whatever's queued.
+            flush_hunk(&mut current_hunk_body, &mut out, &mut hunks_emitted_for_file);
+            continue;
+        }
+        // Normal hunk body line. Lines without a leading +/-/space are
+        // treated as context (envelope format is loose about that).
+        let normalized = if line.starts_with('+') || line.starts_with('-') || line.starts_with(' ')
+        {
+            line.to_string()
+        } else {
+            format!(" {line}")
+        };
+        current_hunk_body.push(normalized);
+    }
+    flush_hunk(&mut current_hunk_body, &mut out, &mut hunks_emitted_for_file);
+
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 fn apply_hunk(lines: &mut Vec<String>, hunk: &Hunk) -> Result<()> {
@@ -473,5 +594,60 @@ fn main() {\n    println!(\"hi\");\n}\n",
         let p = parse_unified_diff(&diff).unwrap();
         assert_eq!(p.files.len(), 1);
         assert_eq!(p.files[0].path, "foo");
+    }
+
+    /// The `*** Begin Patch / *** Update File:` envelope is what
+    /// frontier models default to when asked for "a patch". We
+    /// translate it into a unified diff so apply_patch accepts it
+    /// transparently.
+    #[test]
+    fn translates_openai_envelope_format() {
+        // NOTE: line continuations (`\`) eat leading whitespace in Rust
+        // string literals — that's exactly the bug we hit with the
+        // divan parser. Build the input via explicit newline join.
+        let envelope = join(&[
+            "*** Begin Patch",
+            "*** Update File: src/lib.rs",
+            "@@",
+            " fn keep() {}",
+            "-fn old() {}",
+            "+fn new() {}",
+            "*** End Patch",
+        ]);
+        let translated = translate_envelope_format(&envelope).expect("envelope detected");
+        let parsed = parse_unified_diff(&translated).unwrap();
+        assert_eq!(parsed.files.len(), 1);
+        assert_eq!(parsed.files[0].path, "src/lib.rs");
+        let h = &parsed.files[0].hunks[0];
+        assert_eq!(h.pre_lines, vec!["fn keep() {}", "fn old() {}"]);
+        assert_eq!(h.post_lines, vec!["fn keep() {}", "fn new() {}"]);
+    }
+
+    #[test]
+    fn apply_unified_diff_accepts_envelope_via_translator() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("src/lib.rs");
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "fn keep() {}\nfn old() {}\n").unwrap();
+        let envelope = join(&[
+            "*** Begin Patch",
+            "*** Update File: src/lib.rs",
+            "@@",
+            " fn keep() {}",
+            "-fn old() {}",
+            "+fn new() {}",
+            "*** End Patch",
+        ]);
+        let n = apply_unified_diff(dir.path(), &envelope).unwrap();
+        assert_eq!(n, 1);
+        let after = std::fs::read_to_string(&p).unwrap();
+        assert!(after.contains("fn new() {}"));
+        assert!(!after.contains("fn old() {}"));
+    }
+
+    #[test]
+    fn envelope_translator_returns_none_for_plain_unified_diff() {
+        let plain = join(&["--- a/x", "+++ b/x", "@@ -1,1 +1,1 @@", "-a", "+b"]);
+        assert!(translate_envelope_format(&plain).is_none());
     }
 }
