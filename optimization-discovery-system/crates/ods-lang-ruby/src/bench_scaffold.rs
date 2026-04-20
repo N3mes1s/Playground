@@ -84,8 +84,8 @@ pub fn scaffold(repo: &Path, target: &TargetSig) -> Result<ScaffoldOutcome> {
 /// scaffold only EXERCISES the target — it doesn't try to
 /// auto-construct realistic args. The specialist that runs after
 /// this is expected to refine `realistic_input` with sensible inputs
-/// in a follow-up `apply_patch` if the mock isn't right. The PR body
-/// calls out the bench harness as scaffolded so reviewers know.
+/// via edit_file if the mock isn't right. The PR body calls out
+/// the bench harness as scaffolded so reviewers know.
 fn render_bench(target: &TargetSig, bench_name: &str) -> String {
     let module_path = target
         .module

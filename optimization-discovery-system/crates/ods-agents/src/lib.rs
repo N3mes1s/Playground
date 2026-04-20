@@ -7,7 +7,6 @@
 //! CLI, keeping the musl single-binary story intact.
 
 pub mod anthropic;
-pub mod diff_apply;
 pub mod discover;
 pub mod explorer;
 pub mod harvest;

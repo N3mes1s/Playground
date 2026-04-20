@@ -211,20 +211,15 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
         let cost = stats.estimated_cost_usd();
         spent_usd += cost;
 
-        // PRIMARY patch capture: ask git what changed on disk in the
-        // specialist's worktree. This is guaranteed well-formed because
-        // git produced it from the actual filesystem state — eliminating
-        // the entire class of "agent emitted a malformed diff" failures
-        // that historically blocked apply_patch.
-        //
-        // Fallback to fenced ```diff``` extraction from the final text
-        // is kept for the case where the specialist somehow mutated the
-        // worktree without git noticing (e.g. .gitignore drift) or for
-        // backward-compat with older specialist prompts.
-        let captured = capture_worktree_diff(&wt.path).or_else(|| extract_last_diff(&final_text));
+        // Patch capture: ask git what changed on disk in the
+        // specialist's worktree. The agent only has edit_file /
+        // write_file as mutation tools, so any change is on disk and
+        // git-visible by construction. The diff is guaranteed
+        // well-formed because git produced it from the actual
+        // filesystem state.
         let outcome = SpecialistOutcome {
             kind: *kind,
-            patch_diff: captured,
+            patch_diff: capture_worktree_diff(&wt.path),
             rationale: final_text.clone(),
             tokens_in: stats.input_tokens,
             tokens_out: stats.output_tokens,
@@ -266,9 +261,9 @@ pub async fn run_specialists(input: RaceInput<'_>) -> Result<RaceOutput> {
                 diff_bytes: diff.len(),
             },
         );
-        // The apply_patch tool has already mutated the worktree during the
-        // conversation; `diff` is a copy we keep for the artifact. Verify +
-        // bench what's on disk now.
+        // The agent's edit_file/write_file calls have already mutated
+        // the worktree; `diff` is the git-captured copy we keep for the
+        // artifact. Verify + bench what's on disk now.
         let patch = Patch {
             unified_diff: diff,
             edits: vec![],
@@ -579,39 +574,26 @@ fn compose_user_prompt(
          block via edit_file to actually invoke the target function with \
          realistic inputs — otherwise the pre/post comparison is pure noise \
          and the race will reject your patch regardless of correctness.\n\
-         3. PREFER edit_file (string replace) and write_file (full file \
-         overwrite) over apply_patch. The race captures the canonical diff \
-         via `git diff` after your conversation ends, so you do NOT need to \
-         hand-format a unified diff. Use apply_patch only when you already \
-         have a verbatim unified diff and the change spans many files.\n\
+         3. Use edit_file (surgical string replace) and write_file \
+         (full overwrite) to mutate the worktree. The race captures the \
+         canonical diff via `git diff` after your conversation, so you \
+         never need to hand-format a unified diff.\n\
          4. After every edit, call run_tests to verify semantics are \
          preserved.\n\
          5. Call run_bench to confirm a measurable improvement before \
          finishing the turn.\n\
          6. If you conclude the hypothesis does not apply to this target, \
-         return a final turn with NO edits and NO ```diff code block — \
-         the race will treat that as a principled abstain rather than a \
-         forced bad patch.\n",
+         finish with NO edits — the race treats a clean worktree as a \
+         principled abstain rather than a forced bad patch.\n",
     );
     s
 }
 
-/// Extract the last fenced ```diff``` block from the final assistant text.
-/// Defense-in-depth fallback only — the primary path is now
-/// [`capture_worktree_diff`] which asks git for the actual on-disk delta.
-fn extract_last_diff(text: &str) -> Option<String> {
-    let re = regex::Regex::new(r"(?s)```diff\n(.*?)```").ok()?;
-    re.captures_iter(text)
-        .last()
-        .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
-}
-
-/// PRIMARY patch-extraction path. After the specialist conversation
-/// ends, the worktree filesystem reflects every edit_file / write_file
-/// / apply_patch call the agent made. We ask git for the canonical
-/// unified diff against the worktree's HEAD — which is guaranteed
-/// well-formed because git produced it. Returns `None` when the
-/// worktree is clean (specialist abstained or made only no-op edits).
+/// After the specialist conversation ends, the worktree filesystem
+/// reflects every edit_file / write_file call the agent made. We ask
+/// git for the canonical unified diff against the worktree's HEAD —
+/// guaranteed well-formed because git produced it. Returns `None` when
+/// the worktree is clean (specialist abstained or made only no-op edits).
 fn capture_worktree_diff(worktree: &Path) -> Option<String> {
     use std::process::Command;
     let out = Command::new("git")
@@ -676,11 +658,58 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extracts_last_diff_block() {
-        let text = "prelude\n```diff\n--- a/x\n+++ b/x\n@@\n-a\n+b\n```\nokay";
-        let d = extract_last_diff(text).unwrap();
-        assert!(d.contains("@@"));
-        assert!(d.contains("+b"));
+    fn capture_worktree_diff_returns_none_for_clean_worktree() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(dir.path())
+            .status();
+        // Allow git operations on a fresh repo with no commits — we just
+        // assert the function doesn't panic and returns None.
+        let captured = capture_worktree_diff(dir.path());
+        assert!(captured.is_none() || captured.unwrap().is_empty());
+    }
+
+    #[test]
+    fn capture_worktree_diff_picks_up_edits_and_new_files() {
+        let dir = tempfile::tempdir().unwrap();
+        // Test fixture: disable gpg signing for commits we make purely
+        // to seed the test repo. Local-config-only; doesn't affect the
+        // user's git config.
+        for cmd in [
+            vec!["init", "-q"],
+            vec!["config", "user.email", "ods@test"],
+            vec!["config", "user.name", "ods"],
+            vec!["config", "commit.gpgsign", "false"],
+        ] {
+            std::process::Command::new("git")
+                .args(&cmd)
+                .current_dir(dir.path())
+                .status()
+                .unwrap();
+        }
+        std::fs::write(dir.path().join("a.txt"), "hello\n").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "a.txt"])
+            .current_dir(dir.path())
+            .status()
+            .unwrap();
+        let commit_status = std::process::Command::new("git")
+            .args(["commit", "-q", "-m", "init"])
+            .current_dir(dir.path())
+            .status()
+            .unwrap();
+        if !commit_status.success() {
+            // Some sandboxed CI environments still refuse commits even
+            // with signing disabled. Skip rather than false-fail.
+            eprintln!("skipping: git commit refused in this env");
+            return;
+        }
+        std::fs::write(dir.path().join("a.txt"), "HELLO\n").unwrap();
+        std::fs::write(dir.path().join("b.txt"), "new file\n").unwrap();
+        let diff = capture_worktree_diff(dir.path()).expect("non-empty diff");
+        assert!(diff.contains("HELLO"));
+        assert!(diff.contains("new file"));
     }
 
     #[test]

@@ -48,7 +48,7 @@ pub async fn run_explorer(input: ExplorerInput<'_>) -> Result<ExplorerOutcome> {
     let client = AnthropicClient::new(api_key)?;
 
     // Bind the sandbox to the repo root and register ONLY the read-only
-    // toolkit - no apply_patch, no run_tests, no run_bench.
+    // toolkit - no edit_file, no write_file, no run_tests, no run_bench.
     let mut loop_ = ToolUseLoop::default();
     loop_.max_iters = input.max_iters;
     // Grammar-constrain the final text block so the model CANNOT return

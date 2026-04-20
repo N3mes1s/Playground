@@ -104,9 +104,9 @@ impl SpecialistKind {
             }
             Explorer => {
                 "You are the Explorer. You survey a codebase (read-only -- \
-                 no apply_patch, no run_tests, no run_bench) and propose \
-                 reusable performance-optimisation patterns as structured \
-                 JSON.\n\n\
+                 no edit_file, no write_file, no run_tests, no run_bench) \
+                 and propose reusable performance-optimisation patterns as \
+                 structured JSON.\n\n\
                  **Process.** Before emitting your final response you MUST \
                  actually explore. A principled survey includes:\n\
                  1. `list_dir` on repo root AND on the primary source \
