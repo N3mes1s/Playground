@@ -91,12 +91,64 @@ impl AnthropicClient {
         max_tokens: u32,
         output_schema: Option<&serde_json::Value>,
     ) -> Result<ResponseEnvelope> {
+        // Prompt caching: we mark up to three cache breakpoints per
+        // request so Anthropic caches the stable prefix and charges
+        // only for the delta on each subsequent turn.
+        //
+        // 1. `system` — serialised as a one-block content array with
+        //    `cache_control: ephemeral` on the single text block.
+        // 2. `tools` — `cache_control: ephemeral` on the LAST tool in
+        //    the array marks the tools+system prefix as a cacheable
+        //    unit.
+        // 3. Last message — on each turn we stamp `cache_control:
+        //    ephemeral` onto the last content block of the final
+        //    message. That grows the cached prefix as the
+        //    conversation accumulates, which is the dominant cost
+        //    driver once a specialist has read a large source file
+        //    into context.
+        //
+        // Without these breakpoints, every turn re-pays full input
+        // price for the accumulating history (measured: zero
+        // cache_read across 17 turns, $6 burned on pure exploration
+        // in the Stage-19 dogfood run against httparse).
+        let system_blocks = serde_json::json!([{
+            "type": "text",
+            "text": system,
+            "cache_control": { "type": "ephemeral" },
+        }]);
+        let mut tools_value = serde_json::to_value(tools).unwrap_or(serde_json::Value::Null);
+        if let Some(arr) = tools_value.as_array_mut() {
+            if let Some(last) = arr.last_mut() {
+                if let Some(obj) = last.as_object_mut() {
+                    obj.insert(
+                        "cache_control".into(),
+                        serde_json::json!({ "type": "ephemeral" }),
+                    );
+                }
+            }
+        }
+        let mut messages_value = serde_json::to_value(messages).unwrap_or(serde_json::Value::Null);
+        if let Some(arr) = messages_value.as_array_mut() {
+            if let Some(last_msg) = arr.last_mut() {
+                if let Some(content) = last_msg.get_mut("content").and_then(|c| c.as_array_mut()) {
+                    if let Some(last_block) = content.last_mut() {
+                        if let Some(obj) = last_block.as_object_mut() {
+                            obj.insert(
+                                "cache_control".into(),
+                                serde_json::json!({ "type": "ephemeral" }),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         let mut body = serde_json::json!({
             "model": self.model,
             "max_tokens": max_tokens,
-            "system": system,
-            "messages": messages,
-            "tools": tools,
+            "system": system_blocks,
+            "messages": messages_value,
+            "tools": tools_value,
         });
         if let Some(schema) = output_schema {
             body["output_config"] = serde_json::json!({
@@ -201,8 +253,15 @@ pub struct LoopStats {
 impl LoopStats {
     /// Rough cost estimate assuming Opus-class pricing (tunable via
     /// `ODS_INPUT_PRICE_PER_MTOK` / `ODS_OUTPUT_PRICE_PER_MTOK` env vars).
+    /// Accounts for cache-tier pricing: cache_read at 10% of input,
+    /// cache_creation at 125% of input.
     pub fn estimated_cost_usd(&self) -> f64 {
-        call_cost_usd(self.input_tokens, self.output_tokens)
+        tiered_cost_usd(
+            self.input_tokens,
+            self.output_tokens,
+            self.cache_read_tokens,
+            self.cache_creation_tokens,
+        )
     }
 }
 
@@ -223,8 +282,30 @@ fn output_rate_per_mtok() -> f64 {
 /// Price one specific API call's usage numbers (this call only, not the
 /// running total).
 pub fn call_cost_usd(input_tokens: u32, output_tokens: u32) -> f64 {
-    (input_tokens as f64 / 1_000_000.0) * input_rate_per_mtok()
-        + (output_tokens as f64 / 1_000_000.0) * output_rate_per_mtok()
+    tiered_cost_usd(input_tokens, output_tokens, 0, 0)
+}
+
+/// Cache-aware pricing. Anthropic charges:
+/// - regular input at the base rate (minus what went through cache)
+/// - cache_read at 10% of the base rate
+/// - cache_creation at 125% of the base rate
+/// - output at its own rate
+///
+/// `input_tokens` in the API response is the NON-CACHED input only, so
+/// we bill it at the full rate; `cache_read_tokens` and
+/// `cache_creation_tokens` are billed separately at their tier rates.
+pub fn tiered_cost_usd(
+    input_tokens: u32,
+    output_tokens: u32,
+    cache_read_tokens: u32,
+    cache_creation_tokens: u32,
+) -> f64 {
+    let base = input_rate_per_mtok();
+    let out_rate = output_rate_per_mtok();
+    (input_tokens as f64 / 1_000_000.0) * base
+        + (cache_read_tokens as f64 / 1_000_000.0) * (base * 0.10)
+        + (cache_creation_tokens as f64 / 1_000_000.0) * (base * 1.25)
+        + (output_tokens as f64 / 1_000_000.0) * out_rate
 }
 
 /// Upper bound on the next call's cost. Input tokens: reuse last observed
@@ -408,9 +489,16 @@ impl ToolUseLoop {
 
             // Charge the real delta (this single call's cost) to the shared
             // tracker so other specialists see our spend immediately.
+            // Accounts for cache-tier pricing: cache_read at 10% of input,
+            // cache_creation at 125%. Without this the budget tracker
+            // overcounts by the full base price on every cached token.
             if let Some(tracker) = &self.budget_tracker {
-                let delta =
-                    call_cost_usd(envelope.usage.input_tokens, envelope.usage.output_tokens);
+                let delta = tiered_cost_usd(
+                    envelope.usage.input_tokens,
+                    envelope.usage.output_tokens,
+                    envelope.usage.cache_read_input_tokens,
+                    envelope.usage.cache_creation_input_tokens,
+                );
                 tracker.add_spent(delta);
             }
 
