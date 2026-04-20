@@ -201,6 +201,16 @@ pub fn record_negatives(
 /// Phase 2: one LLM turn that asks the model to abstract the specific
 /// patch into a reusable pattern recipe. Returns `Ok(None)` when the
 /// model didn't produce a parseable recipe (we keep Phase 1 in that case).
+///
+/// The prompt is grounded in the actual pre-patch source text: the
+/// `ast_pattern` will be validated against exactly that text before
+/// upsert, so we tell the model up-front and hand it the text directly.
+/// Historical failure mode: ungrounded generalization produced patterns
+/// like `(while_expression condition: (call_expression function:
+/// (field_expression field: (field_identifier) @n (#match? @n
+/// "next|peek"))) ...)` on a piece of code that used `loop { next!(…) }`
+/// (a macro invocation, not a method call) — the pattern compiled but
+/// matched nothing.
 fn run_generalizer(
     client: &AnthropicClient,
     winner: &WinnerRecord,
@@ -214,13 +224,43 @@ fn run_generalizer(
         name, no module name, no function name); it must describe the AST \
         shape of the trigger as a tree-sitter S-expression query with at \
         least one named capture, the profile signature, and the ordered \
-        transformation steps in pattern-level language.";
+        transformation steps in pattern-level language.\n\n\
+        CRITICAL: your ast_pattern will be compiled against the grammar \
+        and then executed against the PRE-PATCH source text the user \
+        hands you. If the query matches zero nodes in that exact text, \
+        your recipe is rejected. Ground the pattern in the AST shapes \
+        you can SEE in the text — do not invent shapes that sound \
+        plausible. If you cannot find a shape that matches, output the \
+        empty string `{}` and we keep only the specific recipe.";
+    let pre_texts = diff_pre_texts(&winner.patch.unified_diff);
+    let pre_source = if pre_texts.is_empty() {
+        "(empty diff)".to_string()
+    } else {
+        // Prefer the largest pre-text block (usually the lib.rs file
+        // the patch mutated) and truncate for prompt budget. The model
+        // needs to see enough to pick a real AST shape without blowing
+        // out context.
+        let mut longest = pre_texts
+            .iter()
+            .max_by_key(|s| s.len())
+            .cloned()
+            .unwrap_or_default();
+        longest = truncate_to(&longest, 6000);
+        longest
+    };
+    let hints = tree_sitter_hints_for(&target.language);
     let user = format!(
         "Target that was sped up: {}::{}::{}\n\
          Winning specialist: {:?}\n\
          Rationale from specialist:\n{}\n\n\
-         Patch diff:\n{}\n\n\
-         Produce a JSON object matching this schema (no commentary, no fences):\n\
+         Patch diff (the `-` lines are what you must match against):\n{}\n\n\
+         PRE-PATCH SOURCE of the main file the patch modifies — your \
+         ast_pattern will be validated against THIS text verbatim:\n\
+         ```{}\n{}\n```\n\n\
+         {}\n\n\
+         Produce a JSON object matching this schema (no commentary, no fences). \
+         If no reusable pattern grounded in the source above exists, output \
+         exactly `{{}}` and nothing else:\n\
          {{\n\
            \"id\": \"general-<short-slug-you-pick>\",\n\
            \"name\": \"<pattern name, no repo names>\",\n\
@@ -228,11 +268,10 @@ fn run_generalizer(
              fast-path-specialization, algorithmic, validation-removal, \
              caching, dependency-optimization>\",\n\
            \"language\": \"{}\",\n\
-           \"ast_pattern\": \"<tree-sitter S-expression query; must include \
-             at least one @capture; example for rust: (call_expression \
-             function: (scoped_identifier path: (identifier) @p (#eq? @p \
-             \\\"Vec\\\") name: (identifier) @m (#eq? @m \\\"new\\\"))) @match>\",\n\
-           \"profile_signature\": [\"<e.g. hot:nested-for-over-tokens>\"],\n\
+           \"ast_pattern\": \"<tree-sitter S-expression query that MATCHES \
+             AT LEAST ONE NODE in the pre-patch source above; include at \
+             least one @capture>\",\n\
+           \"profile_signature\": [\"<e.g. hot:per-byte-dispatch>\"],\n\
            \"steps\": [\"<ordered transformation steps, pattern-level>\"],\n\
            \"invariants\": [\"<semantic invariants to preserve>\"]\n\
          }}",
@@ -240,8 +279,11 @@ fn run_generalizer(
         target.module,
         target.symbol,
         winner.outcome.kind,
-        truncate_to(&winner.outcome.rationale, 1500),
-        truncate_to(&winner.patch.unified_diff, 2500),
+        truncate_to(&winner.outcome.rationale, 1200),
+        truncate_to(&winner.patch.unified_diff, 2000),
+        target.language,
+        pre_source,
+        hints,
         target.language,
     );
     let loop_ = ToolUseLoop::default();
@@ -265,11 +307,88 @@ fn run_generalizer(
     let Some(json) = extract_json_object(&text) else {
         return Ok(None);
     };
+    // Empty-object escape: the prompt tells the model to return `{}`
+    // when it can't find a pattern grounded in the pre-patch source.
+    // Treat that as "no generalization" rather than a parse error.
+    if json.trim() == "{}" {
+        tracing::info!(
+            specific = %specific_id.0,
+            "generalizer returned empty object; keeping only the specific recipe"
+        );
+        return Ok(None);
+    }
     parse_generalized_recipe(&json, target, specific_id).map(Some)
 }
 
 fn truncate_to(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
+}
+
+/// Language-specific tree-sitter node-name cheatsheet handed to the
+/// Generalizer. Grounds it in the actual grammar names so it doesn't
+/// invent plausible-sounding nodes like `while_statement` (wrong for
+/// rust) or `for_loop` (wrong for go). The list is minimal — just the
+/// shapes most commonly seen in optimization patterns. The model has
+/// the full pre-patch source to check against, so this is a nudge,
+/// not a constraint.
+fn tree_sitter_hints_for(language: &str) -> &'static str {
+    match language {
+        "rust" => "tree-sitter-rust node cheatsheet (names you may use):\n\
+                   - Loops: `(loop_expression body: (block) @b)`, \
+                   `(for_expression ...)`, `(while_expression ...)`\n\
+                   - Control flow: `(match_expression value: (_) body: (match_block ...))`, \
+                   `(if_expression ...)`, `(if_let_expression ...)`\n\
+                   - Calls: `(call_expression function: (field_expression ...))` \
+                   for method calls; `(call_expression function: (scoped_identifier \
+                   path: (identifier) @p name: (identifier) @n))` for `Foo::bar(…)`\n\
+                   - Macro calls: `(macro_invocation macro: (identifier) @m)` \
+                   — this is what `next!()`, `vec![]`, `assert!()` look like, \
+                   NOT a `call_expression`\n\
+                   - Returns: `(return_expression value: (_) @v)`\n\
+                   - Attributes: `(attribute_item (attribute (identifier) @attr))`, \
+                   `(inner_attribute_item ...)`\n\
+                   - Literals: `(integer_literal)`, `(string_literal)`, \
+                   `(boolean_literal)`, `(char_literal)`\n\
+                   - Types: `(generic_type type: (type_identifier) @t)`, \
+                   `(reference_type)`, `(primitive_type)`\n\
+                   - Patterns: `(match_arm pattern: (_) @p value: (_) @v)`, \
+                   `(range_pattern)`\n\
+                   - Function defs: `(function_item name: (identifier) @n \
+                   parameters: (parameters) body: (block) @b)`\n\
+                   - Common predicates: `(#eq? @cap \"literal\")`, \
+                   `(#match? @cap \"regex\")`, `(#not-eq? @cap \"x\")`",
+        "python" => "tree-sitter-python node cheatsheet:\n\
+                     - Loops: `(for_statement body: (block) @b)`, \
+                     `(while_statement body: (block))`\n\
+                     - Functions: `(function_definition name: (identifier) @n \
+                     body: (block))`\n\
+                     - Calls: `(call function: (attribute) @a)` for method calls, \
+                     `(call function: (identifier) @n)` for bare calls\n\
+                     - Decorators: `(decorator (identifier) @dec)`\n\
+                     - Class defs: `(class_definition name: (identifier) @n)`\n\
+                     - Comprehensions: `(list_comprehension)`, \
+                     `(dictionary_comprehension)`, `(generator_expression)`",
+        "go" => "tree-sitter-go node cheatsheet:\n\
+                 - Loops: `(for_statement)`, `(range_clause)`\n\
+                 - Calls: `(call_expression function: (selector_expression) @sel)`, \
+                 `(call_expression function: (identifier) @n)`\n\
+                 - Defer: `(defer_statement)`\n\
+                 - Goroutines: `(go_statement)`\n\
+                 - Composite literals: `(composite_literal type: (_))` — \
+                 `[]T{...}`, `map[K]V{...}` etc.\n\
+                 - Short decl: `(short_var_declaration left: (expression_list) \
+                 right: (expression_list))`",
+        "ruby" => "tree-sitter-ruby node cheatsheet:\n\
+                   - Methods: `(method name: (identifier) @n)`\n\
+                   - Calls: `(call receiver: (_)? method: (identifier) @m)`\n\
+                   - Blocks: `(block)`, `(do_block body: (body_statement))` — \
+                   block uses `block_body`, do-block uses `body_statement`\n\
+                   - Conditionals: `(if condition: (_) consequence: (then))`, \
+                   `(while condition: (_))`\n\
+                   - Array/hash literals: `(array)`, `(hash)`",
+        _ => "(no language-specific cheatsheet; match only nodes you can see \
+              in the pre-patch source block above)",
+    }
 }
 
 /// Reconstruct the "before" text of every file touched by a unified
@@ -489,5 +608,45 @@ mod tests {
     fn ast_hint_picks_first_added_line() {
         let diff = "--- a/x\n+++ b/x\n@@\n-foo\n+bar\n+baz\n";
         assert_eq!(extract_ast_hint(diff), "bar");
+    }
+
+    #[test]
+    fn tree_sitter_hints_are_language_specific() {
+        let rust_hints = tree_sitter_hints_for("rust");
+        assert!(rust_hints.contains("macro_invocation"));
+        assert!(rust_hints.contains("loop_expression"));
+        let python_hints = tree_sitter_hints_for("python");
+        assert!(python_hints.contains("function_definition"));
+        let go_hints = tree_sitter_hints_for("go");
+        assert!(go_hints.contains("defer_statement"));
+        let ruby_hints = tree_sitter_hints_for("ruby");
+        assert!(ruby_hints.contains("do_block"));
+        let unknown = tree_sitter_hints_for("klingon");
+        assert!(unknown.contains("no language-specific"));
+    }
+
+    #[test]
+    fn diff_pre_texts_extracts_minus_and_context_lines() {
+        // Minimal unified diff: one context line, one removed line,
+        // one added line. Pre-text should contain context + removed
+        // but NOT the added line.
+        // NOTE: hand-built; line-continuations eat leading whitespace.
+        let diff = concat!(
+            "--- a/src/lib.rs\n",
+            "+++ b/src/lib.rs\n",
+            "@@ -1,3 +1,3 @@\n",
+            " keep_me\n",
+            "-remove_me\n",
+            "+add_me\n",
+        );
+        let pre = diff_pre_texts(diff);
+        assert_eq!(pre.len(), 1);
+        let text = &pre[0];
+        assert!(text.contains("keep_me"), "expected context: got {text:?}");
+        assert!(text.contains("remove_me"), "expected removed: got {text:?}");
+        assert!(
+            !text.contains("add_me"),
+            "added line must not leak into pre-text: {text:?}"
+        );
     }
 }
