@@ -472,15 +472,34 @@ fn f32_slice_to_bytes(v: &[f32]) -> Vec<u8> {
 }
 
 /// Retrieval score combining promotion strength with a negative-history
-/// penalty. `neg_window` caps how many recent negatives can depress the
-/// score, so one bad repo doesn't permanently silence an otherwise-good
-/// recipe. Returned score is clamped to a minimum of 0.1× so even
-/// heavily-penalised recipes remain surfaceable.
+/// penalty AND a cross-repo success boost. `neg_window` caps how many
+/// recent negatives can depress the score so one bad repo doesn't
+/// permanently silence a recipe. The success boost multiplies by
+/// `1 + 0.25 * min(distinct_repos - 1, 4)` — capped at a 2× boost
+/// after 5 distinct successful repos, so a recipe proven on many
+/// codebases surfaces above untested ones even when both have the
+/// same promotion tier. Returned score is clamped to a minimum of 0.1×.
 pub fn retrieval_score(recipe: &Recipe, neg_window: usize) -> f64 {
     let base = promotion_weight(recipe.promotion);
     let negatives = recipe.negative_history.len().min(neg_window) as f64;
     let penalty = 1.0 - (negatives / (neg_window as f64 + 1.0));
-    (base * penalty.max(0.1)).max(0.1)
+
+    // Count distinct repositories the recipe has succeeded on. A repo
+    // that succeeded five times counts once — we're measuring
+    // transferability, not frequency.
+    let distinct_repos: std::collections::HashSet<&str> = recipe
+        .success_history
+        .iter()
+        .map(|s| s.repo.as_str())
+        .collect();
+    let n = distinct_repos.len() as f64;
+    let boost = if n > 0.0 {
+        1.0 + 0.25 * (n - 1.0).min(4.0)
+    } else {
+        1.0
+    };
+
+    (base * penalty.max(0.1) * boost).max(0.1)
 }
 
 #[cfg(test)]
@@ -621,6 +640,94 @@ mod tests {
                 "KNN and linear disagreed on top-5 for query {q:?}: knn={knn_ids:?} linear={lin_ids:?}"
             );
         }
+    }
+
+    /// Cross-repo transferability lifts retrieval. Two recipes at the
+    /// same promotion tier (Seed → weight 1.5): the one proven on 4
+    /// distinct repos scores materially higher than the fresh one.
+    #[test]
+    fn cross_repo_success_boost_lifts_proven_recipes() {
+        use crate::schema::SuccessRecord;
+        let mut base = fixture();
+        base.success_history = vec![];
+        let base_score = retrieval_score(&base, 5);
+
+        let mut cross_repo = fixture();
+        let now = "2026-04-19T00:00:00Z".to_string();
+        cross_repo.success_history = vec![
+            SuccessRecord {
+                repo: "ripgrep".into(),
+                commit: "a".into(),
+                speedup: 1.5,
+                ci_lower_bound: 1.4,
+                merged: true,
+                recorded_at: now.clone(),
+            },
+            SuccessRecord {
+                repo: "tokio".into(),
+                commit: "b".into(),
+                speedup: 1.8,
+                ci_lower_bound: 1.7,
+                merged: true,
+                recorded_at: now.clone(),
+            },
+            SuccessRecord {
+                repo: "clap".into(),
+                commit: "c".into(),
+                speedup: 2.0,
+                ci_lower_bound: 1.9,
+                merged: true,
+                recorded_at: now.clone(),
+            },
+            SuccessRecord {
+                repo: "serde".into(),
+                commit: "d".into(),
+                speedup: 1.2,
+                ci_lower_bound: 1.1,
+                merged: true,
+                recorded_at: now,
+            },
+        ];
+        let boosted_score = retrieval_score(&cross_repo, 5);
+        assert!(
+            boosted_score > base_score * 1.5,
+            "4 distinct repos should produce at least 1.5x lift over fresh: base={base_score:.2} boosted={boosted_score:.2}"
+        );
+    }
+
+    /// Repeat successes on the SAME repo shouldn't over-boost — we're
+    /// measuring transferability across codebases, not frequency.
+    #[test]
+    fn repeated_same_repo_successes_do_not_inflate() {
+        use crate::schema::SuccessRecord;
+        let mut single_repo_5x = fixture();
+        let now = "2026-04-19T00:00:00Z".to_string();
+        single_repo_5x.success_history = (0..5)
+            .map(|i| SuccessRecord {
+                repo: "same-repo".into(),
+                commit: format!("c{i}"),
+                speedup: 1.5,
+                ci_lower_bound: 1.4,
+                merged: true,
+                recorded_at: now.clone(),
+            })
+            .collect();
+
+        let mut one_repo_1x = fixture();
+        one_repo_1x.success_history = vec![SuccessRecord {
+            repo: "same-repo".into(),
+            commit: "only".into(),
+            speedup: 1.5,
+            ci_lower_bound: 1.4,
+            merged: true,
+            recorded_at: "2026-04-19T00:00:00Z".into(),
+        }];
+
+        // Both should count as "1 distinct repo" → identical boost.
+        assert!(
+            (retrieval_score(&single_repo_5x, 5) - retrieval_score(&one_repo_1x, 5)).abs() < 1e-9,
+            "repeat successes on one repo must not inflate retrieval"
+        );
     }
 
     #[test]

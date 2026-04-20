@@ -51,6 +51,12 @@ pub struct RunArtifact {
     pub patch_diff: Option<String>,
     pub winning_specialist: Option<String>,
     pub harvested_recipe: Option<String>,
+    /// ID of the LLM-generalized (Phase 2 of harvest) recipe, if the
+    /// Generalizer ran and produced a parseable pattern. This is the
+    /// recipe that carries cross-repo reusability — while
+    /// `harvested_recipe` is repo-specific provenance.
+    #[serde(default)]
+    pub generalized_recipe: Option<String>,
     pub env_fingerprint: EnvFingerprint,
     pub determinism: Option<RerunReport>,
     pub pr_withheld: bool,
@@ -117,6 +123,7 @@ impl Orchestrator {
             patch_diff: None,
             winning_specialist: None,
             harvested_recipe: None,
+            generalized_recipe: None,
             env_fingerprint: fingerprint.clone(),
             determinism: None,
             pr_withheld: false,
@@ -261,6 +268,61 @@ impl Orchestrator {
         run.advance()?;
 
         // RecipeRetrieve -------------------------------------------------
+        //
+        // Before querying the corpus, run the Explorer in read-only mode
+        // against this repo so recipes proposed FROM this codebase enter
+        // the planner's retrieval pool for THIS run. Every successful
+        // Explorer proposal lands as `Hypothesized` in the shared store;
+        // next run's discover pass picks them up too, and the harvester
+        // (Flywheel #1) can later promote them. This is how the corpus
+        // grows from the codebases the product sees rather than just
+        // from hand-authored seeds.
+        //
+        // Capped at $0.75 so a normal 3-specialist race at $5 still has
+        // >80% of budget left for patches. Explorer is skipped when
+        // `ANTHROPIC_API_KEY` is absent (same gate as the race below).
+        if allow_llm && std::env::var("ANTHROPIC_API_KEY").is_ok() {
+            let explorer_cap = 0.75_f64.min(
+                self.mode
+                    .budget()
+                    .map(|b| b.spend_cap_usd * 0.15)
+                    .unwrap_or(0.75),
+            );
+            let tracker = ods_core::BudgetTracker::new(Some(&ods_core::Budget {
+                wall_cap: std::time::Duration::from_secs(180),
+                spend_cap_usd: explorer_cap,
+            }));
+            let input = crate::explorer::ExplorerInput {
+                repo: &self.repo,
+                language: self.adapter.name().to_string(),
+                max_recipes: 5,
+                max_iters: 10,
+                budget_tracker: Some(tracker),
+            };
+            match crate::explorer::run_explorer(input).await {
+                Ok(outcome) => {
+                    let mut added = 0usize;
+                    for r in &outcome.proposed_recipes {
+                        if self.store.get(&r.id).ok().flatten().is_some() {
+                            continue; // already in corpus from a prior run
+                        }
+                        if self.store.upsert(r).is_ok() {
+                            added += 1;
+                        }
+                    }
+                    tracing::info!(
+                        proposed = outcome.proposed_recipes.len(),
+                        added,
+                        cost_usd = outcome.spent_usd,
+                        "explorer survey complete; hypothesized recipes added to corpus"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(err = %e, "explorer survey failed; continuing with corpus as-is");
+                }
+            }
+        }
+
         let categories = infer_categories(pre_profile.as_ref());
         let planner = Planner::new(&self.store);
         let plan = planner.plan(&target, &categories).unwrap_or_default();
@@ -333,18 +395,37 @@ impl Orchestrator {
                         post_bench_override = Some(w.post_bench.clone());
                         speedup_override = Some(w.verdict.clone());
 
-                        // Auto-harvest the winning transform.
+                        // Auto-harvest the winning transform. Phase 1 writes
+                        // a specific per-target Candidate (provenance). Phase 2
+                        // calls the LLM Generalizer to turn the specific win
+                        // into a reusable, repo-agnostic Hypothesized recipe.
+                        // This is the flywheel: every successful run grows
+                        // the corpus with a cross-repo-transferable pattern,
+                        // not just a one-liner log entry.
                         let commit_sha =
                             current_commit(&self.repo).unwrap_or_else(|| "HEAD".into());
                         let repo_full = self.repo.display().to_string();
-                        if let Ok(RecipeId(id)) = harvest::harvest(
+                        let generalizer_client = std::env::var("ANTHROPIC_API_KEY")
+                            .ok()
+                            .and_then(|k| crate::anthropic::AnthropicClient::new(k).ok());
+                        match harvest::harvest_full(
                             &w,
                             &target,
                             &repo_full,
                             &commit_sha,
                             self.store.as_ref(),
+                            generalizer_client.as_ref(),
                         ) {
-                            artifact.harvested_recipe = Some(id);
+                            Ok(harvest::HarvestOutcome {
+                                specific_id,
+                                generalized_id,
+                            }) => {
+                                artifact.harvested_recipe = Some(specific_id.0.clone());
+                                artifact.generalized_recipe = generalized_id.map(|g| g.0.clone());
+                            }
+                            Err(e) => {
+                                tracing::warn!(err = %e, "harvest failed; continuing without");
+                            }
                         }
                     }
                 }

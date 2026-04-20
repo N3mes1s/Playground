@@ -170,7 +170,8 @@ fn run_generalizer(
         REUSABLE pattern (not this one change) in our Recipe JSON schema. \
         The output must reference no repo-specific identifiers (no crate \
         name, no module name, no function name); it must describe the AST \
-        shape of the trigger, the profile signature, and the ordered \
+        shape of the trigger as a tree-sitter S-expression query with at \
+        least one named capture, the profile signature, and the ordered \
         transformation steps in pattern-level language.";
     let user = format!(
         "Target that was sped up: {}::{}::{}\n\
@@ -185,7 +186,10 @@ fn run_generalizer(
              fast-path-specialization, algorithmic, validation-removal, \
              caching, dependency-optimization>\",\n\
            \"language\": \"{}\",\n\
-           \"ast_pattern\": \"<regex/tree-sitter trigger, pattern-level>\",\n\
+           \"ast_pattern\": \"<tree-sitter S-expression query; must include \
+             at least one @capture; example for rust: (call_expression \
+             function: (scoped_identifier path: (identifier) @p (#eq? @p \
+             \\\"Vec\\\") name: (identifier) @m (#eq? @m \\\"new\\\"))) @match>\",\n\
            \"profile_signature\": [\"<e.g. hot:nested-for-over-tokens>\"],\n\
            \"steps\": [\"<ordered transformation steps, pattern-level>\"],\n\
            \"invariants\": [\"<semantic invariants to preserve>\"]\n\
