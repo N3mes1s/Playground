@@ -11,19 +11,35 @@ Patch preserved at `docs/hunts/httparse-parse-chunk-size.patch`.
 
 ## Headline
 
-**3.13× speedup (lower bound 3.13× at 99% CI), zero test diffs.**
+**1.70×–3.03× speedup across 5 realistic chunk-size inputs, zero test
+diffs. Verified by 3 independent bench runs per side with disjoint
+CIs — no noise, no cherry-picked sample.**
 
-Measured per bench sub-case:
+Measured per bench sub-case as median ± min/max across 3 independent
+`cargo bench` runs on the same host (post-Stage-21 rerun verification
+outside the specialist loop):
 
-| Input                       | Before    | After     | Delta |
-| --------------------------- | --------- | --------- | ----- |
-| `chunk_size/small`          | 4.63 ns   | 2.62 ns   | -44%  |
-| `chunk_size/medium`         | 10.45 ns  | 5.20 ns   | -50%  |
-| `chunk_size/large` (16-hex) | 28.21 ns  | 16.36 ns  | -41%  |
-| `chunk_size/ext`            | 34.44 ns  | 16.67 ns  | -58%  |
-| `chunk_size/ext_ws`         | 32.26 ns  | 10.13 ns  | -69%  |
+| Input                       | Pre median (CI over 3 runs) | Post median (CI over 3 runs) | Speedup |
+| --------------------------- | ---------------------------- | ----------------------------- | ------- |
+| `chunk_size/small`          | 4.68 ns (4.66–4.79)         | 2.61 ns (2.60–2.62)          | **1.79×** |
+| `chunk_size/medium`         | 10.42 ns (10.31–10.58)      | 5.17 ns (5.14–5.25)          | **2.02×** |
+| `chunk_size/large` (16-hex) | 27.54 ns (27.39–27.87)      | 16.19 ns (16.04–16.44)       | **1.70×** |
+| `chunk_size/ext`            | 32.62 ns (32.32–33.42)      | 11.51 ns (11.29–11.74)       | **2.83×** |
+| `chunk_size/ext_ws`         | 31.77 ns (31.69–31.77)      | 10.47 ns (10.17–10.48)       | **3.03×** |
 
-All 263 existing tests green before and after. Zero-diff gate: Pass.
+Every post measurement sits strictly below every pre measurement —
+for all 5 subcases, across all 3 independent runs per side. No subcase
+regresses. Slowest-case speedup (the full 16-hex-digit `large` input)
+still improves 1.70×.
+
+369/369 existing tests green before and after (100 lib + 263 header
++ 6 integration). Zero-diff gate: Pass.
+
+**Note on the earlier "3.13×" headline.** The product's in-race
+speedup number was computed from a single pre/post sample pair using
+`chunk_size/ext_ws` (which happens to have the largest speedup at
+3.03×). The cross-case table above is a more honest picture: every
+subcase wins, but by different amounts.
 
 ## What the product did
 
