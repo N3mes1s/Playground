@@ -6,7 +6,7 @@
 use crate::discover::Discoverer;
 use crate::orchestrator::Orchestrator;
 use anyhow::Result;
-use ods_core::{Mode, TargetSig};
+use ods_core::{Mode, RunStore, TargetSig};
 use ods_lang::LanguageAdapter;
 use ods_recipes::Store;
 use serde::{Deserialize, Serialize};
@@ -96,7 +96,35 @@ impl Scheduler {
                     child_runs.push(art.run_id);
                 }
                 Err(e) => {
+                    // Orchestrator returned Err. Before Stage 27 this
+                    // branch silently zeroed out an entire target's
+                    // worth of LLM spend — hunts showed "$0, 0 runs"
+                    // even when each target actually burned ~$3. Pull
+                    // whatever the most-recent persist captured from
+                    // runs.db so the batch artifact at least reflects
+                    // reality. Best-effort: if the DB read itself
+                    // fails, preserve the prior behaviour of logging
+                    // the primary error.
                     tracing::warn!(target = %target, err = %e, "scheduler: run failed");
+                    let db_path = self.repo.join(".ods").join("runs.db");
+                    if let Ok(rs) = RunStore::open(&db_path) {
+                        if let Ok(recent) = rs.recent(8) {
+                            if let Some(rec) = recent.into_iter().find(|r| {
+                                r.language == target.language
+                                    && r.target.0 == target.language
+                                    && r.target.1 == target.module
+                                    && r.target.2 == target.symbol
+                            }) {
+                                total_spent += rec.spent_usd;
+                                child_runs.push(rec.id.to_string());
+                                tracing::info!(
+                                    run_id = %rec.id,
+                                    salvaged_usd = rec.spent_usd,
+                                    "scheduler: recovered partial spend for errored run"
+                                );
+                            }
+                        }
+                    }
                 }
             }
         }

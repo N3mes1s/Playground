@@ -503,7 +503,15 @@ impl Orchestrator {
         artifact.winning_specialist = winner_kind.clone();
         artifact.stages_completed.push(LoopStage::Transform);
         persist(&run_store, &run_id, LoopStage::Transform, &artifact)?;
-        run.advance()?;
+        // Post-race stages (Verify, Bench, Harvest) are pure shell-out —
+        // they don't consume LLM budget. Advancing with `?` here made
+        // every run that burned most of its wall cap in the race return
+        // `Err` before `run_tests` could fire, killing the entire
+        // downstream pipeline: no speedup captured, no recipe
+        // harvested, no artifact update. Switch to best-effort: log the
+        // breach and continue. The race's own budget tracker already
+        // stopped new LLM work before reaching this point.
+        advance_best_effort(&mut run, LoopStage::Transform);
 
         // Verify ---------------------------------------------------------
         let tests = self
@@ -529,7 +537,7 @@ impl Orchestrator {
         artifact.gate = Some(gate);
         artifact.stages_completed.push(LoopStage::Verify);
         persist(&run_store, &run_id, LoopStage::Verify, &artifact)?;
-        run.advance()?;
+        advance_best_effort(&mut run, LoopStage::Verify);
 
         // Bench (post + rerun-N) -----------------------------------------
         //
@@ -658,7 +666,7 @@ impl Orchestrator {
         }
         artifact.stages_completed.push(LoopStage::Bench);
         persist(&run_store, &run_id, LoopStage::Bench, &artifact)?;
-        run.advance()?;
+        advance_best_effort(&mut run, LoopStage::Bench);
 
         // Explain + Harvest ---------------------------------------------
         artifact.stages_completed.push(LoopStage::Explain);
@@ -671,6 +679,22 @@ impl Orchestrator {
             &serde_json::to_string(&artifact)?,
         )?;
         Ok(artifact)
+    }
+}
+
+/// Advance `run` to the next stage without treating wall/spend breach as
+/// fatal. Post-race stages (Verify, Bench, Harvest) are pure shell-out;
+/// the LLM budget is already spent and cannot be recouped by failing
+/// here. Prior `run.advance()?` at these boundaries turned a "we ran
+/// out of wall budget during the race" into "we silently threw away
+/// the winning patch, its speedup, and any harvestable recipe."
+fn advance_best_effort(run: &mut Run, at: LoopStage) {
+    if let Err(e) = run.advance() {
+        tracing::warn!(
+            stage = ?at,
+            err = %e,
+            "budget breach after LLM race; post-race stages continue best-effort"
+        );
     }
 }
 
@@ -938,5 +962,32 @@ mod tests {
         assert_eq!(recent[0].status, RunStatus::Completed);
         // JSON mirror also written.
         assert!(repo.path().join(".ods/runs").exists());
+    }
+
+    #[test]
+    fn advance_best_effort_continues_past_budget_exhausted() {
+        // Regression guard for Stage 27's primary bug: with the prior
+        // `run.advance()?` at Transform / Verify / Bench boundaries,
+        // a run that consumed most of the wall cap during its LLM
+        // race would throw BudgetExhausted at the very next advance
+        // and skip every post-race stage. The fix wraps advance in
+        // a helper that logs + continues so shell-only stages
+        // (run_tests, run_bench, harvest) still fire.
+        let budget = ods_core::Budget {
+            // Near-zero wall cap guarantees advance() will fail.
+            wall_cap: Duration::from_nanos(1),
+            spend_cap_usd: 10.0,
+        };
+        let mut run = Run::new(Mode::Ci(budget));
+        // Simulate burning a realistic race spend but NOT exceeding
+        // the spend cap (wall is what trips first in the regression).
+        run.spent_usd = 2.5;
+        // Burn the wall cap by sleeping a tick past it.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        // Strict `advance()?` would error; best-effort version logs
+        // and returns without panicking.
+        advance_best_effort(&mut run, LoopStage::Transform);
+        // run remains usable for the next stage.
+        advance_best_effort(&mut run, LoopStage::Verify);
     }
 }

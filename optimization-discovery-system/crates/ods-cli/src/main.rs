@@ -10,6 +10,7 @@ use ods_report::{render_pr_body, ReportInputs};
 use ods_verify::{GateInput, ZeroDiffGate};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
@@ -1297,7 +1298,27 @@ async fn cmd_optimize(
     let adapter = registry.detect(repo).await?;
     let mode_val = match mode {
         RunMode::Dev => ods_core::Mode::Dev,
-        RunMode::Ci => ods_core::Mode::ci_default(),
+        RunMode::Ci => {
+            // Propagate --budget-usd into the Mode's Budget so the
+            // per-run budget tracker (race, ToolUseLoop.would_exceed)
+            // actually reflects the user's intent. Prior behaviour
+            // (ci_default()) hard-coded a $5 / 15-min cap and silently
+            // truncated every run — post-race Verify/Bench/Harvest
+            // stages hit the wall cap because the race consumed all of
+            // it, and the scheduler discarded the resulting errors.
+            //
+            // Wall cap is scaled with spend: $1 of LLM ≈ 4 minutes of
+            // agent turns (empirical: rust-url's specialists take
+            // 3-6 min per $1 of spend). Add a 15-min headroom for the
+            // post-race shell-only stages (run_tests, run_bench,
+            // determinism rerun). Minimum 15 min so tiny budgets still
+            // produce working runs.
+            let wall_min = ((budget_usd * 4.0) + 15.0).max(15.0) as u64;
+            ods_core::Mode::Ci(ods_core::Budget {
+                wall_cap: Duration::from_secs(wall_min * 60),
+                spend_cap_usd: budget_usd,
+            })
+        }
     };
     let scheduler = ods_agents::Scheduler::new(adapter, store, repo.clone(), mode_val, budget_usd);
     let batch = scheduler.run(top, llm).await?;
