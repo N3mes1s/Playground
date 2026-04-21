@@ -1,0 +1,40 @@
+id: rust-memchr-single-byte-search
+name: SIMD-accelerated single-byte search via memchr
+category: algorithmic
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: |
+    [
+      (call_expression
+        function: (field_expression field: (field_identifier) @m (#eq? @m "position"))
+        arguments: (arguments (closure_expression
+          body: (binary_expression operator: "=="))))
+      (for_expression
+        value: (call_expression
+          function: (field_expression field: (field_identifier) @b (#eq? @b "bytes"))))
+    ] @match
+  profile_signature:
+    - "hot:byte-equality-loop"
+    - "disasm:no-vpcmpeqb"
+    - "IPC:<1.5"
+  naive_alt_ratio_min: null
+transformation:
+  steps:
+    - "Add `memchr = \"2\"` as a dependency (or include <string.h> memchr for C)."
+    - "Replace `haystack.iter().position(|&b| b == N)` with `memchr::memchr(N, haystack)`."
+    - "For line iteration replace manual `\\n` scan with `memchr::Memchr::new(b'\\n', buf)`."
+    - "For two or three needles use `memchr::memchr2` / `memchr::memchr3`, not a boolean OR over single-byte searches."
+    - "Invariants: needle is a single u8 (not a char); haystack is &[u8]; ASCII bytes cannot appear inside a UTF-8 multi-byte sequence so &str.as_bytes() is safe."
+verification:
+  test_selectors: ["scan", "find", "search", "line"]
+  property_seeds: []
+  fuzz_minutes: 5
+  semver_check: true
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:BurntSushi/memchr,ripgrep-a3c64d2,lemire-2024-first-char"
+embedding: null

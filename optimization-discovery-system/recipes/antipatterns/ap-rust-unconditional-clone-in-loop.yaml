@@ -1,0 +1,32 @@
+id: ap-rust-unconditional-clone-in-loop
+name: unconditional .clone() inside a loop body
+category: alloc-reduction
+language: rust
+promotion: anti-pattern
+trigger:
+  ast_pattern: |
+    (for_expression
+      body: (block
+        (expression_statement
+          (call_expression
+            function: (field_expression field: (field_identifier) @m
+              (#eq? @m "clone")))))) @match
+  profile_signature:
+    - "alloc:per-iteration-clone"
+transformation:
+  steps:
+    - "Determine whether each clone is truly necessary. Borrow the source when the downstream use only needs `&T`."
+    - "When insertion into a collection is the reason, prefer `HashSet::contains_key(&owned)` followed by a conditional insert so the clone happens only for new elements."
+    - "For `Arc<T>` / `Rc<T>`, replace `Arc::clone` with a reference when the receiver's lifetime is a subset of the source's."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

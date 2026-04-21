@@ -1,0 +1,61 @@
+id: rust-debug-only-work-hoist
+name: gate expensive debug-only work behind tracing::enabled! / log_enabled!
+category: fast-path-specialization
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: |
+    (macro_invocation
+      macro: [
+        (identifier) @m
+        (scoped_identifier name: (identifier) @m)
+      ]
+      (#match? @m "^(debug|trace)$")
+      (token_tree) @args) @match
+  profile_signature:
+    - "hot:path-computed-then-dropped"
+    - "hot:tracing::debug"
+    - "hot:format_args!"
+  naive_alt_ratio_min: 1.05
+transformation:
+  steps:
+    - "rustc PR #147293 (Dec 2025) removed a computed value used only for debug logging from a query-system hot path. Net: 3%+ icount reduction."
+    - "For every `debug!(…)` / `trace!(…)` macro call whose arguments contain a non-trivial expression (a function call, a format!, a collect-to-string), check whether the debug level is actually enabled at that span."
+    - "If the arg requires work to construct, wrap the call in `if tracing::enabled!(Level::DEBUG) { debug!(…); }` (or the log-crate equivalent `log_enabled!(Level::Debug)`) so the work is skipped in release-mode / default-filter configurations."
+    - "Cheap args (literal strings, pre-bound &str, primitive values) are already zero-cost — don't wrap those. The gate only helps when the argument itself triggers allocation, formatting, or traversal."
+    - "If the work is shared across multiple log calls, hoist it into a named binding and gate the binding's computation too."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: true
+benchmark_template: |
+  use criterion::{black_box, criterion_group, criterion_main, Criterion};
+
+  fn bench_with_gate(c: &mut Criterion) {
+      c.bench_function("log_call_unguarded", |b| {
+          b.iter(|| {
+              let big: String = (0..100).map(|i| format!("{i}")).collect();
+              tracing::debug!(%big, "never printed at INFO");
+              black_box(());
+          })
+      });
+      c.bench_function("log_call_guarded", |b| {
+          b.iter(|| {
+              if tracing::enabled!(tracing::Level::DEBUG) {
+                  let big: String = (0..100).map(|i| format!("{i}")).collect();
+                  tracing::debug!(%big, "never printed at INFO");
+              }
+              black_box(());
+          })
+      });
+  }
+
+  criterion_group!(benches, bench_with_gate);
+  criterion_main!(benches);
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:rust-lang/rust#147293,nnethercote-2025-12"
+embedding: null

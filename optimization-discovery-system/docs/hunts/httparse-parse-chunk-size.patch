@@ -1,0 +1,203 @@
+diff --git a/benches/parse.rs b/benches/parse.rs
+index 7794d31..13df650 100644
+--- a/benches/parse.rs
++++ b/benches/parse.rs
+@@ -231,12 +231,28 @@ fn many_requests(c: &mut Criterion) {
+         });
+ }
+ 
++fn chunk_size(c: &mut Criterion) {
++    fn _chunk(c: &mut Criterion, name: &str, input: &'static [u8]) {
++        c.benchmark_group("chunk_size")
++        .throughput(Throughput::Bytes(input.len() as u64))
++        .bench_function(name, |b| b.iter(|| {
++            httparse::parse_chunk_size(black_box(input)).unwrap()
++        }));
++    }
++
++    _chunk(c, "small", b"0\r\n");
++    _chunk(c, "medium", b"3086d\r\n");
++    _chunk(c, "large", b"ffffffffffffffff\r\n");
++    _chunk(c, "ext", b"3735AB1;foo bar*\r\n");
++    _chunk(c, "ext_ws", b"3735ab1 ; baz \r\n");
++}
++
+ const WARMUP: Duration = Duration::from_millis(100);
+ const MTIME: Duration = Duration::from_millis(100);
+ const SAMPLES: usize = 200;
+ criterion_group!{
+     name = benches;
+     config = Criterion::default().sample_size(SAMPLES).warm_up_time(WARMUP).measurement_time(MTIME);
+-    targets = req, req_short, resp, resp_short, uri, header, version, method, many_requests
++    targets = req, req_short, resp, resp_short, uri, header, version, method, many_requests, chunk_size
+ }
+ criterion_main!(benches);
+diff --git a/src/lib.rs b/src/lib.rs
+index e8c38a6..8cec1ab 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1264,68 +1264,110 @@ fn parse_headers_iter_uninit<'a>(
+ pub fn parse_chunk_size(buf: &[u8])
+     -> result::Result<Status<(usize, u64)>, InvalidChunkSize> {
+     const RADIX: u64 = 16;
+-    let mut bytes = Bytes::new(buf);
+-    let mut size = 0;
+-    let mut in_chunk_size = true;
++    let mut size: u64 = 0;
++    let mut count: u32 = 0;
++    let mut i: usize = 0;
++    let len = buf.len();
++
++    // State 1: consuming hex digits of the chunk size.
++    while i < len {
++        let b = buf[i];
++        // Fast-path hex digit decode. Valid hex digits are 0-9, a-f, A-F.
++        // For digits: b - b'0' is in 0..=9. For letters (case-insensitive via | 0x20):
++        // ('a'..='f' | 0x20) + 10 - b'a' yields 10..=15. Reject anything else.
++        let d: u8 = if b.is_ascii_digit() {
++            b - b'0'
++        } else {
++            let lower = b | 0x20;
++            if matches!(lower, b'a'..=b'f') {
++                lower + 10 - b'a'
++            } else {
++                break;
++            }
++        };
++        if count > 15 {
++            return Err(InvalidChunkSize);
++        }
++        count += 1;
++        if cfg!(debug_assertions) && size > (u64::MAX / RADIX) {
++            // actually unreachable!(), because count stops the loop at 15 digits before
++            // we can reach u64::MAX / RADIX == 0xfffffffffffffff, which requires 15 hex
++            // digits. This stops mirai reporting a false alarm regarding the `size *=
++            // RADIX` multiplication below.
++            return Err(InvalidChunkSize);
++        }
++        size = size * RADIX + d as u64;
++        i += 1;
++    }
++
++    // State 2: post-digit dispatch on the terminator byte.
++    if i >= len {
++        return Ok(Status::Partial);
++    }
+     let mut in_ext = false;
+-    let mut count = 0;
+-    loop {
+-        let b = next!(bytes);
+-        match b {
+-            b'0' ..= b'9' if in_chunk_size => {
+-                if count > 15 {
+-                    return Err(InvalidChunkSize);
+-                }
+-                count += 1;
+-                if cfg!(debug_assertions) && size > (u64::MAX / RADIX) {
+-                    // actually unreachable!(), because count stops the loop at 15 digits before
+-                    // we can reach u64::MAX / RADIX == 0xfffffffffffffff, which requires 15 hex
+-                    // digits. This stops mirai reporting a false alarm regarding the `size *=
+-                    // RADIX` multiplication below.
+-                    return Err(InvalidChunkSize);
++    match buf[i] {
++        b'\r' => {
++            i += 1;
++            if i >= len {
++                return Ok(Status::Partial);
++            }
++            return match buf[i] {
++                b'\n' => Ok(Status::Complete((i + 1, size))),
++                _ => Err(InvalidChunkSize),
++            };
++        }
++        b'\t' | b' ' => {
++            // LWS can follow the chunk size, but no more digits can come.
++            i += 1;
++        }
++        b';' => {
++            in_ext = true;
++            i += 1;
++        }
++        _ => return Err(InvalidChunkSize),
++    }
++
++    // State 3: after digits, before (or inside) extension. Skip whitespace
++    // until ';' or '\r', then accept any arbitrary octet inside the extension.
++    while i < len {
++        let b = buf[i];
++        if in_ext {
++            // Any byte is allowed inside the extension except CR which terminates it.
++            if b == b'\r' {
++                i += 1;
++                if i >= len {
++                    return Ok(Status::Partial);
+                 }
+-                size *= RADIX;
+-                size += (b - b'0') as u64;
+-            },
+-            b'a' ..= b'f' | b'A' ..= b'F' if in_chunk_size => {
+-                if count > 15 {
+-                    return Err(InvalidChunkSize);
++                return match buf[i] {
++                    b'\n' => Ok(Status::Complete((i + 1, size))),
++                    _ => Err(InvalidChunkSize),
++                };
++            }
++            i += 1;
++        } else {
++            match b {
++                b'\r' => {
++                    i += 1;
++                    if i >= len {
++                        return Ok(Status::Partial);
++                    }
++                    return match buf[i] {
++                        b'\n' => Ok(Status::Complete((i + 1, size))),
++                        _ => Err(InvalidChunkSize),
++                    };
+                 }
+-                count += 1;
+-                if cfg!(debug_assertions) && size > (u64::MAX / RADIX) {
+-                    return Err(InvalidChunkSize);
++                b';' => {
++                    in_ext = true;
++                    i += 1;
+                 }
+-                size *= RADIX;
+-                size += ((b | 0x20) + 10 - b'a') as u64;
+-            }
+-            b'\r' => {
+-                match next!(bytes) {
+-                    b'\n' => break,
+-                    _ => return Err(InvalidChunkSize),
++                b'\t' | b' ' => {
++                    i += 1;
+                 }
++                _ => return Err(InvalidChunkSize),
+             }
+-            // If we weren't in the extension yet, the ";" signals its start
+-            b';' if !in_ext => {
+-                in_ext = true;
+-                in_chunk_size = false;
+-            }
+-            // "Linear white space" is ignored between the chunk size and the
+-            // extension separator token (";") due to the "implied *LWS rule".
+-            b'\t' | b' ' if !in_ext && !in_chunk_size => {}
+-            // LWS can follow the chunk size, but no more digits can come
+-            b'\t' | b' ' if in_chunk_size => in_chunk_size = false,
+-            // We allow any arbitrary octet once we are in the extension, since
+-            // they all get ignored anyway. According to the HTTP spec, valid
+-            // extensions would have a more strict syntax:
+-            //     (token ["=" (token | quoted-string)])
+-            // but we gain nothing by rejecting an otherwise valid chunk size.
+-            _ if in_ext => {}
+-            // Finally, if we aren't in the extension and we're reading any
+-            // other octet, the chunk size line is invalid!
+-            _ => return Err(InvalidChunkSize),
+         }
+     }
+-    Ok(Status::Complete((bytes.pos(), size)))
++    Ok(Status::Partial)
+ }
+ 
+ #[cfg(test)]

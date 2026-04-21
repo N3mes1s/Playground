@@ -1,0 +1,37 @@
+id: go-sharded-concurrent-map
+name: shard a contended map by key hash
+category: algorithmic
+language: go
+promotion: seed
+trigger:
+  ast_pattern: |
+    (struct_type
+      (field_declaration_list
+        (field_declaration type: (qualified_type
+          package: (package_identifier) @p (#eq? @p "sync")
+          name: (type_identifier) @t (#match? @t "^(Mutex|RWMutex)$"))))) @match
+  profile_signature:
+    - "mutex:contention-on-map-mutex"
+    - "hot:runtime.mapassign"
+    - "hot:runtime.mapaccess"
+    - "scaling:throughput-plateaus-past-cores"
+  naive_alt_ratio_min: null
+transformation:
+  steps:
+    - "Pick shard count N = next power of two >= runtime.NumCPU() (typical 64)."
+    - "Replace the `mu sync.Mutex; m map[K]V` pair with `shards [N]struct{ mu sync.RWMutex; m map[K]V }`."
+    - "Route every operation via `hash(key) & (N-1)`; use `maphash` or fnv for uniform distribution."
+    - "Skip this pattern if callers rely on whole-map atomic snapshots -- sharding breaks that guarantee."
+    - "Invariants: per-key consistency preserved; iteration order was already non-deterministic."
+verification:
+  test_selectors: ["concurrent", "race"]
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: true
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:puzpuzpuz/xsync,orcaman/concurrent-map"
+embedding: null

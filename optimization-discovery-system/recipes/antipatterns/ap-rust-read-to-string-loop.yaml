@@ -1,0 +1,32 @@
+id: ap-rust-read-to-string-loop
+name: std::fs::read_to_string called inside a loop
+category: syscall-elimination
+language: rust
+promotion: anti-pattern
+trigger:
+  ast_pattern: |
+    (for_expression
+      body: (block
+        (expression_statement
+          (call_expression
+            function: (scoped_identifier
+              name: (identifier) @m (#eq? @m "read_to_string")))))) @match
+  profile_signature:
+    - "syscall:open+read+close-per-iteration"
+transformation:
+  steps:
+    - "Open the file once with `std::fs::File::open` and reuse a `BufReader`."
+    - "If the files vary per iteration, amortise by running the loop body under `rayon::par_iter` to overlap syscalls with compute."
+    - "Consider whether the file contents are constant across iterations -- if so, read once before the loop."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

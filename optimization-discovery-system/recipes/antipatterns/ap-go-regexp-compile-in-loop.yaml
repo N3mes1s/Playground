@@ -1,0 +1,33 @@
+id: ap-go-regexp-compile-in-loop
+name: regexp.MustCompile / regexp.Compile inside a loop
+category: caching
+language: go
+promotion: anti-pattern
+trigger:
+  ast_pattern: |
+    (for_statement
+      body: (block
+        (expression_statement
+          (call_expression
+            function: (selector_expression
+              operand: (identifier) @p (#eq? @p "regexp")
+              field: (field_identifier) @m
+              (#match? @m "^(Compile|MustCompile)$")))))) @match
+  profile_signature:
+    - "hot:regex-compile-per-iteration"
+transformation:
+  steps:
+    - "Hoist the compiled regex to a package-level `var re = regexp.MustCompile(...)`."
+    - "For simple literal checks, `strings.Contains` / `bytes.IndexByte` is dramatically cheaper than a full regex dispatch."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

@@ -1,0 +1,37 @@
+id: rust-arena-for-ast-parse
+name: arena-allocate AST / IR nodes with bumpalo
+category: alloc-reduction
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: |
+    (call_expression
+      function: (scoped_identifier
+        path: (identifier) @p (#match? @p "^(Box|Rc|Arc)$")
+        name: (identifier) @m (#eq? @m "new"))
+      arguments: (arguments (call_expression
+        function: (identifier) @t (#match? @t "Node$")))) @match
+  profile_signature:
+    - "hot:malloc/free-in-top-10"
+    - "alloc:millions-of-sub-64B-allocations"
+    - "teardown:drop-time-rivals-parse-time"
+  naive_alt_ratio_min: null
+transformation:
+  steps:
+    - "Introduce a `bumpalo::Bump` (or `typed_arena::Arena<Node>`) owned by the parse/compile session."
+    - "Replace `Box::new(node)` with `arena.alloc(node)` returning `&'arena Node`."
+    - "Propagate the `'arena` lifetime through AST types; remove any manual `Drop` for nodes (the whole arena frees at once on session end)."
+    - "Confirm the parser never deletes nodes mid-parse -- arenas support only bulk free."
+    - "Invariants: node identity and traversal order preserved; no node outlives the arena (enforced by the lifetime)."
+verification:
+  test_selectors: ["parser", "ast", "compile"]
+  property_seeds: []
+  fuzz_minutes: 5
+  semver_check: true
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:fitzgen/bumpalo,manishearth-arenas-rust"
+embedding: null

@@ -1,0 +1,39 @@
+id: rust-cold-attr-error-paths
+name: outline error and slow paths with #[cold] + #[inline(never)]
+category: algorithmic
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: |
+    [
+      (return_expression
+        (call_expression function: (identifier) @e (#eq? @e "Err")))
+      (call_expression
+        function: (identifier) @e (#eq? @e "Err")
+        arguments: (arguments (macro_invocation macro: (identifier) @m
+          (#eq? @m "format"))))
+    ] @match
+  profile_signature:
+    - "icache:L1-icache-load-miss->1%"
+    - "itlb:miss-rate-elevated"
+    - "disasm:error-blocks-interleaved-with-hot-blocks"
+  naive_alt_ratio_min: null
+transformation:
+  steps:
+    - "Extract the error construction body into its own helper: `#[cold] #[inline(never)] fn make_err(...) -> Error { ... }`."
+    - "Call-sites become `if cond { return Err(make_err(...)); }` so LLVM can move the cold code out of the hot basic-block sequence (into `.text.unlikely`)."
+    - "For Rust 1.77+ wrap the rare branch body in `std::hint::cold_path()` when the error construction is already outlined."
+    - "Verify with `cargo asm` that the hot path is contiguous and no jumps skip over error code."
+    - "Invariants: the cold function must genuinely be rare in steady state (<~1% frequency). Inlining it would inflate the caller beyond its I-cache budget."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: true
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:rust-lang/rust-122757,matklad-branches-arent-free,tigerbeetle-style"
+embedding: null

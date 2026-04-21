@@ -1,0 +1,29 @@
+id: ap-go-map-string-key-concat
+name: map key built by string concatenation
+category: alloc-reduction
+language: go
+promotion: anti-pattern
+trigger:
+  ast_pattern: |
+    (index_expression
+      index: (binary_expression
+        left: (binary_expression operator: "+")
+        operator: "+")) @match
+  profile_signature:
+    - "alloc:map-key-per-lookup"
+transformation:
+  steps:
+    - "Concatenating strings to build a map key allocates on every access. Use a struct key (`struct{A, B string}`) or pre-compute the key outside the hot path."
+    - "For numeric composite keys, a single `uint64` packed from two fields is dramatically cheaper than string building."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

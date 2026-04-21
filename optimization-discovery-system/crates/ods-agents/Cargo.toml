@@ -1,0 +1,37 @@
+[package]
+name        = "ods-agents"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+repository.workspace  = true
+publish               = false
+
+[dependencies]
+ods-core    = { workspace = true }
+ods-recipes = { workspace = true }
+ods-lang    = { workspace = true }
+ods-lang-rust = { workspace = true }
+ods-lang-python = { workspace = true }
+ods-lang-go = { workspace = true }
+ods-lang-ruby = { workspace = true }
+ods-measure = { workspace = true }
+ods-verify  = { workspace = true }
+ods-exec    = { workspace = true }
+anyhow      = { workspace = true }
+thiserror   = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+tracing     = { workspace = true }
+reqwest     = { workspace = true }
+tokio       = { workspace = true }
+async-trait = { workspace = true }
+regex       = { workspace = true }
+walkdir     = { workspace = true }
+similar     = { workspace = true }
+time        = { workspace = true }
+tree-sitter = "0.22"
+
+[dev-dependencies]
+tempfile = { workspace = true }
+serde_yaml = { workspace = true }

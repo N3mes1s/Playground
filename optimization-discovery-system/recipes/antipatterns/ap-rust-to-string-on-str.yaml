@@ -1,0 +1,30 @@
+id: ap-rust-to-string-on-str
+name: .to_string() on a &str when a borrow suffices
+category: alloc-reduction
+language: rust
+promotion: anti-pattern
+trigger:
+  ast_pattern: |
+    (call_expression
+      function: (field_expression
+        value: (string_literal)
+        field: (field_identifier) @m (#eq? @m "to_string"))) @match
+  profile_signature:
+    - "alloc:unnecessary-owned-string"
+transformation:
+  steps:
+    - "If the consumer takes `impl AsRef<str>` or `&str`, drop the `.to_string()`. Passing `&str` avoids the allocation."
+    - "If the consumer needs `String` but only briefly, consider changing its signature to accept `&str` and letting the caller decide."
+    - "`Cow<str>` is the right type when a function returns either a borrowed or owned string depending on input."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

@@ -1,0 +1,32 @@
+id: ap-rust-metadata-is-dir
+name: .metadata() to ask only is_dir / is_file
+category: syscall-elimination
+language: rust
+promotion: anti-pattern
+trigger:
+  ast_pattern: |
+    (call_expression
+      function: (field_expression
+        value: (call_expression
+          function: (field_expression field: (field_identifier) @m1
+            (#eq? @m1 "metadata")))
+        field: (field_identifier) @m2 (#match? @m2 "^is_(dir|file|symlink)$"))) @match
+  profile_signature:
+    - "syscall:stat-on-readdir-entry"
+transformation:
+  steps:
+    - "`DirEntry::file_type()` returns the filetype cached from `readdir`'s `d_type` on platforms that support it, avoiding a `stat(2)` per entry."
+    - "Fall back to `metadata()` only when d_type returns `Unknown`."
+    - "For `Path::is_dir()` on a standalone path, `std::fs::symlink_metadata` is cheaper than `metadata` when symlinks don't need following."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

@@ -1,0 +1,36 @@
+id: rust-aho-corasick-multi-pattern
+name: Aho-Corasick automaton for repeated multi-literal search
+category: caching
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: |
+    (binary_expression
+      left: (call_expression
+        function: (field_expression field: (field_identifier) @m1 (#eq? @m1 "contains")))
+      operator: "||"
+      right: (call_expression
+        function: (field_expression field: (field_identifier) @m2 (#eq? @m2 "contains")))) @match
+  profile_signature:
+    - "hot:N-fold-repeated-substring-scan"
+    - "flamegraph:str::pattern|strings.Contains-sampled-many-times-per-outer-iter"
+  naive_alt_ratio_min: null
+transformation:
+  steps:
+    - "Build the automaton once outside the hot loop: `AhoCorasick::new(&patterns)?`."
+    - "Use `find_iter(haystack)` for leftmost-first match, or `is_match()` for boolean OR."
+    - "For <=1000 ASCII literals set `AhoCorasickKind::DFA` so the Teddy packed-SIMD prefilter fires."
+    - "For Go use cloudflare/ahocorasick; for Java use org.ahocorasick.trie."
+    - "Invariants: patterns are fixed literals (no regex metacharacters); automaton is reused across many haystacks so the O(sum(|pattern|)) build cost amortises."
+verification:
+  test_selectors: ["search", "match", "scan"]
+  property_seeds: []
+  fuzz_minutes: 5
+  semver_check: true
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:BurntSushi/aho-corasick-4a1b5e7,ripgrep-1866,lemire-gog-2024"
+embedding: null

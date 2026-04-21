@@ -1,0 +1,31 @@
+id: ap-go-string-bytes-roundtrip
+name: string(bytes) / []byte(s) conversions in a hot loop
+category: alloc-reduction
+language: go
+promotion: anti-pattern
+trigger:
+  ast_pattern: |
+    (for_statement
+      body: (block
+        (expression_statement
+          (call_expression
+            function: (identifier) @f (#eq? @f "string"))))) @match
+  profile_signature:
+    - "alloc:string-byte-copy"
+transformation:
+  steps:
+    - "`string([]byte)` and `[]byte(string)` both allocate + copy. In a hot loop that's O(n · iterations) extra work for no functional change."
+    - "Keep the payload as `[]byte` throughout the loop. Convert once on exit if the caller really needs a `string`."
+    - "When only substring matching is needed, `bytes` package counterparts (`bytes.Contains`, `bytes.HasPrefix`) skip the round-trip."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

@@ -1,0 +1,84 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ods-cli",
+    "crates/ods-core",
+    "crates/ods-agents",
+    "crates/ods-measure",
+    "crates/ods-verify",
+    "crates/ods-recipes",
+    "crates/ods-exec",
+    "crates/ods-lang",
+    "crates/ods-lang-rust",
+    "crates/ods-lang-go",
+    "crates/ods-lang-ruby",
+    "crates/ods-lang-python",
+    "crates/ods-lang-c",
+    "crates/ods-lang-js",
+    "crates/ods-lang-java",
+    "crates/ods-ci",
+    "crates/ods-report",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/n3mes1s/playground"
+publish = false
+
+[workspace.dependencies]
+ods-core      = { path = "crates/ods-core" }
+ods-agents    = { path = "crates/ods-agents" }
+ods-measure   = { path = "crates/ods-measure" }
+ods-verify    = { path = "crates/ods-verify" }
+ods-recipes   = { path = "crates/ods-recipes" }
+ods-exec      = { path = "crates/ods-exec" }
+ods-lang      = { path = "crates/ods-lang" }
+ods-lang-rust = { path = "crates/ods-lang-rust" }
+ods-lang-go   = { path = "crates/ods-lang-go" }
+ods-lang-ruby = { path = "crates/ods-lang-ruby" }
+ods-lang-python = { path = "crates/ods-lang-python" }
+ods-lang-c    = { path = "crates/ods-lang-c" }
+ods-lang-js   = { path = "crates/ods-lang-js" }
+ods-lang-java = { path = "crates/ods-lang-java" }
+ods-ci        = { path = "crates/ods-ci" }
+ods-report    = { path = "crates/ods-report" }
+
+anyhow     = "1"
+thiserror  = "1"
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+tokio      = { version = "1", features = ["rt-multi-thread", "macros", "fs", "process", "time", "sync", "signal", "net", "io-util"] }
+tracing    = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap       = { version = "4", features = ["derive", "env"] }
+uuid       = { version = "1", features = ["v4", "serde"] }
+time       = { version = "0.3", features = ["serde", "formatting", "parsing"] }
+reqwest    = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "gzip", "json"] }
+rusqlite   = { version = "0.32", features = ["bundled"] }
+semver     = { version = "1", features = ["serde"] }
+regex      = "1"
+walkdir    = "2"
+similar    = "2"
+tempfile   = "3"
+axum       = { version = "0.7", default-features = false, features = ["http1", "json", "tokio", "macros"] }
+async-trait = "0.1"
+hmac       = "0.12"
+sha2       = "0.10"
+rsa        = { version = "0.9", default-features = false, features = ["std", "sha2"] }
+pkcs8      = { version = "0.10", features = ["pem"] }
+pkcs1      = { version = "0.7", features = ["pem"] }
+
+[profile.release]
+opt-level   = 3
+lto         = "fat"
+codegen-units = 1
+strip       = "symbols"
+panic       = "abort"
+
+[profile.dist]
+inherits = "release"
+debug    = 1

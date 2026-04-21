@@ -1,0 +1,53 @@
+id: rust-bm25-df-hoisted
+name: hoist document-frequency + tf out of BM25 inner loop
+category: algorithmic
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: |
+    (for_expression
+      body: (block
+        (expression_statement
+          (for_expression)))) @match
+  profile_signature:
+    - "hot:scoring-loop"
+    - "hot:BM25"
+    - "alloc:none"
+    - "shape:nested-for-over-docs-and-terms"
+  naive_alt_ratio_min: 1.0
+transformation:
+  steps:
+    - "Identify the inner loop that computes document frequency (df) or term frequency (tf) using `iter().filter(...).count()` or similar linear scans inside a per-document loop."
+    - "Precompute a per-doc `HashMap<&str, u32>` (term -> tf) before the scoring loop."
+    - "Precompute a per-unique-query-term `HashMap<&str, f64>` (term -> idf) before the scoring loop."
+    - "Rewrite the hot loop to do O(1) HashMap lookups instead of O(N) or O(N²) scans."
+    - "Deduplicate query terms once so df/idf is computed once per distinct term."
+    - "Preserve identical output ordering by keeping first-seen term order and all existing tie-break behaviour."
+verification:
+  test_selectors:
+    - "score::"
+    - "bm25"
+    - "ranking"
+  property_seeds: [4656, 2761, 3412]
+  fuzz_minutes: 0
+  semver_check: true
+benchmark_template: |
+  fn bench_score(c: &mut Criterion) {
+      for n in [32usize, 256, 1024] {
+          let corpus = make_corpus(n);
+          c.bench_function(&format!("score_recipes/{n}_docs"), |b| {
+              b.iter(|| {
+                  let r = score_recipes(black_box(&corpus), black_box("readdir stat syscall"));
+                  black_box(r);
+              })
+          });
+      }
+  }
+success_history:
+  - repo: "n3mes1s/playground/optimization-discovery-system"
+    commit: "HEAD"
+    speedup: 17.4
+    ci_lower_bound: 16.0
+    merged: false
+    recorded_at: "2026-04-19T08:25:00Z"
+embedding: null

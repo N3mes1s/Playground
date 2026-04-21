@@ -1,0 +1,33 @@
+id: ap-rust-loop-vec-alloc
+name: Vec::new() allocated inside a loop
+category: alloc-reduction
+language: rust
+promotion: anti-pattern
+trigger:
+  ast_pattern: |
+    (for_expression
+      body: (block
+        (expression_statement
+          (call_expression
+            function: (scoped_identifier
+              path: (identifier) @t (#eq? @t "Vec")
+              name: (identifier) @m (#match? @m "^(new|with_capacity)$")))))) @match
+  profile_signature:
+    - "alloc:loop-vec"
+    - "hot:per-iteration-allocation"
+transformation:
+  steps:
+    - "Hoist the Vec out of the loop; `clear()` it between iterations so allocation happens once."
+    - "If the Vec's final length is known ahead of time, use `Vec::with_capacity` outside the loop."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

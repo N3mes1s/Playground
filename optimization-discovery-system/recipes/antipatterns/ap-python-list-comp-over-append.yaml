@@ -1,0 +1,32 @@
+id: ap-python-list-comp-over-append
+name: list.append in a for-loop when a comprehension fits
+category: alloc-reduction
+language: python
+promotion: anti-pattern
+trigger:
+  ast_pattern: |
+    (for_statement
+      body: (block
+        (expression_statement
+          (call
+            function: (attribute attribute: (identifier) @m
+              (#eq? @m "append")))))) @match
+  profile_signature:
+    - "alloc:list-growth-per-iteration"
+transformation:
+  steps:
+    - "A list comprehension `[f(x) for x in src]` is ~2x faster than the `for` + `.append` pattern -- CPython has a fused opcode path for comprehensions."
+    - "For filtering, `[x for x in src if cond(x)]` beats the explicit `if ... append`."
+    - "When the result is consumed once, switch to a generator expression to skip the intermediate list entirely."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

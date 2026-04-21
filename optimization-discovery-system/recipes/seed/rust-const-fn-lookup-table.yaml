@@ -1,0 +1,37 @@
+id: rust-const-fn-lookup-table
+name: move runtime-initialised lookup tables to const fn / build.rs
+category: caching
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: |
+    [
+      (macro_invocation macro: (identifier) @m (#eq? @m "lazy_static"))
+      (static_item
+        type: (generic_type type: (type_identifier) @t
+          (#match? @t "^(Lazy|OnceCell|OnceLock)$")))
+    ] @match
+  profile_signature:
+    - "cold-start:init-takes-ms"
+    - "perf:Once::call_once-in-first-invocations"
+    - "warm-runs:extra-atomic-load-per-access"
+  naive_alt_ratio_min: null
+transformation:
+  steps:
+    - "If the computation is expressible in `const fn` (arithmetic + const loops since Rust 1.79), replace `OnceLock` with a `const TABLE: [T; N] = { let mut t = [0; N]; let mut i = 0; while i < N { t[i] = compute(i); i += 1; } t };`."
+    - "If the computation needs `f64::sin` or other non-const: move generation to `build.rs`, emit `OUT_DIR/table.rs` containing `pub static TABLE: [T; N] = [...]`, include with `include!(concat!(env!(\"OUT_DIR\"), \"/table.rs\"))`."
+    - "For Go, use `go:generate` + committed generated file. For C, Makefile-invoked generator."
+    - "Delete the OnceLock / lazy_static / init block. Validate table values with a runtime test that re-derives the first few entries and checks equality."
+    - "Invariants: the computation is deterministic and pure; table size stays reasonable (<1 MiB, else I-cache pressure and binary size dominate); table is not input-dependent."
+verification:
+  test_selectors: ["startup", "table", "lookup"]
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: true
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:matklad-compile-time-rust,rustc-116054,regex-automata-c1e7f02"
+embedding: null

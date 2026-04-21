@@ -1,0 +1,31 @@
+id: ap-rust-format-in-loop
+name: format!() called inside a loop
+category: alloc-reduction
+language: rust
+promotion: anti-pattern
+trigger:
+  ast_pattern: |
+    (for_expression
+      body: (block
+        (expression_statement
+          (macro_invocation macro: (identifier) @m (#eq? @m "format"))))) @match
+  profile_signature:
+    - "alloc:loop-string"
+    - "hot:format!-per-iteration"
+transformation:
+  steps:
+    - "Replace per-iteration `format!` with a shared `String` accumulator updated via `write!` (from `std::fmt::Write`)."
+    - "Pre-size the accumulator with `String::with_capacity` when the total length is predictable."
+    - "If the formatted string is only needed for logging in cold paths, guard with `if log::log_enabled!`."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

@@ -1,0 +1,30 @@
+id: ap-python-range-len
+name: range(len(x)) used for indexed iteration
+category: algorithmic
+language: python
+promotion: anti-pattern
+trigger:
+  ast_pattern: |
+    (for_statement
+      right: (call
+        function: (identifier) @f1 (#eq? @f1 "range")
+        arguments: (argument_list
+          (call function: (identifier) @f2 (#eq? @f2 "len"))))) @match
+  profile_signature:
+    - "hot:indexed-iteration"
+transformation:
+  steps:
+    - "Prefer `for item in x:` when the index isn't needed, or `for i, item in enumerate(x):` when it is. Both skip the repeated `x[i]` subscript lookup."
+    - "`enumerate` returns a lazy iterator; `range(len(x))` builds no extra list but still does a dict lookup for `len` on every call - negligible but avoidable."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

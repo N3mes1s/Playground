@@ -1,0 +1,23 @@
+[package]
+name        = "ods-lang-python"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+repository.workspace  = true
+publish               = false
+
+[dependencies]
+ods-core  = { workspace = true }
+ods-lang  = { workspace = true }
+ods-exec  = { workspace = true }
+anyhow    = { workspace = true }
+async-trait = { workspace = true }
+regex     = { workspace = true }
+similar   = { workspace = true }
+tokio     = { workspace = true }
+tracing   = { workspace = true }
+serde     = { workspace = true }
+serde_json = { workspace = true }
+tree-sitter = "0.22"
+tree-sitter-python = "0.21"

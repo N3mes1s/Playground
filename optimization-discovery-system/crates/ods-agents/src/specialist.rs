@@ -1,0 +1,221 @@
+use ods_core::OptimizationCategory;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SpecialistKind {
+    SyscallEliminator,
+    AllocReducer,
+    FastPathSpecializer,
+    AlgorithmicFixer,
+    ValidationRemover,
+    CachingSpecialist,
+    DependencyOptimizer,
+    /// Suggests runtime-config tweaks (GC thresholds, allocator choice,
+    /// pre-fork worker hooks) that change runtime behaviour without
+    /// changing request-path semantics. Effect is fleet-level (CPU%,
+    /// RSS, LLC hit-rate) and not measurable by a single-process
+    /// benchmark, so this specialist's output is **suggest-only**: it
+    /// emits a patch + a canary-rollout plan in the PR body but the
+    /// race will not pick it as a winner until a canary gate lands.
+    /// See `OptimizationCategory::requires_canary`.
+    RuntimeConfigurator,
+    /// Read-only survey role that proposes *new* recipes from a codebase.
+    /// Does not apply patches or run tests; its output is a list of
+    /// Hypothesized recipes that grow the corpus.
+    Explorer,
+}
+
+impl SpecialistKind {
+    pub fn category(self) -> OptimizationCategory {
+        use SpecialistKind::*;
+        match self {
+            SyscallEliminator => OptimizationCategory::SyscallElimination,
+            AllocReducer => OptimizationCategory::AllocReduction,
+            FastPathSpecializer => OptimizationCategory::FastPathSpecialization,
+            AlgorithmicFixer => OptimizationCategory::Algorithmic,
+            ValidationRemover => OptimizationCategory::ValidationRemoval,
+            CachingSpecialist => OptimizationCategory::Caching,
+            DependencyOptimizer => OptimizationCategory::DependencyOptimization,
+            RuntimeConfigurator => OptimizationCategory::RuntimeConfig,
+            // Explorer is not bound to a single category: it proposes
+            // patterns across all of them. We pick a neutral one here so
+            // callers that expect every SpecialistKind to have a category
+            // (e.g. the planner) still compile. The Explorer never flows
+            // through the category-driven retrieval path.
+            Explorer => OptimizationCategory::Algorithmic,
+        }
+    }
+
+    pub fn system_prompt(self) -> &'static str {
+        // Stage 1 refines each prompt. The MVP keeps them terse but
+        // category-specific so the model primes correctly.
+        use SpecialistKind::*;
+        match self {
+            SyscallEliminator => {
+                "You eliminate redundant syscalls. Preferred moves: use d_type \
+                 from readdir entries, cache stat results, batch file metadata \
+                 lookups. Never change observable behaviour.\n\n\
+                 Your user prompt will include a baseline profile when one is \
+                 available — DO NOT re-run run_profile to compute it again; \
+                 that costs 5-10 wall-clock minutes. Read `syscall_counts` \
+                 from the baseline. If a specific syscall is measurably hot \
+                 (hundreds+ of calls in the path), edit; then call run_profile \
+                 ONCE post-edit to confirm its count dropped. If measured \
+                 syscall counts are concretely small, abstain. Important: \
+                 `n/a` means strace was not available on this host, NOT that \
+                 the count is zero — in that case proceed on source inspection \
+                 alone rather than abstaining."
+            }
+            AllocReducer => {
+                "You reduce allocations. Preferred moves: prefer borrowed \
+                 slices over owned Vec/String, use SmallVec for small-N, \
+                 replace variadic collection with explicit argc/argv. Never \
+                 change observable behaviour.\n\n\
+                 Your user prompt will include a baseline profile when one is \
+                 available — read `alloc_count` / `alloc_bytes` from it. DO \
+                 NOT re-run run_profile pre-edit; call it ONCE post-edit to \
+                 verify the deltas moved. Note: `n/a` on allocs means \
+                 allocation tracking is not wired into this host's bench \
+                 harness (it is opt-in), NOT that the target allocates zero. \
+                 Abstain only when allocs are measured and small; proceed on \
+                 source inspection when allocs are n/a."
+            }
+            FastPathSpecializer => {
+                "You add a fast path for the common case while preserving a \
+                 correct slow path. Typical splits: ASCII vs general encoding, \
+                 single-argument vs many-argument, zero-length inputs.\n\n\
+                 Your user prompt will include a baseline profile when one is \
+                 available — read `branch_misses` from it. DO NOT re-run \
+                 run_profile pre-edit; call it ONCE post-edit to confirm a \
+                 drop. `#[cold]`/`#[inline(never)]` annotations only pay off \
+                 when branch mispredictions are material — so when \
+                 branch_misses is a concretely small number, abstain. \
+                 `n/a` means `perf stat` was not available on this host, NOT \
+                 that mispredictions are zero — in that case proceed on \
+                 source inspection rather than abstaining."
+            }
+            AlgorithmicFixer => {
+                "You fix algorithmic inefficiencies: backward scans where \
+                 appropriate, early exit, O(n^2) to O(n). Never change \
+                 observable behaviour.\n\n\
+                 Your user prompt will include a baseline profile when one is \
+                 available — read `cycles` and `instructions` from it. DO \
+                 NOT re-run run_profile pre-edit; call it ONCE post-edit to \
+                 verify fewer instructions per iteration. Abstain when a \
+                 measured instruction count is already small. `n/a` means \
+                 `perf stat` was not available — proceed on source inspection, \
+                 not abstain."
+            }
+            ValidationRemover => {
+                "You remove validation that is unreachable given the caller's \
+                 invariants. You must prove the invariant holds from callers \
+                 before removing the check.\n\n\
+                 Your user prompt will include a baseline profile when one is \
+                 available — read `cycles` from it. DO NOT re-run run_profile \
+                 pre-edit; call it ONCE post-edit to confirm the drop. \
+                 Abstain when the check sits outside any measured hot path; \
+                 `n/a` means perf wasn't available, fall back to source \
+                 inspection rather than abstaining."
+            }
+            CachingSpecialist => {
+                "You introduce memoisation or hoist loop-invariant work. \
+                 Caching must be referentially transparent.\n\n\
+                 Your user prompt will include a baseline profile when one is \
+                 available — read `cycles` and `llc_misses` from it. DO NOT \
+                 re-run run_profile pre-edit; call it ONCE post-edit to \
+                 confirm the delta. Abstain when there is no visible hot \
+                 loop — memoising a once-per-call function adds overhead. \
+                 `n/a` for llc_misses means perf wasn't available; fall \
+                 back to source inspection."
+            }
+            DependencyOptimizer => {
+                "You propose dependency bumps or swaps where the upstream \
+                 release contains the optimisation. You must verify cargo-semver-checks \
+                 passes and downstream consumers still build."
+            }
+            RuntimeConfigurator => {
+                "You propose runtime-config tweaks: GC thresholds, allocator \
+                 selection (jemalloc / mimalloc), pre-fork worker hooks, \
+                 THP, IO scheduler. These change runtime behaviour (not \
+                 request-path semantics), so a single-process benchmark \
+                 cannot confirm the win — the production signal is \
+                 fleet-level (CPU%, p99, RSS, LLC hit-rate).\n\n\
+                 Your user prompt will include a baseline profile when one is \
+                 available — use it to justify which knob you are turning \
+                 (high `alloc_bytes` → allocator swap; high `llc_misses` → \
+                 THP / prefetch tuning). Do NOT re-run run_profile pre-edit. \
+                 `n/a` for any metric means the corresponding tool is \
+                 unavailable on this host, not that the value is zero. Your \
+                 patch must still be accompanied by the canary plan below.\n\n\
+                 You emit TWO things: (1) a minimal patch that applies \
+                 the tweak, and (2) a **canary-rollout plan** in the PR \
+                 body that spells out: percentage of traffic to route \
+                 to the change, the metric(s) to monitor, the \
+                 stop-condition on regression, and the rollback command. \
+                 Your patch MUST NOT be applied to 100% of traffic from \
+                 the first deploy. The product's race will mark your \
+                 output 'suggest-only' until the canary gate lands."
+            }
+            Explorer => {
+                "You are the Explorer. You survey a codebase (read-only -- \
+                 no edit_file, no write_file, no run_tests, no run_bench) \
+                 and propose reusable performance-optimisation patterns as \
+                 structured JSON.\n\n\
+                 **Process.** Before emitting your final response you MUST \
+                 actually explore. A principled survey includes:\n\
+                 1. `list_dir` on repo root AND on the primary source \
+                 directory (`src/`, `lib/`, etc.).\n\
+                 2. `read_file` on at least 3 source files that look hot \
+                 (parsers, core loops, formatters, I/O paths).\n\
+                 3. At least 2 `ast_query` calls targeting concrete \
+                 performance smells. `ast_query` takes a tree-sitter \
+                 S-expression pattern (NOT a regex) and returns one hit \
+                 per captured node with its enclosing-fn name. Examples: \
+                 `(call_expression function: (field_expression field: \
+                 (field_identifier) @m (#eq? @m \"clone\"))) @match` or \
+                 `(for_expression body: (block (expression_statement \
+                 (macro_invocation macro: (identifier) @m (#eq? @m \
+                 \"format\"))))) @match`. Every pattern must include at \
+                 least one `@capture` name.\n\
+                 4. One `recipe_search` call to confirm you are not \
+                 re-proposing something already in the corpus.\n\n\
+                 Only after all four are done should you emit your final \
+                 response. Returning an empty `{\"recipes\": []}` on \
+                 iteration 1 without exploration is a failure mode -- do \
+                 not take that shortcut.\n\n\
+                 **Output.** Each pattern you propose describes a \
+                 reusable SHAPE (tree-sitter S-expression trigger + \
+                 profile signature + transformation steps + preserved \
+                 invariants), not a one-off fix for a specific function. Your final text \
+                 response is grammar-constrained to a JSON object matching \
+                 the schema the tool harness has attached to this \
+                 request; you do not need to worry about fences or \
+                 syntax, only about picking good patterns."
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpecialistOutcome {
+    pub kind: SpecialistKind,
+    pub patch_diff: Option<String>,
+    pub rationale: String,
+    pub tokens_in: u32,
+    pub tokens_out: u32,
+    pub estimated_cost_usd: f64,
+}
+
+pub struct Specialist {
+    pub kind: SpecialistKind,
+}
+
+impl Specialist {
+    pub fn new(kind: SpecialistKind) -> Self {
+        Self { kind }
+    }
+
+    pub fn system_prompt(&self) -> &'static str {
+        self.kind.system_prompt()
+    }
+}

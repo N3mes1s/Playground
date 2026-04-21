@@ -1,0 +1,38 @@
+id: rust-io-uring-batched
+name: io_uring batched submission for high-frequency small I/O
+category: syscall-elimination
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: |
+    (for_expression
+      body: (block
+        (expression_statement
+          (call_expression function: (scoped_identifier
+            path: (scoped_identifier name: (identifier) @m1 (#eq? @m1 "fs"))
+            name: (identifier) @m2 (#match? @m2 "^(read|write|File)$")))))) @match
+  profile_signature:
+    - "syscalls:per-second>100k"
+    - "strace:majority-time-in-read-write-futex"
+    - "kernel-time:>30%-with-low-user-IPC"
+  naive_alt_ratio_min: null
+transformation:
+  steps:
+    - "Choose a runtime: `tokio-uring` (drop-in-ish for simple async apps), `glommio` (thread-per-core), or the raw `io-uring` crate."
+    - "Replace per-op syscalls with batched SQE submission: queue N ops, `submit_and_wait(N)`, drain CQEs."
+    - "Enable 2024 flags `IORING_SETUP_DEFER_TASKRUN | IORING_SETUP_SINGLE_ISSUER` to cut wakeups and pin completions to the owning thread."
+    - "Use registered buffers (`IORING_REGISTER_BUFFERS`) and fixed files (`IORING_REGISTER_FILES`) to skip per-op refcount + fd lookup."
+    - "For networking use multishot accept + multishot recv (Linux 6.1+)."
+    - "Invariants: Linux kernel >=5.19 for reliable perf, >=6.1 for DEFER_TASKRUN; buffers must outlive the SQE (ownership handed to the kernel); single submitter thread when SINGLE_ISSUER is on."
+verification:
+  test_selectors: ["io", "file", "network"]
+  property_seeds: []
+  fuzz_minutes: 5
+  semver_check: true
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:axboe-io-uring-2024,glommio-bench,tigerbeetle-design,cloudflare-io-uring-workerpool"
+embedding: null

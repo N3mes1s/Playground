@@ -1,0 +1,31 @@
+id: ap-rust-nested-for-contains
+name: nested for with linear .contains() check
+category: algorithmic
+language: rust
+promotion: anti-pattern
+trigger:
+  ast_pattern: |
+    (for_expression
+      body: (block
+        (expression_statement
+          (call_expression
+            function: (field_expression field: (field_identifier) @m
+              (#eq? @m "contains")))))) @match
+  profile_signature:
+    - "hot:O(n^2)-membership-check"
+transformation:
+  steps:
+    - "Replace the inner `.contains()` on a `Vec` / slice with a `HashSet` lookup. Build the set once before the outer loop."
+    - "If the set is small (<16 elements) and order matters, a sorted `Vec` + `binary_search` is sometimes faster than hashing."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

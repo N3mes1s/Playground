@@ -1,0 +1,34 @@
+id: rust-fxhash-trusted-keys
+name: swap std HashMap for FxHashMap when keys are trusted
+category: algorithmic
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: |
+    (generic_type
+      type: (type_identifier) @t (#eq? @t "HashMap")
+      type_arguments: (type_arguments . (type_identifier) @k
+        (#match? @k "^(u8|u16|u32|u64|usize|i8|i16|i32|i64|isize|String|PathBuf|Path)$"))) @match
+  profile_signature:
+    - "hot:SipHasher13"
+    - "hot:HashMap::(insert|get|contains_key)"
+    - "hashmap:>5%-self-time"
+  naive_alt_ratio_min: null
+transformation:
+  steps:
+    - "Confirm the keys are NOT attacker-controlled (internal IDs, AST node ids, file paths from trusted input). This is the correctness gate; FxHash is DoS-weak."
+    - "Replace `std::collections::HashMap` with `rustc_hash::FxHashMap` (or `ahash::AHashMap` for longer string keys)."
+    - "Update imports and type aliases; no other code changes needed."
+    - "Invariants: no untrusted external input may land in these keys. Iteration order was already non-deterministic."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: true
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:rust-perf-book/hashing,rustc-hash"
+embedding: null

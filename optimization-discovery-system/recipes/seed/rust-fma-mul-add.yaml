@@ -1,0 +1,33 @@
+id: rust-fma-mul-add
+name: fused multiply-add via mul_add for numeric inner loops
+category: algorithmic
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: |
+    (binary_expression
+      left: (binary_expression operator: "*")
+      operator: "+") @match
+  profile_signature:
+    - "disasm:vmulps-then-vaddps-where-vfmadd231ps-fits"
+    - "perf:fp_arith_inst_retired.256b_packed-at-half-expected-rate"
+    - "roofline:compute-bound-at-half-FMA-peak"
+  naive_alt_ratio_min: null
+transformation:
+  steps:
+    - "Replace `a * b + c` with `a.mul_add(b, c)` in Rust; `fma(a, b, c)` in C99 with `-ffp-contract=fast`; `math.FMA(a, b, c)` in Go 1.21+."
+    - "For Horner polynomial evaluation: `((c3.mul_add(x, c2)).mul_add(x, c1)).mul_add(x, c0)`."
+    - "Gate on `#[cfg(target_feature = \"fma\")]`; softfloat FMA emulation is 10-50x slower than separate mul+add on CPUs without hardware FMA."
+    - "Invariants: hardware FMA present (AVX2+ x86, any AArch64, any RISC-V F ext); numerical semantics change slightly -- FMA uses one rounding vs two, usually more accurate, but not bit-identical to separate ops (document in release notes)."
+verification:
+  test_selectors: ["dot_product", "polynomial", "convolution", "matmul", "fir"]
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: true
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:intel-optref-2024-ch11.15,lemire-fma-2024,rustc-121548"
+embedding: null

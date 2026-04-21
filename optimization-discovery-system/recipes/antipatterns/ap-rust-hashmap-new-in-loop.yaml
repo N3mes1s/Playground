@@ -1,0 +1,32 @@
+id: ap-rust-hashmap-new-in-loop
+name: HashMap::new() allocated inside a loop
+category: alloc-reduction
+language: rust
+promotion: anti-pattern
+trigger:
+  ast_pattern: |
+    (for_expression
+      body: (block
+        (expression_statement
+          (call_expression
+            function: (scoped_identifier
+              path: (identifier) @t (#eq? @t "HashMap")
+              name: (identifier) @m (#match? @m "^(new|with_capacity)$")))))) @match
+  profile_signature:
+    - "alloc:loop-hashmap"
+transformation:
+  steps:
+    - "Hoist the HashMap outside the loop; `.clear()` it between iterations to reuse the existing bucket storage."
+    - "When the per-iteration map is small and keys are integer-like, consider a fixed-size lookup table or `SmallVec`-backed map instead."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

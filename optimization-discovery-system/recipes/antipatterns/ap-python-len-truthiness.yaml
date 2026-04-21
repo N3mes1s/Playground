@@ -1,0 +1,28 @@
+id: ap-python-len-truthiness
+name: len(x) == 0 / len(x) != 0 instead of truthiness
+category: algorithmic
+language: python
+promotion: anti-pattern
+trigger:
+  ast_pattern: |
+    (comparison_operator
+      (call function: (identifier) @f (#eq? @f "len"))
+      (integer) @z (#eq? @z "0")) @match
+  profile_signature:
+    - "hot:truthiness-check"
+transformation:
+  steps:
+    - "`if not x:` is faster AND more idiomatic than `if len(x) == 0:` for lists / dicts / sets / strings. It avoids the CALL opcode and the `len` builtin lookup."
+    - "Same for `if x:` vs `if len(x) > 0:`. The interpreter has a TRUTHY check that skips the method dispatch."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

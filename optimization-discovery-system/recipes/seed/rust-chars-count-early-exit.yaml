@@ -1,0 +1,55 @@
+id: rust-chars-count-early-exit
+name: replace s.chars().count() bounded comparisons with O(1) byte-length check
+category: algorithmic
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: |
+    (binary_expression
+      left: (call_expression
+        function: (field_expression
+          value: (call_expression
+            function: (field_expression field: (field_identifier) @m1 (#eq? @m1 "chars")))
+          field: (field_identifier) @m2 (#eq? @m2 "count")))
+      operator: [ "<=" "<" ">=" ">" "==" "!=" ])
+  profile_signature:
+    - "hot:string-length-check"
+    - "anti-pattern:chars().count() against bound"
+    - "alloc:none"
+  naive_alt_ratio_min: 1.0
+transformation:
+  steps:
+    - "Any `s.chars().count() <op> N` comparison can be made O(1) (or early-exit) using `s.len()` because each UTF-8 char is at least one byte."
+    - "For `s.chars().count() <= N`: replace with `if s.len() <= N { ... }` as a cheap short-circuit. This is correct because char_count <= byte_count."
+    - "For `s.chars().count() > N`: use `s.char_indices().nth(N).is_some()`. Walks at most N+1 chars before bailing."
+    - "If you need both the count AND a subsequent truncate/slice, combine the two: `s.char_indices().nth(N)` gives you the byte boundary for the Nth char in one pass."
+    - "Do NOT substitute `s.is_ascii()` as the fast path: `is_ascii()` is an O(n) byte scan and does not change the asymptotic class. The byte-length check is strictly cheaper and sound for the bounded comparison."
+    - "For the truncation path, `format!(\"{}...\", &s[..byte_idx])` where `byte_idx = s.char_indices().nth(max_chars).unwrap().0` produces the same output as `s.chars().take(max_chars).collect::<String>() + \"...\"` without walking the full string first."
+verification:
+  test_selectors: ["truncate", "chars", "display"]
+  property_seeds: [1, 42, 64000]
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: |
+  fn bench_truncate(c: &mut Criterion) {
+      let long = "x".repeat(64 * 1024);
+      let multibyte = "αβγδε".repeat(8 * 1024);
+      let short = "hello world";
+      c.bench_function("truncate/long_ascii_200", |b| {
+          b.iter(|| black_box(truncate_str(black_box(&long), 200)))
+      });
+      c.bench_function("truncate/multibyte_200", |b| {
+          b.iter(|| black_box(truncate_str(black_box(&multibyte), 200)))
+      });
+      c.bench_function("truncate/short_under_cap", |b| {
+          b.iter(|| black_box(truncate_str(black_box(short), 200)))
+      });
+  }
+success_history:
+  - repo: "n3mes1s/claude-teleport-analyzer"
+    commit: "HEAD"
+    speedup: 14.4
+    ci_lower_bound: 14.0
+    merged: false
+    recorded_at: "2026-04-19T09:50:00Z"
+embedding: null

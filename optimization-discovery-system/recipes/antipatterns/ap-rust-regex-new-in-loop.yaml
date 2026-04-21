@@ -1,0 +1,32 @@
+id: ap-rust-regex-new-in-loop
+name: Regex::new() compiled inside a loop
+category: caching
+language: rust
+promotion: anti-pattern
+trigger:
+  ast_pattern: |
+    (for_expression
+      body: (block
+        (expression_statement
+          (call_expression
+            function: (scoped_identifier
+              path: (identifier) @t (#eq? @t "Regex")
+              name: (identifier) @m (#eq? @m "new")))))) @match
+  profile_signature:
+    - "hot:regex-compile-per-iteration"
+transformation:
+  steps:
+    - "Regex compilation is expensive (allocates + builds a DFA). Hoist it once into a `once_cell::Lazy` or `std::sync::OnceLock` static."
+    - "When the pattern depends on per-call data, evaluate whether a simpler substring/byte-level check suffices."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null

@@ -1,0 +1,76 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "ods-v*"
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: optimization-discovery-system
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-latest
+          - target: x86_64-apple-darwin
+            runner: ubuntu-latest
+          - target: aarch64-apple-darwin
+            runner: ubuntu-latest
+          - target: x86_64-pc-windows-gnu
+            runner: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: install zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.13.0
+
+      - name: install cargo-zigbuild
+        run: cargo install cargo-zigbuild --locked
+
+      - name: build
+        run: cargo zigbuild --release --target ${{ matrix.target }} --bin ods
+
+      - name: ensure static (linux musl only)
+        if: contains(matrix.target, 'musl')
+        run: |
+          file target/${{ matrix.target }}/release/ods
+          if command -v ldd >/dev/null 2>&1; then
+            ldd target/${{ matrix.target }}/release/ods || true
+          fi
+
+      - name: upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ods-${{ matrix.target }}
+          path: optimization-discovery-system/target/${{ matrix.target }}/release/ods*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/ods-v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/ods*

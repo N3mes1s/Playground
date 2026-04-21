@@ -1,0 +1,25 @@
+[package]
+name        = "ods-verify"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+repository.workspace  = true
+publish               = false
+
+[dependencies]
+ods-core  = { workspace = true }
+ods-lang  = { workspace = true }
+ods-exec  = { workspace = true }
+anyhow    = { workspace = true }
+thiserror = { workspace = true }
+serde     = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+tracing   = { workspace = true }
+semver    = { workspace = true }
+regex     = { workspace = true }
+tokio     = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

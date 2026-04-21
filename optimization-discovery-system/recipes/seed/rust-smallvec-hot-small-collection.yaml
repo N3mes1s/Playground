@@ -1,0 +1,35 @@
+id: rust-smallvec-hot-small-collection
+name: replace hot-path Vec with SmallVec when typical length is small
+category: alloc-reduction
+language: rust
+promotion: seed
+trigger:
+  ast_pattern: |
+    (call_expression
+      function: (scoped_identifier
+        path: (identifier) @p (#eq? @p "Vec")
+        name: (identifier) @m (#match? @m "^(new|with_capacity)$"))) @match
+  profile_signature:
+    - "alloc:high-frequency-site"
+    - "alloc:avg-bytes-below-128"
+    - "alloc:short-lifetime"
+  naive_alt_ratio_min: null
+transformation:
+  steps:
+    - "Profile with `dhat` / `heaptrack` to confirm this allocation site is high-frequency and averages <=128 B."
+    - "Replace the internal `Vec<T>` with `SmallVec<[T; N]>` where N is the p95 of observed length (or a compile-time upper bound)."
+    - "Preserve `Vec<T>` at public API boundaries; only the internal storage changes."
+    - "Spillover to heap occurs automatically when the stack slot overflows, so correctness for rare large cases is unaffected."
+    - "Invariants: iteration order, indexing semantics, `len()`, `push`/`pop` behaviour unchanged."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: true
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: "research:rust-smallvec,rust-perf-book/heap-allocations"
+embedding: null

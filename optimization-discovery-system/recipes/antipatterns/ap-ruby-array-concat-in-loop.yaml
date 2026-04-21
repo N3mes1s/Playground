@@ -1,0 +1,32 @@
+id: ap-ruby-array-concat-in-loop
+name: array += [x] inside a loop allocates a fresh Array each iteration
+category: alloc-reduction
+language: ruby
+promotion: anti-pattern
+trigger:
+  ast_pattern: |
+    (assignment
+      left: (identifier) @lhs
+      operator: "+="
+      right: (array)) @concat
+  profile_signature:
+    - "alloc:array-growth-per-iteration"
+    - "hot:Array#+"
+transformation:
+  steps:
+    - "`arr += [x]` expands to `arr = arr + [x]`, which allocates a brand-new Array of length N+1 on every iteration. For N iterations this is O(N^2) allocations."
+    - "Replace with `arr << x` (alias `arr.push(x)`) — in-place append, amortised O(1), one Array reused."
+    - "For concatenating many items at once, `arr.concat(other)` beats `arr += other` for the same reason."
+    - "When the final size is known up-front, pre-allocate with `Array.new(n) { |i| ... }` and skip the append loop entirely."
+verification:
+  test_selectors: []
+  property_seeds: []
+  fuzz_minutes: 0
+  semver_check: false
+benchmark_template: ""
+success_history: []
+negative_history: []
+generalized_from: null
+generalized_as: null
+source_patch_ref: null
+embedding: null
