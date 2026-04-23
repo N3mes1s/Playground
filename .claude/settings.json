@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.local/bin/token-flamegraph --hook",
+            "timeout": 30,
+            "statusMessage": "Analyzing token patterns..."
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "token-flamegraph",
+  "version": "0.1.0",
+  "description": "Analyze Claude Code session token usage with flamegraph visualizations, auto-generate optimization rules, and track costs over time.",
+  "owner": {
+    "name": "N3mes1s"
+  },
+  "plugins": [
+    {
+      "name": "token-flamegraph",
+      "source": "./",
+      "description": "Token flamegraph analyzer — visualize where your tokens go and auto-optimize CLAUDE rules"
+    }
+  ]
+}
