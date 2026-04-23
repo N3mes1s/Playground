@@ -10,9 +10,9 @@ use clap::Parser as ClapParser;
 use std::path::PathBuf;
 
 #[derive(ClapParser)]
-#[command(name = "token-flamegraph", about = "Session analysis for Claude Code")]
+#[command(name = "token-flamegraph", about = "Session analysis for AI coding agents (Claude Code, Codex, Aider, Pi, Copilot)")]
 struct Cli {
-    /// Analyze current session
+    /// Analyze current session (auto-detects agent)
     #[arg(long = "self")]
     analyze_self: bool,
 
@@ -39,6 +39,22 @@ struct Cli {
     /// Run as Stop hook (auto-optimize)
     #[arg(long)]
     hook: bool,
+
+    /// Parse as Codex CLI session
+    #[arg(long)]
+    codex: bool,
+
+    /// Parse as Aider session
+    #[arg(long)]
+    aider: bool,
+
+    /// Parse as Pi session
+    #[arg(long)]
+    pi: bool,
+
+    /// Parse as Copilot CLI session
+    #[arg(long)]
+    copilot: bool,
 
     /// Analyze a teleport export
     #[arg(long, value_name = "FILE")]
@@ -84,26 +100,35 @@ fn main() {
         return;
     }
 
+    // Parse session — agent-specific flags override auto-detect
+    let parse_file = |path: &std::path::Path| -> parser::Session {
+        if cli.codex { parser::parse_codex(path) }
+        else if cli.aider { parser::parse_aider(path) }
+        else if cli.pi { parser::parse_pi(path) }
+        else if cli.copilot { parser::parse_copilot(path) }
+        else { parser::parse_auto(path) }
+    };
+
+    let find_agent_session = || -> Option<PathBuf> {
+        if cli.codex { parser::find_codex_session() }
+        else if cli.aider { parser::find_aider_session() }
+        else if cli.pi { parser::find_pi_session() }
+        else if cli.copilot { parser::find_copilot_session() }
+        else { parser::find_session_jsonl() }
+    };
+
     let session = if cli.demo {
         parser::demo_session()
     } else if let Some(ref tp) = cli.teleport {
         parser::parse_teleport(tp)
-    } else if cli.analyze_self {
-        match parser::find_session_jsonl() {
-            Some(p) => parser::parse_jsonl(&p),
-            None => {
-                eprintln!("No session file found.");
-                std::process::exit(1);
-            }
-        }
     } else if let Some(ref f) = cli.file {
-        parser::parse_jsonl(f)
+        parse_file(f)
     } else {
-        // Default: try --self
-        match parser::find_session_jsonl() {
-            Some(p) => parser::parse_jsonl(&p),
+        match find_agent_session() {
+            Some(p) => parse_file(&p),
             None => {
-                eprintln!("Usage: token-flamegraph [--self | --demo | FILE]");
+                eprintln!("No session found. Supported agents: Claude Code, Codex, Aider, Pi, Copilot CLI");
+                eprintln!("Usage: token-flamegraph [--self | --demo | --codex | --aider | --pi | --copilot | FILE]");
                 std::process::exit(1);
             }
         }
