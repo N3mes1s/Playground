@@ -31,6 +31,7 @@ While this is primarily a coding agent workspace, contributions and suggestions 
 |-----------|-------------|
 | [`vulnllm-analyzer/`](vulnllm-analyzer/) | Automated vulnerability analysis for GitHub repos using [VulnLLM-R-7B](https://github.com/ucsb-mlsec/VulnLLM-R) on Modal GPUs |
 | [recursive-lm-security-audit](./recursive-lm-security-audit/) | Automated codebase security scanner using DSPy's Recursive Language Model (RLM) module. Accepts a GitHub repo URL or local path and produces a vulnerability report for ~$0.87. |
+| [`pi-rs/`](pi-rs/) | Rust reimplementation of [pi](https://github.com/badlogic/pi-mono) — the minimal terminal coding agent harness from pi.dev. Cargo workspace with `pi-ai` (multi-provider LLM), `pi-tools` (read/write/edit/bash/grep/find/ls), `pi-agent-core` (loop + sessions), `pi-tui` (diff renderer), and the `pi` binary with interactive/print/json/rpc/sdk modes. |
 
 ## Note
 

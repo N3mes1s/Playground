@@ -7,3 +7,7 @@ __pycache__/
 
 # Sliver source files fetched for scanning (not our code)
 vulnllm-analyzer/sliver-src/
+
+# Rust build artifacts (pi-rs)
+pi-rs/target/
+pi-rs/Cargo.lock
