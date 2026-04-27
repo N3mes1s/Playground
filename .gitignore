@@ -8,7 +8,9 @@ __pycache__/
 # Sliver source files fetched for scanning (not our code)
 vulnllm-analyzer/sliver-src/
 
-# Rust build artifacts (pi-rs)
+# Rust build artifacts — Playground's own workspace + the pi-rs subdir.
+target/
+Cargo.lock
 pi-rs/target/
 pi-rs/Cargo.lock
 
