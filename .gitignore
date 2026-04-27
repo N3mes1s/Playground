@@ -11,3 +11,6 @@ vulnllm-analyzer/sliver-src/
 # Rust build artifacts (pi-rs)
 pi-rs/target/
 pi-rs/Cargo.lock
+
+# Autoresearch transient artefacts
+pi-rs/.autoresearch-*/pgo-data/
