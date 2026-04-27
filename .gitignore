@@ -17,10 +17,6 @@ pi-rs/Cargo.lock
 # Autoresearch transient artefacts
 pi-rs/.autoresearch-*/pgo-data/
 
-# Independent N3mes1s/pi-rs clones used as dev worktrees alongside
-# Playground. These have their own remotes (github.com/N3mes1s/pi-rs)
-# and shouldn't be tracked by Playground itself. The pi-rs/ legacy
-# subdir is a stale separate clone that survived from earlier work;
-# pi-rs-dedicated/ is the active one.
+# pi-rs is now its own repo: github.com/N3mes1s/pi-rs
+# The dedicated clone lives at ./pi-rs/ with its own .git.
 pi-rs/
-pi-rs-dedicated/
