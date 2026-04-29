@@ -36,6 +36,7 @@ While this is primarily a coding agent workspace, contributions and suggestions 
 | [`adversarial-security-sim/`](adversarial-security-sim/) | Triage findings from an existing audit report by running an Attacker-vs-Defender debate per finding, judged for `REAL` / `FALSE_POSITIVE` / `NEEDS_VALIDATION`. |
 | [`blast-radius-prediction/`](blast-radius-prediction/) | Predict downstream breakage of a diff by treating each top-level subsystem of the repo as an agent with a persona, then simulating their reactions. |
 | [`rollout-rehearsal/`](rollout-rehearsal/) | Multi-stakeholder rollout planner: six stakeholder personas (BackendOwner, DataPlatform, SRE, Security, ProductPM, ConsumerSubsystem) emit structured constraints; a Sequencer agent synthesises them into a partial-order plan with explicit gate / rollback / observability per step, plus flagged conflicts and open questions. Targets the migration-ordering gap left by Greptile / blast-radius.dev / Cursor multi-agent judging. |
+| [`verified-rollout/`](verified-rollout/) | Layered on rollout-rehearsal: generates THREE Pareto-frontier plans (aggressive / balanced / conservative) from the same constraints, formally verifies each (DAG, reachability, gate validity, blocking-constraint coverage), counterfactually probes each with a Chaos agent for cascade fragility, then recommends the Pareto-optimal plan. Combines VeriPlan-style verification, BAO-style Pareto frontier, and CST-style counterfactual simulation — a combination not yet shipped by any incumbent. |
 
 ### Shared scaffold
 
