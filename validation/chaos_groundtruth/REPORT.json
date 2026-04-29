@@ -1,0 +1,166 @@
+[
+  {
+    "name": "linear_chain",
+    "n_steps": 5,
+    "probes": [
+      {
+        "target": "S1",
+        "true_downstream": [
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "predicted": [
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "jaccard": 1.0,
+        "overprediction_ratio": 0.0,
+        "underprediction_ratio": 0.0,
+        "rollback_holds": true,
+        "severity": "medium"
+      },
+      {
+        "target": "S2",
+        "true_downstream": [
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "predicted": [
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "jaccard": 1.0,
+        "overprediction_ratio": 0.0,
+        "underprediction_ratio": 0.0,
+        "rollback_holds": true,
+        "severity": "medium"
+      },
+      {
+        "target": "S3",
+        "true_downstream": [
+          "S4",
+          "S5"
+        ],
+        "predicted": [
+          "S4",
+          "S5"
+        ],
+        "jaccard": 1.0,
+        "overprediction_ratio": 0.0,
+        "underprediction_ratio": 0.0,
+        "rollback_holds": true,
+        "severity": "medium"
+      },
+      {
+        "target": "S4",
+        "true_downstream": [
+          "S5"
+        ],
+        "predicted": [
+          "S5"
+        ],
+        "jaccard": 1.0,
+        "overprediction_ratio": 0.0,
+        "underprediction_ratio": 0.0,
+        "rollback_holds": true,
+        "severity": "medium"
+      }
+    ],
+    "avg_jaccard": 1.0,
+    "avg_underprediction": 0.0,
+    "avg_overprediction": 0.0,
+    "n_empty_predictions": 0
+  },
+  {
+    "name": "diamond",
+    "n_steps": 4,
+    "probes": [
+      {
+        "target": "S1",
+        "true_downstream": [
+          "S2",
+          "S3",
+          "S4"
+        ],
+        "predicted": [
+          "S2",
+          "S3",
+          "S4"
+        ],
+        "jaccard": 1.0,
+        "overprediction_ratio": 0.0,
+        "underprediction_ratio": 0.0,
+        "rollback_holds": true,
+        "severity": "medium"
+      },
+      {
+        "target": "S2",
+        "true_downstream": [
+          "S4"
+        ],
+        "predicted": [
+          "S4"
+        ],
+        "jaccard": 1.0,
+        "overprediction_ratio": 0.0,
+        "underprediction_ratio": 0.0,
+        "rollback_holds": true,
+        "severity": "medium"
+      },
+      {
+        "target": "S3",
+        "true_downstream": [
+          "S4"
+        ],
+        "predicted": [
+          "S4"
+        ],
+        "jaccard": 1.0,
+        "overprediction_ratio": 0.0,
+        "underprediction_ratio": 0.0,
+        "rollback_holds": true,
+        "severity": "medium"
+      }
+    ],
+    "avg_jaccard": 1.0,
+    "avg_underprediction": 0.0,
+    "avg_overprediction": 0.0,
+    "n_empty_predictions": 0
+  },
+  {
+    "name": "parallel",
+    "n_steps": 5,
+    "probes": [
+      {
+        "target": "S1",
+        "true_downstream": [
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "predicted": [
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "jaccard": 1.0,
+        "overprediction_ratio": 0.0,
+        "underprediction_ratio": 0.0,
+        "rollback_holds": true,
+        "severity": "medium"
+      }
+    ],
+    "avg_jaccard": 1.0,
+    "avg_underprediction": 0.0,
+    "avg_overprediction": 0.0,
+    "n_empty_predictions": 0
+  }
+]

@@ -1,0 +1,2079 @@
+{
+  "intent_path": "/home/user/Playground/validation/postmortems/intents/03_cloudflare_dc_failover.md",
+  "constraints": [
+    {
+      "axis": "deploy",
+      "summary": "Bring up secondary DC control-plane services before cutting over API",
+      "scope": "Control plane and analytics services in the secondary datacenter",
+      "gate": "wait_for:secondary_stack_healthy",
+      "rollback": "Redeploy the control-plane services back to PDX-01 and restore prior routing",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep API contracts backward-compatible during the failover window",
+      "scope": "Dashboard API, public API, terraform-provider, and analytics query endpoints",
+      "gate": "none",
+      "rollback": "Redeploy previous API version that accepts the pre-failover request/response shapes",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Do not switch traffic until code, config, and storage consumers are live",
+      "scope": "Any service that reads analytics or configuration state in the secondary DC",
+      "gate": "wait_for:code_and_dependency_parity_verified",
+      "rollback": "Revert routing to PDX-01 and redeploy previous binaries in the secondary DC",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "data",
+      "summary": "Maintain dual-write for config and analytics state during cutover",
+      "scope": "Configuration writes and analytics ingestion while both DCs may be active",
+      "gate": "monitor:replication_lag<60s",
+      "rollback": "Stop secondary writes and resume single-writer mode in PDX-01",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Keep PDX-01 as writer until secondary confirms it can serve reads/writes",
+      "scope": "Datastore and service deployments for control-plane state",
+      "gate": "wait_for:secondary_read_write_validation",
+      "rollback": "Fail back writer role to PDX-01 and disable secondary write traffic",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "data",
+      "summary": "Fail over replication before cutover; no analytics data loss",
+      "scope": "Analytics ingestion/query datastores and their cross-DC replication state",
+      "gate": "wait_for:secondary_dc_replication_caught_up",
+      "rollback": "Repoint analytics services back to PDX-01 primary and resume from the preserved lagging replica",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Keep backfill or rebuild batches within IOPS budget",
+      "scope": "Any datastore reseed, replay, or backfill needed in the secondary DC",
+      "gate": "monitor:storage_iops<baseline+20%",
+      "rollback": "Pause backfill jobs and revert to pre-failover replica state",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Do not drop old primary-side tables until quiet period passes",
+      "scope": "Decommissioning PDX-01-only storage objects after failover",
+      "gate": "wait_for:48h_quiet_period_after_cutover",
+      "rollback": "Retain old tables/volumes and re-enable access if rollback is needed",
+      "blocking": false,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "schema",
+      "summary": "Freeze schema changes on migrated datastores during failover",
+      "scope": "Schemas for control-plane and analytics databases being moved to secondary DC",
+      "gate": "window:outside_business_hours",
+      "rollback": "Reapply the last known stable schema migration or redeploy_previous",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Fail over in dependency-ordered stages, not all at once",
+      "scope": "Control plane and analytics service failover sequence from PDX-01 to secondary DC",
+      "gate": "wait_for:each_stage_stable",
+      "rollback": "fail back the last moved service group to PDX-01 if dependencies break",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Pause between stages until error rate and latency recover",
+      "scope": "Each service group cutover in the control plane and analytics stack",
+      "gate": "monitor:error_rate<0.1% and p95_latency<baseline+20% for 60m",
+      "rollback": "route traffic back to the previous DC for the impacted service group",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Use traffic-shift rollback for every service cutover",
+      "scope": "DNS, load balancer, and routing changes moving control plane traffic to secondary DC",
+      "gate": "none",
+      "rollback": "restore previous routing weights or DNS targets to PDX-01",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Avoid additional cutovers during incident escalation windows",
+      "scope": "Any non-emergency follow-on deploys or retries during the failover",
+      "gate": "window:avoid-Friday-afternoon-and-open-incident-windows",
+      "rollback": "defer the next cutover step until the window closes",
+      "blocking": false,
+      "owner": "SRE"
+    },
+    {
+      "axis": "security",
+      "summary": "Rotate any PDX-01-bound credentials before/at cutover",
+      "scope": "Secrets, certs, tokens, and service accounts used by control plane and analytics services with primary residency or issuance in PDX-01",
+      "gate": "wait_for:secret_inventory_and_rotation_plan_approved",
+      "rollback": "revoke newly issued credentials and restore prior secret set only if PDX-01 remains trusted; otherwise redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Preserve audit logs during migration and failover",
+      "scope": "Control plane auth, admin actions, config changes, and analytics ingestion/query audit trails during all migration steps",
+      "gate": "monitor:audit_log_delivery_loss<0.1%",
+      "rollback": "pause migration, restore log forwarding to both DCs, and replay buffered events from source of truth",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Review any externally visible auth or trust changes",
+      "scope": "Customer-facing dashboard/API auth endpoints, TLS termination, signing keys, and trust anchors that may change during failover",
+      "gate": "approval:security_compliance",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify customers before any visible auth or access change",
+      "scope": "Any customer/partner-visible change to login, API auth, certificates, or endpoint behavior during control plane failover",
+      "gate": "window:customer_notice_sent_before_change",
+      "rollback": "delay cutover until notice window is satisfied or revert to prior externally visible behavior",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify customers before any control plane disruption",
+      "scope": "Dashboard, API, terraform-provider, and analytics customer-facing availability",
+      "gate": "wait_for:customer_notification_sent",
+      "rollback": "retract_notice_and_send_followup_explaining_service_restoration",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Post rollout status updates during customer-visible degradation",
+      "scope": "All phases of the PDX-01 control plane and analytics failover",
+      "gate": "approval:comms_lead",
+      "rollback": "issue_status_update_with_current_state_and_next_checkin_time",
+      "blocking": false,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "ops",
+      "summary": "Have named escalation owner for customer incidents during failover",
+      "scope": "Dashboard, API, analytics, and terraform-provider customer escalations",
+      "gate": "approval:on_call_incident_manager",
+      "rollback": "reassign_escalations_to_primary_incident_channel",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "business",
+      "summary": "Do not start failover during launch windows or major events",
+      "scope": "Any customer-visible control plane or analytics traffic shift",
+      "gate": "window:outside_launch_window_and_major_event_calendar",
+      "rollback": "delay_failover_until_next_safe_window",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Support must be briefed before customer-facing changes begin",
+      "scope": "Support handling for dashboard, API, and analytics user tickets",
+      "gate": "approval:support_lead_briefed",
+      "rollback": "send_support_war_room_update_and_resend_briefing",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep old API endpoint live until clients are migrated",
+      "scope": "dashboard, public API, terraform-provider, analytics query API",
+      "gate": "window:dual-support for 14 days after cutover",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Ship a compatibility shim for control-plane API routing",
+      "scope": "API gateway / service discovery during failover",
+      "gate": "wait_for:shim-validated-in-secondary-DC",
+      "rollback": "disable shim and route traffic back to primary mappings",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Run cutover only after failover smoke tests pass in secondary DC",
+      "scope": "control plane API, dashboard auth, terraform-provider, analytics ingest/query",
+      "gate": "approval:release-oncall",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Hold rollback path to PDX-01 config until secondary is stable",
+      "scope": "deployment orchestration and service routing for control plane",
+      "gate": "monitor:control-plane-5xx<1%",
+      "rollback": "revert routing to PDX-01 primary mappings",
+      "blocking": false,
+      "owner": "ConsumerSubsystem"
+    }
+  ],
+  "plans": {
+    "00-cost-leaning": {
+      "summary": "",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Open incident war room, assign named incident manager, support lead, and comms owner; start customer/partner notice and internal status updates.",
+          "owner": "ProductPM",
+          "depends_on": [],
+          "gate": "approval:on_call_incident_manager",
+          "rollback": "Reassign escalations to the primary incident channel and send follow-up status correcting the incident state.",
+          "observability": "Incident channel active, stakeholder acknowledgements, customer notice sent, status page updated."
+        },
+        {
+          "id": "S2",
+          "action": "Inventory PDX-01-bound secrets/certs/tokens and approve a rotation plan for any externally visible auth or trust changes.",
+          "owner": "Security",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "approval:security_compliance",
+          "rollback": "Revoke newly issued credentials and restore the prior secret set only if still trusted; otherwise redeploy_previous.",
+          "observability": "Approved secret inventory, rotation plan signed off, list of affected services and trust artifacts."
+        },
+        {
+          "id": "S3",
+          "action": "Verify secondary DC configuration parity, dependencies, and runbook order for the control plane and analytics services; identify any PDX-01-only state.",
+          "owner": "SRE",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "wait_for:code_and_dependency_parity_verified",
+          "rollback": "Revert planning changes and restore prior routing assumptions.",
+          "observability": "Parity checklist complete, dependency graph validated, gaps/risk exceptions logged."
+        },
+        {
+          "id": "S4",
+          "action": "Freeze schema changes for migrated datastores and confirm the cutover occurs within the permitted change window.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "window:outside_business_hours",
+          "rollback": "Reapply the last known stable schema migration or redeploy_previous.",
+          "observability": "Schema migration lock active, no pending DDL, change window compliance recorded."
+        },
+        {
+          "id": "S5",
+          "action": "Bring up secondary control-plane and analytics services in dependency order, including compatibility shim and API backward-compatibility checks.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S2",
+            "S3",
+            "S4"
+          ],
+          "gate": "wait_for:secondary_stack_healthy",
+          "rollback": "Redeploy the control-plane services back to PDX-01 and restore prior routing.",
+          "observability": "Secondary service health, API contract checks, startup logs, dependency readiness, shim validation."
+        },
+        {
+          "id": "S6",
+          "action": "Validate secondary read/write capability for control-plane state and verify failover smoke tests for dashboard, API, terraform-provider, and analytics paths.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "wait_for:secondary_read_write_validation",
+          "rollback": "Redeploy_previous and revert routing to PDX-01 primary mappings.",
+          "observability": "Smoke test pass/fail, read/write success, 5xx rate, auth success, query/ingest success."
+        },
+        {
+          "id": "S7",
+          "action": "Fail over replication for analytics and control-plane state to secondary, keeping dual-write active while replication lag remains within bounds.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "monitor:replication_lag<60s",
+          "rollback": "Stop secondary writes and resume single-writer mode in PDX-01.",
+          "observability": "Replication lag, backlog depth, replay progress, storage IOPS, audit-log delivery loss."
+        },
+        {
+          "id": "S8",
+          "action": "Shift writer role and traffic routing for control-plane services to secondary in a dependency-ordered staged cutover, pausing after each stage until stable.",
+          "owner": "SRE",
+          "depends_on": [
+            "S7"
+          ],
+          "gate": "wait_for:each_stage_stable",
+          "rollback": "Fail back the last moved service group to PDX-01 and restore previous routing weights/DNS targets.",
+          "observability": "Per-stage error rate, p95 latency, control-plane 5xx, routing convergence, customer-visible availability."
+        },
+        {
+          "id": "S9",
+          "action": "Complete customer-facing auth, TLS, and endpoint cutover for dashboard, API, terraform-provider, and analytics query endpoints after secondary is proven live.",
+          "owner": "Security",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "approval:security_compliance",
+          "rollback": "redeploy_previous",
+          "observability": "Certificate/trust change success, auth failures, endpoint reachability, audit logs, customer ticket volume."
+        },
+        {
+          "id": "S10",
+          "action": "Confirm customer communications, support briefing, and rollout status updates are current for the visible degradation and final cutover state.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S1",
+            "S8"
+          ],
+          "gate": "approval:support_lead_briefed",
+          "rollback": "Send support war room update and resend briefing; retract notice only if required by rollback.",
+          "observability": "Support acknowledgement, status updates posted, customer notice delivery, escalation queue health."
+        },
+        {
+          "id": "S11",
+          "action": "Hold the legacy PDX-01 rollback path and preserve old primary-side tables/volumes until the quiet period expires.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "wait_for:48h_quiet_period_after_cutover",
+          "rollback": "Retain old tables/volumes and re-enable access if rollback is needed.",
+          "observability": "No rollback usage, data consistency checks, storage retention status."
+        }
+      ],
+      "open_questions": [],
+      "conflicts": []
+    },
+    "01-safety-leaning": {
+      "summary": "",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Declare incident, name the incident manager, brief support, send customer notice, and publish the first status update before any customer-visible change.",
+          "owner": "ProductPM",
+          "depends_on": [],
+          "gate": "approval:on_call_incident_manager",
+          "rollback": "Reassign escalations to the primary incident channel and send a follow-up restoration notice.",
+          "observability": "Incident channel ownership, support acknowledgement, customer notice delivery, status page update timestamps."
+        },
+        {
+          "id": "S2",
+          "action": "Approve the failover plan, freeze schema changes, and inventory any PDX-01-bound secrets, certs, tokens, and trust anchors that may change during cutover.",
+          "owner": "Security",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "approval:security_compliance",
+          "rollback": "Reapply the last known stable schema migration or redeploy_previous; revoke any newly issued credentials.",
+          "observability": "Security approval, inventory completeness, schema change freeze confirmation, secret rotation plan status."
+        },
+        {
+          "id": "S3",
+          "action": "Bring up and validate the secondary-datacenter control-plane and analytics stack in dependency order without shifting customer traffic.",
+          "owner": "SRE",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "wait_for:secondary_stack_healthy",
+          "rollback": "Redeploy the moved control-plane services back to PDX-01 and restore prior routing.",
+          "observability": "Per-service health, dependency readiness, deployment success, saturation, and any PDX-01-only dependency failures."
+        },
+        {
+          "id": "S4",
+          "action": "Validate code, config, storage consumers, and read/write behavior in secondary DC using smoke tests and compatibility checks.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S3"
+          ],
+          "gate": "wait_for:secondary_read_write_validation",
+          "rollback": "Revert routing to PDX-01 and redeploy previous binaries in the secondary DC.",
+          "observability": "Smoke test pass rate, API contract compatibility, datastore read/write success, shim behavior, control-plane 5xx rate."
+        },
+        {
+          "id": "S5",
+          "action": "Fail over replication for analytics and configuration state, then confirm secondary replication catch-up before any write traffic shift.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S3"
+          ],
+          "gate": "wait_for:secondary_dc_replication_caught_up",
+          "rollback": "Repoint analytics services back to PDX-01 primary and resume from the preserved lagging replica.",
+          "observability": "Replication lag, backlog drain rate, caught-up status, replay errors, and analytics ingestion continuity."
+        },
+        {
+          "id": "S6",
+          "action": "Rotate or reissue any PDX-01-bound credentials and validate audit-log delivery to both datacenters before cutover.",
+          "owner": "Security",
+          "depends_on": [
+            "S2",
+            "S3"
+          ],
+          "gate": "monitor:audit_log_delivery_loss<0.1%",
+          "rollback": "Pause migration, restore log forwarding to both DCs, and replay buffered events from the source of truth.",
+          "observability": "Secret rotation success, certificate propagation, audit log loss, auth failures, and trust-anchor consistency."
+        },
+        {
+          "id": "S7",
+          "action": "Cut over the compatibility shim and service-discovery mappings in secondary DC, keeping old API shapes available.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S4",
+            "S6"
+          ],
+          "gate": "wait_for:shim-validated-in-secondary-DC",
+          "rollback": "Disable the shim and route traffic back to primary mappings.",
+          "observability": "Shim validation results, endpoint compatibility, auth success, routing correctness, and customer-facing error rates."
+        },
+        {
+          "id": "S8",
+          "action": "Shift a small, dependency-ordered slice of control-plane traffic to secondary DC while keeping PDX-01 as the writer until read/write parity is confirmed.",
+          "owner": "SRE",
+          "depends_on": [
+            "S4",
+            "S5",
+            "S6",
+            "S7"
+          ],
+          "gate": "monitor:error_rate<0.1% and p95_latency<baseline+20% for 60m",
+          "rollback": "Restore previous routing weights or DNS targets to PDX-01 for the impacted service group.",
+          "observability": "Per-service error rate, p95 latency, routing health, write-path success, and dependency-specific degradation."
+        },
+        {
+          "id": "S9",
+          "action": "Enable dual-write for configuration and analytics state during the overlap window, then verify replication lag stays within bounds.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "monitor:replication_lag<60s",
+          "rollback": "Stop secondary writes and resume single-writer mode in PDX-01.",
+          "observability": "Replication lag, write divergence, conflict rate, ingestion latency, and config consistency checks."
+        },
+        {
+          "id": "S10",
+          "action": "Flip writer authority to secondary only after secondary read/write validation and stable dual-write behavior are confirmed.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "wait_for:secondary_read_write_validation",
+          "rollback": "Fail back writer role to PDX-01 and disable secondary write traffic.",
+          "observability": "Writer election status, write acknowledgements, stale-read rate, and cross-DC consistency."
+        },
+        {
+          "id": "S11",
+          "action": "Continue staged service-group cutovers with pauses between each stage until each stage is stable and the control plane remains within SLOs.",
+          "owner": "SRE",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "wait_for:each_stage_stable",
+          "rollback": "Fail back the last moved service group to PDX-01 if dependencies break.",
+          "observability": "Stage-by-stage error rate, latency, dependency health, customer tickets, and rollback frequency."
+        },
+        {
+          "id": "S12",
+          "action": "Hold PDX-01-specific storage objects and decommissioning actions in place; do not delete old tables or volumes until the quiet period is complete.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S11"
+          ],
+          "gate": "wait_for:48h_quiet_period_after_cutover",
+          "rollback": "Retain old tables/volumes and re-enable access if rollback is needed.",
+          "observability": "Quiet-period duration, any rollback requests, access attempts to legacy storage, and storage usage drift."
+        }
+      ],
+      "open_questions": [],
+      "conflicts": []
+    },
+    "02-speed-leaning": {
+      "summary": "",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Inventory current PDX-01-dependent services, dependencies, secrets, and customer-visible auth/endpoints; confirm secondary capacity and identify any hidden PDX-01-only state.",
+          "owner": "SRE",
+          "depends_on": [],
+          "gate": "none",
+          "rollback": "Revert to the pre-migration service and dependency inventory snapshot",
+          "observability": "Dependency gaps, unknown PDX-01-only state, secret inventory completeness, capacity headroom"
+        },
+        {
+          "id": "S2",
+          "action": "Prepare secondary DC by deploying/patching code, config, schemas, replication, log forwarding, and credential rotation plan in parallel where safe.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "wait_for:secondary_stack_healthy",
+          "rollback": "Redeploy previous binaries/config in the secondary DC and revert any schema changes",
+          "observability": "Service readiness, schema migration status, replication health, audit log delivery, secret rotation readiness"
+        },
+        {
+          "id": "S3",
+          "action": "Validate secondary read/write capability for control-plane state and analytics datastores, including replication catch-up and smoke tests for API, dashboard, terraform-provider, ingest/query paths.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "wait_for:secondary_read_write_validation",
+          "rollback": "Fail writer role back to PDX-01 and stop secondary write traffic",
+          "observability": "Replication lag, read/write success, smoke test pass rate, storage IOPS, analytics ingestion freshness"
+        },
+        {
+          "id": "S4",
+          "action": "Install compatibility shim and keep API contracts backward-compatible while secondary remains the serving target candidate.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "wait_for:shim-validated-in-secondary-DC",
+          "rollback": "Disable shim and restore primary mappings",
+          "observability": "Request/response compatibility, routing correctness, error rate on dashboard/API/terraform-provider/query endpoints"
+        },
+        {
+          "id": "S5",
+          "action": "Complete security prerequisites: approve secret rotation plan, rotate PDX-01-bound credentials, preserve audit log delivery, and verify externally visible auth/trust changes are ready.",
+          "owner": "Security",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "approval:security_compliance",
+          "rollback": "Revoke newly issued credentials and restore prior secret set if still trusted; otherwise redeploy_previous",
+          "observability": "Secret rotation success, cert/token validity, audit log loss rate, auth endpoint behavior"
+        },
+        {
+          "id": "S6",
+          "action": "Notify support and customers, assign incident owner, and publish the rollout status plan before any customer-visible disruption.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "wait_for:customer_notification_sent",
+          "rollback": "Retract notice and send follow-up restoration notice",
+          "observability": "Notification delivery, support acknowledgment, incident ownership assignment, customer escalation volume"
+        },
+        {
+          "id": "S7",
+          "action": "Move analytics replication/ingestion primary handling to secondary and confirm no data loss while maintaining dual-write/replication constraints.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S3",
+            "S5"
+          ],
+          "gate": "wait_for:secondary_dc_replication_caught_up",
+          "rollback": "Repoint analytics services back to PDX-01 primary and resume from preserved lagging replica",
+          "observability": "Replication catch-up, lag < 60s, ingest continuity, query freshness, storage IOPS"
+        },
+        {
+          "id": "S8",
+          "action": "Fail over control-plane service groups in dependency order, starting with lowest-level dependencies and then customer-facing APIs/dashboard/terraform-provider, using traffic-shift rollback for each group.",
+          "owner": "SRE",
+          "depends_on": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7"
+          ],
+          "gate": "wait_for:each_stage_stable",
+          "rollback": "Fail back the last moved service group to PDX-01 and restore previous routing weights/DNS targets",
+          "observability": "Per-group error rate, p95 latency, 5xx rate, dependency breakage, control-plane reachability"
+        },
+        {
+          "id": "S9",
+          "action": "Run post-cutover stabilization checks and keep PDX-01 as fallback until secondary proves sustained health; monitor rollout metrics and customer-visible degradation.",
+          "owner": "SRE",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "monitor:error_rate<0.1% and p95_latency<baseline+20% for 60m",
+          "rollback": "Route traffic back to the previous DC for the impacted service group and re-enable PDX-01 primary mappings",
+          "observability": "Control-plane 5xx, latency, dashboard/API availability, analytics freshness, audit log continuity"
+        }
+      ],
+      "open_questions": [],
+      "conflicts": []
+    },
+    "03-safety-tilted": {
+      "summary": "",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Convene the incident command path: assign named incident manager, brief support, send customer notice, and establish comms/status cadence for the failover.",
+          "owner": "ProductPM",
+          "depends_on": [],
+          "gate": "approval:on_call_incident_manager",
+          "rollback": "reassign_escalations_to_primary_incident_channel",
+          "observability": "Incident ownership confirmed, support acknowledged, customer notice sent, status-update channel active"
+        },
+        {
+          "id": "S2",
+          "action": "Freeze schema changes on migrated control-plane and analytics datastores, and obtain security review for any externally visible auth or trust changes.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "approval:security_compliance",
+          "rollback": "Reapply the last known stable schema migration or redeploy_previous",
+          "observability": "No schema deploys in flight; auth/trust change review approved"
+        },
+        {
+          "id": "S3",
+          "action": "Inventory and prepare rotation for all PDX-01-bound credentials, and preserve audit-log forwarding to both datacenters during migration.",
+          "owner": "Security",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "wait_for:secret_inventory_and_rotation_plan_approved",
+          "rollback": "revoke newly issued credentials and restore prior secret set only if PDX-01 remains trusted; otherwise redeploy_previous",
+          "observability": "Secret inventory complete, rotation plan approved, audit-log delivery loss below 0.1%"
+        },
+        {
+          "id": "S4",
+          "action": "Bring up the secondary-datacenter control-plane and analytics stack from runbooks, including any compatibility shim and dependency prerequisites, without changing customer traffic yet.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S2",
+            "S3"
+          ],
+          "gate": "wait_for:secondary_stack_healthy",
+          "rollback": "Redeploy the control-plane services back to PDX-01 and restore prior routing",
+          "observability": "Secondary services healthy, shim validated in secondary DC, no elevated startup errors"
+        },
+        {
+          "id": "S5",
+          "action": "Validate code/config/storage parity and read-write behavior in secondary, including smoke tests for dashboard API, public API, terraform-provider, and analytics ingest/query paths.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "wait_for:code_and_dependency_parity_verified",
+          "rollback": "Revert routing to PDX-01 and redeploy previous binaries in the secondary DC",
+          "observability": "Parity checks pass, smoke tests pass, control-plane and analytics read/write validation succeeds"
+        },
+        {
+          "id": "S6",
+          "action": "Catch up analytics replication to secondary and enable controlled dual-write for config and analytics state while monitoring lag and storage pressure.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "monitor:replication_lag<60s",
+          "rollback": "Stop secondary writes and resume single-writer mode in PDX-01",
+          "observability": "Replication lag under 60s, storage IOPS within budget, no audit-log loss"
+        },
+        {
+          "id": "S7",
+          "action": "Confirm secondary can serve reads and writes for control-plane state, then keep PDX-01 as writer until this validation is green.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "wait_for:secondary_read_write_validation",
+          "rollback": "Fail back writer role to PDX-01 and disable secondary write traffic",
+          "observability": "Secondary read/write validation passes, write paths stable, no data divergence"
+        },
+        {
+          "id": "S8",
+          "action": "Cut over service groups in dependency order from PDX-01 to secondary using traffic-shift rollback for each group; stop between stages if error rate or latency regresses.",
+          "owner": "SRE",
+          "depends_on": [
+            "S7"
+          ],
+          "gate": "wait_for:each_stage_stable",
+          "rollback": "fail back the last moved service group to PDX-01 if dependencies break",
+          "observability": "Per-group error rate under 0.1%, p95 latency within baseline+20%, control-plane 5xx under 1%"
+        },
+        {
+          "id": "S9",
+          "action": "After each staged cutover, hold for soak monitoring before proceeding to the next dependency layer or any final routing flip.",
+          "owner": "SRE",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "monitor:error_rate<0.1% and p95_latency<baseline+20% for 60m",
+          "rollback": "route traffic back to the previous DC for the impacted service group",
+          "observability": "60-minute stability window met for each moved group"
+        },
+        {
+          "id": "S10",
+          "action": "Flip customer-facing routing and DNS/LB targets to secondary for the control plane and analytics endpoints once the moved stack is stable.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "approval:release-oncall",
+          "rollback": "restore previous routing weights or DNS targets to PDX-01",
+          "observability": "Customer-visible endpoints resolve to secondary, 5xx remains below threshold, auth and query paths respond normally"
+        },
+        {
+          "id": "S11",
+          "action": "Keep old API endpoint compatibility live during the post-cutover period and maintain dual-support for migrated clients.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "window:dual-support for 14 days after cutover",
+          "rollback": "redeploy_previous",
+          "observability": "Legacy request shapes still accepted, no client-auth regressions, support ticket volume stable"
+        },
+        {
+          "id": "S12",
+          "action": "Retain old primary-side tables and volumes during the quiet period, then decommission only after stability is proven and rollback is no longer likely.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "wait_for:48h_quiet_period_after_cutover",
+          "rollback": "Retain old tables/volumes and re-enable access if rollback is needed",
+          "observability": "No rollback activity for 48h, replication and audit trails stable, no storage pressure increase"
+        }
+      ],
+      "open_questions": [],
+      "conflicts": []
+    }
+  },
+  "weights_for": {
+    "00-cost-leaning": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "01-safety-leaning": [
+      0.0,
+      1.0,
+      0.0
+    ],
+    "02-speed-leaning": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "03-safety-tilted": [
+      0.0,
+      0.5,
+      0.5
+    ]
+  },
+  "scores": {
+    "00-cost-leaning": {
+      "steps": 11,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 3,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.618,
+      "fragility_at_budget_1": 0.6,
+      "fragility_at_budget_2": 0.8,
+      "avg_severity": 2.73,
+      "rollback_failure_rate": 0.545,
+      "approval_gates": 4,
+      "window_gates": 1,
+      "monitor_gates": 1,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S2",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S6",
+          0.4
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 4,
+        "manual_ops": 7
+      }
+    },
+    "01-safety-leaning": {
+      "steps": 12,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 2,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.8,
+      "fragility_at_budget_1": 0.857,
+      "fragility_at_budget_2": 0.0,
+      "avg_severity": 3.0,
+      "rollback_failure_rate": 0.267,
+      "approval_gates": 2,
+      "window_gates": 0,
+      "monitor_gates": 3,
+      "achilles_heel": [
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 11,
+        "manual_ops": 3,
+        "unrecoverable": 1
+      }
+    },
+    "02-speed-leaning": {
+      "steps": 9,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 5,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 1.0,
+      "fragility_at_budget_1": 1.0,
+      "fragility_at_budget_2": 1.0,
+      "avg_severity": 3.0,
+      "rollback_failure_rate": 0.182,
+      "approval_gates": 1,
+      "window_gates": 0,
+      "monitor_gates": 1,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S2",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 9,
+        "manual_ops": 2
+      }
+    },
+    "03-safety-tilted": {
+      "steps": 12,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 3,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.857,
+      "fragility_at_budget_1": 0.923,
+      "fragility_at_budget_2": 0.0,
+      "avg_severity": 3.36,
+      "rollback_failure_rate": 0.286,
+      "approval_gates": 3,
+      "window_gates": 1,
+      "monitor_gates": 2,
+      "achilles_heel": [
+        [
+          "S2",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 10,
+        "manual_ops": 4
+      }
+    }
+  },
+  "smt": {
+    "00-cost-leaning": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 13,
+      "n_constraint_edges": 6,
+      "witness_ordering": [],
+      "unsat_core": [
+        "dep__S3__before__S5",
+        "dep__S5__before__S6",
+        "con__ProductPM__S6__before__S3"
+      ],
+      "unsat_core_explanations": [
+        "step `S5` depends_on `S3` (so `S3` must be earlier)",
+        "step `S6` depends_on `S5` (so `S5` must be earlier)",
+        "ProductPM's blocking constraint requires `S6` before `S3` (gate `wait_for:customer_notification_sent`)"
+      ],
+      "notes": []
+    },
+    "01-safety-leaning": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 16,
+      "n_constraint_edges": 3,
+      "witness_ordering": [],
+      "unsat_core": [
+        "dep__S4__before__S8",
+        "con__BackendOwner__S8__before__S4"
+      ],
+      "unsat_core_explanations": [
+        "step `S8` depends_on `S4` (so `S4` must be earlier)",
+        "BackendOwner's blocking constraint requires `S8` before `S4` (gate `wait_for:secondary_read_write_validation`)"
+      ],
+      "notes": []
+    },
+    "02-speed-leaning": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 14,
+      "n_constraint_edges": 3,
+      "witness_ordering": [],
+      "unsat_core": [
+        "con__BackendOwner__S9__before__S2",
+        "dep__S4__before__S8",
+        "dep__S2__before__S3",
+        "dep__S8__before__S9",
+        "con__ConsumerSubsystem__S3__before__S4"
+      ],
+      "unsat_core_explanations": [
+        "BackendOwner's blocking constraint requires `S9` before `S2` (gate `wait_for:secondary_stack_healthy`)",
+        "step `S8` depends_on `S4` (so `S4` must be earlier)",
+        "step `S3` depends_on `S2` (so `S2` must be earlier)",
+        "step `S9` depends_on `S8` (so `S8` must be earlier)",
+        "ConsumerSubsystem's blocking constraint requires `S3` before `S4` (gate `wait_for:shim-validated-in-secondary-DC`)"
+      ],
+      "notes": []
+    },
+    "03-safety-tilted": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 13,
+      "n_constraint_edges": 2,
+      "witness_ordering": [],
+      "unsat_core": [
+        "dep__S3__before__S4",
+        "con__ProductPM__S5__before__S3",
+        "dep__S4__before__S5"
+      ],
+      "unsat_core_explanations": [
+        "step `S4` depends_on `S3` (so `S3` must be earlier)",
+        "ProductPM's blocking constraint requires `S5` before `S3` (gate `wait_for:customer_notification_sent`)",
+        "step `S5` depends_on `S4` (so `S4` must be earlier)"
+      ],
+      "notes": []
+    }
+  },
+  "chaos": {
+    "00-cost-leaning": {
+      "fragility": 0.618,
+      "fragility_curve": {
+        "1": 0.6,
+        "2": 0.8
+      },
+      "avg_severity": 2.73,
+      "rollback_failure_rate": 0.545,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S2",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S6",
+          0.4
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 4,
+        "manual_ops": 7
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S6",
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "critical"
+        }
+      ]
+    },
+    "01-safety-leaning": {
+      "fragility": 0.8,
+      "fragility_curve": {
+        "1": 0.857,
+        "2": 0.0
+      },
+      "avg_severity": 3.0,
+      "rollback_failure_rate": 0.267,
+      "achilles_heel": [
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 11,
+        "manual_ops": 3,
+        "unrecoverable": 1
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S10"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S11"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "unrecoverable",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S2",
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        }
+      ]
+    },
+    "02-speed-leaning": {
+      "fragility": 1.0,
+      "fragility_curve": {
+        "1": 1.0,
+        "2": 1.0
+      },
+      "avg_severity": 3.0,
+      "rollback_failure_rate": 0.182,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S2",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 9,
+        "manual_ops": 2
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S6",
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        }
+      ]
+    },
+    "03-safety-tilted": {
+      "fragility": 0.857,
+      "fragility_curve": {
+        "1": 0.923,
+        "2": 0.0
+      },
+      "avg_severity": 3.36,
+      "rollback_failure_rate": 0.286,
+      "achilles_heel": [
+        [
+          "S2",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 10,
+        "manual_ops": 4
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S10"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S6",
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        }
+      ]
+    }
+  },
+  "pareto": {
+    "front_0_labels": [
+      "02-speed-leaning",
+      "00-cost-leaning",
+      "01-safety-leaning"
+    ],
+    "all_points": [
+      {
+        "label": "00-cost-leaning",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.618,
+          "avg_severity": 2.73,
+          "rollback_failure_rate": 0.545,
+          "steps": 11.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      {
+        "label": "01-safety-leaning",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.8,
+          "avg_severity": 3.0,
+          "rollback_failure_rate": 0.267,
+          "steps": 12.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      {
+        "label": "02-speed-leaning",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 1.0,
+          "avg_severity": 3.0,
+          "rollback_failure_rate": 0.182,
+          "steps": 9.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          1.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "label": "03-safety-tilted",
+        "rank": 1,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.857,
+          "avg_severity": 3.36,
+          "rollback_failure_rate": 0.286,
+          "steps": 12.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.0,
+          0.5,
+          0.5
+        ]
+      }
+    ],
+    "winner": "00-cost-leaning",
+    "winner_utility": -0.11595000000000003,
+    "user_weights": {
+      "fragility": 0.4,
+      "coverage": 0.3,
+      "steps": 0.1,
+      "severity": 0.15,
+      "rollback_failure": 0.05
+    }
+  }
+}

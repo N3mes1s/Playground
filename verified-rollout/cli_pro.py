@@ -113,6 +113,12 @@ def _generate_frontier_plans(
         )
         resp = agent.respond(prompt)
         plan = extract_json(resp.content) or {}
+        # Defensive: occasionally a sequencer returns a bare list (just the
+        # steps array) instead of the full {summary, steps, ...} object.
+        if isinstance(plan, list):
+            plan = {"summary": "", "steps": plan, "open_questions": [], "conflicts": []}
+        if not isinstance(plan, dict):
+            plan = {"summary": "", "steps": [], "open_questions": [], "conflicts": []}
         return slot.label, plan, slot.weights
 
     out: dict[str, dict] = {}

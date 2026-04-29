@@ -143,7 +143,18 @@ def smt_verify_plan(
     s.add(z3.Distinct(*pos.values()))
 
     # Dependency edges as named tracked assertions for unsat-core extraction.
+    # Dedupe labels: a step occasionally lists the same dep twice, and multiple
+    # blocking constraints can target the same (producer, gated) pair.
     label_index: dict[str, str] = {}
+    seen_labels: set[str] = set()
+
+    def _add(constraint, label: str, explanation: str) -> None:
+        if label in seen_labels:
+            return
+        seen_labels.add(label)
+        label_index[label] = explanation
+        s.assert_and_track(constraint, label)
+
     for step in steps:
         sid = step["id"]
         for d in step.get("depends_on") or []:
@@ -151,10 +162,11 @@ def smt_verify_plan(
                 continue
             res.n_dependency_edges += 1
             label = f"dep__{d}__before__{sid}"
-            label_index[label] = (
-                f"step `{sid}` depends_on `{d}` (so `{d}` must be earlier)"
+            _add(
+                pos[sid] > pos[d],
+                label,
+                f"step `{sid}` depends_on `{d}` (so `{d}` must be earlier)",
             )
-            s.assert_and_track(pos[sid] > pos[d], label)
 
     # Blocking-constraint ordering edges: a wait_for: gate from owner X on
     # the step matching this constraint's scope must come AFTER the step that
@@ -171,11 +183,12 @@ def smt_verify_plan(
             res.n_constraint_edges += 1
             owner = c.get("owner", "?")
             label = f"con__{owner}__{producer}__before__{gated}"
-            label_index[label] = (
+            _add(
+                pos[gated] > pos[producer],
+                label,
                 f"{owner}'s blocking constraint requires `{producer}` "
-                f"before `{gated}` (gate `{c.get('gate','')}`)"
+                f"before `{gated}` (gate `{c.get('gate','')}`)",
             )
-            s.assert_and_track(pos[gated] > pos[producer], label)
 
     check = s.check()
     if check == z3.sat:

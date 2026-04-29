@@ -1,0 +1,2441 @@
+{
+  "intent_path": "/home/user/Playground/validation/postmortems/intents/01_atlassian_app_deletion.md",
+  "constraints": [
+    {
+      "axis": "api",
+      "summary": "Bulk-delete must operate only on app IDs, never site IDs",
+      "scope": "cleanup.py input contract and Team A CSV handoff",
+      "gate": "approval:Team B",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "api",
+      "summary": "CSV schema must be versioned and validated before execution",
+      "scope": "Team A emitted CSV and Team B ingestion parser",
+      "gate": "wait_for:sample_csv_validation_pass",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Deploy parser/validation changes before any bulk deletion run",
+      "scope": "cleanup.py deployment and production execution order",
+      "gate": "wait_for:validation_build_deployed",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Run a single-site dry run on known-safe test ID before 800-site run",
+      "scope": "bulk-delete execution workflow",
+      "gate": "wait_for:dry_run_success",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "data",
+      "summary": "Validate CSV IDs against app-install records, not site records",
+      "scope": "Team A CSV handoff and Team B bulk-delete target set",
+      "gate": "approval:storage_owner",
+      "rollback": "stop bulk-delete and regenerate CSV from app-install inventory",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Run deletion in small batches with IOPS-safe pacing",
+      "scope": "cleanup.py execution against the ~800 target IDs",
+      "gate": "monitor:iops<70%",
+      "rollback": "pause batch processing and resume from last confirmed batch",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Watch replication lag and halt if it exceeds migration budget",
+      "scope": "database deletes and any downstream replication streams",
+      "gate": "monitor:replication_lag<60s",
+      "rollback": "pause deletions until lag returns under budget, then continue",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "schema",
+      "summary": "Do not drop legacy Insight tables until quiet period passes",
+      "scope": "post-delete schema cleanup for the Insight standalone app",
+      "gate": "window:after_business_hours",
+      "rollback": "recreate dropped tables from backup/DDL if quiet-period checks fail",
+      "blocking": false,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Run a canary delete on a tiny sampled batch before full bulk removal",
+      "scope": "Team B execution of cleanup.py against the Team A CSV handoff",
+      "gate": "monitor:error_rate<0.1%",
+      "rollback": "Stop the run and restore the canary batch from backup before continuing",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Pause between batches until the canary shows no customer-impacting errors",
+      "scope": "Progression from initial batch to the remaining ~800 site removals",
+      "gate": "wait_for:24h_stable_canary",
+      "rollback": "Abort remaining batches and redeploy_previous of the cleanup workflow",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Exclude incident windows and avoid Friday afternoon execution",
+      "scope": "Scheduling for the bulk-delete run across all customer sites",
+      "gate": "window:business-hours-only;no-friday-afternoon;no-incident-window",
+      "rollback": "Defer execution to the next approved window and cancel the current run",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Require a pre-flight dry-run on the CSV to verify target granularity",
+      "scope": "Validation of Team A's identifier list before any destructive action",
+      "gate": "approval:ops-oncall",
+      "rollback": "Reject the CSV and rerun validation after fixing identifiers",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "security",
+      "summary": "Freeze and verify the identifier handoff before any deletion run",
+      "scope": "Team A CSV artifact and Team B bulk-delete invocation",
+      "gate": "approval:security",
+      "rollback": "Discard the CSV and regenerate a fresh, signed identifier list",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Run a preflight audit that confirms IDs target Insight app installs only",
+      "scope": "cleanup.py --ids input validation and dry-run against the CSV",
+      "gate": "wait_for:preflight_audit_pass",
+      "rollback": "Stop the job and restore from the preflight-only state",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify affected customers before externally visible removal begins",
+      "scope": "All customer sites scheduled for Insight deprecation",
+      "gate": "window:customer_notice_sent_and_elapsed",
+      "rollback": "Pause rollout and re-enable the app until notice window completes",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Preserve an audit trail for CSV source, approvals, and each delete action",
+      "scope": "End-to-end migration from catalogue export through bulk deletion",
+      "gate": "monitor:audit_coverage=100%",
+      "rollback": "Halt execution and re-run only after logging is restored",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Require compliance review before deleting customer-deletable data",
+      "scope": "Final sign-off for the Insight deprecation and deletion procedure",
+      "gate": "approval:compliance",
+      "rollback": "Abort rollout and restore the previous deprecation hold",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify affected customers before any destructive removal begins",
+      "scope": "All 800 sites identified in the CSV handoff and bulk deletion execution",
+      "gate": "wait_for:customer_notification_complete",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Provide support with rollout briefing and escalation playbook",
+      "scope": "Support team readiness for customer questions and incidents during deletion",
+      "gate": "approval:support_manager",
+      "rollback": "pause rollout and issue support update",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "No rollout during launch windows or major customer events",
+      "scope": "Timing of the bulk delete across the customer site population",
+      "gate": "window:outside_launch_windows_and_major_events",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Assign one named owner for customer escalations during rollout",
+      "scope": "Escalation handling for customer-impacting issues caused by the deletion",
+      "gate": "approval:designated_escalation_owner",
+      "rollback": "pause rollout until escalation owner assigned",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "api",
+      "summary": "Require app-id validation before bulk-delete execution",
+      "scope": "cleanup.py CLI and CSV ingestion path for Insight removals",
+      "gate": "wait_for:validated dry-run proving IDs map only to Insight app records",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep a dual-support shim for site-id to app-id translation",
+      "scope": "Transition period between Team A CSV generation and Team B deletion",
+      "gate": "window:2 release cycles",
+      "rollback": "disable shim and revert to previous app-only identifier flow",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Ship a non-destructive dry-run and sampled verification first",
+      "scope": "Bulk-delete rollout and pre-cutover validation on the 800-site batch",
+      "gate": "wait_for:successful dry-run with zero destructive actions",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Hold rollout until we have a fallback if new API slips",
+      "scope": "Quarterly deployment plan for Insight deprecation",
+      "gate": "approval:release manager",
+      "rollback": "pause rollout and keep legacy Insight installed",
+      "blocking": false,
+      "owner": "ConsumerSubsystem"
+    }
+  ],
+  "plans": {
+    "00-cost-leaning": {
+      "summary": "Validate app-id CSV, notify and approve, then run audited dry-run and paced bulk delete with monitoring and post-delete cleanup.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Team A exports a versioned CSV of Insight app-install IDs only, with schema documentation and an immutable handoff artifact.",
+          "owner": "Team A",
+          "depends_on": [],
+          "gate": "approval:security",
+          "rollback": "Discard the CSV and regenerate a fresh, signed identifier list",
+          "observability": "CSV checksum, schema version, row count, and source query logs"
+        },
+        {
+          "id": "S2",
+          "action": "Security and Storage validate the CSV against app-install records, confirm target granularity, and freeze the handoff for execution.",
+          "owner": "Security",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "approval:security",
+          "rollback": "stop bulk-delete and regenerate CSV from app-install inventory",
+          "observability": "Validation report, sample mappings, and signed approval record"
+        },
+        {
+          "id": "S3",
+          "action": "ProductPM sends customer notifications, assigns a named escalation owner, and briefs support on the rollout and playbook.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "approval:support_manager",
+          "rollback": "pause rollout and issue support update",
+          "observability": "Notification completion, support briefing receipt, and escalation owner assignment"
+        },
+        {
+          "id": "S4",
+          "action": "Schedule execution only in an approved window outside launch windows, major events, Friday afternoon, and incident windows.",
+          "owner": "SRE",
+          "depends_on": [
+            "S2",
+            "S3"
+          ],
+          "gate": "window:business-hours-only;no-friday-afternoon;no-incident-window;outside_launch_windows_and_major_events",
+          "rollback": "Defer execution to the next approved window and cancel the current run",
+          "observability": "Calendar gate status and incident/event freeze status"
+        },
+        {
+          "id": "S5",
+          "action": "Deploy the validated cleanup.py parser and CSV schema checks before any destructive action.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "wait_for:validation_build_deployed",
+          "rollback": "redeploy_previous",
+          "observability": "Deployment health, parser version, and validation feature flags"
+        },
+        {
+          "id": "S6",
+          "action": "Run a non-destructive preflight dry-run on the frozen CSV to prove every ID maps to an Insight app record only.",
+          "owner": "SRE",
+          "depends_on": [
+            "S4",
+            "S5"
+          ],
+          "gate": "wait_for:preflight_audit_pass",
+          "rollback": "Reject the CSV and rerun validation after fixing identifiers",
+          "observability": "Dry-run output, ID-to-app mapping audit, zero-destructive-action confirmation"
+        },
+        {
+          "id": "S7",
+          "action": "Obtain final compliance sign-off and release-manager approval for the deletion procedure.",
+          "owner": "Security",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "approval:compliance",
+          "rollback": "Abort rollout and restore the previous deprecation hold",
+          "observability": "Approval records and compliance checklist completion"
+        },
+        {
+          "id": "S8",
+          "action": "Run a single-site canary delete on a known-safe test ID using the validated workflow.",
+          "owner": "Team B",
+          "depends_on": [
+            "S7"
+          ],
+          "gate": "monitor:error_rate<0.1%",
+          "rollback": "Stop the run and restore the canary batch from backup before continuing",
+          "observability": "Error rate, customer-impact signals, and delete audit entries"
+        },
+        {
+          "id": "S9",
+          "action": "Verify the canary remains stable before proceeding to the bulk run.",
+          "owner": "SRE",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "wait_for:24h_stable_canary",
+          "rollback": "Abort remaining batches and redeploy_previous of the cleanup workflow",
+          "observability": "24h stability, support tickets, and replication health trends"
+        },
+        {
+          "id": "S10",
+          "action": "Execute the bulk deletion in small batches with IOPS-safe pacing, preserving audit coverage for each delete action.",
+          "owner": "Team B",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "monitor:iops<70%",
+          "rollback": "pause batch processing and resume from last confirmed batch",
+          "observability": "IOPS, batch completion, audit coverage, and per-batch error counts"
+        },
+        {
+          "id": "S11",
+          "action": "Continuously monitor replication lag during the bulk run and halt if it exceeds budget.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "monitor:replication_lag<60s",
+          "rollback": "pause deletions until lag returns under budget, then continue",
+          "observability": "Replication lag, downstream stream health, and backlog depth"
+        },
+        {
+          "id": "S12",
+          "action": "After all deletes complete and the quiet period is reached, remove legacy Insight tables.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S10",
+            "S11"
+          ],
+          "gate": "window:after_business_hours",
+          "rollback": "recreate dropped tables from backup/DDL if quiet-period checks fail",
+          "observability": "Schema migration logs, post-delete checks, and quiet-period verification"
+        }
+      ],
+      "open_questions": [
+        "What is the exact CSV schema version string Team A should publish?",
+        "Which known-safe test ID should be used for the canary delete?",
+        "Who is the designated escalation owner for customer incidents?",
+        "What constitutes the official compliance approval artifact?",
+        "How many rows should each batch contain for IOPS-safe pacing?"
+      ],
+      "conflicts": [
+        {
+          "between": [
+            "SRE:wait_for:24h_stable_canary",
+            "ProductPM:wait_for:customer_notification_complete"
+          ],
+          "issue": "Both are blocking and can delay execution; notification can proceed in parallel with canary, but the canary-stability wait adds a hard pause before bulk rollout."
+        },
+        {
+          "between": [
+            "SRE:window:business-hours-only;no-friday-afternoon;no-incident-window",
+            "ProductPM:window:outside_launch_windows_and_major_events"
+          ],
+          "issue": "Both are blocking scheduling windows that may exclude overlapping time periods and restrict the run further."
+        },
+        {
+          "between": [
+            "ConsumerSubsystem:window:2 release cycles",
+            "All destructive execution constraints"
+          ],
+          "issue": "The dual-support shim window implies an extended transition period, which conflicts with the time-pressure goal of completing deletion this quarter."
+        }
+      ]
+    },
+    "01-safety-leaning": {
+      "summary": "Validate identifiers, notify and get approvals, canary on a safe app ID, then batch-delete with tight monitoring and post-cutover schema cleanup.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Team A exports a versioned CSV from the customer catalogue using the app-install inventory only, one identifier per row, and freezes the artifact for handoff.",
+          "owner": "Team A",
+          "depends_on": [],
+          "gate": "approval:security",
+          "rollback": "Discard the CSV and regenerate a fresh, signed identifier list",
+          "observability": "CSV schema version, row count, checksum, and audit log entry for source query"
+        },
+        {
+          "id": "S2",
+          "action": "Security and Storage validate the frozen CSV against Insight app-install records, not site records, and confirm the IDs map only to app installs.",
+          "owner": "Security",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "wait_for:preflight_audit_pass",
+          "rollback": "Stop bulk-delete and regenerate CSV from app-install inventory",
+          "observability": "Audit results, match rate, any site-vs-app mismatches, and parser validation errors"
+        },
+        {
+          "id": "S3",
+          "action": "Team B deploys parser and validation changes to cleanup.py so the ingestion path rejects non-app IDs and requires the versioned CSV schema.",
+          "owner": "Team B",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "wait_for:validation_build_deployed",
+          "rollback": "Redeploy previous cleanup.py build",
+          "observability": "Deployment status, parser unit/integration tests, and schema validation logs"
+        },
+        {
+          "id": "S4",
+          "action": "Product and Support send customer notifications, assign a single escalation owner, and confirm support briefing is complete before any destructive run.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "approval:support_manager",
+          "rollback": "Pause rollout and issue support update",
+          "observability": "Notice delivery completion, support sign-off, named escalation owner, and complaint intake readiness"
+        },
+        {
+          "id": "S5",
+          "action": "Schedule the run only in an approved window outside launch windows, major events, Friday afternoon, incidents, and outside business-hours constraints as applicable.",
+          "owner": "SRE",
+          "depends_on": [
+            "S3",
+            "S4"
+          ],
+          "gate": "window:business-hours-only;no-friday-afternoon;no-incident-window;outside_launch_windows_and_major_events",
+          "rollback": "Defer execution to the next approved window and cancel the current run",
+          "observability": "Calendar window compliance, incident feed, and launch/event freeze status"
+        },
+        {
+          "id": "S6",
+          "action": "Run a non-destructive dry-run on a known-safe test ID to prove the workflow targets an app ID and not a site ID.",
+          "owner": "Team B",
+          "depends_on": [
+            "S3",
+            "S5"
+          ],
+          "gate": "monitor:error_rate<0.1%",
+          "rollback": "Redeploy previous workflow and stop the run",
+          "observability": "Dry-run output, target resolution, deletion count should remain zero, and error rate"
+        },
+        {
+          "id": "S7",
+          "action": "Obtain final compliance approval to proceed with customer-deletable data removal after preflight and dry-run checks pass.",
+          "owner": "Security",
+          "depends_on": [
+            "S2",
+            "S6"
+          ],
+          "gate": "approval:compliance",
+          "rollback": "Abort rollout and restore the previous deprecation hold",
+          "observability": "Compliance sign-off record and any exception notes"
+        },
+        {
+          "id": "S8",
+          "action": "Run a canary delete on a tiny sampled batch of validated app IDs from the CSV, with the batch isolated from the full 800-site set.",
+          "owner": "Team B",
+          "depends_on": [
+            "S6",
+            "S7"
+          ],
+          "gate": "monitor:error_rate<0.1%",
+          "rollback": "Stop the run and restore the canary batch from backup before continuing",
+          "observability": "Customer-impact signals, delete success rate, replication lag, audit trail, and canary error rate"
+        },
+        {
+          "id": "S9",
+          "action": "Hold the rollout for 24 hours after the canary and require no customer-impacting errors before continuing to the remaining batches.",
+          "owner": "SRE",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "wait_for:24h_stable_canary",
+          "rollback": "Abort remaining batches and redeploy_previous of the cleanup workflow",
+          "observability": "24h stability, support tickets, replication lag, and any rollback-triggering errors"
+        },
+        {
+          "id": "S10",
+          "action": "Execute bulk deletion in small batches with IOPS-safe pacing, deleting only app IDs and pausing between batches as needed.",
+          "owner": "Team B",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "monitor:iops<70%",
+          "rollback": "Pause batch processing and resume from the last confirmed batch",
+          "observability": "IOPS, replication lag, delete success/failure counts, and batch completion audit entries"
+        },
+        {
+          "id": "S11",
+          "action": "Continuously halt the run if replication lag exceeds the migration budget, then resume only once it returns under threshold.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "monitor:replication_lag<60s",
+          "rollback": "Pause deletions until lag returns under budget, then continue",
+          "observability": "Replication lag, downstream stream health, and queue depth"
+        },
+        {
+          "id": "S12",
+          "action": "After all deletes complete, perform post-delete schema cleanup for legacy Insight tables during the quiet period only.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S11"
+          ],
+          "gate": "window:after_business_hours",
+          "rollback": "Recreate dropped tables from backup/DDL if quiet-period checks fail",
+          "observability": "Quiet-period checks, DDL execution logs, and post-drop application errors"
+        }
+      ],
+      "open_questions": [
+        "What exact CSV schema version should Team A emit for the versioned handoff?",
+        "Who is the designated escalation owner for customer issues during the rollout?",
+        "What constitutes the 'known-safe' test app ID for the dry run and canary?",
+        "Which approval order is preferred for security, storage, compliance, and support if they cannot all be obtained concurrently?",
+        "What is the precise batch size for the IOPS-safe pacing step?"
+      ],
+      "conflicts": [
+        {
+          "a": "SRE: \"Pause between batches until the canary shows no customer-impacting errors\" gated by wait_for:24h_stable_canary",
+          "b": "ProductPM: time pressure to complete in the current quarter",
+          "reason": "The mandatory 24h soak materially slows rollout, opposing schedule pressure."
+        },
+        {
+          "a": "SRE: \"No rollout during launch windows or major customer events\"",
+          "b": "ProductPM: time pressure to complete in the current quarter",
+          "reason": "Restricted windows reduce available execution time and can delay completion."
+        },
+        {
+          "a": "Security: \"Notify affected customers before any destructive removal begins\"",
+          "b": "Time pressure to complete in the current quarter",
+          "reason": "Mandatory notification and elapsed notice window add delay before deletion can start."
+        },
+        {
+          "a": "DataPlatform: \"Do not drop legacy Insight tables until quiet period passes\"",
+          "b": "Time pressure to complete in the current quarter",
+          "reason": "Post-delete schema cleanup is deferred by the quiet-period requirement."
+        },
+        {
+          "a": "ConsumerSubsystem: \"Keep a dual-support shim for site-id to app-id translation\"",
+          "b": "BackendOwner: \"Bulk-delete must operate only on app IDs, never site IDs\"",
+          "reason": "A translation shim can obscure or accept site IDs, conflicting with a strict app-ID-only contract."
+        }
+      ]
+    },
+    "02-speed-leaning": {
+      "summary": "Validate and freeze the ID handoff, deploy parser changes, run audited canary/dry-run, then pace the bulk delete in monitored batches.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Collect Team A's CSV and perform schema/version checks plus app-install record validation to confirm every row is an Insight app ID, not a site ID.",
+          "owner": "Team A",
+          "depends_on": [],
+          "gate": "wait_for:sample_csv_validation_pass",
+          "rollback": "stop bulk-delete and regenerate CSV from app-install inventory",
+          "observability": "CSV row count, schema version, ID-to-app-install match rate, any site-ID mismatches"
+        },
+        {
+          "id": "S2",
+          "action": "Freeze the validated CSV handoff, secure audit logging for the artifact, and obtain required security/compliance/support approvals for the deletion run.",
+          "owner": "Security",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "approval:security",
+          "rollback": "Discard the CSV and regenerate a fresh, signed identifier list",
+          "observability": "Approval status, artifact checksum/signature, audit log presence, escalation owner assigned"
+        },
+        {
+          "id": "S3",
+          "action": "Deploy cleanup.py parser/validation changes that enforce versioned CSV parsing and app-ID-only ingestion before any destructive execution.",
+          "owner": "Team B",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "wait_for:validation_build_deployed",
+          "rollback": "redeploy_previous",
+          "observability": "Deployment completion, parser version, validation test pass/fail, ingestion rejection of invalid IDs"
+        },
+        {
+          "id": "S4",
+          "action": "Prepare customer notification, support briefing, and schedule the run inside an approved non-launch, non-Friday-afternoon, non-incident window.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "window:customer_notice_sent_and_elapsed",
+          "rollback": "Pause rollout and re-enable the app until notice window completes",
+          "observability": "Notification delivery completion, elapsed notice window, support readiness, schedule window compliance"
+        },
+        {
+          "id": "S5",
+          "action": "Run a single-site dry run on a known-safe test ID and a preflight audit that proves IDs map only to Insight app records.",
+          "owner": "SRE",
+          "depends_on": [
+            "S2",
+            "S3"
+          ],
+          "gate": "wait_for:preflight_audit_pass",
+          "rollback": "Stop the job and restore from the preflight-only state",
+          "observability": "Dry-run target, zero destructive actions, audit findings, app-record mapping confirmation"
+        },
+        {
+          "id": "S6",
+          "action": "Obtain explicit go-ahead from ops/oncall and storage owner after the CSV and dry run validate correct granularity.",
+          "owner": "Ops",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "approval:ops-oncall",
+          "rollback": "Reject the CSV and rerun validation after fixing identifiers",
+          "observability": "Approval granted, unresolved validation issues, any target granularity warnings"
+        },
+        {
+          "id": "S7",
+          "action": "Start a tiny canary delete batch using the validated CSV and confirm audit coverage for every action.",
+          "owner": "Team B",
+          "depends_on": [
+            "S4",
+            "S5",
+            "S6"
+          ],
+          "gate": "monitor:error_rate<0.1%",
+          "rollback": "Stop the run and restore the canary batch from backup before continuing",
+          "observability": "Error rate, audit coverage, customer-impacting errors, canary batch completion"
+        },
+        {
+          "id": "S8",
+          "action": "Pause after the canary and wait for stability confirmation before expanding beyond the sampled batch.",
+          "owner": "SRE",
+          "depends_on": [
+            "S7"
+          ],
+          "gate": "wait_for:24h_stable_canary",
+          "rollback": "Abort remaining batches and redeploy_previous of the cleanup workflow",
+          "observability": "24h stability, customer support signals, replication lag trend, batch error trend"
+        },
+        {
+          "id": "S9",
+          "action": "Execute the full bulk deletion in small paced batches, keeping deletion only on app IDs and preserving full audit trail.",
+          "owner": "Team B",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "monitor:iops<70%",
+          "rollback": "pause batch processing and resume from last confirmed batch",
+          "observability": "IOPS, batch success rate, audit completeness, replication lag, deletion counts"
+        },
+        {
+          "id": "S10",
+          "action": "Continuously monitor replication lag during bulk deletion and halt if it exceeds the migration budget.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "monitor:replication_lag<60s",
+          "rollback": "pause deletions until lag returns under budget, then continue",
+          "observability": "Replication lag, downstream stream health, backlog depth, catch-up time"
+        },
+        {
+          "id": "S11",
+          "action": "After completion and only in the allowed quiet period, remove legacy Insight tables if still required.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "window:after_business_hours",
+          "rollback": "recreate dropped tables from backup/DDL if quiet-period checks fail",
+          "observability": "Quiet-period status, schema cleanup success, application error rate, table existence checks"
+        },
+        {
+          "id": "S12",
+          "action": "Close out with final audit review and compliance sign-off that all targets were app installs only and all deletions are logged.",
+          "owner": "Security",
+          "depends_on": [
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "gate": "approval:compliance",
+          "rollback": "Abort rollout and restore the previous deprecation hold",
+          "observability": "Audit coverage=100%, compliance approval, unresolved incidents, residual Insight presence"
+        }
+      ],
+      "open_questions": [
+        "Which exact customer-notification channel and message wording should be used?",
+        "Who is the designated escalation owner for this rollout?",
+        "What is the approved business-hours window for the canary and full run?",
+        "What constitutes the known-safe test ID for the single-site dry run?",
+        "Who from storage owns the app-install validation approval?"
+      ],
+      "conflicts": [
+        {
+          "between": [
+            "BackendOwner",
+            "SRE"
+          ],
+          "blocking_constraints": [
+            "Deploy parser/validation changes before any bulk deletion run",
+            "Run a single-site dry run on known-safe test ID before 800-site run",
+            "Require a pre-flight dry-run on the CSV to verify target granularity"
+          ],
+          "conflict": "Dry-run and validation-first requirements add pre-execution time, conflicting with speed-biased desire to run the bulk delete sooner."
+        },
+        {
+          "between": [
+            "BackendOwner",
+            "DataPlatform"
+          ],
+          "blocking_constraints": [
+            "Validate CSV IDs against app-install records, not site records",
+            "Run deletion in small batches with IOPS-safe pacing",
+            "Watch replication lag and halt if it exceeds migration budget"
+          ],
+          "conflict": "Validation and pacing gates slow execution versus faster single-pass bulk deletion."
+        },
+        {
+          "between": [
+            "SRE",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Notify affected customers before destructive removal begins",
+            "No rollout during launch windows or major customer events",
+            "Pause between batches until the canary shows no customer-impacting errors",
+            "Assign one named owner for customer escalations during rollout"
+          ],
+          "conflict": "Notification, timing, and escalation readiness gates delay the migration relative to immediate execution."
+        },
+        {
+          "between": [
+            "Security",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Freeze and verify the identifier handoff before any deletion run",
+            "Require compliance review before deleting customer-deletable data",
+            "Notify affected customers before any destructive removal begins"
+          ],
+          "conflict": "Security/compliance/customer-notice gates require additional pre-run coordination and waiting."
+        },
+        {
+          "between": [
+            "Security",
+            "ConsumerSubsystem"
+          ],
+          "blocking_constraints": [
+            "Require app-id validation before bulk-delete execution",
+            "Keep a dual-support shim for site-id to app-id translation",
+            "Ship a non-destructive dry-run and sampled verification first"
+          ],
+          "conflict": "The shim and staged validation add rollout complexity and time before the destructive run."
+        }
+      ]
+    },
+    "03-safety-tilted": {
+      "summary": "Validate app-only IDs, notify/support, dry-run a safe canary, then delete in paced batches with monitoring and post-delete cleanup.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Team A exports a versioned CSV of identifiers from the customer-site catalogue and freezes the artifact for handoff.",
+          "owner": "Team A",
+          "depends_on": [],
+          "gate": "approval:security",
+          "rollback": "Discard the CSV and regenerate a fresh, signed identifier list",
+          "observability": "CSV present, signed/frozen, and logged as the single handoff artifact"
+        },
+        {
+          "id": "S2",
+          "action": "Validate the CSV schema and confirm every row maps to app-install records for Insight, not site records; reject and regenerate if any mismatch appears.",
+          "owner": "Team B",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "wait_for:sample_csv_validation_pass",
+          "rollback": "stop bulk-delete and regenerate CSV from app-install inventory",
+          "observability": "Schema version, row count, ID type checks, and app-install lookup results"
+        },
+        {
+          "id": "S3",
+          "action": "Deploy updated cleanup.py parsing/validation that accepts only the validated CSV schema and app-ID targets.",
+          "owner": "Team B",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "wait_for:validation_build_deployed",
+          "rollback": "redeploy_previous",
+          "observability": "Deployment success, parser version, and input-contract test pass rate"
+        },
+        {
+          "id": "S4",
+          "action": "Run the required pre-flight dry-run on the validated CSV to prove target granularity and produce an audit trail.",
+          "owner": "Team B",
+          "depends_on": [
+            "S3"
+          ],
+          "gate": "wait_for:preflight_audit_pass",
+          "rollback": "Stop the job and restore from the preflight-only state",
+          "observability": "Dry-run output, target resolution, audit logs, and zero destructive actions"
+        },
+        {
+          "id": "S5",
+          "action": "Execute a single-site canary delete using a known-safe test ID that resolves to an Insight app install only.",
+          "owner": "Team B",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "monitor:error_rate<0.1%",
+          "rollback": "Stop the run and restore the canary batch from backup before continuing",
+          "observability": "Error rate, delete result, replication lag, and customer-impact signals for the canary"
+        },
+        {
+          "id": "S6",
+          "action": "Obtain the required customer notification complete signal and support readiness sign-off before any broader destructive action.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "wait_for:customer_notification_complete",
+          "rollback": "pause rollout and re-enable the app until notice window completes",
+          "observability": "Notification completion, support briefing status, escalation owner assignment"
+        },
+        {
+          "id": "S7",
+          "action": "Secure final cross-functional approvals for support, compliance, storage ownership, and designated escalation ownership.",
+          "owner": "ProgramOwner",
+          "depends_on": [
+            "S2",
+            "S6"
+          ],
+          "gate": "approval:compliance",
+          "rollback": "Abort rollout and restore the previous deprecation hold",
+          "observability": "Approval records from compliance, storage_owner, support_manager, and escalation owner"
+        },
+        {
+          "id": "S8",
+          "action": "Run the bulk delete in small paced batches against the validated app IDs, with the run paused on any replication or IOPS budget breach.",
+          "owner": "Team B",
+          "depends_on": [
+            "S5",
+            "S7"
+          ],
+          "gate": "monitor:iops<70%",
+          "rollback": "pause batch processing and resume from last confirmed batch",
+          "observability": "Batch success/failure, IOPS, replication lag, and per-batch audit coverage"
+        },
+        {
+          "id": "S9",
+          "action": "Continue batch deletion only while replication lag stays within budget and the canary/batch health remains stable.",
+          "owner": "Team B",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "monitor:replication_lag<60s",
+          "rollback": "pause deletions until lag returns under budget, then continue",
+          "observability": "Replication lag, backlog depth, and customer-facing error rate"
+        },
+        {
+          "id": "S10",
+          "action": "After the batch run completes, verify audit coverage is complete for CSV source, approvals, and each delete action.",
+          "owner": "Security",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "monitor:audit_coverage=100%",
+          "rollback": "Halt execution and re-run only after logging is restored",
+          "observability": "Audit trail completeness, immutable log presence, and per-action traceability"
+        },
+        {
+          "id": "S11",
+          "action": "Perform post-delete schema cleanup for legacy Insight tables only during the approved quiet period.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "window:after_business_hours",
+          "rollback": "recreate dropped tables from backup/DDL if quiet-period checks fail",
+          "observability": "Quiet-period checks, DDL success, and any unexpected query failures"
+        },
+        {
+          "id": "S12",
+          "action": "Close out the rollout by confirming all target sites no longer have Insight installed and customer-visible state is unchanged.",
+          "owner": "ProgramOwner",
+          "depends_on": [
+            "S11"
+          ],
+          "gate": "none",
+          "rollback": "redeploy_previous",
+          "observability": "Post-migration inventory, customer-visible error rate, and escalation count"
+        }
+      ],
+      "open_questions": [
+        "Who is the single named escalation owner?",
+        "What exact version tag should be used for the CSV schema?",
+        "Which known-safe test ID will be used for the canary?",
+        "Is the customer notification already prepared, or does it still need drafting?"
+      ],
+      "conflicts": [
+        {
+          "between": [
+            "ProductPM",
+            "SRE"
+          ],
+          "blocking_constraints": [
+            "ProductPM: Notify affected customers before any destructive removal begins",
+            "SRE: Exclude incident windows and avoid Friday afternoon execution"
+          ],
+          "conflict": "Customer-notice timing may force execution into a window that is disallowed by SRE scheduling constraints."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "ConsumerSubsystem"
+          ],
+          "blocking_constraints": [
+            "ProductPM: Notify affected customers before any destructive removal begins",
+            "ConsumerSubsystem: Hold rollout until we have a fallback if new API slips"
+          ],
+          "conflict": "Waiting for fallback readiness can delay the customer-notice-to-execution sequence."
+        },
+        {
+          "between": [
+            "BackendOwner",
+            "DataPlatform"
+          ],
+          "blocking_constraints": [
+            "BackendOwner: Run a single-site dry run on known-safe test ID before 800-site run",
+            "DataPlatform: Run deletion in small batches with IOPS-safe pacing"
+          ],
+          "conflict": "A single-site dry run and small-batch pacing are different execution shapes that both must precede full deletion."
+        },
+        {
+          "between": [
+            "BackendOwner",
+            "SRE"
+          ],
+          "blocking_constraints": [
+            "BackendOwner: Run a single-site dry run on known-safe test ID before 800-site run",
+            "SRE: Run a canary delete on a tiny sampled batch before full bulk removal"
+          ],
+          "conflict": "Two separate pre-full-run validation requirements exist: one single-site dry run and one sampled canary batch."
+        },
+        {
+          "between": [
+            "DataPlatform",
+            "SRE"
+          ],
+          "blocking_constraints": [
+            "DataPlatform: Run deletion in small batches with IOPS-safe pacing",
+            "SRE: Pause between batches until the canary shows no customer-impacting errors"
+          ],
+          "conflict": "Batch pacing is required, and progression between batches is additionally gated on canary stability."
+        },
+        {
+          "between": [
+            "DataPlatform",
+            "Security"
+          ],
+          "blocking_constraints": [
+            "DataPlatform: Validate CSV IDs against app-install records, not site records",
+            "Security: Freeze and verify the identifier handoff before any deletion run"
+          ],
+          "conflict": "The CSV must be both validated against app-install records and frozen as the handoff artifact before deletion."
+        },
+        {
+          "between": [
+            "Security",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Security: Require compliance review before deleting customer-deletable data",
+            "ProductPM: Notify affected customers before externally visible removal begins"
+          ],
+          "conflict": "Compliance approval and customer notification are both blocking prerequisites that may need sequencing coordination."
+        },
+        {
+          "between": [
+            "Security",
+            "ConsumerSubsystem"
+          ],
+          "blocking_constraints": [
+            "Security: Run a preflight audit that confirms IDs target Insight app installs only",
+            "ConsumerSubsystem: Require app-id validation before bulk-delete execution"
+          ],
+          "conflict": "Both require app-install-only validation, but at different enforcement layers and approval gates."
+        },
+        {
+          "between": [
+            "BackendOwner",
+            "ConsumerSubsystem"
+          ],
+          "blocking_constraints": [
+            "BackendOwner: Bulk-delete must operate only on app IDs, never site IDs",
+            "ConsumerSubsystem: Keep a dual-support shim for site-id to app-id translation"
+          ],
+          "conflict": "The shim introduces site-id handling during transition, while the backend requires app-only operation."
+        },
+        {
+          "between": [
+            "ConsumerSubsystem",
+            "SRE"
+          ],
+          "blocking_constraints": [
+            "ConsumerSubsystem: Ship a non-destructive dry-run and sampled verification first",
+            "SRE: Run a canary delete on a tiny sampled batch before full bulk removal"
+          ],
+          "conflict": "Both demand pre-destructive validation, but one is non-destructive dry-run while the other is an actual canary delete."
+        }
+      ]
+    }
+  },
+  "weights_for": {
+    "00-cost-leaning": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "01-safety-leaning": [
+      0.0,
+      1.0,
+      0.0
+    ],
+    "02-speed-leaning": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "03-safety-tilted": [
+      0.0,
+      0.5,
+      0.5
+    ]
+  },
+  "scores": {
+    "00-cost-leaning": {
+      "steps": 12,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 4,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.733,
+      "fragility_at_budget_1": 0.786,
+      "fragility_at_budget_2": 0.0,
+      "avg_severity": 2.47,
+      "rollback_failure_rate": 0.267,
+      "approval_gates": 4,
+      "window_gates": 2,
+      "monitor_gates": 3,
+      "achilles_heel": [
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ],
+        [
+          "S8",
+          1.0
+        ],
+        [
+          "S9",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 11,
+        "manual_ops": 4
+      }
+    },
+    "01-safety-leaning": {
+      "steps": 12,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 2,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.8,
+      "fragility_at_budget_1": 0.786,
+      "fragility_at_budget_2": 1.0,
+      "avg_severity": 2.47,
+      "rollback_failure_rate": 0.333,
+      "approval_gates": 3,
+      "window_gates": 2,
+      "monitor_gates": 4,
+      "achilles_heel": [
+        [
+          "S2",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 10,
+        "manual_ops": 4,
+        "redo_full": 1
+      }
+    },
+    "02-speed-leaning": {
+      "steps": 12,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 2,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.733,
+      "fragility_at_budget_1": 0.714,
+      "fragility_at_budget_2": 1.0,
+      "avg_severity": 2.53,
+      "rollback_failure_rate": 0.267,
+      "approval_gates": 3,
+      "window_gates": 2,
+      "monitor_gates": 3,
+      "achilles_heel": [
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ],
+        [
+          "S8",
+          1.0
+        ],
+        [
+          "S9",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 11,
+        "manual_ops": 4
+      }
+    },
+    "03-safety-tilted": {
+      "steps": 12,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 2,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.533,
+      "fragility_at_budget_1": 0.571,
+      "fragility_at_budget_2": 0.0,
+      "avg_severity": 2.67,
+      "rollback_failure_rate": 0.467,
+      "approval_gates": 2,
+      "window_gates": 1,
+      "monitor_gates": 4,
+      "achilles_heel": [
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ],
+        [
+          "S10",
+          1.0
+        ],
+        [
+          "S1",
+          0.5
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 6,
+        "manual_ops": 9
+      }
+    }
+  },
+  "smt": {
+    "00-cost-leaning": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 14,
+      "n_constraint_edges": 2,
+      "witness_ordering": [],
+      "unsat_core": [
+        "dep__S5__before__S6",
+        "dep__S6__before__S7",
+        "dep__S7__before__S8",
+        "con__BackendOwner__S8__before__S5"
+      ],
+      "unsat_core_explanations": [
+        "step `S6` depends_on `S5` (so `S5` must be earlier)",
+        "step `S7` depends_on `S6` (so `S6` must be earlier)",
+        "step `S8` depends_on `S7` (so `S7` must be earlier)",
+        "BackendOwner's blocking constraint requires `S8` before `S5` (gate `wait_for:dry_run_success`)"
+      ],
+      "notes": []
+    },
+    "01-safety-leaning": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 15,
+      "n_constraint_edges": 2,
+      "witness_ordering": [],
+      "unsat_core": [
+        "dep__S2__before__S3",
+        "con__BackendOwner__S3__before__S2"
+      ],
+      "unsat_core_explanations": [
+        "step `S3` depends_on `S2` (so `S2` must be earlier)",
+        "BackendOwner's blocking constraint requires `S3` before `S2` (gate `wait_for:sample_csv_validation_pass`)"
+      ],
+      "notes": []
+    },
+    "02-speed-leaning": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 16,
+      "n_constraint_edges": 4,
+      "witness_ordering": [],
+      "unsat_core": [
+        "dep__S1__before__S3",
+        "con__BackendOwner__S3__before__S1"
+      ],
+      "unsat_core_explanations": [
+        "step `S3` depends_on `S1` (so `S1` must be earlier)",
+        "BackendOwner's blocking constraint requires `S3` before `S1` (gate `wait_for:sample_csv_validation_pass`)"
+      ],
+      "notes": []
+    },
+    "03-safety-tilted": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 13,
+      "n_constraint_edges": 4,
+      "witness_ordering": [],
+      "unsat_core": [
+        "con__BackendOwner__S3__before__S2",
+        "dep__S2__before__S3"
+      ],
+      "unsat_core_explanations": [
+        "BackendOwner's blocking constraint requires `S3` before `S2` (gate `wait_for:sample_csv_validation_pass`)",
+        "step `S3` depends_on `S2` (so `S2` must be earlier)"
+      ],
+      "notes": []
+    }
+  },
+  "chaos": {
+    "00-cost-leaning": {
+      "fragility": 0.733,
+      "fragility_curve": {
+        "1": 0.786,
+        "2": 0.0
+      },
+      "avg_severity": 2.47,
+      "rollback_failure_rate": 0.267,
+      "achilles_heel": [
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ],
+        [
+          "S8",
+          1.0
+        ],
+        [
+          "S9",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 11,
+        "manual_ops": 4
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S10"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S11"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S10",
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        }
+      ]
+    },
+    "01-safety-leaning": {
+      "fragility": 0.8,
+      "fragility_curve": {
+        "1": 0.786,
+        "2": 1.0
+      },
+      "avg_severity": 2.47,
+      "rollback_failure_rate": 0.333,
+      "achilles_heel": [
+        [
+          "S2",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 10,
+        "manual_ops": 4,
+        "redo_full": 1
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S3",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S10"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S11"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S3",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "redo_full",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S6",
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        }
+      ]
+    },
+    "02-speed-leaning": {
+      "fragility": 0.733,
+      "fragility_curve": {
+        "1": 0.714,
+        "2": 1.0
+      },
+      "avg_severity": 2.53,
+      "rollback_failure_rate": 0.267,
+      "achilles_heel": [
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ],
+        [
+          "S8",
+          1.0
+        ],
+        [
+          "S9",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 11,
+        "manual_ops": 4
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S10"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S11"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4",
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        }
+      ]
+    },
+    "03-safety-tilted": {
+      "fragility": 0.533,
+      "fragility_curve": {
+        "1": 0.571,
+        "2": 0.0
+      },
+      "avg_severity": 2.67,
+      "rollback_failure_rate": 0.467,
+      "achilles_heel": [
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ],
+        [
+          "S10",
+          1.0
+        ],
+        [
+          "S1",
+          0.5
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 6,
+        "manual_ops": 9
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S10"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S11"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4",
+            "S11"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        }
+      ]
+    }
+  },
+  "pareto": {
+    "front_0_labels": [
+      "00-cost-leaning",
+      "03-safety-tilted"
+    ],
+    "all_points": [
+      {
+        "label": "00-cost-leaning",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.733,
+          "avg_severity": 2.47,
+          "rollback_failure_rate": 0.267,
+          "steps": 12.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      {
+        "label": "01-safety-leaning",
+        "rank": 1,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.8,
+          "avg_severity": 2.47,
+          "rollback_failure_rate": 0.333,
+          "steps": 12.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      {
+        "label": "02-speed-leaning",
+        "rank": 1,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.733,
+          "avg_severity": 2.53,
+          "rollback_failure_rate": 0.267,
+          "steps": 12.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          1.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "label": "03-safety-tilted",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.533,
+          "avg_severity": 2.67,
+          "rollback_failure_rate": 0.467,
+          "steps": 12.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.0,
+          0.5,
+          0.5
+        ]
+      }
+    ],
+    "winner": "03-safety-tilted",
+    "winner_utility": -0.08005000000000004,
+    "user_weights": {
+      "fragility": 0.4,
+      "coverage": 0.3,
+      "steps": 0.1,
+      "severity": 0.15,
+      "rollback_failure": 0.05
+    }
+  }
+}

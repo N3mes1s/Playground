@@ -1,0 +1,2249 @@
+{
+  "intent_path": "/home/user/Playground/validation/postmortems/intents/04_gitlab_db_replica.md",
+  "constraints": [
+    {
+      "axis": "deploy",
+      "summary": "Verify SSH target is db2 before any stop/wipe commands",
+      "scope": "Manual rebuild steps on the target host",
+      "gate": "approval:engineer observing",
+      "rollback": "Abort session and reconnect only after re-verifying db2.cluster.gitlab.com",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Do not run data-directory wipe until db1 host identity is confirmed",
+      "scope": "Step 2 destructive cleanup on PostgreSQL data directory",
+      "gate": "approval:engineer driving",
+      "rollback": "Stop and recover from the last intact db2 data directory snapshot if present",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Perform stop-wipe-basebackup-start in that exact order on db2 only",
+      "scope": "Full replica rebuild sequence",
+      "gate": "wait_for:postgresql stopped on db2",
+      "rollback": "Redeploy previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep db1 serving production reads/writes throughout rebuild",
+      "scope": "Primary database availability during replica rebuild",
+      "gate": "monitor:db1 write availability 100%",
+      "rollback": "Redeploy previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Confirm replication health before declaring db2 back in service",
+      "scope": "Post-rebuild validation and handoff",
+      "gate": "monitor:replication lag 0",
+      "rollback": "Redeploy previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "data",
+      "summary": "Confirm target is db2 before any data-dir wipe",
+      "scope": "The destructive rm -rf of the PostgreSQL data directory on the replica host",
+      "gate": "approval:two_engineers",
+      "rollback": "Stop PostgreSQL and immediately restore the original data directory from the pre-wipe filesystem snapshot or backup",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Perform rebuild only in a quiet off-peak maintenance window",
+      "scope": "Stopping PostgreSQL, wiping the replica data directory, and running pg_basebackup",
+      "gate": "window:off-peak_maint",
+      "rollback": "Abort the rebuild, keep db2 offline, and retry during the next approved maintenance window",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Limit pg_basebackup throughput to protect db1 IOPS",
+      "scope": "The full base backup copy from db1 to db2 during replica reseeding",
+      "gate": "monitor:db1_replication_lag<30s",
+      "rollback": "Cancel pg_basebackup, clear the partially copied replica directory, and restart with a lower rate limit",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Do not remove old replica files until catch-up is stable",
+      "scope": "Post-rebuild cleanup of any prior replica data or temporary backup artifacts on db2",
+      "gate": "wait_for:replication_caught_up_and_stable",
+      "rollback": "Retain the old files or restore them from the temporary preservation location if the new replica fails",
+      "blocking": false,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Require two-engineer buddy check before any destructive step",
+      "scope": "SSH session on db2.cluster.gitlab.com before stopping PostgreSQL or wiping data",
+      "gate": "approval:second_engineer",
+      "rollback": "Abort the session and do not run any further commands",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Verify host identity matches db2 before any rm -rf",
+      "scope": "Preflight on the SSH host prior to stopping PostgreSQL and deleting the data directory",
+      "gate": "wait_for:hostname_confirmed_db2.cluster.gitlab.com",
+      "rollback": "Disconnect from host and reconnect only after explicit hostname verification",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Block execution during incident windows or overnight fatigue risk",
+      "scope": "Entire rebuild window for db2.cluster.gitlab.com",
+      "gate": "window:outside_incident_window_and_not_late_night",
+      "rollback": "Defer the rebuild and reschedule for a staffed maintenance window",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Proceed to cutover only after replication lag is healthy",
+      "scope": "Post-basebackup validation and restart of PostgreSQL on db2",
+      "gate": "monitor:replication_lag<0.1%",
+      "rollback": "Keep db2 out of service and re-run the rebuild if lag does not clear",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "security",
+      "summary": "Verify host identity before any destructive command",
+      "scope": "SSH session and pre-rebuild checks on db2.cluster.gitlab.com",
+      "gate": "approval:two_engineers",
+      "rollback": "Abort session and reconnect only after explicit host verification",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Require a second engineer to confirm db2 before rm -rf",
+      "scope": "Step 2 data directory wipe on the replica host",
+      "gate": "approval:second_engineer",
+      "rollback": "Stop the wipe, preserve current state, and re-verify target host",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Preserve audit trail for host access and destructive steps",
+      "scope": "SSH access, service stop, data wipe, basebackup, restart",
+      "gate": "none",
+      "rollback": "Reproduce from logs only; if logging is unavailable, halt and restore audit logging",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify on-call and DB owners before any externally visible change",
+      "scope": "Replica rebuild window and any outage or failover risk",
+      "gate": "window:23:00_local_until_completion",
+      "rollback": "Pause the rebuild and send notification before proceeding",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Pause for compliance review if backup or access controls changed",
+      "scope": "Use of production backups, SSH access path, and recovery process",
+      "gate": "approval:security_review",
+      "rollback": "Revert to the documented runbook path and defer until review is complete",
+      "blocking": false,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify support before rebuild starts and confirm readiness",
+      "scope": "Pre-maintenance communication for the db2 replica rebuild",
+      "gate": "approval:support lead",
+      "rollback": "Abort the rebuild and reschedule after support confirmation",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Do not start during peak support or launch communication windows",
+      "scope": "Timing of the db2 rebuild operation",
+      "gate": "window:outside launch window / major event",
+      "rollback": "Pause the rebuild and resume in the next approved low-risk window",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "business",
+      "summary": "Assign a named escalation owner for the full rebuild window",
+      "scope": "Customer escalation handling during the db2 rebuild",
+      "gate": "approval:on-call incident owner",
+      "rollback": "Escalation ownership reverts to the prior duty owner until reassigned",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Send customer-facing status update if rebuild impacts failover coverage",
+      "scope": "External status communication during the replica being out of service",
+      "gate": "monitor:replication health unavailable",
+      "rollback": "Publish a recovery update once replication is healthy again",
+      "blocking": false,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Hold rebuild until a second engineer confirms db2 host identity",
+      "scope": "SSH target verification before any stop/wipe commands on db2.cluster.gitlab.com",
+      "gate": "approval:second_engineer",
+      "rollback": "abort session and reconnect only after explicit db2 hostname check",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Require a pre-wipe runbook checkpoint before rm -rf of data dir",
+      "scope": "Destructive data directory wipe step in the db2 rebuild procedure",
+      "gate": "approval:on_call_observer",
+      "rollback": "skip wipe and leave db2 stopped until re-approved",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Keep dual-support fallback: preserve old replica until basebackup succeeds",
+      "scope": "Transition window from stopped db2 to rebuilt db2 catching up to db1",
+      "gate": "wait_for:pg_basebackup_complete",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Add post-rebuild replication health checks before cutover completion",
+      "scope": "Validation after starting PostgreSQL on db2 and before declaring success",
+      "gate": "monitor:replication_lag0",
+      "rollback": "stop db2 and restore from last known-good basebackup",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    }
+  ],
+  "plans": {
+    "00-cost-leaning": {
+      "summary": "Rebuild db2 only after strict host checks, buddy approval, and off-peak confirmation; keep db1 untouched and verify replication before handoff.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Confirm an escalation owner is assigned and notify on-call, DB owners, and support that a db2 rebuild is about to start.",
+          "owner": "ProductPM",
+          "depends_on": [],
+          "gate": "approval:on-call incident owner",
+          "rollback": "Revert escalation ownership to the prior duty owner and pause the rebuild.",
+          "observability": "Acknowledgements from on-call, DB owners, and support; status note recorded."
+        },
+        {
+          "id": "S2",
+          "action": "Verify the rebuild is occurring in an approved low-risk window and not during incident/launch/overnight fatigue risk.",
+          "owner": "SRE",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "window:outside_incident_window_and_not_late_night",
+          "rollback": "Defer the rebuild and reschedule for a staffed maintenance window.",
+          "observability": "Calendar/incident status confirms off-peak maintenance window."
+        },
+        {
+          "id": "S3",
+          "action": "SSH into the replica host and confirm the hostname is exactly db2.cluster.gitlab.com before any destructive command.",
+          "owner": "SRE",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "wait_for:hostname_confirmed_db2.cluster.gitlab.com",
+          "rollback": "Disconnect and reconnect only after explicit hostname verification.",
+          "observability": "Shell prompt, hostname command output, and host key/context all match db2."
+        },
+        {
+          "id": "S4",
+          "action": "Have the second engineer and observing engineer explicitly approve that the connected host is db2 and that the session is safe to proceed.",
+          "owner": "SRE",
+          "depends_on": [
+            "S3"
+          ],
+          "gate": "approval:second_engineer",
+          "rollback": "Abort the session and run no further commands.",
+          "observability": "Two-person verbal/recorded confirmation that the target is db2."
+        },
+        {
+          "id": "S5",
+          "action": "Stop PostgreSQL on db2 and confirm it is fully stopped before any cleanup.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "wait_for:postgresql stopped on db2",
+          "rollback": "Start PostgreSQL on db2 if stopped incorrectly and reassess before continuing.",
+          "observability": "Service status shows PostgreSQL stopped; no remaining postmaster processes."
+        },
+        {
+          "id": "S6",
+          "action": "Perform the pre-wipe checkpoint: observer confirms db2 identity again, then approve the destructive cleanup.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "approval:on_call_observer",
+          "rollback": "Skip the wipe and leave db2 stopped until re-approved.",
+          "observability": "Observer signs off on host identity and destructive-step readiness."
+        },
+        {
+          "id": "S7",
+          "action": "Wipe only the PostgreSQL data directory on db2, preserving audit logs and any pre-wipe snapshot references.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "none",
+          "rollback": "Restore the original data directory from the pre-wipe filesystem snapshot or backup, if available.",
+          "observability": "Destructive command targets only the db2 data directory; audit trail captured."
+        },
+        {
+          "id": "S8",
+          "action": "Run pg_basebackup from db1 to reseed db2 with a throughput limit that protects db1 IOPS.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S7"
+          ],
+          "gate": "monitor:db1_replication_lag<30s",
+          "rollback": "Cancel pg_basebackup, clear the partial replica directory, and restart with a lower rate limit.",
+          "observability": "db1 replication lag stays under 30s; db1 write availability remains normal."
+        },
+        {
+          "id": "S9",
+          "action": "Start PostgreSQL on db2 after basebackup completes and verify streaming replication resumes.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "monitor:replication_lag<0.1%",
+          "rollback": "Stop db2 and restore from the last known-good basebackup.",
+          "observability": "PostgreSQL starts cleanly; replication status transitions to streaming."
+        },
+        {
+          "id": "S10",
+          "action": "Confirm replication is fully caught up and stable before declaring db2 back in service.",
+          "owner": "SRE",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "monitor:replication_lag 0",
+          "rollback": "Keep db2 out of service and re-run the rebuild if lag does not clear.",
+          "observability": "Replication lag is zero and remains stable over a short observation period."
+        },
+        {
+          "id": "S11",
+          "action": "Release db2 to service and clean up any temporary preservation artifacts only after catch-up stability is confirmed.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "wait_for:replication_caught_up_and_stable",
+          "rollback": "Retain old files or restore them from temporary preservation storage if the new replica fails.",
+          "observability": "No stale artifacts remain in active paths; db2 is healthy and serving as replica."
+        }
+      ],
+      "open_questions": [
+        "Is a formal maintenance window already approved for this rebuild, or must one still be scheduled?",
+        "Who is the named on-call incident owner for this session?",
+        "Which exact backup/snapshot mechanism exists for pre-wipe recovery if the wipe is started on the wrong host?",
+        "Is the observer the same as the second engineer, or do the roles need to be distinct?",
+        "Are there any current incident or launch windows that would force a deferment?"
+      ],
+      "conflicts": [
+        {
+          "between": [
+            "DataPlatform",
+            "SRE"
+          ],
+          "issue": "DataPlatform requires a quiet off-peak maintenance window, while SRE blocks execution during incident windows or overnight fatigue risk.",
+          "impact": "Both are blocking and can prevent the rebuild from starting now.",
+          "plan": "Defer until a staffed off-peak maintenance window that also avoids incident/late-night risk."
+        },
+        {
+          "between": [
+            "DataPlatform",
+            "Security"
+          ],
+          "issue": "DataPlatform requires proceeding during a quiet maintenance window, while Security requires notification before any externally visible change during the 23:00 local window.",
+          "impact": "Timing and notification gates both block immediate execution.",
+          "plan": "Send notifications first, then proceed only if the maintenance window remains valid."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "SRE"
+          ],
+          "issue": "ProductPM forbids starting during peak support or launch windows, while SRE forbids overnight fatigue-risk execution.",
+          "impact": "These blocking time constraints may jointly force a delay.",
+          "plan": "Choose the next staffed low-risk window that satisfies both constraints."
+        },
+        {
+          "between": [
+            "BackendOwner",
+            "DataPlatform"
+          ],
+          "issue": "BackendOwner wants the stop-wipe-basebackup-start sequence on db2 only, while DataPlatform blocks the wipe until db1 host identity is confirmed.",
+          "impact": "The wipe step cannot occur until host identity checks are complete.",
+          "plan": "Perform host verification before any destructive cleanup, then continue the ordered sequence."
+        },
+        {
+          "between": [
+            "BackendOwner",
+            "SRE"
+          ],
+          "issue": "BackendOwner requires verifying SSH target is db2 before stop/wipe, while SRE requires host identity confirmation before any rm -rf.",
+          "impact": "Both block the same pre-wipe step and reinforce the same gate.",
+          "plan": "Collapse into one pre-wipe host verification checkpoint before any destructive command."
+        },
+        {
+          "between": [
+            "BackendOwner",
+            "Security"
+          ],
+          "issue": "BackendOwner requires host identity verification before destructive commands, while Security also requires verification before any destructive command and a second-engineer confirmation for the wipe.",
+          "impact": "The wipe cannot proceed without both identity and buddy approval.",
+          "plan": "Bundle identity verification and second-engineer confirmation into one checkpoint before rm -rf."
+        },
+        {
+          "between": [
+            "DataPlatform",
+            "ConsumerSubsystem"
+          ],
+          "issue": "DataPlatform says do not remove old replica files until catch-up is stable, while ConsumerSubsystem wants to preserve old replica files until basebackup succeeds.",
+          "impact": "These are aligned and both block premature cleanup.",
+          "plan": "Keep old replica data preserved through basebackup and only clean up after stable catch-up."
+        },
+        {
+          "between": [
+            "SRE",
+            "Security"
+          ],
+          "issue": "SRE requires two-engineer buddy check before any destructive step, and Security requires host identity verification before destructive commands plus two-engineer confirmation before rm -rf.",
+          "impact": "Multiple approval gates stack before the wipe.",
+          "plan": "Collapse to one two-engineer pre-wipe approval that includes host identity verification."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "BackendOwner"
+          ],
+          "issue": "ProductPM requires support readiness before rebuild starts, while BackendOwner requires keeping db1 serving production reads/writes throughout.",
+          "impact": "Support approval is a start gate; db1 availability is a continuous blocking invariant.",
+          "plan": "Obtain support readiness before starting and continuously monitor db1 availability during the rebuild."
+        }
+      ]
+    },
+    "01-safety-leaning": {
+      "summary": "",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Notify on-call, DB owners, support, and assign a named escalation owner for the rebuild window; confirm the operation is in an approved off-peak maintenance window and not during launch/major event periods.",
+          "owner": "ProductPM",
+          "depends_on": [],
+          "gate": "approval:support lead",
+          "rollback": "Pause the rebuild and reschedule in the next approved low-risk window.",
+          "observability": "Written confirmations from support and on-call; maintenance window status; escalation owner recorded."
+        },
+        {
+          "id": "S2",
+          "action": "Open the SSH session to db2.cluster.gitlab.com with both engineers present; verify the hostname/banner and command prompt match db2 before any service or filesystem action.",
+          "owner": "SRE",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "approval:second_engineer",
+          "rollback": "Abort the session and reconnect only after explicit db2 hostname verification.",
+          "observability": "SSH target hostname, shell prompt, and host fingerprint match db2.cluster.gitlab.com."
+        },
+        {
+          "id": "S3",
+          "action": "Record audit logs for the SSH session and preflight checks; confirm logging is active before proceeding.",
+          "owner": "Security",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "none",
+          "rollback": "Stop work and restore audit logging before any further commands.",
+          "observability": "Session logging present for access, service stop, wipe, basebackup, and restart commands."
+        },
+        {
+          "id": "S4",
+          "action": "Confirm db1.cluster.gitlab.com identity separately and verify it is serving production reads/writes; confirm no commands will be run on db1.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "monitor:db1 write availability 100%",
+          "rollback": "Stop and re-verify host identity before any further action.",
+          "observability": "db1 hostname/fingerprint, production read/write health, and no access to db1 shell for rebuild actions."
+        },
+        {
+          "id": "S5",
+          "action": "Stop PostgreSQL on db2 only after db2 identity is confirmed and the buddy check is complete.",
+          "owner": "SRE",
+          "depends_on": [
+            "S3",
+            "S4"
+          ],
+          "gate": "wait_for:postgresql stopped on db2",
+          "rollback": "Start PostgreSQL on db2 if it was stopped in error and reassess before continuing.",
+          "observability": "PostgreSQL service state on db2; no impact on db1 availability."
+        },
+        {
+          "id": "S6",
+          "action": "Perform a pre-wipe checkpoint: second engineer confirms db2 host identity, the observer approves the destructive step, and any old replica data is preserved in a temporary location or snapshot if available.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "approval:on_call_observer",
+          "rollback": "Skip the wipe and leave db2 stopped until re-approved.",
+          "observability": "Explicit dual approval captured; preserved snapshot or backup location recorded."
+        },
+        {
+          "id": "S7",
+          "action": "Wipe only the PostgreSQL data directory on db2 with rm -rf after all confirmations are complete.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "approval:two_engineers",
+          "rollback": "Restore the original data directory from the pre-wipe filesystem snapshot or backup and keep db2 offline.",
+          "observability": "Path targeted is the db2 data directory only; no other filesystem paths touched."
+        },
+        {
+          "id": "S8",
+          "action": "Run pg_basebackup from db1 to db2 with throughput limited to protect db1 IOPS.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S7"
+          ],
+          "gate": "monitor:db1_replication_lag<30s",
+          "rollback": "Cancel pg_basebackup, clear the partially copied replica directory, and restart with a lower rate limit.",
+          "observability": "Basebackup progress, db1 replication lag, db1 IOPS, and transfer rate."
+        },
+        {
+          "id": "S9",
+          "action": "Start PostgreSQL on db2 after basebackup completes.",
+          "owner": "SRE",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "wait_for:pg_basebackup_complete",
+          "rollback": "Stop db2 PostgreSQL and restore from the last known-good basebackup if startup fails.",
+          "observability": "Service start success, recovery logs, and initial WAL replay progress."
+        },
+        {
+          "id": "S10",
+          "action": "Verify replication health until lag is zero and stable; keep db2 out of service until the lag remains healthy.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "monitor:replication_lag0",
+          "rollback": "Stop db2 and re-run the rebuild if lag does not clear.",
+          "observability": "Replication lag, WAL replay status, and stability over time."
+        },
+        {
+          "id": "S11",
+          "action": "Hold the old replica files and temporary artifacts on db2 until replication catch-up has been stable; then remove only after stability is confirmed.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "wait_for:replication_caught_up_and_stable",
+          "rollback": "Retain the old files or restore them from the temporary preservation location if the new replica fails.",
+          "observability": "Presence of preserved files before cleanup and replication stability duration."
+        },
+        {
+          "id": "S12",
+          "action": "Announce completion only after replication is healthy and db1 remained fully available throughout the rebuild.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S10",
+            "S11"
+          ],
+          "gate": "monitor:db1 write availability 100%",
+          "rollback": "Publish a recovery update once replication is healthy again and keep the replica out of service until then.",
+          "observability": "Replication health at zero lag, db1 production availability, and internal/external status updates."
+        }
+      ],
+      "open_questions": [],
+      "conflicts": []
+    },
+    "02-speed-leaning": {
+      "summary": "",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Notify on-call, DB owners, support, and assign the named escalation owner; confirm the rebuild is in an approved off-peak maintenance window and outside launch/incident/fatigue risk.",
+          "owner": "SRE",
+          "depends_on": [],
+          "gate": "approval:on-call incident owner",
+          "rollback": "Pause the rebuild and reschedule in the next approved staffed maintenance window.",
+          "observability": "Acknowledgements received, escalation owner named, window confirmed, no incident/launch overlap."
+        },
+        {
+          "id": "S2",
+          "action": "SSH to db2.cluster.gitlab.com and verify host identity before any service stop or destructive command; preserve the audit trail of the session.",
+          "owner": "SecondEngineer",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "approval:second_engineer",
+          "rollback": "Abort session and reconnect only after explicit hostname verification of db2.cluster.gitlab.com.",
+          "observability": "Hostname output matches db2.cluster.gitlab.com; SSH logs captured."
+        },
+        {
+          "id": "S3",
+          "action": "Have the observing engineer perform a buddy check confirming the SSH target is db2 and the planned rebuild sequence is stop -> wipe -> basebackup -> start.",
+          "owner": "SecondEngineer",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "approval:second_engineer",
+          "rollback": "Abort the session and do not run any further commands.",
+          "observability": "Two-engineer confirmation recorded; target and sequence verbally/operationally confirmed."
+        },
+        {
+          "id": "S4",
+          "action": "Stop PostgreSQL on db2 and confirm the service is fully stopped before proceeding.",
+          "owner": "DriverEngineer",
+          "depends_on": [
+            "S3"
+          ],
+          "gate": "wait_for:postgresql stopped on db2",
+          "rollback": "Start PostgreSQL back on db2 if the rebuild is aborted before wipe.",
+          "observability": "postgresql stopped; no active postmaster on db2."
+        },
+        {
+          "id": "S5",
+          "action": "Wipe the db2 PostgreSQL data directory only after re-confirming the host is db2 and the second engineer approves the destructive step.",
+          "owner": "DriverEngineer",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "approval:second_engineer",
+          "rollback": "Stop the wipe, preserve current state, and reconnect/re-verify if anything looks off.",
+          "observability": "Target path is the replica data dir on db2; audit log notes rm -rf execution."
+        },
+        {
+          "id": "S6",
+          "action": "Run pg_basebackup from db1 to refill db2 with a rate limit that protects db1 IOPS and replication lag.",
+          "owner": "DriverEngineer",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "monitor:db1_replication_lag<30s",
+          "rollback": "Cancel pg_basebackup, clear the partially copied replica directory, and restart with a lower rate limit.",
+          "observability": "db1 write availability remains 100%; db1 replication lag stays under threshold; basebackup progress advances."
+        },
+        {
+          "id": "S7",
+          "action": "Start PostgreSQL on db2 after basebackup completion.",
+          "owner": "DriverEngineer",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "wait_for:pg_basebackup_complete",
+          "rollback": "Stop db2 and restore from the last known-good basebackup if startup or recovery is incorrect.",
+          "observability": "PostgreSQL starts cleanly; recovery/replay begins without errors."
+        },
+        {
+          "id": "S8",
+          "action": "Monitor replication health and lag until db2 is caught up and stable; keep db2 out of service until the lag thresholds are satisfied.",
+          "owner": "ObserverEngineer",
+          "depends_on": [
+            "S7"
+          ],
+          "gate": "monitor:replication_lag0",
+          "rollback": "Keep db2 out of service and re-run the rebuild if lag does not clear.",
+          "observability": "Replication lag reaches 0, stays stable, and streaming remains healthy."
+        },
+        {
+          "id": "S9",
+          "action": "Validate that db1 continues serving production reads/writes throughout the rebuild and that no production impact occurred.",
+          "owner": "ObserverEngineer",
+          "depends_on": [
+            "S1",
+            "S6",
+            "S8"
+          ],
+          "gate": "monitor:db1 write availability 100%",
+          "rollback": "Redeploy previous",
+          "observability": "db1 write availability remains 100%; no errors or failover events on primary."
+        },
+        {
+          "id": "S10",
+          "action": "Declare success only after replication lag is zero/healthy and hand db2 back into service.",
+          "owner": "SRE",
+          "depends_on": [
+            "S8",
+            "S9"
+          ],
+          "gate": "monitor:replication lag 0",
+          "rollback": "Keep db2 out of service and restore from the last known-good basebackup if health degrades.",
+          "observability": "Replication health sustained; db2 caught up and serving as a valid failover/backup source."
+        }
+      ],
+      "open_questions": [],
+      "conflicts": []
+    },
+    "03-safety-tilted": {
+      "summary": "",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Send notifications to on-call, DB owners, and support; confirm named escalation owner is assigned for the full rebuild window.",
+          "owner": "ProductPM",
+          "depends_on": [],
+          "gate": "approval:support lead",
+          "rollback": "Pause the rebuild and resend notifications once support is ready.",
+          "observability": "Acknowledgements from support, on-call, and DB owners; named escalation owner recorded."
+        },
+        {
+          "id": "S2",
+          "action": "Confirm the operation is in an approved off-peak maintenance window and not during incident, launch, or major-event coverage; if not, defer.",
+          "owner": "SRE",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "window:off-peak_maint",
+          "rollback": "Abort the rebuild and reschedule for the next staffed maintenance window.",
+          "observability": "Calendar/window approval status; no active incident or launch window conflict."
+        },
+        {
+          "id": "S3",
+          "action": "SSH to db2.cluster.gitlab.com from the driving engineer session and have the observing engineer verify the host identity aloud and from the shell prompt.",
+          "owner": "SRE",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "approval:second_engineer",
+          "rollback": "Disconnect immediately and reconnect only after explicit db2 hostname verification.",
+          "observability": "Hostname, prompt, and connection target all match db2.cluster.gitlab.com."
+        },
+        {
+          "id": "S4",
+          "action": "Record/confirm audit logging is active for SSH access and all destructive commands before any service changes.",
+          "owner": "Security",
+          "depends_on": [
+            "S3"
+          ],
+          "gate": "none",
+          "rollback": "Halt the rebuild until audit logging is restored and verifiable.",
+          "observability": "Session logging present; commands and timestamps captured."
+        },
+        {
+          "id": "S5",
+          "action": "Stop PostgreSQL on db2 only after the observer re-confirms the host identity and the session remains on db2.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "wait_for:postgresql stopped on db2",
+          "rollback": "Start PostgreSQL on db2 again and abort the rebuild if the host identity is uncertain.",
+          "observability": "Service status shows PostgreSQL fully stopped on db2; db1 remains healthy."
+        },
+        {
+          "id": "S6",
+          "action": "Before any wipe, perform a final two-engineer preflight: verify the shell hostname, fully qualified domain name, and target path all correspond to db2.cluster.gitlab.com.",
+          "owner": "Security",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "approval:two_engineers",
+          "rollback": "Abort the session and do not run any further commands until db2 is re-verified.",
+          "observability": "Verified host identity, correct data directory path, and both engineers in agreement."
+        },
+        {
+          "id": "S7",
+          "action": "Wipe only the PostgreSQL data directory on db2 with rm -rf, preserving audit logs and not touching any parent or unrelated paths.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "approval:second_engineer",
+          "rollback": "Stop the wipe immediately and restore the original data directory from the pre-wipe filesystem snapshot or backup if needed.",
+          "observability": "Command target path matches the intended db2 data directory; no access outside the replica host."
+        },
+        {
+          "id": "S8",
+          "action": "Run pg_basebackup from db1 to refill db2, using a throughput limit that protects db1 IOPS and avoids excessive replication lag.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S7"
+          ],
+          "gate": "monitor:db1_replication_lag<30s",
+          "rollback": "Cancel pg_basebackup, clear the partially copied replica directory, and restart with a lower rate limit.",
+          "observability": "db1 write latency, replica lag, and basebackup progress; db1 production availability remains 100%."
+        },
+        {
+          "id": "S9",
+          "action": "Start PostgreSQL on db2 after basebackup completes and keep the old replica artifacts preserved until catch-up is stable.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "wait_for:pg_basebackup_complete",
+          "rollback": "Stop db2 and restore the preserved prior state or last known-good backup if the new start fails.",
+          "observability": "PostgreSQL starts cleanly; old files remain untouched until stability is proven."
+        },
+        {
+          "id": "S10",
+          "action": "Validate replication health and lag continuously until it is fully caught up and stable, then confirm db2 is safe for service.",
+          "owner": "SRE",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "monitor:replication_lag<0.1%",
+          "rollback": "Keep db2 out of service and re-run the rebuild if lag does not clear.",
+          "observability": "Replication lag, replay status, and catch-up stability over time; db1 remains unaffected."
+        },
+        {
+          "id": "S11",
+          "action": "After stable catch-up, remove any preserved old replica files and temporary artifacts from db2.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "wait_for:replication_caught_up_and_stable",
+          "rollback": "Retain the old files or restore them from the temporary preservation location if the new replica fails.",
+          "observability": "Cleanup completes only after stable replication is confirmed."
+        },
+        {
+          "id": "S12",
+          "action": "Hand back the rebuilt replica for normal use and confirm db1 write availability stayed at 100% throughout.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "monitor:db1 write availability 100%",
+          "rollback": "Redeploy previous",
+          "observability": "db1 service health, customer-facing availability, and replica health all remain green."
+        }
+      ],
+      "open_questions": [],
+      "conflicts": []
+    }
+  },
+  "weights_for": {
+    "00-cost-leaning": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "01-safety-leaning": [
+      0.0,
+      1.0,
+      0.0
+    ],
+    "02-speed-leaning": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "03-safety-tilted": [
+      0.0,
+      0.5,
+      0.5
+    ]
+  },
+  "scores": {
+    "00-cost-leaning": {
+      "steps": 11,
+      "structural_pass": true,
+      "smt_feasible": true,
+      "smt_unsat_core_size": 0,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.5,
+      "fragility_at_budget_1": 0.538,
+      "fragility_at_budget_2": 0.0,
+      "avg_severity": 2.43,
+      "rollback_failure_rate": 0.571,
+      "approval_gates": 3,
+      "window_gates": 1,
+      "monitor_gates": 3,
+      "achilles_heel": [
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ],
+        [
+          "S1",
+          0.5
+        ],
+        [
+          "S2",
+          0.5
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 6,
+        "redo_full": 1,
+        "manual_ops": 7
+      }
+    },
+    "01-safety-leaning": {
+      "steps": 12,
+      "structural_pass": true,
+      "smt_feasible": true,
+      "smt_unsat_core_size": 0,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.6,
+      "fragility_at_budget_1": 0.643,
+      "fragility_at_budget_2": 0.0,
+      "avg_severity": 1.8,
+      "rollback_failure_rate": 0.4,
+      "approval_gates": 4,
+      "window_gates": 0,
+      "monitor_gates": 4,
+      "achilles_heel": [
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S10",
+          1.0
+        ],
+        [
+          "S11",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 9,
+        "manual_ops": 6
+      }
+    },
+    "02-speed-leaning": {
+      "steps": 10,
+      "structural_pass": true,
+      "smt_feasible": true,
+      "smt_unsat_core_size": 0,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.846,
+      "fragility_at_budget_1": 0.917,
+      "fragility_at_budget_2": 0.0,
+      "avg_severity": 2.38,
+      "rollback_failure_rate": 0.308,
+      "approval_gates": 4,
+      "window_gates": 0,
+      "monitor_gates": 4,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 8,
+        "manual_ops": 3,
+        "unrecoverable": 2
+      }
+    },
+    "03-safety-tilted": {
+      "steps": 12,
+      "structural_pass": true,
+      "smt_feasible": true,
+      "smt_unsat_core_size": 0,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.99,
+      "fragility_at_budget_1": 1.0,
+      "fragility_at_budget_2": 0.857,
+      "avg_severity": 2.5,
+      "rollback_failure_rate": 0.214,
+      "approval_gates": 4,
+      "window_gates": 1,
+      "monitor_gates": 3,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S2",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 13,
+        "unrecoverable": 1
+      }
+    }
+  },
+  "smt": {
+    "00-cost-leaning": {
+      "feasible": true,
+      "backend": "z3",
+      "n_dependency_edges": 10,
+      "n_constraint_edges": 1,
+      "witness_ordering": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5",
+        "S6",
+        "S7",
+        "S8",
+        "S9",
+        "S10",
+        "S11"
+      ],
+      "unsat_core": [],
+      "unsat_core_explanations": [],
+      "notes": []
+    },
+    "01-safety-leaning": {
+      "feasible": true,
+      "backend": "z3",
+      "n_dependency_edges": 13,
+      "n_constraint_edges": 0,
+      "witness_ordering": [
+        "S1",
+        "S2",
+        "S4",
+        "S3",
+        "S5",
+        "S6",
+        "S7",
+        "S8",
+        "S9",
+        "S10",
+        "S11",
+        "S12"
+      ],
+      "unsat_core": [],
+      "unsat_core_explanations": [],
+      "notes": []
+    },
+    "02-speed-leaning": {
+      "feasible": true,
+      "backend": "z3",
+      "n_dependency_edges": 12,
+      "n_constraint_edges": 1,
+      "witness_ordering": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5",
+        "S6",
+        "S7",
+        "S8",
+        "S9",
+        "S10"
+      ],
+      "unsat_core": [],
+      "unsat_core_explanations": [],
+      "notes": []
+    },
+    "03-safety-tilted": {
+      "feasible": true,
+      "backend": "z3",
+      "n_dependency_edges": 11,
+      "n_constraint_edges": 0,
+      "witness_ordering": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5",
+        "S6",
+        "S7",
+        "S8",
+        "S9",
+        "S10",
+        "S11",
+        "S12"
+      ],
+      "unsat_core": [],
+      "unsat_core_explanations": [],
+      "notes": []
+    }
+  },
+  "chaos": {
+    "00-cost-leaning": {
+      "fragility": 0.5,
+      "fragility_curve": {
+        "1": 0.538,
+        "2": 0.0
+      },
+      "avg_severity": 2.43,
+      "rollback_failure_rate": 0.571,
+      "achilles_heel": [
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ],
+        [
+          "S1",
+          0.5
+        ],
+        [
+          "S2",
+          0.5
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 6,
+        "redo_full": 1,
+        "manual_ops": 7
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "redo_full",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S10"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S5",
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        }
+      ]
+    },
+    "01-safety-leaning": {
+      "fragility": 0.6,
+      "fragility_curve": {
+        "1": 0.643,
+        "2": 0.0
+      },
+      "avg_severity": 1.8,
+      "rollback_failure_rate": 0.4,
+      "achilles_heel": [
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S10",
+          1.0
+        ],
+        [
+          "S11",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 9,
+        "manual_ops": 6
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "low"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "low"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S10"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S11"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "low"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S9",
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        }
+      ]
+    },
+    "02-speed-leaning": {
+      "fragility": 0.846,
+      "fragility_curve": {
+        "1": 0.917,
+        "2": 0.0
+      },
+      "avg_severity": 2.38,
+      "rollback_failure_rate": 0.308,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 8,
+        "manual_ops": 3,
+        "unrecoverable": 2
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "unrecoverable",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "unrecoverable",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S6",
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        }
+      ]
+    },
+    "03-safety-tilted": {
+      "fragility": 0.99,
+      "fragility_curve": {
+        "1": 1.0,
+        "2": 0.857
+      },
+      "avg_severity": 2.5,
+      "rollback_failure_rate": 0.214,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S2",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 13,
+        "unrecoverable": 1
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "low"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S10"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "unrecoverable",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8",
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S6",
+            "S7",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        }
+      ]
+    }
+  },
+  "pareto": {
+    "front_0_labels": [
+      "02-speed-leaning",
+      "00-cost-leaning",
+      "03-safety-tilted",
+      "01-safety-leaning"
+    ],
+    "all_points": [
+      {
+        "label": "00-cost-leaning",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.5,
+          "avg_severity": 2.43,
+          "rollback_failure_rate": 0.571,
+          "steps": 11.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      {
+        "label": "01-safety-leaning",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.6,
+          "avg_severity": 1.8,
+          "rollback_failure_rate": 0.4,
+          "steps": 12.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      {
+        "label": "02-speed-leaning",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.846,
+          "avg_severity": 2.38,
+          "rollback_failure_rate": 0.308,
+          "steps": 10.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          1.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "label": "03-safety-tilted",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.99,
+          "avg_severity": 2.5,
+          "rollback_failure_rate": 0.214,
+          "steps": 12.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.0,
+          0.5,
+          0.5
+        ]
+      }
+    ],
+    "winner": "00-cost-leaning",
+    "winner_utility": -0.055050000000000036,
+    "user_weights": {
+      "fragility": 0.4,
+      "coverage": 0.3,
+      "steps": 0.1,
+      "severity": 0.15,
+      "rollback_failure": 0.05
+    }
+  }
+}

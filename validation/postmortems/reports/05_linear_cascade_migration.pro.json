@@ -1,0 +1,2175 @@
+{
+  "intent_path": "/home/user/Playground/validation/postmortems/intents/05_linear_cascade_migration.md",
+  "constraints": [
+    {
+      "axis": "deploy",
+      "summary": "Add join-table reads/writes before dropping assignee_id",
+      "scope": "Deployment order for Steps 3-5 of the Issue.assignee migration",
+      "gate": "wait_for:backfill_complete_and_dual_write_verified",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep API backward-compatible while both assignment models exist",
+      "scope": "Issue assignment endpoints and serializers during the transition window",
+      "gate": "none",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Do not deploy code that reads join table until it exists and backfill starts",
+      "scope": "Step 3 code rollout that reads from IssueAssignee",
+      "gate": "wait_for:IssueAssignee_table_created_and_backfill_job_running",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Keep dual-write enabled until old and new stores match",
+      "scope": "Transition window between dual-write code and read-only new-store code",
+      "gate": "monitor:backfill_and_dual_write_mismatch_rate=0",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "schema",
+      "summary": "Create join table before any backfill or read switch",
+      "scope": "Step 1 must land and be fully applied before Step 2/3 uses IssueAssignee",
+      "gate": "wait_for:IssueAssignee table created and migrated successfully",
+      "rollback": "Drop IssueAssignee and revert to the pre-migration schema",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Backfill in bounded batches to avoid IOPS spikes",
+      "scope": "Step 2 backfill from Issue.assignee_id into IssueAssignee across ~50M issues",
+      "gate": "monitor:replication_lag<5m",
+      "rollback": "Stop the backfill job and delete inserted IssueAssignee rows from the batch window",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Run schema-altering DDL only in the maintenance window",
+      "scope": "Any DDL for creating or dropping tables/columns, especially Step 5 drop",
+      "gate": "window:maintenance",
+      "rollback": "Revert the migration by restoring the previous schema version",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Do not drop assignee_id until a quiet period confirms no lagging reads",
+      "scope": "Step 5 destructive drop of Issue.assignee_id after dual-write/read cutover",
+      "gate": "wait_for:quiet_period_after_cutover",
+      "rollback": "Re-add Issue.assignee_id and restore it from backup if needed",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "schema",
+      "summary": "Review generated DROP DDL for unintended cascades before merge",
+      "scope": "Prisma-generated migration SQL for Step 5, including ON DELETE CASCADE effects",
+      "gate": "approval:storage",
+      "rollback": "Reject the migration and regenerate SQL without the cascading drop path",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Block destructive drop until post-cutover error rate is stable",
+      "scope": "Step 5: dropping Issue.assignee_id and any generated cascade DDL",
+      "gate": "monitor:error_rate<0.1% for 24h",
+      "rollback": "restore Issue.assignee_id from backup or redeploy previous migration and code",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Do not run the drop outside a safe maintenance window",
+      "scope": "Step 5 production execution",
+      "gate": "window:business-hours-mon-thu-only-no-incidents",
+      "rollback": "abort migration and reschedule to the next approved window",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Require a verified rollback path before any schema cutover",
+      "scope": "Steps 3-5 transition from dual-write to IssueAssignee-only and column drop",
+      "gate": "approval:release-manager",
+      "rollback": "redeploy previous application version with dual-read/dual-write enabled",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Hold destructive migration until backfill and dual-write are fully settled",
+      "scope": "Step 5 depends on prior backfill and transition code",
+      "gate": "wait_for:backfill_complete_and_dual_write_stable",
+      "rollback": "stop rollout and keep old column until transition completes",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "security",
+      "summary": "Approve DDL review for destructive drop before merge",
+      "scope": "Step 5 Prisma-generated migration that drops Issue.assignee_id and may cascade",
+      "gate": "approval:security",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Verify migration SQL has no unexpected cascade path",
+      "scope": "Prisma-generated DDL for the column-drop PR and any helper functions it emits",
+      "gate": "wait_for:explicit_cascade_review",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify customers if assignment behavior changes externally",
+      "scope": "Steps 3-5 when writes/read source-of-truth changes or legacy column is removed",
+      "gate": "window:customer_notice_before_release",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Allow partner/support lead time for visible assignment change",
+      "scope": "Any externally visible change in assignee behavior during dual-write cutover",
+      "gate": "window:partner_notice_before_cutover",
+      "rollback": "redeploy_previous",
+      "blocking": false,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify customers before any breaking assignment change",
+      "scope": "Step 5 dropping Issue.assignee_id and any user-visible assignment behavior changes",
+      "gate": "wait_for:customer_notice_sent_at_least_14_days_before_step_5",
+      "rollback": "pause rollout and keep legacy Issue.assignee_id path active",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Avoid rollout during launch windows or major customer events",
+      "scope": "All migration steps, especially the quiet-period transition and column drop",
+      "gate": "window:no_launch_window_or_major_event",
+      "rollback": "defer to next allowed window and retain current dual-write/read mode",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "ops",
+      "summary": "Support must be briefed and staffed before destructive cutover",
+      "scope": "Step 5 and the preceding quiet-period transition",
+      "gate": "approval:support_lead_ready",
+      "rollback": "stop cutover and keep both schemas available for supportability",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "business",
+      "summary": "Escalation owner must be named for customer issues during rollout",
+      "scope": "Entire rollout, with emphasis on the transition window and cutover",
+      "gate": "approval:business_owner_assigned",
+      "rollback": "halt rollout until an escalation owner is named and published",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "api",
+      "summary": "Dual-write support must stay live until read-path parity is proven",
+      "scope": "Steps 3-4: code that reads from IssueAssignee and writes to both",
+      "gate": "wait_for:read-path_parity_verified_on_production_shape_snapshot",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep old assignee_id write shim until all writers are updated",
+      "scope": "Transition code that accepts legacy assignee_id and mirrors to IssueAssignee",
+      "gate": "approval:api-owner",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Do not drop assignee_id until dual-support window completes",
+      "scope": "Step 5 schema drop of Issue.assignee_id",
+      "gate": "window:quiet_period_after_dual_write_release",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Require cutover test proving generated drop SQL is non-destructive",
+      "scope": "Prisma-generated migration for Step 5, including FK behavior",
+      "gate": "wait_for:drop_migration_test_passes_on_prod_shape_copy",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "If new API misses schedule, freeze Step 5 and keep shim active",
+      "scope": "Release plan for the final read/write-only IssueAssignee codepath",
+      "gate": "monitor:release_date_slip>0d",
+      "rollback": "redeploy_previous",
+      "blocking": false,
+      "owner": "ConsumerSubsystem"
+    }
+  ],
+  "plans": {
+    "00-cost-leaning": {
+      "summary": "",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Merge and apply schema migration to create IssueAssignee with required indexes/constraints; do not change app reads yet.",
+          "owner": "DataPlatform",
+          "depends_on": [],
+          "gate": "wait_for:IssueAssignee table created and migrated successfully",
+          "rollback": "Drop IssueAssignee and revert to the pre-migration schema",
+          "observability": "Migration success, table existence, constraint validity, no unexpected lock/latency spikes"
+        },
+        {
+          "id": "S2",
+          "action": "Run bounded-batch backfill from Issue.assignee_id into IssueAssignee for all non-null rows.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "monitor:replication_lag<5m",
+          "rollback": "Stop the backfill job and delete inserted IssueAssignee rows from the batch window",
+          "observability": "Batch progress, row counts matched, replication lag, deadlocks, write IOPS"
+        },
+        {
+          "id": "S3",
+          "action": "Deploy backward-compatible app code that reads from IssueAssignee and writes to both stores while preserving legacy API behavior.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "wait_for:backfill_complete_and_dual_write_verified",
+          "rollback": "redeploy_previous",
+          "observability": "Read-path parity, dual-write success rate, mismatch rate, request errors"
+        },
+        {
+          "id": "S4",
+          "action": "Keep dual-write release live until parity is proven on production-shape data and all writers are updated/using the shim.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S3"
+          ],
+          "gate": "wait_for:read-path_parity_verified_on_production_shape_snapshot",
+          "rollback": "redeploy_previous",
+          "observability": "Parity checks, write amplification, stale-read rate, background reconciliation mismatches"
+        },
+        {
+          "id": "S5",
+          "action": "Pause for the required quiet period while monitoring for lagging reads, errors, and any assignment inconsistencies.",
+          "owner": "SRE",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "monitor:error_rate<0.1% for 24h",
+          "rollback": "redeploy_previous",
+          "observability": "Error rate, assignment endpoint failures, support tickets, read/write mismatch trends"
+        },
+        {
+          "id": "S6",
+          "action": "Prepare and review Prisma-generated drop migration SQL, explicitly inspecting the ON DELETE CASCADE path and helper DDL before merge.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "approval:storage",
+          "rollback": "Reject the migration and regenerate SQL without the cascading drop path",
+          "observability": "SQL diff review outcome, presence of cascade clauses, reviewer comments, generated helper function behavior"
+        },
+        {
+          "id": "S7",
+          "action": "Obtain security review and explicit cascade-path confirmation for the destructive drop migration.",
+          "owner": "Security",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "wait_for:explicit_cascade_review",
+          "rollback": "redeploy_previous",
+          "observability": "Security signoff, cascade analysis result, unresolved findings"
+        },
+        {
+          "id": "S8",
+          "action": "Confirm customer notice was sent at least 14 days before the destructive step and that support is briefed/staffed with a named escalation owner.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S3"
+          ],
+          "gate": "wait_for:customer_notice_sent_at_least_14_days_before_step_5",
+          "rollback": "pause rollout and keep legacy Issue.assignee_id path active",
+          "observability": "Notice timestamp, support staffing roster, escalation owner publication, customer replies/escalations"
+        },
+        {
+          "id": "S9",
+          "action": "Schedule the final cutover/drop only inside an approved maintenance/business-safe window with no launch events or incidents.",
+          "owner": "SRE",
+          "depends_on": [
+            "S8",
+            "S7"
+          ],
+          "gate": "window:maintenance",
+          "rollback": "abort migration and reschedule to the next approved window",
+          "observability": "Window availability, incident status, launch calendar conflicts, deployment readiness"
+        },
+        {
+          "id": "S10",
+          "action": "Run the final Prisma-generated migration to drop Issue.assignee_id after cutover, keeping the destructive DDL reviewed and approved.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S9",
+            "S7"
+          ],
+          "gate": "approval:release-manager",
+          "rollback": "Re-add Issue.assignee_id and restore it from backup if needed",
+          "observability": "DDL execution success, lock duration, unexpected cascade effects, schema consistency"
+        },
+        {
+          "id": "S11",
+          "action": "Verify post-drop stability and complete the migration only after the quiet period and post-cutover metrics remain clean.",
+          "owner": "SRE",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "wait_for:quiet_period_after_cutover",
+          "rollback": "restore Issue.assignee_id from backup or redeploy previous migration and code",
+          "observability": "Post-cutover error rate, customer-visible assignment failures, support volume, data integrity checks"
+        }
+      ],
+      "open_questions": [],
+      "conflicts": []
+    },
+    "01-safety-leaning": {
+      "summary": "Create and backfill join table, dual-write with parity checks, then do a heavily reviewed maintenance-window drop only after long quiet periods.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Merge and apply Prisma migration that creates IssueAssignee(issue_id, user_id, ...) with indexes/constraints, without touching Issue.assignee_id.",
+          "owner": "DataPlatform",
+          "depends_on": [],
+          "gate": "approval:2_approvers_and:storage_and:security_and:api-owner",
+          "rollback": "Drop IssueAssignee and revert to the pre-migration schema.",
+          "observability": "Migration success, table exists, constraint validation, no increase in schema errors."
+        },
+        {
+          "id": "S2",
+          "action": "Start the bounded-batch backfill from Issue.assignee_id into IssueAssignee using a resumable job.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "monitor:replication_lag<5m",
+          "rollback": "Stop the backfill job and delete inserted IssueAssignee rows from the batch window.",
+          "observability": "Backfill throughput, replication lag, deadlocks, batch error rate, row counts by batch."
+        },
+        {
+          "id": "S3",
+          "action": "Deploy application code that reads from IssueAssignee and dual-writes to both IssueAssignee and legacy Issue.assignee_id, while keeping the API backward-compatible.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "wait_for:IssueAssignee_table_created_and_backfill_job_running",
+          "rollback": "Redeploy previous application version.",
+          "observability": "Read-path parity, dual-write success rate, serializer compatibility, write amplification, error rate."
+        },
+        {
+          "id": "S4",
+          "action": "Keep dual-write enabled until parity is proven on a production-shape snapshot and mismatch rate remains zero during soak.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S3"
+          ],
+          "gate": "monitor:backfill_and_dual_write_mismatch_rate=0 for 24h",
+          "rollback": "Redeploy previous application version with dual-read/dual-write enabled.",
+          "observability": "Mismatch count, lagging consumers, retry rate, snapshot parity checks, assignment read accuracy."
+        },
+        {
+          "id": "S5",
+          "action": "Deploy code that reads and writes only IssueAssignee, while keeping the legacy write shim available only if required for rollback.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "wait_for:read-path_parity_verified_on_production_shape_snapshot",
+          "rollback": "Redeploy previous application version with dual-read/dual-write enabled.",
+          "observability": "Read-path parity, new-write success rate, any legacy writer traffic, API compatibility errors."
+        },
+        {
+          "id": "S6",
+          "action": "Announce customer/support readiness and name an escalation owner before any user-visible cutover or destructive change.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S3"
+          ],
+          "gate": "window:customer_notice_before_release",
+          "rollback": "Pause rollout and keep legacy Issue.assignee_id path active.",
+          "observability": "Notice sent confirmation, support staffing confirmation, escalation contact publication."
+        },
+        {
+          "id": "S7",
+          "action": "Wait through the quiet period after dual-write/read cutover, with no launch windows or major events, and confirm stable error rates.",
+          "owner": "SRE",
+          "depends_on": [
+            "S5",
+            "S6"
+          ],
+          "gate": "monitor:error_rate<0.1% for 24h",
+          "rollback": "Keep both schemas available and redeploy previous application version.",
+          "observability": "Error rate, support tickets, assignment-related incidents, customer-facing anomalies, deployment noise."
+        },
+        {
+          "id": "S8",
+          "action": "Prepare and review the Prisma-generated drop migration SQL, explicitly checking for the unrelated ON DELETE CASCADE path and any unexpected cascades.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S7"
+          ],
+          "gate": "wait_for:explicit_cascade_review",
+          "rollback": "Reject the migration and regenerate SQL without the cascading drop path.",
+          "observability": "SQL diff review findings, cascade annotations, foreign-key effects, helper function output."
+        },
+        {
+          "id": "S9",
+          "action": "Obtain formal approvals for the destructive drop, including storage, security, release management, and support readiness.",
+          "owner": "SRE",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "approval:storage_and:approval:security_and:approval:release-manager_and:approval:support_lead_ready",
+          "rollback": "Abort the cutover and keep the old column.",
+          "observability": "Approval records, reviewer signoff, rollback plan confirmation, support staffing."
+        },
+        {
+          "id": "S10",
+          "action": "Execute the column drop for Issue.assignee_id in the maintenance window, only after the quiet period and all reviews/approvals are complete.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "window:maintenance",
+          "rollback": "Re-add Issue.assignee_id and restore it from backup if needed.",
+          "observability": "DDL execution result, cascade behavior, row-count deltas, post-drop query errors, customer ticket spikes."
+        },
+        {
+          "id": "S11",
+          "action": "Run post-drop verification to confirm IssueAssignee is the source of truth and no legacy reads/writes remain.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "monitor:error_rate<0.1% for 24h",
+          "rollback": "Redeploy previous application version and restore the legacy column if necessary.",
+          "observability": "Legacy column references, assignment correctness, 404/500 rates, mismatch logs, support escalations."
+        }
+      ],
+      "open_questions": [
+        "Who is the named business escalation owner?",
+        "What exact maintenance window satisfies both the maintenance-window and business-hours constraints?",
+        "How will customer notice be delivered, and who confirms it was sent 14 days before Step 5?",
+        "What constitutes a production-shape snapshot for parity verification?",
+        "Should the legacy assignee_id write shim be disabled before or after the read-only cutover, given rollback needs?"
+      ],
+      "conflicts": [
+        {
+          "owners": [
+            "DataPlatform",
+            "SRE"
+          ],
+          "constraint_a": "Run schema-altering DDL only in the maintenance window",
+          "constraint_b": "Do not run the drop outside a safe maintenance window",
+          "resolution": "Use the narrowest common maintenance window for the destructive drop."
+        },
+        {
+          "owners": [
+            "DataPlatform",
+            "ProductPM"
+          ],
+          "constraint_a": "Run schema-altering DDL only in the maintenance window",
+          "constraint_b": "Avoid rollout during launch windows or major customer events",
+          "resolution": "Avoid launch/major-event periods and schedule within an allowed maintenance window."
+        },
+        {
+          "owners": [
+            "SRE",
+            "ProductPM"
+          ],
+          "constraint_a": "Do not run the drop outside a safe maintenance window",
+          "constraint_b": "Avoid rollout during launch windows or major customer events",
+          "resolution": "Choose a window that satisfies both operational and business-event constraints."
+        },
+        {
+          "owners": [
+            "ProductPM",
+            "ConsumerSubsystem"
+          ],
+          "constraint_a": "Notify customers before any breaking assignment change",
+          "constraint_b": "If new API misses schedule, freeze Step 5 and keep shim active",
+          "resolution": "If notice timing slips, keep the shim and defer destructive cutover."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ConsumerSubsystem"
+          ],
+          "constraint_a": "Add join-table reads/writes before dropping assignee_id",
+          "constraint_b": "Keep old assignee_id write shim until all writers are updated",
+          "resolution": "Retain the legacy write shim through the transition until all writers are migrated."
+        }
+      ]
+    },
+    "02-speed-leaning": {
+      "summary": "Create IssueAssignee, backfill, dual-write, verify parity, then cut over and drop assignee_id in a controlled maintenance window.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Merge and apply the Prisma migration that creates IssueAssignee with required indexes/constraints, without changing application read paths yet.",
+          "owner": "DataPlatform",
+          "depends_on": [],
+          "gate": "wait_for:IssueAssignee table created and migrated successfully",
+          "rollback": "Drop IssueAssignee and revert to the pre-migration schema",
+          "observability": "Migration success, table presence, index creation, lock duration, error logs"
+        },
+        {
+          "id": "S2",
+          "action": "Run the bounded backfill job to copy each non-null Issue.assignee_id into IssueAssignee in batches.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "monitor:replication_lag<5m",
+          "rollback": "Stop the backfill job and delete inserted IssueAssignee rows from the batch window",
+          "observability": "Backfill throughput, replication lag, deadlocks, row counts inserted vs expected"
+        },
+        {
+          "id": "S3",
+          "action": "Deploy backward-compatible application code that reads from IssueAssignee and writes to both old and new assignment stores, while still accepting legacy paths.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "wait_for:backfill_complete_and_dual_write_verified",
+          "rollback": "redeploy_previous",
+          "observability": "Read-path correctness, dual-write success rate, mismatch counts, API error rate"
+        },
+        {
+          "id": "S4",
+          "action": "Hold the dual-write release steady and verify read-path parity plus store matching until the transition is proven stable.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S3"
+          ],
+          "gate": "monitor:backfill_and_dual_write_mismatch_rate=0",
+          "rollback": "redeploy_previous",
+          "observability": "Mismatch rate, parity checks on production-shape snapshot, write shim health"
+        },
+        {
+          "id": "S5",
+          "action": "Prepare the destructive drop PR by reviewing the generated Prisma SQL, explicitly checking the ON DELETE CASCADE path and validating the drop migration on a production-shape copy.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "approval:storage",
+          "rollback": "Reject the migration and regenerate SQL without the cascading drop path",
+          "observability": "SQL review outcome, cascade-path verification, test pass/fail on prod-shape copy"
+        },
+        {
+          "id": "S6",
+          "action": "Publish customer/support communications for the upcoming cutover and confirm escalation ownership and support readiness.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "window:customer_notice_before_release",
+          "rollback": "pause rollout and keep legacy Issue.assignee_id path active",
+          "observability": "Notice sent timestamp, support staffing confirmation, business owner assignment"
+        },
+        {
+          "id": "S7",
+          "action": "After the quiet period and once parity is stable, deploy code that reads and writes only IssueAssignee and remove the legacy write shim.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S4",
+            "S6"
+          ],
+          "gate": "wait_for:quiet_period_after_cutover",
+          "rollback": "redeploy_previous",
+          "observability": "Legacy write volume, read-path correctness, customer-facing assignment errors"
+        },
+        {
+          "id": "S8",
+          "action": "Execute the schema cutover in the maintenance window to drop Issue.assignee_id using the reviewed migration.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S5",
+            "S7"
+          ],
+          "gate": "window:maintenance",
+          "rollback": "Re-add Issue.assignee_id and restore it from backup if needed",
+          "observability": "DDL execution status, lock time, cascade effects, row counts before/after"
+        },
+        {
+          "id": "S9",
+          "action": "Monitor post-cutover stability and confirm error rate remains below threshold for the required settling period.",
+          "owner": "SRE",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "monitor:error_rate<0.1% for 24h",
+          "rollback": "restore Issue.assignee_id from backup or redeploy previous migration and code",
+          "observability": "API error rate, assignment endpoint failures, latency, customer support tickets"
+        }
+      ],
+      "open_questions": [
+        "Exact maintenance window start time for the destructive drop",
+        "Who is the named business owner for escalation",
+        "Whether support has been briefed and staffed before cutover",
+        "Whether the 14-day customer notice requirement is satisfied before Step 8",
+        "Whether the generated Prisma drop SQL passes explicit cascade review and non-destructive prod-shape testing"
+      ],
+      "conflicts": [
+        {
+          "owners": [
+            "SRE",
+            "DataPlatform"
+          ],
+          "constraints": [
+            "Do not run the drop outside a safe maintenance window",
+            "Run schema-altering DDL only in the maintenance window"
+          ],
+          "type": "aligned",
+          "resolution": "Use the maintenance window for the destructive drop."
+        },
+        {
+          "owners": [
+            "SRE",
+            "ProductPM"
+          ],
+          "constraints": [
+            "Avoid rollout during launch windows or major customer events",
+            "Do not run the drop outside a safe maintenance window"
+          ],
+          "type": "potential_conflict",
+          "resolution": "Schedule the drop in a maintenance window that also avoids launch windows and major events."
+        },
+        {
+          "owners": [
+            "Security",
+            "DataPlatform"
+          ],
+          "constraints": [
+            "Review generated DROP DDL for unintended cascades before merge",
+            "Verify migration SQL has no unexpected cascade path"
+          ],
+          "type": "aligned",
+          "resolution": "Require explicit cascade review before merging the drop migration."
+        },
+        {
+          "owners": [
+            "Security",
+            "ProductPM"
+          ],
+          "constraints": [
+            "Notify customers if assignment behavior changes externally",
+            "Notify customers before any breaking assignment change"
+          ],
+          "type": "aligned",
+          "resolution": "Send customer notice before the cutover/drop."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ConsumerSubsystem"
+          ],
+          "constraints": [
+            "Add join-table reads/writes before dropping assignee_id",
+            "Dual-write support must stay live until read-path parity is proven"
+          ],
+          "type": "aligned",
+          "resolution": "Keep dual-write active until parity is verified."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ConsumerSubsystem"
+          ],
+          "constraints": [
+            "Do not deploy code that reads join table until it exists and backfill starts",
+            "Keep API backward-compatible while both assignment models exist"
+          ],
+          "type": "aligned",
+          "resolution": "Create the table and start backfill before switching reads, while preserving compatibility."
+        }
+      ]
+    },
+    "03-safety-tilted": {
+      "summary": "Create and backfill join table, dual-write, verify parity, then do a guarded maintenance-window drop with explicit cascade review.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Create the IssueAssignee join table and required indexes/constraints; do not change app reads yet.",
+          "owner": "DataPlatform",
+          "depends_on": [],
+          "gate": "wait_for:IssueAssignee table created and migrated successfully",
+          "rollback": "Drop IssueAssignee and revert to the pre-migration schema",
+          "observability": "Migration success, table exists, constraints/indexes valid, no unexpected lock contention"
+        },
+        {
+          "id": "S2",
+          "action": "Start bounded-batch backfill from Issue.assignee_id into IssueAssignee for all non-null rows.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "monitor:replication_lag<5m",
+          "rollback": "Stop the backfill job and delete inserted IssueAssignee rows from the batch window",
+          "observability": "Backfill progress, replication lag, insert errors, batch latency, row counts matched to source"
+        },
+        {
+          "id": "S3",
+          "action": "Deploy backward-compatible application code that continues old writes and adds dual-writes to IssueAssignee; keep API behavior unchanged.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "wait_for:IssueAssignee_table_created_and_backfill_job_running",
+          "rollback": "redeploy_previous",
+          "observability": "Dual-write success rate, write error rate, read consistency on production-shape snapshot, legacy API compatibility"
+        },
+        {
+          "id": "S4",
+          "action": "Verify dual-write/backfill parity and keep the dual-write path live until mismatch rate is zero and read-path parity is proven.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S3"
+          ],
+          "gate": "monitor:backfill_and_dual_write_mismatch_rate=0",
+          "rollback": "redeploy_previous",
+          "observability": "Mismatch rate, read-path parity checks, stale/lagging writers, reconciliation diffs"
+        },
+        {
+          "id": "S5",
+          "action": "Deploy code that reads from IssueAssignee while still writing to both stores, maintaining backward-compatible API behavior during the transition window.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "wait_for:read-path_parity_verified_on_production_shape_snapshot",
+          "rollback": "redeploy_previous",
+          "observability": "Read-path parity, error rate, assignment lookup latency, dual-write consistency, snapshot test results"
+        },
+        {
+          "id": "S6",
+          "action": "Hold the transition in a quiet period until post-cutover behavior is stable and no lagging reads remain.",
+          "owner": "SRE",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "monitor:error_rate<0.1% for 24h",
+          "rollback": "redeploy_previous",
+          "observability": "Error rate, assignment-related support signals, lagging read indicators, operational alerts"
+        },
+        {
+          "id": "S7",
+          "action": "Prepare the destructive drop PR by reviewing Prisma-generated SQL for unintended cascades, including the ON DELETE CASCADE relationship; obtain security and storage approvals.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "approval:storage",
+          "rollback": "Reject the migration and regenerate SQL without the cascading drop path",
+          "observability": "Explicit cascade review completion, SQL diff audit, approver signoff, helper-function output review"
+        },
+        {
+          "id": "S8",
+          "action": "Run the drop migration test on a production-shape copy to prove the generated DROP SQL is non-destructive.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S7"
+          ],
+          "gate": "wait_for:drop_migration_test_passes_on_prod_shape_copy",
+          "rollback": "redeploy_previous",
+          "observability": "Test outcome, deleted-row counts, foreign-key/cascade behavior, data integrity before/after"
+        },
+        {
+          "id": "S9",
+          "action": "Execute the final schema cutover in the approved maintenance window: drop Issue.assignee_id only after quiet-period, customer notice, and support readiness conditions are met.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "window:maintenance",
+          "rollback": "Re-add Issue.assignee_id and restore it from backup if needed",
+          "observability": "DDL lock duration, affected row counts, cascade side effects, post-migration integrity checks"
+        }
+      ],
+      "open_questions": [
+        "Who is the named business owner for the rollout?",
+        "Who will act as the support lead for the destructive cutover?",
+        "Has customer notice been sent at least 14 days before the final drop?",
+        "Have partner/support notice windows been satisfied before the visible cutover?",
+        "Which exact quiet-period definition should be used if multiple teams require different durations?"
+      ],
+      "conflicts": [
+        {
+          "owners": [
+            "DataPlatform",
+            "SRE"
+          ],
+          "issue": "Step 5 must run in a maintenance window, but one constraint specifies maintenance and another restricts it to business-hours Mon-Thu only with no incidents; these can conflict with the product quiet-period timing."
+        },
+        {
+          "owners": [
+            "DataPlatform",
+            "ProductPM"
+          ],
+          "issue": "Step 5 requires a maintenance window and quiet period, while ProductPM requires no launch window or major event and customer notice 14 days before the drop; timing may block the drop window."
+        },
+        {
+          "owners": [
+            "SRE",
+            "ProductPM"
+          ],
+          "issue": "SRE requires a safe maintenance window and stable post-cutover error rate before destructive drop, while ProductPM requires support readiness and avoidance of launch/major-event windows; these jointly constrain when the drop can occur."
+        },
+        {
+          "owners": [
+            "Security",
+            "ConsumerSubsystem"
+          ],
+          "issue": "Security requires explicit cascade review and approval before merge, while ConsumerSubsystem requires a cutover test proving the generated drop SQL is non-destructive; both must be satisfied and may surface conflicting outcomes if the cascade is dangerous."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ConsumerSubsystem"
+          ],
+          "issue": "BackendOwner wants join-table reads/writes before dropping assignee_id, while ConsumerSubsystem requires old assignee_id write shim until all writers are updated; these align on a transition window but still impose a dependency that delays read-switch cutover until writer parity."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "DataPlatform"
+          ],
+          "issue": "BackendOwner wants read-switch after backfill and dual-write verification, while DataPlatform requires bounded backfill batches and the join table fully created before read switch; this is compatible but strictly serializes deployment."
+        }
+      ]
+    }
+  },
+  "weights_for": {
+    "00-cost-leaning": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "01-safety-leaning": [
+      0.0,
+      1.0,
+      0.0
+    ],
+    "02-speed-leaning": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "03-safety-tilted": [
+      0.0,
+      0.5,
+      0.5
+    ]
+  },
+  "scores": {
+    "00-cost-leaning": {
+      "steps": 11,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 2,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 1.0,
+      "fragility_at_budget_1": 1.0,
+      "fragility_at_budget_2": 1.0,
+      "avg_severity": 3.21,
+      "rollback_failure_rate": 0.214,
+      "approval_gates": 2,
+      "window_gates": 1,
+      "monitor_gates": 2,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S2",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 5,
+        "manual_ops": 7,
+        "redo_full": 2
+      }
+    },
+    "01-safety-leaning": {
+      "steps": 11,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 2,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.714,
+      "fragility_at_budget_1": 0.692,
+      "fragility_at_budget_2": 1.0,
+      "avg_severity": 2.43,
+      "rollback_failure_rate": 0.357,
+      "approval_gates": 2,
+      "window_gates": 2,
+      "monitor_gates": 4,
+      "achilles_heel": [
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ],
+        [
+          "S8",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 9,
+        "manual_ops": 5
+      }
+    },
+    "02-speed-leaning": {
+      "steps": 9,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 2,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.909,
+      "fragility_at_budget_1": 0.9,
+      "fragility_at_budget_2": 1.0,
+      "avg_severity": 2.73,
+      "rollback_failure_rate": 0.273,
+      "approval_gates": 1,
+      "window_gates": 2,
+      "monitor_gates": 3,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S2",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "manual_ops": 4,
+        "recoverable_in_window": 6,
+        "unrecoverable": 1
+      }
+    },
+    "03-safety-tilted": {
+      "steps": 9,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 4,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.545,
+      "fragility_at_budget_1": 0.6,
+      "fragility_at_budget_2": 0.0,
+      "avg_severity": 2.09,
+      "rollback_failure_rate": 0.455,
+      "approval_gates": 1,
+      "window_gates": 1,
+      "monitor_gates": 3,
+      "achilles_heel": [
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S1",
+          0.5
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 6,
+        "manual_ops": 5
+      }
+    }
+  },
+  "smt": {
+    "00-cost-leaning": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 13,
+      "n_constraint_edges": 6,
+      "witness_ordering": [],
+      "unsat_core": [
+        "dep__S3__before__S4",
+        "con__SRE__S4__before__S3"
+      ],
+      "unsat_core_explanations": [
+        "step `S4` depends_on `S3` (so `S3` must be earlier)",
+        "SRE's blocking constraint requires `S4` before `S3` (gate `wait_for:backfill_complete_and_dual_write_stable`)"
+      ],
+      "notes": []
+    },
+    "01-safety-leaning": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 12,
+      "n_constraint_edges": 4,
+      "witness_ordering": [],
+      "unsat_core": [
+        "con__SRE__S4__before__S3",
+        "dep__S3__before__S4"
+      ],
+      "unsat_core_explanations": [
+        "SRE's blocking constraint requires `S4` before `S3` (gate `wait_for:backfill_complete_and_dual_write_stable`)",
+        "step `S4` depends_on `S3` (so `S3` must be earlier)"
+      ],
+      "notes": []
+    },
+    "02-speed-leaning": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 11,
+      "n_constraint_edges": 4,
+      "witness_ordering": [],
+      "unsat_core": [
+        "dep__S3__before__S4",
+        "con__SRE__S4__before__S3"
+      ],
+      "unsat_core_explanations": [
+        "step `S4` depends_on `S3` (so `S3` must be earlier)",
+        "SRE's blocking constraint requires `S4` before `S3` (gate `wait_for:backfill_complete_and_dual_write_stable`)"
+      ],
+      "notes": []
+    },
+    "03-safety-tilted": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 9,
+      "n_constraint_edges": 4,
+      "witness_ordering": [],
+      "unsat_core": [
+        "dep__S5__before__S6",
+        "dep__S4__before__S5",
+        "con__DataPlatform__S6__before__S3",
+        "dep__S3__before__S4"
+      ],
+      "unsat_core_explanations": [
+        "step `S6` depends_on `S5` (so `S5` must be earlier)",
+        "step `S5` depends_on `S4` (so `S4` must be earlier)",
+        "DataPlatform's blocking constraint requires `S6` before `S3` (gate `wait_for:quiet_period_after_cutover`)",
+        "step `S4` depends_on `S3` (so `S3` must be earlier)"
+      ],
+      "notes": []
+    }
+  },
+  "chaos": {
+    "00-cost-leaning": {
+      "fragility": 1.0,
+      "fragility_curve": {
+        "1": 1.0,
+        "2": 1.0
+      },
+      "avg_severity": 3.21,
+      "rollback_failure_rate": 0.214,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S2",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 5,
+        "manual_ops": 7,
+        "redo_full": 2
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S10"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "redo_full",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "redo_full",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S4",
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "critical"
+        }
+      ]
+    },
+    "01-safety-leaning": {
+      "fragility": 0.714,
+      "fragility_curve": {
+        "1": 0.692,
+        "2": 1.0
+      },
+      "avg_severity": 2.43,
+      "rollback_failure_rate": 0.357,
+      "achilles_heel": [
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ],
+        [
+          "S8",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 9,
+        "manual_ops": 5
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S10"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3",
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "critical"
+        }
+      ]
+    },
+    "02-speed-leaning": {
+      "fragility": 0.909,
+      "fragility_curve": {
+        "1": 0.9,
+        "2": 1.0
+      },
+      "avg_severity": 2.73,
+      "rollback_failure_rate": 0.273,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S2",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "manual_ops": 4,
+        "recoverable_in_window": 6,
+        "unrecoverable": 1
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "unrecoverable",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S2",
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "high"
+        }
+      ]
+    },
+    "03-safety-tilted": {
+      "fragility": 0.545,
+      "fragility_curve": {
+        "1": 0.6,
+        "2": 0.0
+      },
+      "avg_severity": 2.09,
+      "rollback_failure_rate": 0.455,
+      "achilles_heel": [
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S1",
+          0.5
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 6,
+        "manual_ops": 5
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8",
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        }
+      ]
+    }
+  },
+  "pareto": {
+    "front_0_labels": [
+      "02-speed-leaning",
+      "03-safety-tilted",
+      "00-cost-leaning",
+      "01-safety-leaning"
+    ],
+    "all_points": [
+      {
+        "label": "00-cost-leaning",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 1.0,
+          "avg_severity": 3.21,
+          "rollback_failure_rate": 0.214,
+          "steps": 11.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      {
+        "label": "01-safety-leaning",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.714,
+          "avg_severity": 2.43,
+          "rollback_failure_rate": 0.357,
+          "steps": 11.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      {
+        "label": "02-speed-leaning",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.909,
+          "avg_severity": 2.73,
+          "rollback_failure_rate": 0.273,
+          "steps": 9.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          1.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "label": "03-safety-tilted",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.545,
+          "avg_severity": 2.09,
+          "rollback_failure_rate": 0.455,
+          "steps": 9.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.0,
+          0.5,
+          0.5
+        ]
+      }
+    ],
+    "winner": "03-safety-tilted",
+    "winner_utility": -0.040250000000000036,
+    "user_weights": {
+      "fragility": 0.4,
+      "coverage": 0.3,
+      "steps": 0.1,
+      "severity": 0.15,
+      "rollback_failure": 0.05
+    }
+  }
+}
