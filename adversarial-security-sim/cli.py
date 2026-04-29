@@ -129,13 +129,17 @@ def run(report_path: Path, *, top: int, rounds: int, out_path: Path) -> Path:
         defender = Agent(def_p, cfg)
 
         seed = (
-            f"# Reported finding\n\n"
+            f"# Reported finding (already disclosed by a static scanner)\n\n"
             f"**Title**: {f.title}\n\n"
             f"**Severity claimed**: {f.severity}\n\n"
             f"**Report body**:\n\n{f.body}\n\n"
-            f"As the Attacker, propose a concrete exploit chain. Cite specific code "
-            f"references. If you cannot construct a plausible exploit from the "
-            f"information given, say so and explain what would be needed."
+            f"You are the Red Team Triager. Produce an audit-level plausibility "
+            f"analysis: what preconditions a real attacker would need, the trigger "
+            f"surface, the data reachable, and the blast radius IF the finding is "
+            f"valid. Do NOT write exploit code or payloads. Cite the code references "
+            f"in the finding. If the finding is implausible or under-specified, "
+            f"explain why and list the additional code paths that need to be "
+            f"inspected to settle it."
         )
 
         transcript = debate(attacker, defender, seed_prompt=seed, rounds=rounds)
