@@ -1,0 +1,483 @@
+{
+  "intent_path": "validation/real_world_demo/intent_acme_pydantic_v2.md",
+  "constraints": [
+    {
+      "axis": "api",
+      "summary": "Keep v1 and v2 client contracts backward-compatible during transition",
+      "scope": "payments API request/response shapes exposed to internal services and docs",
+      "gate": "wait_for:payments-client@2.x published and v1 client still supported",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Deploy schema/serializer changes before code that depends on them",
+      "scope": "pydantic model rewrites, field serializers, orm-mode replacements, and any new response fields",
+      "gate": "none",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Maintain a dual-write/dual-serialize window until all consumers migrate",
+      "scope": "OpenAPI output, JSON payload serialization, and any response fields that changed under Pydantic v2",
+      "gate": "wait_for:80% internal consumer migration to @acme/payments-client@2.x",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "api",
+      "summary": "Do not introduce breaking schema changes before mobile SDK is in users' hands",
+      "scope": "any request/response schema change that affects mobile clients",
+      "gate": "wait_for:new mobile SDK shipped to app stores and in user hands",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "api",
+      "summary": "Preserve current validation behavior for accepted request bodies unless explicitly loosened",
+      "scope": "Pydantic v2 stricter coercion on charge/payment request models",
+      "gate": "monitor:validation-rejection-rate increase <=0.1%",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "data",
+      "summary": "Run schema diff checks before publishing v2 JSON/OpenAPI",
+      "scope": "Regenerated OpenAPI schema, TypeScript client v2, mobile SDK schema, and downstream event payloads",
+      "gate": "wait_for:approved_schema_diff_report",
+      "rollback": "Do not publish the new schema artifacts; revert generated outputs to v1 and keep existing client versions",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Keep any payload-shape changes backward compatible during transition",
+      "scope": "Response JSON fields consumed by Snowflake feeds and any stored/evented payment payloads",
+      "gate": "monitor:downstream_parse_error_rate<=0.1%",
+      "rollback": "Revert serialization changes to the prior JSON shape and republish the v1-compatible artifacts",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Schedule any DB migrations or backfills outside business hours",
+      "scope": "Any schema or data backfill needed to support model serialization or persisted payload changes",
+      "gate": "window:off-peak_maintenance_window",
+      "rollback": "Stop the migration job and restore from the latest pre-change snapshot or backup",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Throttle backfills to preserve IOPS and replica lag budget",
+      "scope": "Historical backfills or reprocessing caused by new serialized fields or stored JSON rewrites",
+      "gate": "monitor:replication_lag<=30s",
+      "rollback": "Pause the backfill, reduce batch size, or restore the last consistent checkpoint",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Delay dropping legacy columns until the quiet period passes",
+      "scope": "Any old columns/tables retained for v1-v2 coexistence during the mixed-fleet transition",
+      "gate": "wait_for:30_day_quiet_period",
+      "rollback": "Recreate the dropped column/table from backup or keep the legacy storage path in place",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Stage canary with feature flag and keep v1 rollback ready",
+      "scope": "payments-api migration from FastAPI 0.95.2/Pydantic v1 to FastAPI 0.110/Pydantic v2",
+      "gate": "monitor:validation-rejection-rate<0.1%",
+      "rollback": "flip the rollout flag back to v1 behavior; redeploy_previous",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Hold promotion until canary is stable for 24h",
+      "scope": "advance from canary to wider production rollout for payments-api",
+      "gate": "wait_for:24h stable canary with no error-budget burn",
+      "rollback": "reduce traffic to the previous deployment slice and keep the flag on v1",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "No production cutover during incident windows or Friday afternoon",
+      "scope": "all deploy, canary promotion, and client/server schema publish steps",
+      "gate": "window:Mon-Thu 09:00-15:00 local time, outside incident freeze",
+      "rollback": "pause rollout and retain current production version",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Do not advance if p99 validation latency regresses materially",
+      "scope": "/v1/payments/charge and other high-volume validation paths during rollout",
+      "gate": "monitor:p99_validation_latency<=baseline*1.1",
+      "rollback": "route traffic back to v1 deployment and disable v2 flag",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "security",
+      "summary": "Approve v2 validation parity review before prod cutover",
+      "scope": "Pydantic v2 coercion changes, validators, and any relaxed strict=False fields",
+      "gate": "approval:security",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Complete SOC2 control evidence update for new validation path",
+      "scope": "Migration evidence covering validation rules, bypass risk review, and test results",
+      "gate": "wait_for:soc2_review_complete",
+      "rollback": "pause rollout and revert to previous validated release",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify partners before any externally visible schema/client change",
+      "scope": "OpenAPI regeneration, docs.acme.internal/payments, and @acme/payments-client@2.x release",
+      "gate": "window:partner_notice_14d",
+      "rollback": "withhold client v2 publish and redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Preserve audit trail coverage during dual-version transition",
+      "scope": "Period where v1 and v2 clients are both supported and server behavior may differ",
+      "gate": "none",
+      "rollback": "disable v2 rollout and restore prior request logging/audit hooks",
+      "blocking": false,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify partner integrators before any breaking schema change",
+      "scope": "OpenAPI/schema changes affecting docs.acme.internal/payments and client contracts",
+      "gate": "wait_for:partner-integrator notice sent",
+      "rollback": "revert to prior public schema/client release and suspend rollout",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Give internal service consumers advance notice of client v2",
+      "scope": "@acme/payments-client major version publication and downstream consumer migration",
+      "gate": "wait_for:consumer migration notice sent",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "ops",
+      "summary": "Do not roll during launch windows or major customer events",
+      "scope": "Production cutover for payments-api, SDK publication, and schema release",
+      "gate": "window:outside launch windows and major customer events",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "ops",
+      "summary": "Support and escalation owners must be staffed for the rollout",
+      "scope": "Production rollout period and first customer-facing release window",
+      "gate": "approval:Support lead and named escalation owner",
+      "rollback": "halt rollout and revert to prior release version",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep v1 and v2 client/schema compatibility during migration",
+      "scope": "OpenAPI regeneration, published @acme/payments-client major version, server response/request shapes",
+      "gate": "wait_for:all critical endpoints validated against both v1 and v2 client test suites",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Allow a dual-support window for @acme/payments-client 1.x",
+      "scope": "Server-side API behavior while internal services migrate off client 1.x",
+      "gate": "window:minimum 8 weeks after @acme/payments-client@2.x publish",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Ship a compatibility shim for old and new request/response parsing",
+      "scope": "payments-api deploy path, especially request validation and response serialization",
+      "gate": "wait_for:shim regression tests passing for legacy .dict()/.json() consumers",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Block cutover until rollback to FastAPI/Pydantic v1 is verified",
+      "scope": "production rollout and staged deployment plan",
+      "gate": "approval:SRE",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Have a fallback if new API publish slips past consumer migration",
+      "scope": "release sequencing for server cutover vs client 2.x adoption",
+      "gate": "monitor:consumer_migration_coverage>=80%",
+      "rollback": "redeploy_previous",
+      "blocking": false,
+      "owner": "ConsumerSubsystem"
+    }
+  ],
+  "trajectory": [
+    {
+      "iteration": 0,
+      "stage": "base",
+      "fragility": 0.5,
+      "n_steps": 10,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 2,
+      "achilles_top": [
+        [
+          "S1"
+        ],
+        [
+          "S2"
+        ],
+        [
+          "S3"
+        ]
+      ],
+      "diff_from_previous": [
+        "initial plan"
+      ]
+    },
+    {
+      "iteration": 1,
+      "stage": "hardened",
+      "fragility": 0.5,
+      "fragility_delta": 0.0,
+      "n_steps": 10,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 2,
+      "achilles_top": [
+        [
+          "S1"
+        ],
+        [
+          "S2"
+        ],
+        [
+          "S3"
+        ]
+      ],
+      "diff_from_previous": [
+        "edits:",
+        "  - S8.rollback: 'flip the rollout flag back to v1 behavio' \u2192 'flip the rollout flag back to v1 behavio'",
+        "  - S5.action: 'Generate the v2 OpenAPI schema, run sche' \u2192 'Generate the v2 OpenAPI schema from the '",
+        "  - S6.rollback: 'withhold client v2 publish and redeploy_' \u2192 'withhold client v2 publish and restore p'"
+      ],
+      "llm_probe_rollback_failure_rate": 0.25
+    }
+  ],
+  "converged": false,
+  "reason": "iteration 1: hardened plan infeasible by Z3 (unsat core size 2)",
+  "final_plan": {
+    "summary": "Migrate FastAPI/Pydantic with staged compatibility, schema review, dual-support, and gated production cutover.",
+    "steps": [
+      {
+        "id": "S1",
+        "action": "Run inventory and codemod dry-run: apply bump-pydantic across the repo, enumerate validator/root_validator, encoders, orm_mode, dict/json, and schema-affecting models.",
+        "owner": "BackendOwner",
+        "depends_on": [],
+        "gate": "none",
+        "rollback": "revert codemod working tree changes",
+        "observability": "Codemod diff size, list of touched models/routes, count of remaining v1 APIs"
+      },
+      {
+        "id": "S2",
+        "action": "Manually rewrite the 6 root validators, 3 json_encoders to field_serializer, orm_mode models to ConfigDict(from_attributes=True), and replace .dict()/.json() call sites that codemod missed.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S1"
+        ],
+        "gate": "wait_for:unit_and_contract_tests_pass",
+        "rollback": "revert model and serializer changes to last known good commit",
+        "observability": "Unit test failures, serializer output diffs, model validation regressions"
+      },
+      {
+        "id": "S3",
+        "action": "Characterize Pydantic v2 coercion changes on charge/payment request models, add explicit strict=False only where approved, and fix validator ordering/async-validator replacements for the 2 tax-service endpoints.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S2"
+        ],
+        "gate": "monitor:validation-rejection-rate increase <=0.1%",
+        "rollback": "restore prior validation logic and remove newly relaxed fields",
+        "observability": "Validation rejection rate, payload samples that now fail, tax-service call success/error rates"
+      },
+      {
+        "id": "S4",
+        "action": "Prepare compatibility shim and regression suite for legacy .dict()/.json() consumers, then verify request/response parsing works for both old and new client expectations.",
+        "owner": "ConsumerSubsystem",
+        "depends_on": [
+          "S2",
+          "S3"
+        ],
+        "gate": "wait_for:shim regression tests passing for legacy .dict()/.json() consumers",
+        "rollback": "disable shim path and revert parsing/serialization compatibility changes",
+        "observability": "Shim test pass rate, parsed payload equivalence, serialization round-trip diffs"
+      },
+      {
+        "id": "S5",
+        "action": "Generate the v2 OpenAPI schema, run schema diff checks, and validate critical endpoints against both v1 and v2 client test suites.",
+        "owner": "DataPlatform",
+        "depends_on": [
+          "S4"
+        ],
+        "gate": "wait_for:approved_schema_diff_report",
+        "rollback": "do not publish the new schema artifacts; revert generated outputs to v1 and keep existing client versions",
+        "observability": "Schema diff report, endpoint test matrix, breaking-change candidates"
+      },
+      {
+        "id": "S6",
+        "action": "Publish the new major TypeScript client @acme/payments-client@2.x and regenerate the mobile SDK from the approved schema diff.",
+        "owner": "ProductPM",
+        "depends_on": [
+          "S5"
+        ],
+        "gate": "wait_for:consumer migration notice sent",
+        "rollback": "withhold client v2 publish and redeploy_previous",
+        "observability": "Package publish success, SDK generation success, consumer notice delivery status"
+      },
+      {
+        "id": "S7",
+        "action": "Run partner-integrator and internal consumer comms for the new schema/client, then wait for mobile SDK to be shipped to app stores and in users' hands before any breaking server-side schema change.",
+        "owner": "ProductPM",
+        "depends_on": [
+          "S6"
+        ],
+        "gate": "window:partner_notice_14d",
+        "rollback": "revert to prior public schema/client release and suspend rollout",
+        "observability": "Notice date, app store release status, rollout/installation telemetry"
+      },
+      {
+        "id": "S8",
+        "action": "Deploy the compatibility server release behind a feature flag with both v1 and v2 serialization paths enabled, keeping response shapes backward compatible during the transition.",
+        "owner": "SRE",
+        "depends_on": [
+          "S3",
+          "S4",
+          "S5",
+          "S7"
+        ],
+        "gate": "monitor:validation-rejection-rate<0.1%",
+        "rollback": "flip the rollout flag back to v1 behavior; redeploy_previous",
+        "observability": "Canary error rate, validation rejection rate, response-shape parity, p99 validation latency"
+      },
+      {
+        "id": "S9",
+        "action": "Promote canary to wider production only after 24h stable canary, security approval, SRE rollback verification, and support/escalation staffing are in place.",
+        "owner": "SRE",
+        "depends_on": [
+          "S8"
+        ],
+        "gate": "wait_for:24h stable canary with no error-budget burn",
+        "rollback": "reduce traffic to the previous deployment slice and keep the flag on v1",
+        "observability": "Error-budget burn, canary stability, SRE approval status, support coverage, p99 latency"
+      },
+      {
+        "id": "S10",
+        "action": "Complete SOC2 evidence update and post-cutover monitoring, then keep dual-support active for at least 8 weeks while tracking consumer migration and downstream parse errors.",
+        "owner": "Security",
+        "depends_on": [
+          "S9"
+        ],
+        "gate": "monitor:downstream_parse_error_rate<=0.1%",
+        "rollback": "pause rollout and revert to previous validated release",
+        "observability": "SOC2 review completion, downstream parse errors, consumer migration coverage, audit trail coverage"
+      }
+    ],
+    "open_questions": [
+      "Which request models need explicit strict=False relaxation versus rejecting new coercions?",
+      "What exact compatibility shim behavior is required for legacy .dict()/.json() consumers?",
+      "Are any mobile-facing schema changes actually breaking, or can they be kept additive?",
+      "What is the approved schema diff threshold for publishing v2 artifacts?",
+      "Who provides the named SRE support/escalation approval for the rollout window?"
+    ],
+    "conflicts": [
+      {
+        "between": [
+          "BackendOwner",
+          "ProductPM"
+        ],
+        "issue": "BackendOwner wants v1/v2 contract compatibility during transition, while ProductPM requires partner notice before externally visible schema/client changes; resolved by sequencing comms before publish and keeping compatibility during rollout."
+      },
+      {
+        "between": [
+          "BackendOwner",
+          "ConsumerSubsystem"
+        ],
+        "issue": "BackendOwner wants dual-serialize support until consumers migrate, while ConsumerSubsystem requires a minimum 8-week dual-support window; resolved by maintaining dual support after v2 publish and before any retirement."
+      },
+      {
+        "between": [
+          "BackendOwner",
+          "SRE"
+        ],
+        "issue": "BackendOwner wants schema/serializer changes deployed before dependent code, while SRE requires gated canary and rollback-ready rollout; resolved by doing code/schema prep first, then canary under feature flag."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "ProductPM"
+        ],
+        "issue": "DataPlatform requires schema diff approval before publishing v2 JSON/OpenAPI, while ProductPM requires partner notice before schema/client changes; resolved by diff review first, then notice, then publish."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "SRE"
+        ],
+        "issue": "DataPlatform wants off-peak maintenance windows and throttled backfills, while SRE wants Mon-Thu daytime canary/promotion without incidents; resolved by avoiding backfills in cutover and limiting rollout to approved windows."
+      },
+      {
+        "between": [
+          "Security",
+          "ProductPM"
+        ],
+        "issue": "Security requires SOC2 evidence completion and approval for validation parity, while ProductPM requires staffing and launch-window avoidance for release timing; resolved by finishing security review before production promotion."
+      },
+      {
+        "between": [
+          "Security",
+          "ConsumerSubsystem"
+        ],
+        "issue": "Security requires audit/trust review of relaxed validation paths, while ConsumerSubsystem requires a dual-support window and rollback verification; resolved by keeping dual-support while security validates parity and audit coverage."
+      },
+      {
+        "between": [
+          "ProductPM",
+          "ConsumerSubsystem"
+        ],
+        "issue": "ProductPM requires internal consumer notice before client v2 publication, while ConsumerSubsystem requires maintaining old client support for 8 weeks after publish; resolved by notice first, publish second, then long dual-support."
+      }
+    ]
+  }
+}
