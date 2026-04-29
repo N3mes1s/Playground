@@ -6,3 +6,4 @@ openai>=1.50.0
 python-dotenv>=1.0.0
 rich>=13.0.0
 requests>=2.31.0
+z3-solver>=4.13.0
