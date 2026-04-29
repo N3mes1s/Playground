@@ -1,100 +1,105 @@
 # Rollout Rehearsal — intent_rlm_validator_persona_swap
 
-> Intent: fixtures/intent_rlm_validator_persona_swap.md · Stakeholders: 6 · Constraints: 22 · Steps: 12 · Model: gpt-5.4-mini
+> Intent: fixtures/intent_rlm_validator_persona_swap.md · Stakeholders: 6 · Constraints: 25 · Steps: 11 · Model: gpt-5.4-mini
 
-_Generated 2026-04-29T17:17:11Z_
+_Generated 2026-04-29T18:41:51Z_
 
 ## Summary
 
-Add reframed RedTeamTriager/Maintainer validator path behind a flag, keep verdict taxonomy unchanged, and validate parity, F1, and token cost before defaulting.
+Introduce reframed validator personas with a legacy/reframed flag, keep verdict labels stable, and gate default flip on tests, A/B metrics, and approvals.
 
 ## Stakeholder constraints
 
 | Owner | Axis | Summary | Gate | Rollback | Blocking |
 |---|---|---|---|---|---|
-| BackendOwner | api | Keep verdict outputs as CONFIRMED/DOWNGRADED/DISMISSED | `none` | redeploy_previous | Y |
-| BackendOwner | api | Preserve legacy validator mode during A/B rollout | `wait_for:reframed_mode_matches_legacy_on_ground_truth` | disable reframed mode and route all runs to legacy | Y |
-| BackendOwner | deploy | Ship shared persona prompts before switching validator import path | `wait_for:persona_module_deployed_and_importable` | revert validator to embedded legacy prompts | Y |
-| BackendOwner | api | Do not change verdict taxonomy or report schema fields | `none` | redeploy_previous | Y |
-| SRE | deploy | Ship reframed validator behind --validator-mode flag only | `none` | Set --validator-mode=legacy to restore the prior validator path without redeploying | Y |
-| SRE | ops | Compare refusal rate and verdict mix before default flip | `monitor:refusal_rate<0.1% for 24h` | Disable reframed mode and revert benchmark invocations to legacy mode | Y |
-| SRE | ops | Require no accuracy regression on flowise manual verification | `monitor:F1>=legacy_F1` | Flip validator-mode back to legacy if reframed F1 drops below baseline | Y |
-| SRE | deploy | Keep prompt rewrite within current token budget envelope | `monitor:token_usage<=110%` | Reinstate the original prosecution/defense prompts and seed template | n |
-| SRE | deploy | Avoid validator rollout during incident windows or Friday afternoon | `window:weekday_business_hours_excluding_incidents` | Hold default flip and continue operating in legacy mode | Y |
-| Security | security | Preserve existing finding audit logs across legacy and reframed modes | `approval:security review` | redeploy_previous | Y |
-| Security | security | Rotate any shared persona-prompt secrets before importing shared module | `wait_for:secret-rotation-complete` | revoke new credentials and revert to legacy-local prompts | Y |
-| Security | comms | Notify report consumers of reframed mode and unchanged verdict labels | `window:at least 5 business days before default flip` | keep legacy mode as default and withdraw change notice | Y |
-| Security | security | Complete compliance review for prompt framing change before defaulting | `approval:compliance` | revert default to legacy framing and disable reframed flag by default | Y |
-| ProductPM | comms | Notify report consumers of unchanged verdict taxonomy | `wait_for:customer_notice_sent` | reissue comms clarifying legacy validator mode remains available | Y |
-| ProductPM | comms | Publish migration note before defaulting to reframed mode | `approval:comms_lead` | keep default on legacy mode and postpone reframed default change | Y |
-| ProductPM | ops | Support must have escalation playbook for refusal-rate changes | `approval:support_manager` | disable reframed mode and revert to legacy validator mode | Y |
-| ProductPM | business | Avoid launch windows and major events during A/B rollout | `window:outside_launch_window_and_major_event` | pause rollout until the next approved non-peak window | Y |
-| ConsumerSubsystem | api | Keep verdict outputs stable across legacy and reframed modes | `wait_for:benchmark A/B run shows CONFIRMED/DOWNGRADED/DISMISSED parity` | redeploy_previous | Y |
-| ConsumerSubsystem | api | Ship --validator-mode flag before default switch | `wait_for:CLI integration tests cover --validator-mode={legacy,reframed}` | remove new flag and redeploy_previous | Y |
-| ConsumerSubsystem | deploy | Maintain dual-support window for legacy and reframed validator | `window:keep both modes available until benchmark A/B completes` | force legacy mode and redeploy_previous | Y |
-| ConsumerSubsystem | deploy | Block default flip until F1 meets or exceeds legacy | `monitor:flowise-manual-verification F1>=legacy` | set default back to legacy and redeploy_previous | Y |
-| ConsumerSubsystem | deploy | Hold rollout if token spend rises beyond 10 percent | `monitor:per-finding token usage<=110% of baseline` | switch validator-mode to legacy and redeploy_previous | Y |
+| BackendOwner | api | Keep verdict outputs exactly CONFIRMED/DOWNGRADED/DISMISSED | `none` | revert verdict prompt changes and redeploy previous validator | Y |
+| BackendOwner | api | Add --validator-mode with legacy and reframed behaviors | `none` | remove new flag and redeploy previous benchmark runners | Y |
+| BackendOwner | deploy | Deploy shared persona prompts before switching validator import | `wait_for:shared persona module released and importable` | pin validator to local legacy prompts and redeploy previous version | Y |
+| BackendOwner | deploy | Default stay legacy until reframed mode is A/B validated | `wait_for:A/B run completes with refusal and verdict metrics reviewed` | flip default back to legacy mode and redeploy runners | Y |
+| DataPlatform | data | Preserve CONFIRMED/DOWNGRADED/DISMISSED report compatibility | `none` | Restore the legacy verdict formatter so existing reports emit the prior labels unchanged | Y |
+| DataPlatform | data | Backfill any persisted validator metadata in small batches | `monitor:replication_lag<2m` | Pause backfill and revert any partially migrated rows to the previous schema/value set | Y |
+| DataPlatform | ops | Run schema-affecting changes only in an off-hours window | `window:off-hours` | Revert the storage change and disable the migration job until the next maintenance window | Y |
+| DataPlatform | data | Drop legacy validator-mode storage only after a quiet period | `wait_for:7d_no_legacy_reads` | Restore the dropped column/table/key from backup or replica and re-enable legacy reads | Y |
+| SRE | ops | A/B validator-mode behind a flag before default flip | `wait_for:reframed-mode-has-parity-data` | switch --validator-mode back to legacy | Y |
+| SRE | ops | Require error-rate and refusal-rate parity before defaulting | `monitor:refusal_rate<0.1% for 24h` | revert default to legacy mode without redeploying the benchmark runner | Y |
+| SRE | deploy | Do not cut over during incident windows or Friday afternoon | `window:Mon-Thu 09:00-16:00 local, no active incident` | flip validator-mode to legacy and disable reframed default | Y |
+| SRE | ops | Preserve rollback path for shared persona module import | `approval:maintainer` | restore inline legacy prosecution/defense prompts and seed prompt | n |
+| Security | security | Rotate any persona prompt secrets before shared import | `wait_for:secret-rotation-complete` | restore prior persona prompt bundle and revoke newly-issued prompt credentials | Y |
+| Security | security | Preserve full audit trail for legacy and reframed runs | `monitor:audit-trail_coverage>=100%` | disable reframed mode and rerun the affected findings with legacy framing | Y |
+| Security | comms | Notify customers of any externally visible framing change | `window:notify>=14d_before_default_flip` | keep --validator-mode=legacy as the default until notice window closes | Y |
+| Security | comms | Obtain compliance review before production default changes | `approval:compliance` | revert default to legacy mode and freeze release pending review | Y |
+| ProductPM | comms | Notify audit-report consumers of persona rename before default flip | `wait_for:customer-facing release note approval` | revert default validator mode to legacy and restore prior terminology in docs | Y |
+| ProductPM | comms | Give advance notice to support before A/B rollout begins | `approval:support lead` | pause reframed mode rollout until support is briefed and ready | Y |
+| ProductPM | ops | Do not start rollout during launch windows or major events | `window:outside launch window / major event blackout` | disable reframed mode in active jobs and continue with legacy mode only | Y |
+| ProductPM | business | Assign a named escalation owner for misparsed report complaints | `approval:designated rollout owner` | route escalations to legacy-mode owner and stop default flip | Y |
+| ConsumerSubsystem | api | Keep legacy validator mode as default during A/B window | `window:two release cycles` | redeploy_previous | Y |
+| ConsumerSubsystem | api | Ship compatibility shim for legacy prose-to-verdict parsing | `wait_for:compatibility shim tests passing` | redeploy_previous | Y |
+| ConsumerSubsystem | deploy | Do not flip default until refusal-rate and F1 A/B pass | `monitor:refusal_rate<=legacy and F1>=legacy` | redeploy_previous | Y |
+| ConsumerSubsystem | deploy | Add pre-cutover tests for report parsing and verdict parity | `wait_for:integration tests added and green` | redeploy_previous | Y |
+| ConsumerSubsystem | deploy | Have legacy validator fallback if reframed mode is delayed | `approval:release manager` | redeploy_previous | n |
 
 ## Rollout plan
 
 | # | Action | Owner | Depends on | Gate | Rollback | Watch |
 |---|---|---|---|---|---|---|
-| S1 | Rotate any shared persona-prompt secrets and confirm the shared persona module can be safely imported in the target environment. | Security | — | `wait_for:secret-rotation-complete` | revoke new credentials and revert to legacy-local prompts | Secret rotation completion status, import success for mirofish_lab/personas.py, no auth/import errors |
-| S2 | Publish the compliance review and customer notice that the validator will gain a reframed mode while keeping CONFIRMED/DOWNGRADED/DISMISSED unchanged. | ProductPM | — | `approval:compliance` | revert default to legacy framing and disable reframed flag by default | Compliance approval, customer notice sent, communications acknowledged |
-| S3 | Create or update shared RedTeamTriager and Maintainer persona prompts in mirofish_lab/personas.py, including the audit-level plausibility seed prompt text. | BackendOwner | S1 | `wait_for:persona_module_deployed_and_importable` | revert validator to embedded legacy prompts | Persona module deploy status, importability, prompt text diff, token length of prompts |
-| S4 | Refactor recursive-lm-security-audit/validator.py to use the shared RedTeamTriager/Maintainer prompts and the new audit-level seed prompt, while leaving the verdict prompt and labels unchanged. | BackendOwner | S3 | `none` | redeploy_previous | Validator output still emits CONFIRMED/DOWNGRADED/DISMISSED, prompt selection path, token usage per finding |
-| S5 | Add --validator-mode={legacy,reframed} to benchmark.py and batch_runner.py, wiring legacy to the current validator path and reframed to the new persona-based path. | BackendOwner | S4 | `wait_for:CLI integration tests cover --validator-mode={legacy,reframed}` | remove new flag and redeploy_previous | CLI parsing tests, mode routing, report schema compatibility, log labels for chosen mode |
-| S6 | Run A/B benchmark comparisons on legacy versus reframed validator mode using the flowise-manual-verification.md ground truth and existing audit reports. | SRE | S5, S2 | `monitor:refusal_rate<0.1% for 24h` | Disable reframed mode and revert benchmark invocations to legacy mode | Refusal rate, verdict distribution, CONFIRMED/DOWNGRADED/DISMISSED parity, F1 vs legacy, per-finding token usage |
-| S7 | Keep both validator modes available for the full dual-support window and only use reframed mode in explicit A/B runs. | ConsumerSubsystem | S5 | `window:keep both modes available until benchmark A/B completes` | force legacy mode and redeploy_previous | Mode availability, accidental defaulting, report parsing stability, rollback readiness |
-| S8 | Verify the reframed validator meets or exceeds legacy F1 on flowise-manual-verification.md and stays within the token budget envelope. | SRE | S6 | `monitor:F1>=legacy_F1` | Flip validator-mode back to legacy if reframed F1 drops below baseline | F1 score, false positives/negatives, per-finding token usage <=110% baseline |
-| S9 | Confirm downstream benchmark and report parsing still interpret existing audit reports as CONFIRMED/DOWNGRADED/DISMISSED with no schema changes. | ConsumerSubsystem | S4, S5 | `wait_for:benchmark A/B run shows CONFIRMED/DOWNGRADED/DISMISSED parity` | redeploy_previous | Report parser output, label counts, schema validation, backward compatibility across existing reports |
-| S10 | Complete security review for audit-log preservation and the framing change before any default flip. | Security | S4, S5, S6 | `approval:security review` | redeploy_previous | Security signoff, audit log continuity, no missing or renamed fields in validator/benchmark outputs |
-| S11 | Publish the migration note and report-consumer notice describing the reframed mode, unchanged verdict taxonomy, and the fact that legacy mode remains available. | ProductPM | S2, S7, S9 | `window:at least 5 business days before default flip` | keep legacy mode as default and withdraw change notice | Notice publication date, audience acknowledgment, business-day timing, support playbook readiness |
-| S12 | After approvals, notices, and validation gates pass, flip the benchmark default to reframed mode only during an approved business-hours window outside incidents and major events. | SRE | S8, S10, S11 | `window:weekday_business_hours_excluding_incidents` | Set --validator-mode=legacy to restore the prior validator path without redeploying | Default mode selection, incident status, launch-window compliance, support escalation health |
+| S1 | Add shared RedTeamTriager and Maintainer persona prompts to mirofish_lab/personas.py, including the audit-level seed prompt fragment for validator debates. | BackendOwner | — | `wait_for:secret-rotation-complete` | Restore the prior persona prompt bundle and revoke newly-issued prompt credentials. | Secret rotation completion, importability of the new persona module, and prompt checksum/version. |
+| S2 | Refactor recursive-lm-security-audit/validator.py to import the shared personas, swap prosecution/defense framing for RedTeamTriager/Maintainer, and keep the verdict prompt and CONFIRMED/DOWNGRADED/DISMISSED labels unchanged. | BackendOwner | S1 | `wait_for:shared persona module released and importable` | Pin validator to local legacy prompts and redeploy the previous validator version. | Validator import success, unchanged verdict label emission, token count per finding, and no parser regressions. |
+| S3 | Add --validator-mode={legacy,reframed} to benchmark.py and batch_runner.py, wiring mode selection to the existing validator implementation without changing report label parsing. | BackendOwner | S2 | `none` | Remove the new flag and redeploy the previous benchmark runners. | CLI help output, mode propagation in logs, and parity of legacy behavior when the flag is set to legacy. |
+| S4 | Update the validator seed prompt template from exploit-chain framing to audit-level plausibility analysis while preserving the downstream verdict classifier and report taxonomy. | BackendOwner | S2 | `none` | Restore the legacy seed prompt and redeploy the prior validator prompt bundle. | Refusal rate on critical findings, average prompt token length, and verdict distribution stability. |
+| S5 | Add/extend CI integration tests covering report parsing for existing audits and ground-truth parity on flowise-manual-verification.md for both legacy and reframed modes. | ConsumerSubsystem | S3, S4 | `wait_for:integration tests added and green` | Redeploy previous test suite and revert the runner changes. | Test pass/fail status, parsed labels from sample reports, and F1 comparison against legacy. |
+| S6 | Run an internal A/B validation of legacy vs reframed validator mode on representative findings, capturing refusal rate, F1, and verdict distribution. | ConsumerSubsystem | S3, S5 | `monitor:refusal_rate<=legacy and F1>=legacy` | Switch --validator-mode back to legacy and rerun affected findings. | Refusal rate, F1 on flowise ground truth, CONFIRMED/DOWNGRADED/DISMISSED counts, and token spend per finding. |
+| S7 | Prepare benchmark and batch-runner rollout behind the validator-mode flag with legacy as the default during the A/B window, and preserve full audit trail logging for both modes. | SRE | S3, S6 | `wait_for:reframed-mode-has-parity-data` | Switch --validator-mode back to legacy and preserve existing logs for rerun. | Mode adoption rate, audit-trail coverage, and any logging gaps between legacy and reframed runs. |
+| S8 | Deploy reframed validator and runner changes in an allowed production window, with a fallback to legacy mode if incidents occur. | SRE | S7 | `window:Mon-Thu 09:00-16:00 local, no active incident` | Flip validator-mode to legacy and disable reframed default. | Incident status, job error rate, refusal rate, and deployment health during the window. |
+| S9 | Notify support and report consumers about the persona rename and any externally visible framing changes; assign a named escalation owner for misparsed report complaints. | ProductPM | S8 | `approval:support lead` | Pause reframed mode rollout and keep legacy terminology/defaults active. | Support readiness, customer acknowledgement, and escalation routing correctness. |
+| S10 | Obtain compliance review and customer-facing release note approval before any default flip to reframed mode. | Security | S9 | `approval:compliance` | Revert default to legacy mode and freeze release pending review. | Compliance sign-off, release note approval status, and any required wording changes. |
+| S11 | After A/B validation and approvals, flip the benchmark/batch default from legacy to reframed and keep legacy available as a fallback during the transition period. | BackendOwner | S10 | `monitor:refusal_rate<0.1% for 24h` | Revert the default to legacy mode without redeploying the benchmark runner. | 24h refusal rate, error rate, F1, and final default mode in runtime configs. |
 
 ## Mermaid graph
 
 ```mermaid
 flowchart TD
-    S1["S1: Rotate any shared persona-prompt secrets and confirm the ..."]
-    S2["S2: Publish the compliance review and customer notice that th..."]
-    S3["S3: Create or update shared RedTeamTriager and Maintainer per..."]
-    S1 -->|wait_for:persona_module_deployed_and_imp| S3
-    S4["S4: Refactor recursive-lm-security-audit/validator.py to use ..."]
-    S3 --> S4
-    S5["S5: Add --validator-mode={legacy,reframed} to benchmark.py an..."]
-    S4 -->|wait_for:CLI integration tests cover --v| S5
-    S6["S6: Run A/B benchmark comparisons on legacy versus reframed v..."]
-    S5 -->|monitor:refusal_rate<0.1% for 24h| S6
-    S2 -->|monitor:refusal_rate<0.1% for 24h| S6
-    S7["S7: Keep both validator modes available for the full dual-sup..."]
-    S5 -->|window:keep both modes available until b| S7
-    S8["S8: Verify the reframed validator meets or exceeds legacy F1 ..."]
-    S6 -->|monitor:F1>=legacy_F1| S8
-    S9["S9: Confirm downstream benchmark and report parsing still int..."]
-    S4 -->|wait_for:benchmark A/B run shows CONFIRM| S9
-    S5 -->|wait_for:benchmark A/B run shows CONFIRM| S9
-    S10["S10: Complete security review for audit-log preservation and t..."]
-    S4 -->|approval:security review| S10
-    S5 -->|approval:security review| S10
-    S6 -->|approval:security review| S10
-    S11["S11: Publish the migration note and report-consumer notice des..."]
-    S2 -->|window:at least 5 business days before d| S11
-    S7 -->|window:at least 5 business days before d| S11
-    S9 -->|window:at least 5 business days before d| S11
-    S12["S12: After approvals, notices, and validation gates pass, flip..."]
-    S8 -->|window:weekday_business_hours_excluding_| S12
-    S10 -->|window:weekday_business_hours_excluding_| S12
-    S11 -->|window:weekday_business_hours_excluding_| S12
+    S1["S1: Add shared RedTeamTriager and Maintainer persona prompts ..."]
+    S2["S2: Refactor recursive-lm-security-audit/validator.py to impo..."]
+    S1 -->|wait_for:shared persona module released | S2
+    S3["S3: Add --validator-mode={legacy,reframed} to benchmark.py an..."]
+    S2 --> S3
+    S4["S4: Update the validator seed prompt template from exploit-ch..."]
+    S2 --> S4
+    S5["S5: Add/extend CI integration tests covering report parsing f..."]
+    S3 -->|wait_for:integration tests added and gre| S5
+    S4 -->|wait_for:integration tests added and gre| S5
+    S6["S6: Run an internal A/B validation of legacy vs reframed vali..."]
+    S3 -->|monitor:refusal_rate<=legacy and F1>=leg| S6
+    S5 -->|monitor:refusal_rate<=legacy and F1>=leg| S6
+    S7["S7: Prepare benchmark and batch-runner rollout behind the val..."]
+    S3 -->|wait_for:reframed-mode-has-parity-data| S7
+    S6 -->|wait_for:reframed-mode-has-parity-data| S7
+    S8["S8: Deploy reframed validator and runner changes in an allowe..."]
+    S7 -->|window:Mon-Thu 09:00-16:00 local, no act| S8
+    S9["S9: Notify support and report consumers about the persona ren..."]
+    S8 -->|approval:support lead| S9
+    S10["S10: Obtain compliance review and customer-facing release note..."]
+    S9 -->|approval:compliance| S10
+    S11["S11: After A/B validation and approvals, flip the benchmark/ba..."]
+    S10 -->|monitor:refusal_rate<0.1% for 24h| S11
 ```
 
 ## Conflicts (resolved by sequencer)
 
-- between **BackendOwner, SRE**: Prompt budget is a soft constraint while F1 parity and refusal-rate reduction are hard blockers. The rollout keeps the persona rewrite minimal and measures token usage during A/B rather than expanding prompt scope.
-- between **ProductPM, SRE**: Product wants prior notice and support readiness before default flip, while SRE requires the reframed mode to remain behind a flag during A/B. The plan keeps reframed mode opt-in until all notices, approvals, and validation gates are satisfied.
+- between **BackendOwner, DataPlatform**: Backend wants shared persona import before validator switch; DataPlatform requires any schema/storage migration for validator-mode only in off-hours and with backfill/quiet-period gates. Resolved by avoiding storage changes in the plan and keeping persona changes code-only.
+- between **BackendOwner, SRE**: Backend prefers default to remain legacy until A/B validation completes, while SRE requires A/B behind a flag and parity data before defaulting. Resolved by making legacy the interim default and gating the flip on parity data.
+- between **BackendOwner, Security**: Backend wants prompt import after module release, while Security requires prompt secrets rotated before shared import. Resolved by placing secret rotation and persona module release ahead of validator import.
+- between **BackendOwner, ProductPM**: Backend wants the flag and reframed mode added promptly, but ProductPM requires advance notice and support briefing before A/B rollout begins. Resolved by sequencing notifications before production rollout.
+- between **BackendOwner, ConsumerSubsystem**: Backend wants verdict labels and parsing unchanged, while ConsumerSubsystem wants a compatibility shim and pre-cutover tests. Resolved by keeping labels identical and adding tests before the default flip.
+- between **SRE, Security**: SRE allows rollout only in a Mon-Thu business window, while Security requires full audit-trail preservation and a 24h refusal-rate monitor before defaulting. Resolved by using the narrower business window and keeping monitoring active across the A/B period.
+- between **SRE, ProductPM**: SRE prohibits cutover during incident windows and Friday afternoon, while ProductPM also blocks rollout during launch windows/major events. Resolved by requiring both blackout constraints to be clear before rollout.
+- between **Security, ProductPM**: Security requires compliance approval and customer notice before default flip, while ProductPM requires support approval and release-note approval before rollout. Resolved by treating all approvals/notices as prerequisites to the flip.
+- between **DataPlatform, ConsumerSubsystem**: DataPlatform wants any legacy storage dropped only after 7 days with no legacy reads, while ConsumerSubsystem requires legacy fallback during the A/B window. Resolved by not dropping any legacy storage in this rollout.
 
 ## Open questions for the human
 
-- Should the shared persona prompts be imported from mirofish_lab/personas.py immediately in validator.py, or should validator.py keep a local fallback copy during the dual-support window?
-- What exact benchmark set defines the 24h refusal-rate measurement for the reframed mode?
-- Who owns the final approval to switch the benchmark default after the A/B phase: SRE, Security, or ProductPM?
+- What exact prompt text should be imported from adversarial-security-sim, and should any local fallback remain in validator.py?
+- Do validator-mode selections need to be persisted, and if so, where should that metadata live?
+- Which team owns the named escalation owner for report parsing complaints?
+- Should the default flip wait for both compliance approval and the 14-day customer notice window to complete, or is one sufficient?
+- Are there any existing stored run artifacts that require backfill, or can we avoid schema changes entirely?

@@ -2,207 +2,198 @@
   "intent_path": "fixtures/intent_adversarial_findings_history.md",
   "constraints": [
     {
-      "axis": "api",
-      "summary": "Keep CLI output unchanged unless --show-drift is set",
-      "scope": "adversarial-security-sim/cli.py report flow",
-      "gate": "none",
-      "rollback": "redeploy_previous",
-      "blocking": true,
-      "owner": "BackendOwner"
-    },
-    {
-      "axis": "api",
-      "summary": "Do not require history log for normal verdict generation",
-      "scope": "append-only JSONL write path and report generation",
-      "gate": "none",
+      "axis": "schema",
+      "summary": "Add history record schema before code writes JSONL entries",
+      "scope": "New per-finding history log format under .mirofish_memory/security/<source-stem>.jsonl",
+      "gate": "wait_for:schema_fields_reviewed",
       "rollback": "redeploy_previous",
       "blocking": true,
       "owner": "BackendOwner"
     },
     {
       "axis": "deploy",
-      "summary": "Ship history reader before any code that depends on drift data",
-      "scope": "history.py helper and CLI --show-drift integration",
-      "gate": "wait_for:history_reader_merged_and_released",
+      "summary": "Ship log-writer only after readers tolerate absent drift files",
+      "scope": "adversarial-security-sim/cli.py and new history.py helper",
+      "gate": "wait_for:history_reader_backwards_compat_verified",
       "rollback": "redeploy_previous",
       "blocking": true,
       "owner": "BackendOwner"
     },
     {
       "axis": "deploy",
-      "summary": "If storage backend changes, dual-write JSONL during cutover",
-      "scope": "future move to mirofish_lab SQLite memory backend",
-      "gate": "wait_for:sqlite_backend_write_path_live",
+      "summary": "Maintain dual-read compatibility during memory backend migration",
+      "scope": "Compatibility with upcoming SQLite memory backend in mirofish_lab",
+      "gate": "wait_for:sqlite_backend_write_path_ready",
       "rollback": "redeploy_previous",
       "blocking": true,
       "owner": "BackendOwner"
     },
     {
-      "axis": "data",
-      "summary": "Write JSONL append-only; never rewrite prior history records",
-      "scope": "Per-finding history log under .mirofish_memory/security/<source-stem>.jsonl",
+      "axis": "api",
+      "summary": "Keep --show-drift optional and preserve existing CLI output",
+      "scope": "CLI behavior and report output formatting",
       "gate": "none",
-      "rollback": "Stop appending to the new log and leave existing records untouched",
+      "rollback": "remove_flag_and_redeploy_previous",
+      "blocking": false,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "data",
+      "summary": "Append-only history; never rewrite prior finding records",
+      "scope": "JSONL history writes under .mirofish_memory/security/<source-stem>.jsonl",
+      "gate": "none",
+      "rollback": "Stop appending new records; leave existing log files intact",
       "blocking": true,
       "owner": "DataPlatform"
     },
     {
       "axis": "data",
-      "summary": "Batch backfills to protect IOPS if historical logs are populated",
-      "scope": "Any initial population or migration of existing finding histories into the new log",
-      "gate": "monitor:write_iops<baseline+20%",
-      "rollback": "Pause backfill jobs and resume with smaller batches",
-      "blocking": true,
-      "owner": "DataPlatform"
-    },
-    {
-      "axis": "ops",
-      "summary": "Avoid schema or storage-layout changes during business hours",
-      "scope": "Creation or migration of the security memory store for verdict history",
-      "gate": "window:outside_business_hours",
-      "rollback": "Defer deployment and keep using the current storage layout",
-      "blocking": true,
-      "owner": "DataPlatform"
-    },
-    {
-      "axis": "data",
-      "summary": "Keep replication lag within budget during log writes",
-      "scope": "Primary-to-replica propagation of the append-only history records",
-      "gate": "monitor:replication_lag<30s",
-      "rollback": "Throttle or halt history writes until lag returns under budget",
-      "blocking": true,
-      "owner": "DataPlatform"
-    },
-    {
-      "axis": "data",
-      "summary": "Drop any legacy storage only after a quiet period",
-      "scope": "Retiring old memory files or tables once the new history log is validated",
-      "gate": "wait_for:quiet_period_7d",
-      "rollback": "Restore the old storage artifacts from backup if needed",
+      "summary": "Use small append batches to avoid IOPS spikes during debates",
+      "scope": "Per-finding log append in adversarial-security-sim/cli.py",
+      "gate": "monitor:write_iops<baseline+10%",
+      "rollback": "Reduce flush/batch size or disable per-finding append until IOPS normalizes",
       "blocking": false,
       "owner": "DataPlatform"
     },
     {
       "axis": "ops",
-      "summary": "Gate rollout on clean write-path and drift read-path error rates",
-      "scope": "CLI append to .mirofish_memory/security/*.jsonl and history.py drift lookup",
-      "gate": "monitor:error_rate<0.1%",
-      "rollback": "disable --show-drift and stop appending new JSONL records",
+      "summary": "Do not introduce storage-format migration during business hours",
+      "scope": "Any future move of the JSONL history into the SQLite memory backend",
+      "gate": "window:after_hours",
+      "rollback": "Keep writing the JSONL log in the existing filesystem location",
       "blocking": true,
-      "owner": "SRE"
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Hold column/table drops until a quiet period after migration",
+      "scope": "Old storage artifacts replaced by the SQLite memory backend",
+      "gate": "wait_for:7d_no_reads_or_writes",
+      "rollback": "Restore access to the old log/table and keep dual-read support",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Keep replication lag within budget during history writes",
+      "scope": "Storage replication while appending verdict history records",
+      "gate": "monitor:replication_lag<30s",
+      "rollback": "Throttle or pause history appends until lag recovers",
+      "blocking": true,
+      "owner": "DataPlatform"
     },
     {
       "axis": "deploy",
-      "summary": "Ship drift logging behind a flag to avoid forced redeploys",
-      "scope": "Optional --show-drift behavior and JSONL append emission in cli.py",
-      "gate": "approval:release_manager",
-      "rollback": "turn off the feature flag and redeploy_previous",
-      "blocking": true,
-      "owner": "SRE"
-    },
-    {
-      "axis": "ops",
-      "summary": "Require a rollback path before enabling new persistence writes",
-      "scope": "Append-only security history log in the memory store",
-      "gate": "wait_for:rollback_plan_reviewed",
-      "rollback": "switch log writes off and read existing records only",
-      "blocking": true,
-      "owner": "SRE"
-    },
-    {
-      "axis": "deploy",
-      "summary": "Avoid rollout during incident windows or Friday afternoon",
-      "scope": "Enablement of history logging and drift display in production runs",
-      "gate": "window:business_hours_only",
-      "rollback": "pause rollout until next approved window",
-      "blocking": true,
-      "owner": "SRE"
-    },
-    {
-      "axis": "security",
-      "summary": "Append-only log must never overwrite prior verdict records",
-      "scope": "JSONL writes under .mirofish_memory/security/<source-stem>.jsonl",
+      "summary": "Roll out behind --show-drift with no default behavior change",
+      "scope": "adversarial-security-sim/cli.py drift summary output",
       "gate": "none",
-      "rollback": "Disable history append and redeploy_previous",
+      "rollback": "disable --show-drift and redeploy_previous",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Verify append-only log writes are stable before broad use",
+      "scope": ".mirofish_memory/security/<source-stem>.jsonl append path",
+      "gate": "monitor:write_error_rate<0.1%",
+      "rollback": "stop writing history log entries and redeploy_previous",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Gate cutover on 24h of healthy history-log persistence",
+      "scope": "history append and drift-read workflow end to end",
+      "gate": "wait_for:24h_healthy_history_persistence",
+      "rollback": "pause rollout and redeploy_previous",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Do not deploy during incident windows or Friday afternoon",
+      "scope": "release of adversarial-security-sim with history logging",
+      "gate": "window:mon-thu_09:00-16:00_local",
+      "rollback": "abort deploy and redeploy_previous",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "security",
+      "summary": "Append-only writes; never mutate or delete prior verdict records",
+      "scope": "JSONL history log persistence in adversarial-security-sim",
+      "gate": "none",
+      "rollback": "Disable history append path and redeploy_previous",
       "blocking": true,
       "owner": "Security"
     },
     {
       "axis": "security",
-      "summary": "Hash agent outputs; do not persist full finding bodies",
-      "scope": "Per-finding record fields in cli.py and history.py",
-      "gate": "approval:Security Reviewer",
-      "rollback": "Purge any plaintext bodies from log and redeploy_previous",
+      "summary": "Store only hashes/metadata; exclude finding bodies and transcripts",
+      "scope": "Per-finding log fields and any drift summary output",
+      "gate": "approval:security",
+      "rollback": "Purge any non-hashed records from the log and redeploy_previous",
       "blocking": true,
       "owner": "Security"
     },
     {
       "axis": "comms",
-      "summary": "Notify downstream consumers before drift output becomes visible",
-      "scope": "--show-drift CLI behavior and any externally visible report change",
-      "gate": "window:at least 5 business days after partner/customer notice",
-      "rollback": "Remove --show-drift output from default report flow",
+      "summary": "Notify downstream consumers before any visible drift-summary change",
+      "scope": "Optional --show-drift CLI output and any user-facing report text",
+      "gate": "window:prior_notice_before_release",
+      "rollback": "Remove the drift-summary output and redeploy_previous",
       "blocking": true,
       "owner": "Security"
     },
     {
       "axis": "security",
-      "summary": "Require migration review before moving log to SQLite memory store",
-      "scope": "Compatibility path with mirofish_lab SQLite backend migration",
-      "gate": "approval:Compliance Reviewer",
-      "rollback": "Keep writing to current JSONL store; defer migration",
+      "summary": "Complete audit review for new persistence path before rollout",
+      "scope": "New history.py helper and CLI append logic touching stored records",
+      "gate": "approval:security",
+      "rollback": "Disable the new persistence path and redeploy_previous",
       "blocking": true,
       "owner": "Security"
     },
     {
       "axis": "comms",
-      "summary": "Notify users before enabling drift logging or --show-drift",
-      "scope": "CLI behavior change adding per-finding history logs and optional drift output",
-      "gate": "approval:customer_comms_lead",
-      "rollback": "redeploy_previous",
+      "summary": "Notify customers before any breaking drift-log behavior changes",
+      "scope": "CLI output and history logging behavior that could alter report content or expectations for repeated audits",
+      "gate": "approval:comms lead",
+      "rollback": "disable the drift-summary output and stop writing new history records",
       "blocking": true,
       "owner": "ProductPM"
     },
     {
       "axis": "comms",
-      "summary": "Publish release note on new persisted finding history",
-      "scope": "Introduction of .mirofish_memory/security/*.jsonl append-only records",
-      "gate": "wait_for:release_note_published",
-      "rollback": "disable_history_log_write",
+      "summary": "Publish release notes for the new per-finding history log",
+      "scope": "New `.mirofish_memory/security/<source-stem>.jsonl` history persistence and `--show-drift` flag",
+      "gate": "wait_for:release_notes_approved",
+      "rollback": "revert the release notes and remove mention of the history log from customer-facing docs",
       "blocking": true,
       "owner": "ProductPM"
     },
     {
       "axis": "ops",
-      "summary": "Ensure support is briefed on drift questions before rollout",
-      "scope": "Support readiness for questions about verdict drift and historical logs",
-      "gate": "approval:support_lead",
-      "rollback": "suspend_rollout_until_briefed",
+      "summary": "Support must be briefed on drift-log questions before launch",
+      "scope": "Customer support and escalation handling for audit-history storage, retention, and drift comparisons",
+      "gate": "approval:support lead",
+      "rollback": "pause rollout until support FAQ and escalation paths are updated",
       "blocking": true,
       "owner": "ProductPM"
     },
     {
       "axis": "business",
       "summary": "Do not roll out during launch windows or major events",
-      "scope": "Rollout timing for the new history log and drift display feature",
-      "gate": "window:outside_launch_windows_and_major_events",
-      "rollback": "pause_rollout",
-      "blocking": true,
-      "owner": "ProductPM"
-    },
-    {
-      "axis": "business",
-      "summary": "Assign an escalation owner for customer issues during rollout",
-      "scope": "Handling customer concerns about data retention, drift, and report changes",
-      "gate": "approval:escalation_owner_assigned",
-      "rollback": "rollback_feature_and_route_escalations_to_support",
+      "scope": "Deployment of the new logging and optional drift summary feature",
+      "gate": "window:outside_launch_window",
+      "rollback": "redeploy_previous",
       "blocking": true,
       "owner": "ProductPM"
     },
     {
       "axis": "api",
-      "summary": "Keep old CLI behavior while --show-drift is added",
-      "scope": "adversarial-security-sim/cli.py report output and flag parsing",
+      "summary": "Keep old CLI behavior; drift output must be opt-in only",
+      "scope": "CLI contract for adversarial-security-sim/report output",
       "gate": "approval:release-owner",
       "rollback": "redeploy_previous",
       "blocking": true,
@@ -210,170 +201,261 @@
     },
     {
       "axis": "api",
-      "summary": "Dual-support JSONL log and report path for one release",
-      "scope": "per-finding append to .mirofish_memory/security and drift reads",
-      "gate": "window:one-release",
-      "rollback": "stop writing drift log and remove --show-drift usage",
-      "blocking": true,
-      "owner": "ConsumerSubsystem"
-    },
-    {
-      "axis": "deploy",
-      "summary": "Ship drift helper only after append-and-read tests pass",
-      "scope": "new history.py verdict_drift() plus CLI integration",
-      "gate": "wait_for:CI green on add/read/append regression suite",
+      "summary": "Dual-support JSONL and new SQLite memory store during migration",
+      "scope": "history persistence path used by verdict_drift and log append",
+      "gate": "wait_for:sqlite_memory_backend_available",
       "rollback": "redeploy_previous",
       "blocking": true,
       "owner": "ConsumerSubsystem"
     },
     {
       "axis": "deploy",
-      "summary": "Fallback to no-drift mode if memory backend migration slips",
-      "scope": "compatibility with upcoming SQLite memory backend switch",
-      "gate": "wait_for:mirofish_lab backend migration availability",
-      "rollback": "disable --show-drift and continue append-only logging locally",
+      "summary": "Maintain append-only log compatibility for at least one release",
+      "scope": "transition period between current filesystem log and backend swap",
+      "gate": "window:1_release",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Add cutover tests for rerun drift, append, and backend fallback",
+      "scope": "pre-release validation for history append and --show-drift",
+      "gate": "wait_for:integration_tests_pass",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Fallback to no-drift mode if history backend is unavailable",
+      "scope": "runtime behavior when log or SQLite store cannot be written",
+      "gate": "monitor:history_write_error_rate<1%",
+      "rollback": "redeploy_previous",
       "blocking": false,
       "owner": "ConsumerSubsystem"
     }
   ],
   "plan": {
-    "summary": "Add append-only per-finding JSONL history and optional drift lookup, while keeping normal CLI output unchanged.",
+    "summary": "Ship append-only per-finding history logging and optional drift summaries with privacy, compatibility, and staged rollout controls.",
     "steps": [
       {
         "id": "S1",
-        "action": "Review and document a rollback plan for the new append-only security history log, including how to stop writes without altering existing records.",
-        "owner": "SRE",
+        "action": "Review and freeze the history record schema for JSONL entries under .mirofish_memory/security/<source-stem>.jsonl, including source, finding_id, severity, verdict, triager_sha256, maintainer_sha256, model, and timestamp.",
+        "owner": "BackendOwner",
         "depends_on": [],
-        "gate": "wait_for:rollback_plan_reviewed",
-        "rollback": "switch log writes off and read existing records only",
-        "observability": "Rollback procedure approved; write-disable switch identified; no code changes yet."
+        "gate": "wait_for:schema_fields_reviewed",
+        "rollback": "redeploy_previous",
+        "observability": "Schema review approval, field completeness, and no missing required attributes."
       },
       {
         "id": "S2",
-        "action": "Publish the release note and notify users, support, and downstream stakeholders about the new persisted finding history and optional drift output.",
-        "owner": "ProductPM",
+        "action": "Complete security approval for the new persistence path and privacy rules, confirming only hashes/metadata are stored and no finding bodies or transcripts are persisted.",
+        "owner": "Security",
         "depends_on": [
           "S1"
         ],
-        "gate": "wait_for:release_note_published",
-        "rollback": "disable_history_log_write",
-        "observability": "Release note published; customer/support notices sent; escalation owner assigned; support briefed."
+        "gate": "approval:security",
+        "rollback": "Disable the new persistence path and redeploy_previous",
+        "observability": "Security sign-off, field-level data classification, and confirmation that only hashes are logged."
       },
       {
         "id": "S3",
-        "action": "Implement `adversarial-security-sim/history.py` with `verdict_drift(source, finding_id)` that reads append-only JSONL history and summarizes verdicts across runs.",
+        "action": "Implement history.py with verdict_drift(source, finding_id) that reads append-only JSONL history and returns verdicts across runs without requiring existing drift files.",
         "owner": "BackendOwner",
-        "depends_on": [
-          "S1"
-        ],
-        "gate": "wait_for:history_reader_merged_and_released",
-        "rollback": "redeploy_previous",
-        "observability": "Reader returns expected drift summaries on fixture logs; read-path error rate remains below threshold."
-      },
-      {
-        "id": "S4",
-        "action": "Add append-only JSONL logging in `adversarial-security-sim/cli.py` at the end of each finding debate, storing source, finding_id, severity, verdict, hashes, model, and timestamp without full finding text.",
-        "owner": "Security",
         "depends_on": [
           "S1",
           "S2"
         ],
-        "gate": "approval:Security Reviewer",
-        "rollback": "Disable history append and redeploy_previous",
-        "observability": "Records append successfully; no plaintext bodies appear; write-path error rate stays under 0.1%; replication lag stays under 30s."
+        "gate": "wait_for:history_reader_backwards_compat_verified",
+        "rollback": "redeploy_previous",
+        "observability": "Reader can handle absent files, parse existing logs, and produce stable drift summaries."
+      },
+      {
+        "id": "S4",
+        "action": "Add append-only per-finding history writes in adversarial-security-sim/cli.py at the end of each finding debate, writing structured JSONL records with hashed agent outputs.",
+        "owner": "Security",
+        "depends_on": [
+          "S2",
+          "S3"
+        ],
+        "gate": "monitor:write_error_rate<0.1%",
+        "rollback": "Disable history append path and redeploy_previous",
+        "observability": "Append success rate, JSONL validity, no overwrite behavior, and presence of only hashed/metadata fields."
       },
       {
         "id": "S5",
-        "action": "Add and run append/read regression tests for the history writer and verdict_drift helper, including privacy checks for hashed outputs only.",
+        "action": "Run integration tests covering rerun drift, append behavior, and backend fallback for both JSONL and the forthcoming SQLite memory store.",
         "owner": "ConsumerSubsystem",
         "depends_on": [
           "S3",
           "S4"
         ],
-        "gate": "wait_for:CI green on add/read/append regression suite",
+        "gate": "wait_for:integration_tests_pass",
         "rollback": "redeploy_previous",
-        "observability": "CI passes on append, read, drift-summary, and privacy assertions."
+        "observability": "Test pass rate for drift reads, append compatibility, and fallback behavior under storage unavailability."
       },
       {
         "id": "S6",
-        "action": "Integrate optional `--show-drift` into the CLI so drift summary prints before the report only when explicitly requested, leaving default output unchanged.",
+        "action": "Prepare runtime dual-read compatibility for the upcoming SQLite memory backend so verdict_drift and append paths can work during migration without losing JSONL support.",
+        "owner": "mirofish_lab",
+        "depends_on": [
+          "S3",
+          "S5"
+        ],
+        "gate": "wait_for:sqlite_memory_backend_available",
+        "rollback": "redeploy_previous",
+        "observability": "Both JSONL and SQLite paths resolve correctly, with no regression in drift reads or append writes."
+      },
+      {
+        "id": "S7",
+        "action": "Enable the optional --show-drift CLI flag behind opt-in behavior only, preserving existing default report output.",
         "owner": "BackendOwner",
         "depends_on": [
           "S3",
           "S5"
         ],
-        "gate": "approval:release_manager",
-        "rollback": "turn off the feature flag and redeploy_previous",
-        "observability": "Default report output is unchanged; `--show-drift` prints only the drift summary; no extra output in normal runs."
-      },
-      {
-        "id": "S7",
-        "action": "Stage the rollout in an approved window outside business hours, launch windows, major events, incidents, and Friday afternoon, with log writes enabled only after readiness gates pass.",
-        "owner": "DataPlatform",
-        "depends_on": [
-          "S4",
-          "S6"
-        ],
-        "gate": "window:outside_business_hours",
-        "rollback": "Defer deployment and keep using the current storage layout",
-        "observability": "Deployment timing is compliant; no business-hours storage-layout change; rollout stays within approved window."
+        "gate": "approval:release-owner",
+        "rollback": "remove_flag_and_redeploy_previous",
+        "observability": "Default CLI output unchanged, drift output only appears when explicitly requested."
       },
       {
         "id": "S8",
-        "action": "Enable production writes and `--show-drift` behind the release gates, while monitoring write error rate, drift read error rate, replication lag, and CLI output stability.",
-        "owner": "SRE",
+        "action": "Publish release notes and customer-facing documentation for the new history log and --show-drift behavior, and brief support on drift-log questions.",
+        "owner": "ProductPM",
         "depends_on": [
           "S7"
         ],
-        "gate": "monitor:error_rate<0.1%",
-        "rollback": "disable --show-drift and stop appending new JSONL records",
-        "observability": "Write-path and read-path error rates remain below 0.1%; replication lag stays under 30s; normal CLI output remains unchanged."
+        "gate": "wait_for:release_notes_approved",
+        "rollback": "revert the release notes and remove mention of the history log from customer-facing docs",
+        "observability": "Release notes approval, support FAQ readiness, and updated customer documentation."
       },
       {
         "id": "S9",
-        "action": "If historical records need initial population, backfill in small batches into the JSONL log without rewriting existing entries.",
-        "owner": "DataPlatform",
+        "action": "Obtain support lead approval for escalation handling, retention questions, and drift comparison explanations before launch.",
+        "owner": "ProductPM",
         "depends_on": [
           "S8"
         ],
-        "gate": "monitor:write_iops<baseline+20%",
-        "rollback": "Pause backfill jobs and resume with smaller batches",
-        "observability": "IOPS stays within baseline+20%; append-only invariant holds; no replication-lag spikes."
+        "gate": "approval:support lead",
+        "rollback": "pause rollout until support FAQ and escalation paths are updated",
+        "observability": "Support readiness sign-off and updated escalation paths."
       },
       {
         "id": "S10",
-        "action": "Plan the future SQLite memory-backend migration path so the JSONL history can be dual-written during cutover, but keep the current JSONL store as the active path until the backend is live and reviewed.",
-        "owner": "Security",
+        "action": "Perform controlled rollout of the logging change and optional drift summary during an allowed release window, keeping drift opt-in and avoiding incident/launch windows.",
+        "owner": "SRE",
         "depends_on": [
-          "S8"
+          "S4",
+          "S6",
+          "S7",
+          "S9"
         ],
-        "gate": "wait_for:sqlite_backend_write_path_live",
-        "rollback": "Keep writing to current JSONL store; defer migration",
-        "observability": "Migration remains deferred until the SQLite write path is live; no storage-layout change is introduced prematurely."
+        "gate": "window:mon-thu_09:00-16:00_local",
+        "rollback": "abort deploy and redeploy_previous",
+        "observability": "Deployment timing, incident status, and unchanged default CLI behavior."
+      },
+      {
+        "id": "S11",
+        "action": "Monitor write stability, replication lag, IOPS, and the 24h end-to-end history persistence workflow after rollout; throttle or pause appends if thresholds are exceeded.",
+        "owner": "DataPlatform",
+        "depends_on": [
+          "S10"
+        ],
+        "gate": "wait_for:24h_healthy_history_persistence",
+        "rollback": "Stop appending new records, throttle writes, or keep dual-read support as needed while preserving existing logs",
+        "observability": "write_iops<baseline+10%, replication_lag<30s, write_error_rate<0.1%, and healthy drift-read success over 24h."
+      },
+      {
+        "id": "S12",
+        "action": "Plan the later backend cutover so JSONL and SQLite storage coexist for at least one release, with old artifacts retained until the quiet period and no daytime migration.",
+        "owner": "mirofish_lab",
+        "depends_on": [
+          "S6",
+          "S11"
+        ],
+        "gate": "window:after_hours",
+        "rollback": "Keep writing the JSONL log in the existing filesystem location",
+        "observability": "No daytime migration activity, dual-read continuity, and no drop of old storage artifacts before the quiet period."
       }
     ],
     "open_questions": [
-      "Who is the named release owner/customer_comms_lead for the approval gates?",
-      "Who is the escalation owner assigned for customer issues?",
-      "What exact hashes should be used for `triager_sha256` and `maintainer_sha256` if agent-output hashing format is not already standardized?",
-      "Should initial backfill ever run, or is the rollout limited to new findings only?"
+      "Who is the single release owner for approving the optional --show-drift flag?",
+      "Should the drift summary include any non-hashed metadata beyond the required fields?",
+      "What exact release window should be used if the mon-thu local window conflicts with a customer launch freeze?",
+      "Where will the security approval for the persistence path be recorded for auditability?",
+      "How should the SQLite backend represent history records while preserving append-only semantics?"
     ],
     "conflicts": [
       {
         "between": [
           "BackendOwner",
+          "SRE"
+        ],
+        "issue": "BackendOwner requires waiting for history_reader_backwards_compat_verified before shipping the log-writer, while SRE requires a release gate that also keeps --show-drift opt-in and default output unchanged. Resolved by placing reader-compat work before any rollout and keeping the drift flag opt-in in S7."
+      },
+      {
+        "between": [
+          "BackendOwner",
+          "ConsumerSubsystem"
+        ],
+        "issue": "BackendOwner wants dual-read compatibility only after sqlite_backend_write_path_ready, while ConsumerSubsystem requires dual-support JSONL and SQLite during migration and integration tests first. Resolved conservatively by doing JSONL reader work before backend cutover and delaying migration until both test and backend readiness are met."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "SRE"
+        ],
+        "issue": "DataPlatform allows small append batches with only write_iops monitoring, but SRE requires write_error_rate<0.1% and a 24h healthy persistence gate before broad use. Resolved by using conservative batching and waiting for the stricter 24h stability gate."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "mirofish_lab"
+        ],
+        "issue": "DataPlatform forbids storage-format migration during business hours and requires 7d no reads/writes before dropping old artifacts, while mirofish_lab needs the history log moved into the SQLite backend. Resolved by deferring cutover to an after-hours quiet period and keeping the filesystem log until the quiet period is satisfied."
+      },
+      {
+        "between": [
+          "Security",
+          "ProductPM"
+        ],
+        "issue": "Security requires stored records to exclude finding bodies and transcripts, while ProductPM wants customer-facing release notes and support briefings about the new history log. Resolved by keeping release notes high-level and limiting operational details to hashes/metadata only."
+      },
+      {
+        "between": [
+          "Security",
+          "ConsumerSubsystem"
+        ],
+        "issue": "Security requires approval for the new persistence path before rollout, while ConsumerSubsystem wants cutover tests and backend fallback validated for drift reads and append behavior. Resolved by sequencing security approval before implementation and running integration tests after the reader/writer paths are in place."
+      },
+      {
+        "between": [
           "SRE",
+          "ProductPM"
+        ],
+        "issue": "SRE requires deployment only in mon-thu 09:00-16:00 local and outside incident windows, while ProductPM forbids launch-window rollouts. Resolved by choosing the stricter combined release window and treating launch windows as excluded time."
+      },
+      {
+        "between": [
           "ProductPM",
           "ConsumerSubsystem"
         ],
-        "issue": "Multiple blockers require approvals, timing windows, and release-note/user-notice prerequisites before drift becomes visible. Resolved by sequencing reader, rollout comms, and approvals before enabling `--show-drift`; normal CLI output stays unchanged unless the flag is used."
+        "issue": "ProductPM wants notification before any breaking drift-log behavior changes, while ConsumerSubsystem requires drift output to remain opt-in only with old CLI behavior preserved. Resolved by keeping drift output opt-in and sending release notes before enabling the flag."
+      },
+      {
+        "between": [
+          "ProductPM",
+          "SRE"
+        ],
+        "issue": "ProductPM requires support briefing and release-note approval before launch, while SRE requires rollout health gating and an allowed deployment window. Resolved by placing product communications before SRE deployment and using the SRE window as the final launch gate."
       },
       {
         "between": [
           "DataPlatform",
           "Security"
         ],
-        "issue": "History must be append-only and privacy-preserving, while future backend migration may change storage. Resolved by keeping JSONL as the active append-only log now and deferring any SQLite move until the backend write path is live and compliance-reviewed."
+        "issue": "Both require append-only behavior, but Security additionally forbids mutation/deletion of prior verdict records while DataPlatform's rollback language could imply stopping writes without touching existing logs. Resolved by using a rollback that only stops future appends and preserves existing history intact."
       }
     ]
   }

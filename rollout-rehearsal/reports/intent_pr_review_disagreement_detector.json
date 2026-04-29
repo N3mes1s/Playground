@@ -3,8 +3,8 @@
   "constraints": [
     {
       "axis": "api",
-      "summary": "Keep report format additive; preserve existing report readers",
-      "scope": "pr-review-rehearsal report generation and committed reports in reports/",
+      "summary": "Keep report format additive; existing reports must still parse",
+      "scope": "pr-review-rehearsal report generation and consumers of reports/",
       "gate": "none",
       "rollback": "redeploy_previous",
       "blocking": true,
@@ -12,8 +12,8 @@
     },
     {
       "axis": "api",
-      "summary": "Judge input must accept conflicts without changing prior fields",
-      "scope": "Judge prompt/input contract in cli.py",
+      "summary": "Judge input must accept optional conflict list without breaking old path",
+      "scope": "Judge prompt and the handoff from DisagreementChecker to Judge",
       "gate": "none",
       "rollback": "redeploy_previous",
       "blocking": true,
@@ -21,370 +21,348 @@
     },
     {
       "axis": "deploy",
-      "summary": "Deploy persona and conflict parser before enabling section output",
-      "scope": "mirofish_lab/personas.py and cli.py rollout order",
-      "gate": "wait_for:DisagreementChecker_available",
+      "summary": "Ship DisagreementChecker and report section before relying on its output",
+      "scope": "mirofish_lab/personas.py and pr-review-rehearsal/cli.py rollout",
+      "gate": "wait_for:DisagreementChecker_present_in_deploy",
       "rollback": "redeploy_previous",
       "blocking": true,
       "owner": "BackendOwner"
     },
     {
       "axis": "deploy",
-      "summary": "Rollback by disabling conflict section if report consumers break",
-      "scope": "New Cross-reviewer conflicts section emission",
-      "gate": "monitor:report_parse_errors0",
-      "rollback": "disable_conflict_section",
-      "blocking": false,
+      "summary": "Deploy code that emits conflict list before any consumer treats it as required",
+      "scope": "all downstream report consumers and Judge update",
+      "gate": "none",
+      "rollback": "redeploy_previous",
+      "blocking": true,
       "owner": "BackendOwner"
     },
     {
       "axis": "data",
-      "summary": "Keep existing report files readable; add conflicts section only",
-      "scope": "reports/ committed outputs and any generated report schema",
-      "gate": "wait_for:backfill_validation_on_sample_reports",
-      "rollback": "Remove the new section and regenerate reports in the prior format",
+      "summary": "Keep report format additive so existing report files still parse",
+      "scope": "pr-review-rehearsal/reports/ and any reader of prior committed reports",
+      "gate": "none",
+      "rollback": "Restore the previous report serializer and omit the new conflict section",
       "blocking": true,
       "owner": "DataPlatform"
     },
     {
       "axis": "data",
-      "summary": "Do not backfill or rewrite historical reports during rollout",
-      "scope": "Existing artifacts under pr-review-rehearsal/reports/",
+      "summary": "Do not require any new stored fields for disagreement detection",
+      "scope": "DisagreementChecker inputs/outputs and report generation",
       "gate": "none",
-      "rollback": "Restore historical files from backup if any accidental rewrite occurs",
+      "rollback": "Remove conflict persistence and derive all output only from in-memory review text",
       "blocking": true,
       "owner": "DataPlatform"
     },
     {
       "axis": "ops",
-      "summary": "Avoid schema/table changes to report storage during business hours",
-      "scope": "Any database or file-store schema used for report persistence",
-      "gate": "window:after_hours_only",
-      "rollback": "Revert the storage schema change and redeploy the previous migration state",
-      "blocking": false,
-      "owner": "DataPlatform"
-    },
-    {
-      "axis": "data",
-      "summary": "New conflict data must not increase write load materially",
-      "scope": "Any persisted metadata for cross-reviewer conflicts",
-      "gate": "monitor:write_iops<=baseline_plus_10%",
-      "rollback": "Disable persistence of conflict metadata and fall back to report-only output",
+      "summary": "Keep the added analysis batch bounded to avoid storage I/O spikes",
+      "scope": "If disagreement results are written to disk or cached during runs",
+      "gate": "monitor:IOPS<baseline+10%",
+      "rollback": "Disable the conflict cache/write path and revert to transient in-memory processing",
       "blocking": false,
       "owner": "DataPlatform"
     },
     {
       "axis": "deploy",
-      "summary": "Ship behind a feature flag for additive report section",
-      "scope": "pr-review-rehearsal/cli.py conflict extraction and report rendering",
+      "summary": "Ship behind a feature flag for the new conflict section",
+      "scope": "pr-review-rehearsal/cli.py report generation and Judge input wiring",
       "gate": "none",
-      "rollback": "disable the feature flag to skip DisagreementChecker and omit the new section",
+      "rollback": "disable the feature flag and fall back to the existing review\u2192judge flow",
       "blocking": true,
       "owner": "SRE"
     },
     {
       "axis": "ops",
-      "summary": "Validate on a canary batch before full rollout",
-      "scope": "End-to-end pr-review-rehearsal runs with the new conflict step",
-      "gate": "monitor:report_render_errors<0.1%",
-      "rollback": "roll back to the previous version and resume runs without conflict detection",
+      "summary": "Canary on a small PR subset before broad enablement",
+      "scope": "DisagreementChecker execution and report rendering in production runs",
+      "gate": "monitor:error_rate<0.1%",
+      "rollback": "disable the feature flag and route all runs to the previous flow",
       "blocking": true,
       "owner": "SRE"
     },
     {
       "axis": "ops",
-      "summary": "Require no incident window and no Friday afternoon deploy",
-      "scope": "Deployment of the updated pr-review-rehearsal service",
-      "gate": "window:weekday-business-hours-excluding-friday-afternoon-and-incident-windows",
-      "rollback": "redeploy_previous",
-      "blocking": true,
-      "owner": "SRE"
-    },
-    {
-      "axis": "ops",
-      "summary": "Hold rollout until conflict section is empty or accurate",
-      "scope": "DisagreementChecker output and report generation",
-      "gate": "monitor:empty_conflict_section_rate=100%",
-      "rollback": "disable DisagreementChecker and revert to judge-only reporting",
+      "summary": "Wait for stable no-parse-failure runs before full rollout",
+      "scope": "new cross-reviewer conflict section and Judge prompt payload",
+      "gate": "wait_for:24h_of_successful_runs",
+      "rollback": "revert to the previous report schema and Judge prompt",
       "blocking": false,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Avoid rollout during incident windows or weekend-change freeze",
+      "scope": "production rollout of the DisagreementChecker path",
+      "gate": "window:business-hours-no-incident-window",
+      "rollback": "pause rollout and keep the prior deployment active",
+      "blocking": true,
       "owner": "SRE"
     },
     {
       "axis": "security",
-      "summary": "Do not weaken or overwrite reviewer security findings",
-      "scope": "DisagreementChecker diffing SecurityHawk output against other reviewers and the Judge input",
-      "gate": "approval:SecurityHawk",
-      "rollback": "Remove DisagreementChecker from the review pipeline and restore Judge-only aggregation",
+      "summary": "Keep audit trail of reviewer outputs and conflict list intact",
+      "scope": "DisagreementChecker input/output path and report generation in pr-review-rehearsal/cli.py",
+      "gate": "none",
+      "rollback": "Redeploy previous CLI version without the DisagreementChecker step",
       "blocking": true,
       "owner": "Security"
     },
     {
       "axis": "security",
-      "summary": "Preserve audit trail for all review outputs and conflict entries",
-      "scope": "Report generation for per-reviewer comments, conflict list, and Judge prompt payload",
-      "gate": "monitor:audit_coverage100%",
-      "rollback": "Redeploy previous report renderer that emits only the original reviewer sections",
+      "summary": "Add conflicts only after review artifacts are fully recorded",
+      "scope": "Order of execution between parallel reviewer run, conflict detection, and judge merge",
+      "gate": "wait_for:review_outputs_persisted",
+      "rollback": "Disable DisagreementChecker and preserve prior judge-only flow",
       "blocking": true,
       "owner": "Security"
     },
     {
       "axis": "comms",
-      "summary": "Notify consumers of additive report section before rollout",
-      "scope": "Any externally visible report shape change in pr-review-rehearsal reports",
-      "gate": "window:customer_notice_before_release",
-      "rollback": "Delay enabling the new conflict section and ship the prior report format",
+      "summary": "Notify consumers about additive report section before release",
+      "scope": "Any externally visible report format change for consumers of pr-review-rehearsal/reports/",
+      "gate": "window:notify_consumers_before_release",
+      "rollback": "Remove the new Cross-reviewer conflicts section from generated reports",
       "blocking": true,
       "owner": "Security"
     },
     {
       "axis": "security",
-      "summary": "Complete compliance review for new LLM-based conflict handling",
-      "scope": "New DisagreementChecker persona and Judge prompt change using reviewer text",
-      "gate": "approval:Compliance",
-      "rollback": "Disable DisagreementChecker and revert to existing review flow",
+      "summary": "Do not launch until review of conflict wording is approved",
+      "scope": "New report text that surfaces reviewer disagreements and explicit conflicts",
+      "gate": "approval:security_review",
+      "rollback": "Revert to the previous report template with no conflict section",
       "blocking": true,
       "owner": "Security"
     },
     {
       "axis": "comms",
-      "summary": "Notify report consumers before the additive report change ships",
-      "scope": "pr-review-rehearsal report format and released examples in reports/",
+      "summary": "Announce additive report section before rollout",
+      "scope": "pr-review-rehearsal report consumers and PR authors",
       "gate": "wait_for:customer_notice_sent",
-      "rollback": "remove the new conflict section from generated reports",
+      "rollback": "remove the new conflict section from reports and prompts",
       "blocking": true,
       "owner": "ProductPM"
     },
     {
       "axis": "comms",
-      "summary": "Publish support notes for the new conflict section and empty case",
-      "scope": "pr-review-rehearsal CLI output and report interpretation guidance",
-      "gate": "approval:support_lead",
-      "rollback": "revert to the prior report wording without the conflict section",
-      "blocking": true,
-      "owner": "ProductPM"
-    },
-    {
-      "axis": "business",
-      "summary": "Avoid rollout during launch windows or major customer events",
-      "scope": "deployment of the DisagreementChecker update to pr-review-rehearsal",
+      "summary": "Give advance notice for any report-format change",
+      "scope": "existing committed reports in pr-review-rehearsal/reports/",
       "gate": "window:outside_launch_window",
-      "rollback": "redeploy_previous",
+      "rollback": "revert to the pre-change report template",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "ops",
+      "summary": "Support team must have rollout briefing and FAQ",
+      "scope": "support and escalation handling during the first release",
+      "gate": "approval:support_lead",
+      "rollback": "pause rollout until support brief is updated and re-issued",
       "blocking": true,
       "owner": "ProductPM"
     },
     {
       "axis": "business",
-      "summary": "Assign an owner for customer escalations about changed reports",
-      "scope": "first release of cross-reviewer conflicts in generated reports",
-      "gate": "approval:release_owner",
-      "rollback": "disable the conflict section in generated reports",
+      "summary": "Avoid rollout during launch windows or major events",
+      "scope": "deployment of the disagreement detection change",
+      "gate": "window:no_launch_window",
+      "rollback": "delay deployment until after the event window closes",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Assign explicit owner for customer escalations",
+      "scope": "customer confusion or complaints about new conflict reporting",
+      "gate": "approval:customer_escalation_owner",
+      "rollback": "escalate to rollback owner and suspend rollout",
       "blocking": true,
       "owner": "ProductPM"
     },
     {
       "axis": "api",
-      "summary": "Keep old report readers working with additive-only section",
-      "scope": "pr-review-rehearsal report generation and any parser/consumer expecting current report layout",
-      "gate": "approval:pr-review-rehearsal consumers",
-      "rollback": "remove the Cross-reviewer conflicts section and redeploy_previous",
+      "summary": "Keep report format additive; old reports must still parse",
+      "scope": "pr-review-rehearsal report generation and any parser/consumer of reports",
+      "gate": "wait_for:compatibility_tests_added_and_passing",
+      "rollback": "remove the new Cross-reviewer conflicts section and redeploy_previous",
       "blocking": true,
       "owner": "ConsumerSubsystem"
     },
     {
       "axis": "api",
-      "summary": "Ship DisagreementChecker behind a dual-read transition path",
-      "scope": "cli.py flow from reviewer outputs into Judge prompt",
-      "gate": "wait_for:compatibility shim verified on committed reports",
-      "rollback": "bypass DisagreementChecker and feed Judge the pre-change reviewer outputs only",
+      "summary": "Dual-support Judge input until conflict payload is stable",
+      "scope": "Judge prompt/input contract in cli.py for review outputs plus conflict list",
+      "gate": "window:2 release cycles",
+      "rollback": "drop conflict list from Judge input and redeploy_previous",
       "blocking": true,
       "owner": "ConsumerSubsystem"
     },
     {
       "axis": "deploy",
-      "summary": "Add regression tests for conflict section and empty-conflict case",
-      "scope": "pr-review-rehearsal test suite covering report output and Judge input",
-      "gate": "approval:CI green on committed report fixtures",
-      "rollback": "revert the new tests and redeploy_previous",
-      "blocking": true,
-      "owner": "ConsumerSubsystem"
-    },
-    {
-      "axis": "deploy",
-      "summary": "Define a no-risk fallback if the new agent slips the release",
-      "scope": "release plan for cli.py and persona registry changes",
-      "gate": "window:until new agent is production-ready",
-      "rollback": "disable DisagreementChecker and keep the current Judge-only path",
+      "summary": "Ship a shim that tolerates missing conflict section in older runs",
+      "scope": "report rendering and any downstream consumer expecting the new section",
+      "gate": "approval:release_manager",
+      "rollback": "disable conflict-section rendering and redeploy_previous",
       "blocking": false,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Fallback must be revertible to judge-only flow if rollout slips",
+      "scope": "cli.py execution path for reviewer -> judge pipeline",
+      "gate": "monitor:conflict_detection_failure_rate<1%",
+      "rollback": "skip DisagreementChecker step and redeploy_previous",
+      "blocking": true,
       "owner": "ConsumerSubsystem"
     }
   ],
   "plan": {
-    "summary": "Add DisagreementChecker behind a flag, preserve old reports, and roll out additive conflict visibility without breaking existing consumers.",
+    "summary": "Add an in-memory DisagreementChecker, render an additive conflict section, and dual-wire Judge input while preserving old report compatibility.",
     "steps": [
       {
         "id": "S1",
-        "action": "Add DisagreementChecker to mirofish_lab/personas.py and wire a no-op/feature-flagged path in cli.py that can accept conflict data without changing existing reviewer or Judge fields.",
+        "action": "Add the DisagreementChecker persona definition in mirofish_lab/personas.py and implement in-memory diffing of the four reviewer outputs into topic/reviewers_for/reviewers_against/evidence entries.",
         "owner": "BackendOwner",
         "depends_on": [],
         "gate": "none",
-        "rollback": "redeploy_previous",
-        "observability": "Persona registry loads, CLI accepts the new persona, and existing review flow still runs unchanged when the flag is off."
+        "rollback": "Redeploy the previous personas file and remove the DisagreementChecker persona.",
+        "observability": "Persona loads successfully; checker returns a list from review text only with no new persisted fields."
       },
       {
         "id": "S2",
-        "action": "Update Judge prompt/input contract in cli.py to accept an additional conflicts payload while preserving all prior fields and existing prompt semantics.",
+        "action": "Update pr-review-rehearsal/cli.py to run DisagreementChecker after parallel_run(reviewers, ...) and before Judge merge, using only the in-memory review outputs.",
         "owner": "BackendOwner",
         "depends_on": [
           "S1"
         ],
-        "gate": "none",
-        "rollback": "redeploy_previous",
-        "observability": "Judge receives the extra input slot, previous fields remain stable, and judge-only runs still produce the same shape."
+        "gate": "wait_for:review_outputs_persisted",
+        "rollback": "Disable DisagreementChecker and restore the prior reviewer->judge flow.",
+        "observability": "Checker executes only after reviewer artifacts are recorded; no extra GitHub fetches occur."
       },
       {
         "id": "S3",
-        "action": "Implement in-memory disagreement extraction after parallel_run(reviewers, ...) to produce {topic, reviewers_for, reviewers_against, evidence} entries, including an explicit empty-conflict case.",
-        "owner": "ConsumerSubsystem",
+        "action": "Extend the report serializer to insert a new additive 'Cross-reviewer conflicts' section between per-reviewer comments and implementer iteration, including an explicit empty-case message when no conflicts exist.",
+        "owner": "DataPlatform",
         "depends_on": [
-          "S1",
           "S2"
         ],
-        "gate": "wait_for:DisagreementChecker_available",
-        "rollback": "bypass DisagreementChecker and feed Judge the pre-change reviewer outputs only",
-        "observability": "Conflict list is derived only from reviewer outputs, no extra GitHub fetches occur, and empty cases render as an explicit no-conflicts result."
+        "gate": "none",
+        "rollback": "Restore the previous report serializer and omit the conflict section.",
+        "observability": "Existing committed reports still parse; new section appears only as an additive block."
       },
       {
         "id": "S4",
-        "action": "Add regression tests and fixture coverage for additive report rendering, old report readability, conflict extraction, and the honest empty-conflict section.",
-        "owner": "ConsumerSubsystem",
+        "action": "Update the Judge prompt/input contract to accept an optional conflict list while preserving the old path when the list is absent.",
+        "owner": "BackendOwner",
         "depends_on": [
+          "S2",
           "S3"
         ],
-        "gate": "approval:CI green on committed report fixtures",
-        "rollback": "revert the new tests and redeploy_previous",
-        "observability": "Tests verify committed reports remain readable, the new section is additive only, and Judge input still accepts prior fields."
+        "gate": "none",
+        "rollback": "Redeploy the previous Judge prompt and drop the conflict payload.",
+        "observability": "Judge consumes conflict data when present and still works with legacy inputs."
       },
       {
         "id": "S5",
-        "action": "Validate compatibility on a sample set of committed reports without rewriting historical artifacts, confirming the new section can be added and omitted safely.",
-        "owner": "DataPlatform",
+        "action": "Add compatibility tests for legacy report parsing and for Judge behavior with and without the conflict list.",
+        "owner": "ConsumerSubsystem",
         "depends_on": [
+          "S3",
           "S4"
         ],
-        "gate": "wait_for:backfill_validation_on_sample_reports",
-        "rollback": "Remove the new section and regenerate reports in the prior format",
-        "observability": "Sample reports parse successfully, historical files under reports/ are untouched, and no backfill or rewrite is performed."
+        "gate": "wait_for:compatibility_tests_added_and_passing",
+        "rollback": "Remove the new tests and revert to the previous test suite.",
+        "observability": "Tests confirm additive-only report shape and dual-support Judge input."
       },
       {
         "id": "S6",
-        "action": "Prepare additive report wording and consumer support notes for the new Cross-reviewer conflicts section, including the empty-case explanation.",
+        "action": "Prepare release notes, consumer notice, support FAQ, and escalation ownership for the new additive section.",
         "owner": "ProductPM",
         "depends_on": [
-          "S4",
-          "S5"
+          "S3",
+          "S4"
         ],
-        "gate": "approval:support_lead",
-        "rollback": "revert to the prior report wording without the conflict section",
-        "observability": "Support notes explain the new section clearly, and consumers have guidance for both conflict and no-conflict outputs."
+        "gate": "wait_for:customer_notice_sent",
+        "rollback": "Withdraw the notice and revert to the pre-change report template.",
+        "observability": "Notice is sent before release; support materials reference the new conflict section."
       },
       {
         "id": "S7",
-        "action": "Obtain customer notice for the additive report change and assign a release owner for escalations before enabling the new section.",
-        "owner": "ProductPM",
+        "action": "Obtain security approval for the new conflict wording and the unchanged audit trail path.",
+        "owner": "Security",
         "depends_on": [
-          "S6"
+          "S3",
+          "S4"
         ],
-        "gate": "wait_for:customer_notice_sent",
-        "rollback": "remove the new conflict section from generated reports",
-        "observability": "Notice is sent before release, the escalation owner is assigned, and no production report shape change is enabled yet."
+        "gate": "approval:security_review",
+        "rollback": "Revert to the previous report template with no conflict section.",
+        "observability": "Approved wording matches the report text; audit trail remains intact."
       },
       {
         "id": "S8",
-        "action": "Complete compliance review for the new LLM-based conflict handling and ensure security findings are not weakened or overwritten.",
-        "owner": "Security",
+        "action": "Deploy behind the feature flag and canary on a small PR subset during business hours, outside incident and launch windows.",
+        "owner": "SRE",
         "depends_on": [
-          "S3",
-          "S5"
+          "S5",
+          "S6",
+          "S7"
         ],
-        "gate": "approval:Compliance",
-        "rollback": "Disable DisagreementChecker and revert to existing review flow",
-        "observability": "Compliance approves the new agent and Judge prompt change, and audit trail coverage remains intact."
+        "gate": "window:business-hours-no-incident-window",
+        "rollback": "Disable the feature flag and route all runs to the previous flow.",
+        "observability": "Canary error rate, parse failures, and conflict_detection_failure_rate stay within thresholds."
       },
       {
         "id": "S9",
-        "action": "Get explicit SecurityHawk approval for diffing its output against other reviewers and for feeding conflicts into Judge.",
-        "owner": "Security",
+        "action": "Monitor the canary for 24 hours of successful runs and verify no parse failures before broadening rollout.",
+        "owner": "SRE",
         "depends_on": [
-          "S3",
           "S8"
         ],
-        "gate": "approval:SecurityHawk",
-        "rollback": "Remove DisagreementChecker from the review pipeline and restore Judge-only aggregation",
-        "observability": "SecurityHawk signs off that its findings are preserved, not weakened, and conflict extraction respects security output."
+        "gate": "monitor:error_rate<0.1%",
+        "rollback": "Revert to the previous report schema and Judge prompt.",
+        "observability": "Track error rate, parse failures, and whether conflicts are surfaced correctly."
       },
       {
         "id": "S10",
-        "action": "Deploy the updated service behind the feature flag during an allowed window, after customer notice and compliance/security approvals are complete.",
-        "owner": "SRE",
+        "action": "Keep the feature flag as the immediate fallback and, if rollout slips or conflict detection fails, revert to judge-only flow.",
+        "owner": "ConsumerSubsystem",
         "depends_on": [
-          "S7",
           "S8",
           "S9"
         ],
-        "gate": "window:weekday-business-hours-excluding-friday-afternoon-and-incident-windows",
-        "rollback": "disable the feature flag to skip DisagreementChecker and omit the new section",
-        "observability": "Deployment occurs outside incident windows and Friday afternoon, with the feature flag still off by default."
-      },
-      {
-        "id": "S11",
-        "action": "Run a canary batch with the feature enabled to verify end-to-end report rendering, audit coverage, and zero parse regressions before full rollout.",
-        "owner": "SRE",
-        "depends_on": [
-          "S10"
-        ],
-        "gate": "monitor:report_render_errors<0.1%",
-        "rollback": "roll back to the previous version and resume runs without conflict detection",
-        "observability": "Watch report render errors, parse errors, audit coverage, and whether the conflicts section is empty or accurate."
-      },
-      {
-        "id": "S12",
-        "action": "Enable the additive Cross-reviewer conflicts section for all runs only after canary success, while keeping the old report shape readable and the fallback available.",
-        "owner": "SRE",
-        "depends_on": [
-          "S11"
-        ],
-        "gate": "monitor:report_parse_errors0",
-        "rollback": "disable_conflict_section",
-        "observability": "Monitor report parse errors, empty-conflict rate, write IOPS, and consumer feedback on the new section."
+        "gate": "monitor:conflict_detection_failure_rate<1%",
+        "rollback": "Skip DisagreementChecker and redeploy_previous.",
+        "observability": "Fallback remains available; judge-only path can be restored without schema changes."
       }
     ],
     "open_questions": [
-      "What exact heuristic should DisagreementChecker use to decide that one reviewer 'implicitly endorsed' another's objection?",
-      "What is the final customer-facing wording for the empty-conflict section?",
-      "Which team owns the runtime feature flag and its default state at first release?",
-      "Should the committed reports in reports/ be regenerated only for fixtures, or also for published examples once notice is sent?"
+      "Who is the final release manager approver for the compatibility shim, if that shim is later needed?",
+      "Should the empty-case message be a fixed sentence or templated per reviewer set?",
+      "What exact wording should the customer notice and support FAQ use for the new conflict section?"
     ],
     "conflicts": [
       {
         "between": [
           "SRE",
-          "BackendOwner"
-        ],
-        "issue": "SRE requires a feature-flagged rollout and canary validation before enabling output; BackendOwner requires the new judge input contract to accept conflicts. Resolved by wiring the contract first, then shipping disabled behind the flag, and only enabling after canary."
-      },
-      {
-        "between": [
-          "DataPlatform",
           "ProductPM"
         ],
-        "issue": "DataPlatform forbids rewriting historical reports, while ProductPM wants released examples updated. Resolved by not touching historical artifacts and limiting any regeneration to future outputs and sample validation only."
+        "issue": "SRE requires rollout only in a business-hours/no-incident window, while ProductPM also requires a release-notice/launch-window constraint. Resolved by sequencing notice and approvals before the business-hours canary, and treating both windows as rollout prerequisites."
       },
       {
         "between": [
-          "Security",
+          "SRE",
+          "ProductPM"
+        ],
+        "issue": "SRE wants a canary on a small PR subset before broad enablement; ProductPM requires customer notice/support prep before release. Resolved by doing notice/FAQ first, then canary."
+      },
+      {
+        "between": [
+          "BackendOwner",
           "ConsumerSubsystem"
         ],
-        "issue": "ConsumerSubsystem wants a dual-read compatibility path, while Security requires audit preservation and no weakening of security findings. Resolved by preserving all prior fields, appending conflicts only, and keeping SecurityHawk sign-off before enablement."
+        "issue": "BackendOwner wants the Judge to accept an optional conflict list immediately, while ConsumerSubsystem requires dual-support for two release cycles. Resolved conservatively by making the new payload optional and preserving the old path during rollout."
       }
     ]
   }

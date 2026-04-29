@@ -1,0 +1,139 @@
+{
+  "intent": "fixtures/intent_rlm_validator_persona_swap.md",
+  "model": "gpt-5.4-mini",
+  "tokens_in": 801,
+  "tokens_out": 1523,
+  "plan": {
+    "summary": "Reframe validator debate prompts to RedTeamTriager/Maintainer, add legacy/reframed A/B mode in runners, preserve verdict labels and benchmark comparability.",
+    "steps": [
+      {
+        "id": "S1",
+        "action": "Inventory current validator.py prompts, seed template, and any shared persona fragments used by adversarial-security-sim so the new framing reuses existing language where possible.",
+        "owner": "backend",
+        "depends_on": [],
+        "gate": "none",
+        "rollback": "No code changes yet; discard audit notes if findings reveal hidden coupling.",
+        "observability": "Document current prompt strings, token counts per finding, and current refusal/victory rate baseline."
+      },
+      {
+        "id": "S2",
+        "action": "Extract or import RedTeamTriager and Maintainer system prompts from mirofish_lab/personas.py into recursive-lm-security-audit/validator.py, replacing prosecution/defense persona text only.",
+        "owner": "backend",
+        "depends_on": [
+          "S1"
+        ],
+        "gate": "approval:security-review",
+        "rollback": "Revert validator.py to the prior prosecution/defense prompt constants or disable the import path.",
+        "observability": "Log which persona prompt is selected per finding and compare prompt token length to legacy."
+      },
+      {
+        "id": "S3",
+        "action": "Rewrite the seed prompt template from 'construct an exploit chain' to 'audit-level plausibility analysis' while keeping the two-agent debate structure and final verdict labels unchanged.",
+        "owner": "backend",
+        "depends_on": [
+          "S2"
+        ],
+        "gate": "approval:product-and-security",
+        "rollback": "Restore the prior exploit-chain seed prompt template if verdict quality degrades.",
+        "observability": "Track refusal rate on critical-severity findings and count any new safety-related interruptions."
+      },
+      {
+        "id": "S4",
+        "action": "Keep the verdict prompt logic and label set exactly CONFIRMED/DOWNGRADED/DISMISSED, and add regression tests that parse existing reports like flowise-report.md, juice-shop-audit-report.md, n8n-audit-report.md, and dvsa-audit-report.md.",
+        "owner": "backend",
+        "depends_on": [
+          "S3"
+        ],
+        "gate": "wait_for:test-pass",
+        "rollback": "Revert verdict prompt changes if any report parser or label-mapping test fails.",
+        "observability": "Run report parsing tests and assert label distribution remains compatible with prior outputs."
+      },
+      {
+        "id": "S5",
+        "action": "Add --validator-mode={legacy,reframed} to benchmark.py and batch_runner.py, wiring the flag through to validator selection without changing default behavior yet.",
+        "owner": "backend",
+        "depends_on": [
+          "S4"
+        ],
+        "gate": "approval:platform",
+        "rollback": "Remove the flag plumbing and default back to the existing validator path.",
+        "observability": "Expose mode in run metadata, benchmark logs, and output filenames so A/B runs are attributable."
+      },
+      {
+        "id": "S6",
+        "action": "Run A/B benchmark jobs on the same finding set to compare refusal rate, verdict distribution, F1 on flowise-manual-verification.md, and per-finding token spend between legacy and reframed modes.",
+        "owner": "data",
+        "depends_on": [
+          "S5"
+        ],
+        "gate": "window:benchmark-run",
+        "rollback": "Stop the reframed jobs and retain legacy as the comparison baseline if spend or quality drifts materially.",
+        "observability": "Collect refusal counts, CONFIRMED/DOWNGRADED/DISMISSED histograms, precision/recall/F1, and token usage deltas."
+      },
+      {
+        "id": "S7",
+        "action": "Have SRE verify runtime stability and rate limits during benchmark execution, especially that the new persona prompts do not increase retries or timeout rates beyond the current baseline.",
+        "owner": "sre",
+        "depends_on": [
+          "S5"
+        ],
+        "gate": "monitor:job-health",
+        "rollback": "Throttle or pause reframed runs if timeout, retry, or rate-limit errors rise above baseline.",
+        "observability": "Monitor request latency, error rate, retry count, and model refusal spikes by severity tier."
+      },
+      {
+        "id": "S8",
+        "action": "Review the benchmark results against the stated constraints: no F1 regression on flowise-manual-verification.md and no more than ~10% token spend increase per finding.",
+        "owner": "security",
+        "depends_on": [
+          "S6",
+          "S7"
+        ],
+        "gate": "approval:security-signoff",
+        "rollback": "Keep legacy mode as the default if the reframed prompts reduce accuracy or exceed the spend envelope.",
+        "observability": "Publish a side-by-side comparison of refusal rate, F1, and token cost for both validator modes."
+      },
+      {
+        "id": "S9",
+        "action": "If reframed mode meets quality and cost gates, switch the benchmark default to reframed in a controlled release and update docs to explain the new RedTeamTriager/Maintainer framing and preserved verdict taxonomy.",
+        "owner": "product",
+        "depends_on": [
+          "S8"
+        ],
+        "gate": "approval:release-manager",
+        "rollback": "Flip the default back to legacy mode via config or release toggle if downstream consumers report incompatibility.",
+        "observability": "Track post-rollout refusal rate, report parse success, and stakeholder feedback on label comparability."
+      }
+    ],
+    "open_questions": [
+      "Is mirofish_lab/personas.py the single source of truth for RedTeamTriager/Maintainer prompts, or should validator.py keep a local fallback copy?",
+      "What exact threshold should define 'no accuracy regression' on flowise-manual-verification.md: equal F1, non-inferior F1, or a small tolerance?",
+      "What counts as 'within ~10% spend'\u2014prompt tokens only, total completion tokens, or end-to-end API cost?",
+      "Should --validator-mode default to legacy until a manual signoff, or can it flip automatically once benchmark gates pass?",
+      "Do existing report parsers depend on the old prosecution/defense terminology anywhere outside verdict labels?"
+    ],
+    "conflicts": [
+      {
+        "between": [
+          "security",
+          "product"
+        ],
+        "issue": "Security wants reframing only if it improves refusal rate without harming F1, while product wants a quick default flip to reduce critical-finding refusals."
+      },
+      {
+        "between": [
+          "backend",
+          "sre"
+        ],
+        "issue": "Importing shared persona prompts may reduce duplication, but it can also introduce cross-package coupling and deployment/runtime dependency risk."
+      },
+      {
+        "between": [
+          "data",
+          "security"
+        ],
+        "issue": "A/B benchmarking needs enough runs to measure refusal and F1 reliably, but security may want to limit exposure of critical findings during testing."
+      }
+    ]
+  }
+}

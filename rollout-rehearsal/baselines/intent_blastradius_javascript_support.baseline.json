@@ -1,0 +1,143 @@
+{
+  "intent": "fixtures/intent_blastradius_javascript_support.md",
+  "model": "gpt-5.4-mini",
+  "tokens_in": 748,
+  "tokens_out": 1592,
+  "plan": {
+    "summary": "Add tree-sitter-backed JS/TS symbol extraction and diff mapping while preserving byte-identical Python behavior and graceful fallback.",
+    "steps": [
+      {
+        "id": "S1",
+        "action": "Add optional dependencies to requirements.txt for tree-sitter, tree-sitter-python, tree-sitter-javascript, and tree-sitter-typescript; verify install works without a build step.",
+        "owner": "backend",
+        "depends_on": [],
+        "gate": "approval:dependency_review",
+        "rollback": "Remove the added packages from requirements.txt and revert to Python-only extraction.",
+        "observability": "pip install -r requirements.txt succeeds in clean envs; capture import-time warnings for missing tree-sitter wheels."
+      },
+      {
+        "id": "S2",
+        "action": "Implement a tree-sitter parser registry in mirofish_lab/repo.py as _LANG_PARSERS mapping file suffixes to grammar loaders for .js/.ts/.tsx/.jsx, while keeping .py on ast.parse.",
+        "owner": "backend",
+        "depends_on": [
+          "S1"
+        ],
+        "gate": "none",
+        "rollback": "Disable registry lookup and route all suffixes back to existing ast.parse path.",
+        "observability": "Log which suffix selects which parser; confirm .py continues to use ast.parse and emits identical symbol sets."
+      },
+      {
+        "id": "S3",
+        "action": "Refactor python_files() into source_files(langs=...) with default behavior preserving current .py-only discovery, and update internal callers to use the new helper.",
+        "owner": "backend",
+        "depends_on": [
+          "S2"
+        ],
+        "gate": "none",
+        "rollback": "Restore python_files() and original call sites if discovery scope changes unexpectedly.",
+        "observability": "Compare file enumeration before/after on sample repo; ensure default call path returns the same .py set."
+      },
+      {
+        "id": "S4",
+        "action": "Add js_symbols(file) and ts_symbols(file) helpers that parse with tree-sitter and emit keyword sets for grep_callers() and diff-to-symbol mapping, covering .js/.jsx and .ts/.tsx.",
+        "owner": "backend",
+        "depends_on": [
+          "S2"
+        ],
+        "gate": "none",
+        "rollback": "Return empty symbol lists for JS/TS helpers and keep Python-only behavior intact.",
+        "observability": "Unit test symbol extraction on representative JS/TS fixtures; log parsed node kinds and extracted keywords."
+      },
+      {
+        "id": "S5",
+        "action": "Update extract_symbols() to dispatch by suffix: .py uses existing ast.parse path unchanged; JS/TS routes to tree-sitter; unsupported files remain ignored.",
+        "owner": "backend",
+        "depends_on": [
+          "S2",
+          "S4"
+        ],
+        "gate": "none",
+        "rollback": "Revert extract_symbols() to the prior .py-only implementation.",
+        "observability": "Golden-file test on reports/sample.md proves Python symbol output is byte-identical; JS/TS fixtures produce non-empty symbols."
+      },
+      {
+        "id": "S6",
+        "action": "Modify grep_callers() and diff-to-symbol mapping to consume tree-sitter-derived keywords for JS/TS files and ensure caller matching works across .js/.ts/.tsx/.jsx.",
+        "owner": "backend",
+        "depends_on": [
+          "S4",
+          "S5"
+        ],
+        "gate": "monitor:caller_match_accuracy",
+        "rollback": "Fallback to the previous grep logic for JS/TS and leave Python unchanged.",
+        "observability": "Track caller hit rate and false positives on JS/TS repos; compare diff-to-symbol mappings against known PRs in Flowise/n8n/Juice Shop."
+      },
+      {
+        "id": "S7",
+        "action": "Add graceful fallback handling around tree-sitter imports and parser initialization so missing wheels or older Python versions degrade JS/TS to no symbols with a clear warning, not a crash.",
+        "owner": "sre",
+        "depends_on": [
+          "S1",
+          "S2"
+        ],
+        "gate": "monitor:import_failure_rate",
+        "rollback": "Disable tree-sitter paths via feature flag or code path guard and continue Python-only operation.",
+        "observability": "Emit one warning per process when tree-sitter is unavailable; alert on unexpected exception rates from repo.py imports."
+      },
+      {
+        "id": "S8",
+        "action": "Run regression checks against blast-radius-prediction/reports/sample.md and existing .py repositories to verify byte-identical Python output, then exercise JS/TS audit targets from recursive-lm-security-audit examples.",
+        "owner": "data",
+        "depends_on": [
+          "S5",
+          "S6",
+          "S7"
+        ],
+        "gate": "wait_for:regression_signoff",
+        "rollback": "Block merge and revert to last known good if sample.md diverges or JS/TS outputs are empty.",
+        "observability": "Diff sample.md outputs, symbol counts, and caller graphs; store before/after metrics for Python and JS/TS runs."
+      },
+      {
+        "id": "S9",
+        "action": "Coordinate a staged release for blast-radius-prediction users, starting with internal validation on JS/TS-heavy repos and then broader rollout after monitoring stabilizes.",
+        "owner": "product",
+        "depends_on": [
+          "S8"
+        ],
+        "gate": "approval:release_readiness",
+        "rollback": "Pin the previous release and exclude tree-sitter-enabled code paths from production rollout.",
+        "observability": "Track adoption on JS/TS repos, support tickets about missing symbols, and any change in prediction coverage or runtime."
+      }
+    ],
+    "open_questions": [
+      "Should .tsx be parsed with the JavaScript grammar, the TypeScript grammar, or a language-specific branch in _LANG_PARSERS?",
+      "What exact keyword set should tree-sitter generate for grep_callers(): identifiers only, declarations plus references, or a broader node-kind list?",
+      "How should parse failures be logged so a single repo with malformed JS/TS does not spam warnings across every file?",
+      "Do we need to support mixed-language repos where source_files(langs=...) may include both .py and JS/TS in one run by default?",
+      "Should the optional tree-sitter dependencies be pinned to specific versions to avoid grammar ABI mismatches?"
+    ],
+    "conflicts": [
+      {
+        "between": [
+          "No build step",
+          "Optional tree-sitter wheels across all supported Python environments"
+        ],
+        "issue": "The intent requires pip install to work without compilation, but older Python or platform combinations may not have matching pre-built wheels for tree-sitter grammars, making the fallback path essential."
+      },
+      {
+        "between": [
+          "Python path unchanged",
+          "New shared source_files()/extract_symbols() plumbing"
+        ],
+        "issue": "Refactoring file discovery and symbol extraction risks changing .py ordering or emitted symbol formatting, which would break byte-identical reproduction of sample.md."
+      },
+      {
+        "between": [
+          "Graceful fallback with clear warning",
+          "Silent no-op for JS/TS when tree-sitter is unavailable"
+        ],
+        "issue": "The scope asks for JS/TS degradation to no symbols, but the why/constraints require a clear warning; balancing silence in results with explicit logging needs careful UX."
+      }
+    ]
+  }
+}

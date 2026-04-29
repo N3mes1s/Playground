@@ -1,103 +1,97 @@
 # Rollout Rehearsal — intent_pr_review_disagreement_detector
 
-> Intent: fixtures/intent_pr_review_disagreement_detector.md · Stakeholders: 6 · Constraints: 24 · Steps: 12 · Model: gpt-5.4-mini
+> Intent: fixtures/intent_pr_review_disagreement_detector.md · Stakeholders: 6 · Constraints: 24 · Steps: 10 · Model: gpt-5.4-mini
 
-_Generated 2026-04-29T17:17:31Z_
+_Generated 2026-04-29T18:42:07Z_
 
 ## Summary
 
-Add DisagreementChecker behind a flag, preserve old reports, and roll out additive conflict visibility without breaking existing consumers.
+Add an in-memory DisagreementChecker, render an additive conflict section, and dual-wire Judge input while preserving old report compatibility.
 
 ## Stakeholder constraints
 
 | Owner | Axis | Summary | Gate | Rollback | Blocking |
 |---|---|---|---|---|---|
-| BackendOwner | api | Keep report format additive; preserve existing report readers | `none` | redeploy_previous | Y |
-| BackendOwner | api | Judge input must accept conflicts without changing prior fields | `none` | redeploy_previous | Y |
-| BackendOwner | deploy | Deploy persona and conflict parser before enabling section output | `wait_for:DisagreementChecker_available` | redeploy_previous | Y |
-| BackendOwner | deploy | Rollback by disabling conflict section if report consumers break | `monitor:report_parse_errors0` | disable_conflict_section | n |
-| DataPlatform | data | Keep existing report files readable; add conflicts section only | `wait_for:backfill_validation_on_sample_reports` | Remove the new section and regenerate reports in the prior format | Y |
-| DataPlatform | data | Do not backfill or rewrite historical reports during rollout | `none` | Restore historical files from backup if any accidental rewrite occurs | Y |
-| DataPlatform | ops | Avoid schema/table changes to report storage during business hours | `window:after_hours_only` | Revert the storage schema change and redeploy the previous migration state | n |
-| DataPlatform | data | New conflict data must not increase write load materially | `monitor:write_iops<=baseline_plus_10%` | Disable persistence of conflict metadata and fall back to report-only output | n |
-| SRE | deploy | Ship behind a feature flag for additive report section | `none` | disable the feature flag to skip DisagreementChecker and omit the new section | Y |
-| SRE | ops | Validate on a canary batch before full rollout | `monitor:report_render_errors<0.1%` | roll back to the previous version and resume runs without conflict detection | Y |
-| SRE | ops | Require no incident window and no Friday afternoon deploy | `window:weekday-business-hours-excluding-friday-afternoon-and-incident-windows` | redeploy_previous | Y |
-| SRE | ops | Hold rollout until conflict section is empty or accurate | `monitor:empty_conflict_section_rate=100%` | disable DisagreementChecker and revert to judge-only reporting | n |
-| Security | security | Do not weaken or overwrite reviewer security findings | `approval:SecurityHawk` | Remove DisagreementChecker from the review pipeline and restore Judge-only aggregation | Y |
-| Security | security | Preserve audit trail for all review outputs and conflict entries | `monitor:audit_coverage100%` | Redeploy previous report renderer that emits only the original reviewer sections | Y |
-| Security | comms | Notify consumers of additive report section before rollout | `window:customer_notice_before_release` | Delay enabling the new conflict section and ship the prior report format | Y |
-| Security | security | Complete compliance review for new LLM-based conflict handling | `approval:Compliance` | Disable DisagreementChecker and revert to existing review flow | Y |
-| ProductPM | comms | Notify report consumers before the additive report change ships | `wait_for:customer_notice_sent` | remove the new conflict section from generated reports | Y |
-| ProductPM | comms | Publish support notes for the new conflict section and empty case | `approval:support_lead` | revert to the prior report wording without the conflict section | Y |
-| ProductPM | business | Avoid rollout during launch windows or major customer events | `window:outside_launch_window` | redeploy_previous | Y |
-| ProductPM | business | Assign an owner for customer escalations about changed reports | `approval:release_owner` | disable the conflict section in generated reports | Y |
-| ConsumerSubsystem | api | Keep old report readers working with additive-only section | `approval:pr-review-rehearsal consumers` | remove the Cross-reviewer conflicts section and redeploy_previous | Y |
-| ConsumerSubsystem | api | Ship DisagreementChecker behind a dual-read transition path | `wait_for:compatibility shim verified on committed reports` | bypass DisagreementChecker and feed Judge the pre-change reviewer outputs only | Y |
-| ConsumerSubsystem | deploy | Add regression tests for conflict section and empty-conflict case | `approval:CI green on committed report fixtures` | revert the new tests and redeploy_previous | Y |
-| ConsumerSubsystem | deploy | Define a no-risk fallback if the new agent slips the release | `window:until new agent is production-ready` | disable DisagreementChecker and keep the current Judge-only path | n |
+| BackendOwner | api | Keep report format additive; existing reports must still parse | `none` | redeploy_previous | Y |
+| BackendOwner | api | Judge input must accept optional conflict list without breaking old path | `none` | redeploy_previous | Y |
+| BackendOwner | deploy | Ship DisagreementChecker and report section before relying on its output | `wait_for:DisagreementChecker_present_in_deploy` | redeploy_previous | Y |
+| BackendOwner | deploy | Deploy code that emits conflict list before any consumer treats it as required | `none` | redeploy_previous | Y |
+| DataPlatform | data | Keep report format additive so existing report files still parse | `none` | Restore the previous report serializer and omit the new conflict section | Y |
+| DataPlatform | data | Do not require any new stored fields for disagreement detection | `none` | Remove conflict persistence and derive all output only from in-memory review text | Y |
+| DataPlatform | ops | Keep the added analysis batch bounded to avoid storage I/O spikes | `monitor:IOPS<baseline+10%` | Disable the conflict cache/write path and revert to transient in-memory processing | n |
+| SRE | deploy | Ship behind a feature flag for the new conflict section | `none` | disable the feature flag and fall back to the existing review→judge flow | Y |
+| SRE | ops | Canary on a small PR subset before broad enablement | `monitor:error_rate<0.1%` | disable the feature flag and route all runs to the previous flow | Y |
+| SRE | ops | Wait for stable no-parse-failure runs before full rollout | `wait_for:24h_of_successful_runs` | revert to the previous report schema and Judge prompt | n |
+| SRE | deploy | Avoid rollout during incident windows or weekend-change freeze | `window:business-hours-no-incident-window` | pause rollout and keep the prior deployment active | Y |
+| Security | security | Keep audit trail of reviewer outputs and conflict list intact | `none` | Redeploy previous CLI version without the DisagreementChecker step | Y |
+| Security | security | Add conflicts only after review artifacts are fully recorded | `wait_for:review_outputs_persisted` | Disable DisagreementChecker and preserve prior judge-only flow | Y |
+| Security | comms | Notify consumers about additive report section before release | `window:notify_consumers_before_release` | Remove the new Cross-reviewer conflicts section from generated reports | Y |
+| Security | security | Do not launch until review of conflict wording is approved | `approval:security_review` | Revert to the previous report template with no conflict section | Y |
+| ProductPM | comms | Announce additive report section before rollout | `wait_for:customer_notice_sent` | remove the new conflict section from reports and prompts | Y |
+| ProductPM | comms | Give advance notice for any report-format change | `window:outside_launch_window` | revert to the pre-change report template | Y |
+| ProductPM | ops | Support team must have rollout briefing and FAQ | `approval:support_lead` | pause rollout until support brief is updated and re-issued | Y |
+| ProductPM | business | Avoid rollout during launch windows or major events | `window:no_launch_window` | delay deployment until after the event window closes | Y |
+| ProductPM | comms | Assign explicit owner for customer escalations | `approval:customer_escalation_owner` | escalate to rollback owner and suspend rollout | Y |
+| ConsumerSubsystem | api | Keep report format additive; old reports must still parse | `wait_for:compatibility_tests_added_and_passing` | remove the new Cross-reviewer conflicts section and redeploy_previous | Y |
+| ConsumerSubsystem | api | Dual-support Judge input until conflict payload is stable | `window:2 release cycles` | drop conflict list from Judge input and redeploy_previous | Y |
+| ConsumerSubsystem | deploy | Ship a shim that tolerates missing conflict section in older runs | `approval:release_manager` | disable conflict-section rendering and redeploy_previous | n |
+| ConsumerSubsystem | deploy | Fallback must be revertible to judge-only flow if rollout slips | `monitor:conflict_detection_failure_rate<1%` | skip DisagreementChecker step and redeploy_previous | Y |
 
 ## Rollout plan
 
 | # | Action | Owner | Depends on | Gate | Rollback | Watch |
 |---|---|---|---|---|---|---|
-| S1 | Add DisagreementChecker to mirofish_lab/personas.py and wire a no-op/feature-flagged path in cli.py that can accept conflict data without changing existing reviewer or Judge fields. | BackendOwner | — | `none` | redeploy_previous | Persona registry loads, CLI accepts the new persona, and existing review flow still runs unchanged when the flag is off. |
-| S2 | Update Judge prompt/input contract in cli.py to accept an additional conflicts payload while preserving all prior fields and existing prompt semantics. | BackendOwner | S1 | `none` | redeploy_previous | Judge receives the extra input slot, previous fields remain stable, and judge-only runs still produce the same shape. |
-| S3 | Implement in-memory disagreement extraction after parallel_run(reviewers, ...) to produce {topic, reviewers_for, reviewers_against, evidence} entries, including an explicit empty-conflict case. | ConsumerSubsystem | S1, S2 | `wait_for:DisagreementChecker_available` | bypass DisagreementChecker and feed Judge the pre-change reviewer outputs only | Conflict list is derived only from reviewer outputs, no extra GitHub fetches occur, and empty cases render as an explicit no-conflicts result. |
-| S4 | Add regression tests and fixture coverage for additive report rendering, old report readability, conflict extraction, and the honest empty-conflict section. | ConsumerSubsystem | S3 | `approval:CI green on committed report fixtures` | revert the new tests and redeploy_previous | Tests verify committed reports remain readable, the new section is additive only, and Judge input still accepts prior fields. |
-| S5 | Validate compatibility on a sample set of committed reports without rewriting historical artifacts, confirming the new section can be added and omitted safely. | DataPlatform | S4 | `wait_for:backfill_validation_on_sample_reports` | Remove the new section and regenerate reports in the prior format | Sample reports parse successfully, historical files under reports/ are untouched, and no backfill or rewrite is performed. |
-| S6 | Prepare additive report wording and consumer support notes for the new Cross-reviewer conflicts section, including the empty-case explanation. | ProductPM | S4, S5 | `approval:support_lead` | revert to the prior report wording without the conflict section | Support notes explain the new section clearly, and consumers have guidance for both conflict and no-conflict outputs. |
-| S7 | Obtain customer notice for the additive report change and assign a release owner for escalations before enabling the new section. | ProductPM | S6 | `wait_for:customer_notice_sent` | remove the new conflict section from generated reports | Notice is sent before release, the escalation owner is assigned, and no production report shape change is enabled yet. |
-| S8 | Complete compliance review for the new LLM-based conflict handling and ensure security findings are not weakened or overwritten. | Security | S3, S5 | `approval:Compliance` | Disable DisagreementChecker and revert to existing review flow | Compliance approves the new agent and Judge prompt change, and audit trail coverage remains intact. |
-| S9 | Get explicit SecurityHawk approval for diffing its output against other reviewers and for feeding conflicts into Judge. | Security | S3, S8 | `approval:SecurityHawk` | Remove DisagreementChecker from the review pipeline and restore Judge-only aggregation | SecurityHawk signs off that its findings are preserved, not weakened, and conflict extraction respects security output. |
-| S10 | Deploy the updated service behind the feature flag during an allowed window, after customer notice and compliance/security approvals are complete. | SRE | S7, S8, S9 | `window:weekday-business-hours-excluding-friday-afternoon-and-incident-windows` | disable the feature flag to skip DisagreementChecker and omit the new section | Deployment occurs outside incident windows and Friday afternoon, with the feature flag still off by default. |
-| S11 | Run a canary batch with the feature enabled to verify end-to-end report rendering, audit coverage, and zero parse regressions before full rollout. | SRE | S10 | `monitor:report_render_errors<0.1%` | roll back to the previous version and resume runs without conflict detection | Watch report render errors, parse errors, audit coverage, and whether the conflicts section is empty or accurate. |
-| S12 | Enable the additive Cross-reviewer conflicts section for all runs only after canary success, while keeping the old report shape readable and the fallback available. | SRE | S11 | `monitor:report_parse_errors0` | disable_conflict_section | Monitor report parse errors, empty-conflict rate, write IOPS, and consumer feedback on the new section. |
+| S1 | Add the DisagreementChecker persona definition in mirofish_lab/personas.py and implement in-memory diffing of the four reviewer outputs into topic/reviewers_for/reviewers_against/evidence entries. | BackendOwner | — | `none` | Redeploy the previous personas file and remove the DisagreementChecker persona. | Persona loads successfully; checker returns a list from review text only with no new persisted fields. |
+| S2 | Update pr-review-rehearsal/cli.py to run DisagreementChecker after parallel_run(reviewers, ...) and before Judge merge, using only the in-memory review outputs. | BackendOwner | S1 | `wait_for:review_outputs_persisted` | Disable DisagreementChecker and restore the prior reviewer->judge flow. | Checker executes only after reviewer artifacts are recorded; no extra GitHub fetches occur. |
+| S3 | Extend the report serializer to insert a new additive 'Cross-reviewer conflicts' section between per-reviewer comments and implementer iteration, including an explicit empty-case message when no conflicts exist. | DataPlatform | S2 | `none` | Restore the previous report serializer and omit the conflict section. | Existing committed reports still parse; new section appears only as an additive block. |
+| S4 | Update the Judge prompt/input contract to accept an optional conflict list while preserving the old path when the list is absent. | BackendOwner | S2, S3 | `none` | Redeploy the previous Judge prompt and drop the conflict payload. | Judge consumes conflict data when present and still works with legacy inputs. |
+| S5 | Add compatibility tests for legacy report parsing and for Judge behavior with and without the conflict list. | ConsumerSubsystem | S3, S4 | `wait_for:compatibility_tests_added_and_passing` | Remove the new tests and revert to the previous test suite. | Tests confirm additive-only report shape and dual-support Judge input. |
+| S6 | Prepare release notes, consumer notice, support FAQ, and escalation ownership for the new additive section. | ProductPM | S3, S4 | `wait_for:customer_notice_sent` | Withdraw the notice and revert to the pre-change report template. | Notice is sent before release; support materials reference the new conflict section. |
+| S7 | Obtain security approval for the new conflict wording and the unchanged audit trail path. | Security | S3, S4 | `approval:security_review` | Revert to the previous report template with no conflict section. | Approved wording matches the report text; audit trail remains intact. |
+| S8 | Deploy behind the feature flag and canary on a small PR subset during business hours, outside incident and launch windows. | SRE | S5, S6, S7 | `window:business-hours-no-incident-window` | Disable the feature flag and route all runs to the previous flow. | Canary error rate, parse failures, and conflict_detection_failure_rate stay within thresholds. |
+| S9 | Monitor the canary for 24 hours of successful runs and verify no parse failures before broadening rollout. | SRE | S8 | `monitor:error_rate<0.1%` | Revert to the previous report schema and Judge prompt. | Track error rate, parse failures, and whether conflicts are surfaced correctly. |
+| S10 | Keep the feature flag as the immediate fallback and, if rollout slips or conflict detection fails, revert to judge-only flow. | ConsumerSubsystem | S8, S9 | `monitor:conflict_detection_failure_rate<1%` | Skip DisagreementChecker and redeploy_previous. | Fallback remains available; judge-only path can be restored without schema changes. |
 
 ## Mermaid graph
 
 ```mermaid
 flowchart TD
-    S1["S1: Add DisagreementChecker to mirofish_lab/personas.py and w..."]
-    S2["S2: Update Judge prompt/input contract in cli.py to accept an..."]
-    S1 --> S2
-    S3["S3: Implement in-memory disagreement extraction after paralle..."]
-    S1 -->|wait_for:DisagreementChecker_available| S3
-    S2 -->|wait_for:DisagreementChecker_available| S3
-    S4["S4: Add regression tests and fixture coverage for additive re..."]
-    S3 -->|approval:CI green on committed report fi| S4
-    S5["S5: Validate compatibility on a sample set of committed repor..."]
-    S4 -->|wait_for:backfill_validation_on_sample_r| S5
-    S6["S6: Prepare additive report wording and consumer support note..."]
-    S4 -->|approval:support_lead| S6
-    S5 -->|approval:support_lead| S6
-    S7["S7: Obtain customer notice for the additive report change and..."]
-    S6 -->|wait_for:customer_notice_sent| S7
-    S8["S8: Complete compliance review for the new LLM-based conflict..."]
-    S3 -->|approval:Compliance| S8
-    S5 -->|approval:Compliance| S8
-    S9["S9: Get explicit SecurityHawk approval for diffing its output..."]
-    S3 -->|approval:SecurityHawk| S9
-    S8 -->|approval:SecurityHawk| S9
-    S10["S10: Deploy the updated service behind the feature flag during..."]
-    S7 -->|window:weekday-business-hours-excluding-| S10
-    S8 -->|window:weekday-business-hours-excluding-| S10
-    S9 -->|window:weekday-business-hours-excluding-| S10
-    S11["S11: Run a canary batch with the feature enabled to verify end..."]
-    S10 -->|monitor:report_render_errors<0.1%| S11
-    S12["S12: Enable the additive Cross-reviewer conflicts section for ..."]
-    S11 -->|monitor:report_parse_errors0| S12
+    S1["S1: Add the DisagreementChecker persona definition in mirofis..."]
+    S2["S2: Update pr-review-rehearsal/cli.py to run DisagreementChec..."]
+    S1 -->|wait_for:review_outputs_persisted| S2
+    S3["S3: Extend the report serializer to insert a new additive 'Cr..."]
+    S2 --> S3
+    S4["S4: Update the Judge prompt/input contract to accept an optio..."]
+    S2 --> S4
+    S3 --> S4
+    S5["S5: Add compatibility tests for legacy report parsing and for..."]
+    S3 -->|wait_for:compatibility_tests_added_and_p| S5
+    S4 -->|wait_for:compatibility_tests_added_and_p| S5
+    S6["S6: Prepare release notes, consumer notice, support FAQ, and ..."]
+    S3 -->|wait_for:customer_notice_sent| S6
+    S4 -->|wait_for:customer_notice_sent| S6
+    S7["S7: Obtain security approval for the new conflict wording and..."]
+    S3 -->|approval:security_review| S7
+    S4 -->|approval:security_review| S7
+    S8["S8: Deploy behind the feature flag and canary on a small PR s..."]
+    S5 -->|window:business-hours-no-incident-window| S8
+    S6 -->|window:business-hours-no-incident-window| S8
+    S7 -->|window:business-hours-no-incident-window| S8
+    S9["S9: Monitor the canary for 24 hours of successful runs and ve..."]
+    S8 -->|monitor:error_rate<0.1%| S9
+    S10["S10: Keep the feature flag as the immediate fallback and, if r..."]
+    S8 -->|monitor:conflict_detection_failure_rate<| S10
+    S9 -->|monitor:conflict_detection_failure_rate<| S10
 ```
 
 ## Conflicts (resolved by sequencer)
 
-- between **SRE, BackendOwner**: SRE requires a feature-flagged rollout and canary validation before enabling output; BackendOwner requires the new judge input contract to accept conflicts. Resolved by wiring the contract first, then shipping disabled behind the flag, and only enabling after canary.
-- between **DataPlatform, ProductPM**: DataPlatform forbids rewriting historical reports, while ProductPM wants released examples updated. Resolved by not touching historical artifacts and limiting any regeneration to future outputs and sample validation only.
-- between **Security, ConsumerSubsystem**: ConsumerSubsystem wants a dual-read compatibility path, while Security requires audit preservation and no weakening of security findings. Resolved by preserving all prior fields, appending conflicts only, and keeping SecurityHawk sign-off before enablement.
+- between **SRE, ProductPM**: SRE requires rollout only in a business-hours/no-incident window, while ProductPM also requires a release-notice/launch-window constraint. Resolved by sequencing notice and approvals before the business-hours canary, and treating both windows as rollout prerequisites.
+- between **SRE, ProductPM**: SRE wants a canary on a small PR subset before broad enablement; ProductPM requires customer notice/support prep before release. Resolved by doing notice/FAQ first, then canary.
+- between **BackendOwner, ConsumerSubsystem**: BackendOwner wants the Judge to accept an optional conflict list immediately, while ConsumerSubsystem requires dual-support for two release cycles. Resolved conservatively by making the new payload optional and preserving the old path during rollout.
 
 ## Open questions for the human
 
-- What exact heuristic should DisagreementChecker use to decide that one reviewer 'implicitly endorsed' another's objection?
-- What is the final customer-facing wording for the empty-conflict section?
-- Which team owns the runtime feature flag and its default state at first release?
-- Should the committed reports in reports/ be regenerated only for fixtures, or also for published examples once notice is sent?
+- Who is the final release manager approver for the compatibility shim, if that shim is later needed?
+- Should the empty-case message be a fixed sentence or templated per reviewer set?
+- What exact wording should the customer notice and support FAQ use for the new conflict section?

@@ -1,0 +1,145 @@
+{
+  "intent": "fixtures/intent_adversarial_findings_history.md",
+  "model": "gpt-5.4-mini",
+  "tokens_in": 666,
+  "tokens_out": 1622,
+  "plan": {
+    "summary": "Add append-only per-finding JSONL history logs, drift lookup helper, and optional CLI drift display without storing raw finding text.",
+    "steps": [
+      {
+        "id": "S1",
+        "action": "Define the history record contract for `.mirofish_memory/security/<source-stem>.jsonl` with the exact fields `{source, finding_id, severity, verdict, triager_sha256, maintainer_sha256, model, timestamp}` and confirm hashes cover agent outputs only, not finding bodies.",
+        "owner": "backend",
+        "depends_on": [],
+        "gate": "approval:record_schema_review",
+        "rollback": "Keep history writer disabled behind a feature flag until schema is approved.",
+        "observability": "Add a unit test that validates required keys, JSONL line shape, and that no raw finding text is serialized."
+      },
+      {
+        "id": "S2",
+        "action": "Implement `adversarial-security-sim/history.py` with `verdict_drift(source, finding_id)` that reads the JSONL log for a given source stem and returns verdicts across runs ordered by timestamp.",
+        "owner": "backend",
+        "depends_on": [
+          "S1"
+        ],
+        "gate": "wait_for:history_module_tests",
+        "rollback": "If parsing or ordering fails, fall back to returning an empty drift summary and log the error.",
+        "observability": "Test multiple appended records for the same finding_id and verify drift output shows prior verdicts and timestamps."
+      },
+      {
+        "id": "S3",
+        "action": "Add an append-only writer in `adversarial-security-sim/cli.py` at the end of each finding debate to append one JSONL record under `.mirofish_memory/security/`, deriving `<source-stem>` from the audit report source.",
+        "owner": "backend",
+        "depends_on": [
+          "S1",
+          "S2"
+        ],
+        "gate": "approval:append_only_io_review",
+        "rollback": "If append fails, continue the audit run and emit a warning; never truncate or rewrite existing history.",
+        "observability": "Instrument append success/failure counts and log the target path, source stem, finding_id, verdict, and timestamp."
+      },
+      {
+        "id": "S4",
+        "action": "Compute and persist `triager_sha256` and `maintainer_sha256` from the agent outputs in the debate flow, ensuring only hashes are stored and the raw transcripts remain in the normal report output.",
+        "owner": "backend",
+        "depends_on": [
+          "S1",
+          "S3"
+        ],
+        "gate": "wait_for:hashing_tests",
+        "rollback": "If hashing is unavailable, write a null-safe placeholder and skip drift comparison for that field rather than storing plaintext.",
+        "observability": "Add tests that changing the debate text changes the hash while identical outputs produce identical hashes."
+      },
+      {
+        "id": "S5",
+        "action": "Add `--show-drift` to the CLI so it prints the drift summary from `verdict_drift(source, finding_id)` before the report when enabled.",
+        "owner": "product",
+        "depends_on": [
+          "S2",
+          "S3"
+        ],
+        "gate": "approval:cli_output_review",
+        "rollback": "Disable the flag path if output is too noisy or confusing, leaving the default report unchanged.",
+        "observability": "Capture CLI snapshots for a first-time run, a repeated same-verdict run, and a verdict-flip run to verify the summary is readable."
+      },
+      {
+        "id": "S6",
+        "action": "Add concurrency-safe append behavior for JSONL writes to avoid corruption when multiple simulator runs target the same `.mirofish_memory/security/<source-stem>.jsonl` file.",
+        "owner": "sre",
+        "depends_on": [
+          "S3"
+        ],
+        "gate": "wait_for:filesystem_concurrency_tests",
+        "rollback": "If atomic append cannot be guaranteed, serialize writes per source stem or temporarily disable parallel writes.",
+        "observability": "Run a stress test with concurrent appends and validate each JSONL line remains parseable and no records are lost."
+      },
+      {
+        "id": "S7",
+        "action": "Align the storage path and access pattern with the planned `mirofish_lab` SQLite memory backend migration so history can move to the same store without changing the public drift API.",
+        "owner": "data",
+        "depends_on": [
+          "S1",
+          "S2"
+        ],
+        "gate": "approval:memory_backend_alignment",
+        "rollback": "Keep the JSONL implementation isolated behind the history helper so a backend swap only changes the implementation, not callers.",
+        "observability": "Document the adapter boundary and add an interface test that `verdict_drift()` works from a file-backed implementation."
+      },
+      {
+        "id": "S8",
+        "action": "Add privacy checks to ensure the log never includes finding bodies, prompt content, or full debate transcripts; only hashes, verdicts, severity, IDs, source, model, and timestamp are retained.",
+        "owner": "security",
+        "depends_on": [
+          "S1",
+          "S4"
+        ],
+        "gate": "approval:privacy_security_review",
+        "rollback": "If any sensitive field is detected in output, fail the write and surface a redacted warning.",
+        "observability": "Create a regression test that searches the emitted JSONL for banned substrings from a sample finding body and transcript."
+      },
+      {
+        "id": "S9",
+        "action": "Add a small regression suite for repeated runs over the same source stem to validate the three intended behaviors: verdict comparison, verdict drift display, and append-only accumulation of false-positive patterns.",
+        "owner": "backend",
+        "depends_on": [
+          "S2",
+          "S3",
+          "S5"
+        ],
+        "gate": "wait_for:end_to_end_tests",
+        "rollback": "If drift reporting causes flaky tests, pin timestamps and isolate the filesystem fixture per run.",
+        "observability": "Assert the second run can see the first run's verdicts, that a NEEDS_VALIDATION to FALSE_POSITIVE flip is surfaced, and that the log grows by one line per finding."
+      }
+    ],
+    "open_questions": [
+      "Should `timestamp` be UTC ISO-8601, epoch millis, or both for downstream SQLite compatibility?",
+      "What exact source-stem normalization should be used for nested report paths or duplicate filenames?",
+      "Should `verdict_drift()` compare only verdicts, or also surface severity and hash changes as separate drift signals?",
+      "If a JSONL line is malformed, should the helper skip it, fail closed, or surface a partial summary?",
+      "Do we need a retention policy for the append-only log, or is infinite growth acceptable for the initial rollout?"
+    ],
+    "conflicts": [
+      {
+        "between": [
+          "security",
+          "product"
+        ],
+        "issue": "Product wants richer drift summaries via `--show-drift`, while security requires strict minimization of stored content; the CLI must avoid exposing raw transcripts or finding bodies in the drift output."
+      },
+      {
+        "between": [
+          "sre",
+          "backend"
+        ],
+        "issue": "Append-only JSONL is simple, but concurrent simulator runs can corrupt the file unless writes are serialized or made atomic per source stem."
+      },
+      {
+        "between": [
+          "data",
+          "backend"
+        ],
+        "issue": "The current JSONL file path must later map cleanly to the `mirofish_lab` SQLite memory backend, so the implementation should avoid hard-coding file-only assumptions."
+      }
+    ]
+  }
+}

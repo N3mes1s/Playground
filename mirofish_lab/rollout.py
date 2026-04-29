@@ -153,12 +153,20 @@ SEQUENCER_PERSONA = Persona(
         "    }\n"
         "  ],\n"
         '  "open_questions": ["unresolved things a human must decide"],\n'
-        '  "conflicts": [\n'
-        '    {"between": ["constraint_owner_A", "constraint_owner_B"],\n'
-        '     "issue": "describe the disagreement and how you resolved it"}\n'
-        "  ]\n"
+        '  "conflicts": []\n'
         "}\n\n"
-        "Rules:\n"
+        "CRITICAL conflict-detection instruction:\n"
+        "- Walk EVERY pair of stakeholder constraints in the input.\n"
+        "- A conflict exists whenever two BLOCKING constraints from different owners "
+        "pull in opposite directions (e.g. owner A's gate forbids what owner B's gate "
+        "requires; owner A wants step before X, owner B wants the same step after X; "
+        "or two rollback strategies are mutually exclusive).\n"
+        "- List EVERY such conflict you find. There is NO target count. Many inputs "
+        "have zero conflicts; some have ten. Do NOT invent conflicts to fill space and "
+        "do NOT omit real ones to be brief.\n"
+        '- Each conflict object: {"between": ["owner_A", "owner_B"], '
+        '"issue": "describe the disagreement and how you resolved it"}.\n\n'
+        "Other rules:\n"
         "- Honour every BLOCKING constraint. If two blockers conflict, raise it in "
         "  conflicts and pick the more conservative path.\n"
         "- Each step must have a rollback. 'redeploy_previous' is OK only when literally "
