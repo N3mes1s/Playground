@@ -1,0 +1,8 @@
+# Shared deps for all mirofish_lab experiments.
+# Each experiment may pin extras in its own requirements.txt.
+
+camel-ai>=0.2.0
+openai>=1.50.0
+python-dotenv>=1.0.0
+rich>=13.0.0
+requests>=2.31.0

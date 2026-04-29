@@ -31,6 +31,19 @@ While this is primarily a coding agent workspace, contributions and suggestions 
 |-----------|-------------|
 | [`vulnllm-analyzer/`](vulnllm-analyzer/) | Automated vulnerability analysis for GitHub repos using [VulnLLM-R-7B](https://github.com/ucsb-mlsec/VulnLLM-R) on Modal GPUs |
 | [recursive-lm-security-audit](./recursive-lm-security-audit/) | Automated codebase security scanner using DSPy's Recursive Language Model (RLM) module. Accepts a GitHub repo URL or local path and produces a vulnerability report for ~$0.87. |
+| [`pr-review-rehearsal/`](pr-review-rehearsal/) | Rehearse a PR review **before** opening the PR. Four reviewer personas debate the diff, an implementer iterates, a judge ranks concerns. |
+| [`pre-flight-rehearsal/`](pre-flight-rehearsal/) | Run four implementer styles (Minimalist, Defensive, TestFirst, RefactorHappy) in parallel against a real GitHub issue; a judge picks a winning plan. |
+| [`adversarial-security-sim/`](adversarial-security-sim/) | Triage findings from an existing audit report by running an Attacker-vs-Defender debate per finding, judged for `REAL` / `FALSE_POSITIVE` / `NEEDS_VALIDATION`. |
+| [`blast-radius-prediction/`](blast-radius-prediction/) | Predict downstream breakage of a diff by treating each top-level subsystem of the repo as an agent with a persona, then simulating their reactions. |
+
+### Shared scaffold
+
+The four experiments above share [`mirofish_lab/`](mirofish_lab/) — a small,
+inspectable substrate built on **CAMEL-AI** (the same engine MiroFish runs
+on internally) plus a local JSONL-backed memory layer in place of Zep
+Cloud. See `.env.example` for required keys (`OPENAI_API_KEY`, `MODEL`).
+All four experiments run end-to-end against real inputs (GitHub PRs/issues,
+local repos, existing audit reports) and produce real markdown reports.
 
 ## Note
 
