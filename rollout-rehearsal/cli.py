@@ -105,6 +105,10 @@ def _parse_constraints(raw: object, owner: str) -> list[Constraint]:
     for item in raw:
         if not isinstance(item, dict):
             continue
+        # Force canonical persona name; the model frequently paraphrases
+        # ("backend services" instead of "BackendOwner"), which breaks
+        # mechanical conflict detection between specific owners.
+        item["owner"] = owner
         c = Constraint.from_dict(item, default_owner=owner)
         if c.summary:
             out.append(c)

@@ -1,0 +1,365 @@
+{
+  "intent_path": "fixtures/intent_rlm_validator_persona_swap.md",
+  "constraints": [
+    {
+      "axis": "api",
+      "summary": "Keep verdict outputs as CONFIRMED/DOWNGRADED/DISMISSED",
+      "scope": "validator.py verdict prompt and downstream report parsing",
+      "gate": "none",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "api",
+      "summary": "Preserve legacy validator mode during A/B rollout",
+      "scope": "benchmark.py and batch_runner.py --validator-mode flag",
+      "gate": "wait_for:reframed_mode_matches_legacy_on_ground_truth",
+      "rollback": "disable reframed mode and route all runs to legacy",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Ship shared persona prompts before switching validator import path",
+      "scope": "mirofish_lab/personas.py and recursive-lm-security-audit/validator.py",
+      "gate": "wait_for:persona_module_deployed_and_importable",
+      "rollback": "revert validator to embedded legacy prompts",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "api",
+      "summary": "Do not change verdict taxonomy or report schema fields",
+      "scope": "benchmark outputs and existing audit report compatibility",
+      "gate": "none",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Ship reframed validator behind --validator-mode flag only",
+      "scope": "benchmark.py and batch_runner.py rollout of the new validator path",
+      "gate": "none",
+      "rollback": "Set --validator-mode=legacy to restore the prior validator path without redeploying",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Compare refusal rate and verdict mix before default flip",
+      "scope": "A/B validation of legacy vs reframed validator in benchmark runs",
+      "gate": "monitor:refusal_rate<0.1% for 24h",
+      "rollback": "Disable reframed mode and revert benchmark invocations to legacy mode",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Require no accuracy regression on flowise manual verification",
+      "scope": "validator behavior against flowise-manual-verification.md ground truth",
+      "gate": "monitor:F1>=legacy_F1",
+      "rollback": "Flip validator-mode back to legacy if reframed F1 drops below baseline",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Keep prompt rewrite within current token budget envelope",
+      "scope": "persona prompt changes and seed prompt template in validator.py",
+      "gate": "monitor:token_usage<=110%",
+      "rollback": "Reinstate the original prosecution/defense prompts and seed template",
+      "blocking": false,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Avoid validator rollout during incident windows or Friday afternoon",
+      "scope": "Production activation of reframed validator defaults",
+      "gate": "window:weekday_business_hours_excluding_incidents",
+      "rollback": "Hold default flip and continue operating in legacy mode",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "security",
+      "summary": "Preserve existing finding audit logs across legacy and reframed modes",
+      "scope": "validator.py, benchmark.py, batch_runner.py rollout path",
+      "gate": "approval:security review",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Rotate any shared persona-prompt secrets before importing shared module",
+      "scope": "mirofish_lab/personas.py integration and validator seed prompts",
+      "gate": "wait_for:secret-rotation-complete",
+      "rollback": "revoke new credentials and revert to legacy-local prompts",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify report consumers of reframed mode and unchanged verdict labels",
+      "scope": "Externally visible benchmark/report behavior for existing audit outputs",
+      "gate": "window:at least 5 business days before default flip",
+      "rollback": "keep legacy mode as default and withdraw change notice",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Complete compliance review for prompt framing change before defaulting",
+      "scope": "Shift from prosecution/defense to RedTeamTriager/Maintainer framing",
+      "gate": "approval:compliance",
+      "rollback": "revert default to legacy framing and disable reframed flag by default",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify report consumers of unchanged verdict taxonomy",
+      "scope": "Existing audit reports and benchmark outputs that parse CONFIRMED/DOWNGRADED/DISMISSED",
+      "gate": "wait_for:customer_notice_sent",
+      "rollback": "reissue comms clarifying legacy validator mode remains available",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Publish migration note before defaulting to reframed mode",
+      "scope": "benchmark.py and batch_runner.py --validator-mode rollout to users of the validator",
+      "gate": "approval:comms_lead",
+      "rollback": "keep default on legacy mode and postpone reframed default change",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "ops",
+      "summary": "Support must have escalation playbook for refusal-rate changes",
+      "scope": "Rollout period for reframed validator in recursive-lm-security-audit",
+      "gate": "approval:support_manager",
+      "rollback": "disable reframed mode and revert to legacy validator mode",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "business",
+      "summary": "Avoid launch windows and major events during A/B rollout",
+      "scope": "Enabling --validator-mode=reframed in benchmark and batch runs",
+      "gate": "window:outside_launch_window_and_major_event",
+      "rollback": "pause rollout until the next approved non-peak window",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep verdict outputs stable across legacy and reframed modes",
+      "scope": "validator.py verdict agent and downstream report parsing",
+      "gate": "wait_for:benchmark A/B run shows CONFIRMED/DOWNGRADED/DISMISSED parity",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Ship --validator-mode flag before default switch",
+      "scope": "benchmark.py and batch_runner.py CLI contract",
+      "gate": "wait_for:CLI integration tests cover --validator-mode={legacy,reframed}",
+      "rollback": "remove new flag and redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Maintain dual-support window for legacy and reframed validator",
+      "scope": "benchmark rollout and validator selection path",
+      "gate": "window:keep both modes available until benchmark A/B completes",
+      "rollback": "force legacy mode and redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Block default flip until F1 meets or exceeds legacy",
+      "scope": "cutover from legacy to reframed default in benchmark runner",
+      "gate": "monitor:flowise-manual-verification F1>=legacy",
+      "rollback": "set default back to legacy and redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Hold rollout if token spend rises beyond 10 percent",
+      "scope": "persona prompt changes and seed prompt rewrite",
+      "gate": "monitor:per-finding token usage<=110% of baseline",
+      "rollback": "switch validator-mode to legacy and redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    }
+  ],
+  "plan": {
+    "summary": "Add reframed RedTeamTriager/Maintainer validator path behind a flag, keep verdict taxonomy unchanged, and validate parity, F1, and token cost before defaulting.",
+    "steps": [
+      {
+        "id": "S1",
+        "action": "Rotate any shared persona-prompt secrets and confirm the shared persona module can be safely imported in the target environment.",
+        "owner": "Security",
+        "depends_on": [],
+        "gate": "wait_for:secret-rotation-complete",
+        "rollback": "revoke new credentials and revert to legacy-local prompts",
+        "observability": "Secret rotation completion status, import success for mirofish_lab/personas.py, no auth/import errors"
+      },
+      {
+        "id": "S2",
+        "action": "Publish the compliance review and customer notice that the validator will gain a reframed mode while keeping CONFIRMED/DOWNGRADED/DISMISSED unchanged.",
+        "owner": "ProductPM",
+        "depends_on": [],
+        "gate": "approval:compliance",
+        "rollback": "revert default to legacy framing and disable reframed flag by default",
+        "observability": "Compliance approval, customer notice sent, communications acknowledged"
+      },
+      {
+        "id": "S3",
+        "action": "Create or update shared RedTeamTriager and Maintainer persona prompts in mirofish_lab/personas.py, including the audit-level plausibility seed prompt text.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S1"
+        ],
+        "gate": "wait_for:persona_module_deployed_and_importable",
+        "rollback": "revert validator to embedded legacy prompts",
+        "observability": "Persona module deploy status, importability, prompt text diff, token length of prompts"
+      },
+      {
+        "id": "S4",
+        "action": "Refactor recursive-lm-security-audit/validator.py to use the shared RedTeamTriager/Maintainer prompts and the new audit-level seed prompt, while leaving the verdict prompt and labels unchanged.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S3"
+        ],
+        "gate": "none",
+        "rollback": "redeploy_previous",
+        "observability": "Validator output still emits CONFIRMED/DOWNGRADED/DISMISSED, prompt selection path, token usage per finding"
+      },
+      {
+        "id": "S5",
+        "action": "Add --validator-mode={legacy,reframed} to benchmark.py and batch_runner.py, wiring legacy to the current validator path and reframed to the new persona-based path.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S4"
+        ],
+        "gate": "wait_for:CLI integration tests cover --validator-mode={legacy,reframed}",
+        "rollback": "remove new flag and redeploy_previous",
+        "observability": "CLI parsing tests, mode routing, report schema compatibility, log labels for chosen mode"
+      },
+      {
+        "id": "S6",
+        "action": "Run A/B benchmark comparisons on legacy versus reframed validator mode using the flowise-manual-verification.md ground truth and existing audit reports.",
+        "owner": "SRE",
+        "depends_on": [
+          "S5",
+          "S2"
+        ],
+        "gate": "monitor:refusal_rate<0.1% for 24h",
+        "rollback": "Disable reframed mode and revert benchmark invocations to legacy mode",
+        "observability": "Refusal rate, verdict distribution, CONFIRMED/DOWNGRADED/DISMISSED parity, F1 vs legacy, per-finding token usage"
+      },
+      {
+        "id": "S7",
+        "action": "Keep both validator modes available for the full dual-support window and only use reframed mode in explicit A/B runs.",
+        "owner": "ConsumerSubsystem",
+        "depends_on": [
+          "S5"
+        ],
+        "gate": "window:keep both modes available until benchmark A/B completes",
+        "rollback": "force legacy mode and redeploy_previous",
+        "observability": "Mode availability, accidental defaulting, report parsing stability, rollback readiness"
+      },
+      {
+        "id": "S8",
+        "action": "Verify the reframed validator meets or exceeds legacy F1 on flowise-manual-verification.md and stays within the token budget envelope.",
+        "owner": "SRE",
+        "depends_on": [
+          "S6"
+        ],
+        "gate": "monitor:F1>=legacy_F1",
+        "rollback": "Flip validator-mode back to legacy if reframed F1 drops below baseline",
+        "observability": "F1 score, false positives/negatives, per-finding token usage <=110% baseline"
+      },
+      {
+        "id": "S9",
+        "action": "Confirm downstream benchmark and report parsing still interpret existing audit reports as CONFIRMED/DOWNGRADED/DISMISSED with no schema changes.",
+        "owner": "ConsumerSubsystem",
+        "depends_on": [
+          "S4",
+          "S5"
+        ],
+        "gate": "wait_for:benchmark A/B run shows CONFIRMED/DOWNGRADED/DISMISSED parity",
+        "rollback": "redeploy_previous",
+        "observability": "Report parser output, label counts, schema validation, backward compatibility across existing reports"
+      },
+      {
+        "id": "S10",
+        "action": "Complete security review for audit-log preservation and the framing change before any default flip.",
+        "owner": "Security",
+        "depends_on": [
+          "S4",
+          "S5",
+          "S6"
+        ],
+        "gate": "approval:security review",
+        "rollback": "redeploy_previous",
+        "observability": "Security signoff, audit log continuity, no missing or renamed fields in validator/benchmark outputs"
+      },
+      {
+        "id": "S11",
+        "action": "Publish the migration note and report-consumer notice describing the reframed mode, unchanged verdict taxonomy, and the fact that legacy mode remains available.",
+        "owner": "ProductPM",
+        "depends_on": [
+          "S2",
+          "S7",
+          "S9"
+        ],
+        "gate": "window:at least 5 business days before default flip",
+        "rollback": "keep legacy mode as default and withdraw change notice",
+        "observability": "Notice publication date, audience acknowledgment, business-day timing, support playbook readiness"
+      },
+      {
+        "id": "S12",
+        "action": "After approvals, notices, and validation gates pass, flip the benchmark default to reframed mode only during an approved business-hours window outside incidents and major events.",
+        "owner": "SRE",
+        "depends_on": [
+          "S8",
+          "S10",
+          "S11"
+        ],
+        "gate": "window:weekday_business_hours_excluding_incidents",
+        "rollback": "Set --validator-mode=legacy to restore the prior validator path without redeploying",
+        "observability": "Default mode selection, incident status, launch-window compliance, support escalation health"
+      }
+    ],
+    "open_questions": [
+      "Should the shared persona prompts be imported from mirofish_lab/personas.py immediately in validator.py, or should validator.py keep a local fallback copy during the dual-support window?",
+      "What exact benchmark set defines the 24h refusal-rate measurement for the reframed mode?",
+      "Who owns the final approval to switch the benchmark default after the A/B phase: SRE, Security, or ProductPM?"
+    ],
+    "conflicts": [
+      {
+        "between": [
+          "BackendOwner",
+          "SRE"
+        ],
+        "issue": "Prompt budget is a soft constraint while F1 parity and refusal-rate reduction are hard blockers. The rollout keeps the persona rewrite minimal and measures token usage during A/B rather than expanding prompt scope."
+      },
+      {
+        "between": [
+          "ProductPM",
+          "SRE"
+        ],
+        "issue": "Product wants prior notice and support readiness before default flip, while SRE requires the reframed mode to remain behind a flag during A/B. The plan keeps reframed mode opt-in until all notices, approvals, and validation gates are satisfied."
+      }
+    ]
+  }
+}

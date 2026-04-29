@@ -1,0 +1,400 @@
+{
+  "intent_path": "fixtures/intent_preflight_iterative_refinement.md",
+  "constraints": [
+    {
+      "axis": "api",
+      "summary": "Keep default --rounds 1 byte-for-byte identical output",
+      "scope": "pre-flight-rehearsal/cli.py report rendering and control flow",
+      "gate": "none",
+      "rollback": "revert to the prior single-pass CLI path",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "api",
+      "summary": "Preserve existing report schema when rounds is 1",
+      "scope": "CLI stdout/stderr format and judge input payloads",
+      "gate": "none",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Ship simulation adapter before CLI reads revision semantics",
+      "scope": "mirofish_lab/simulation.py round_table behavior",
+      "gate": "wait_for:simulation_adapter_merged",
+      "rollback": "revert the CLI to the pre-rounds implementation",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Deploy CLI cost-warning logic before enabling rounds>1",
+      "scope": "pre-flight-rehearsal/cli.py --rounds N execution path",
+      "gate": "wait_for:cost_warning_verified",
+      "rollback": "disable rounds>1 flag handling",
+      "blocking": false,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "data",
+      "summary": "Keep round-1 outputs byte-for-byte identical to current reports",
+      "scope": "Report generation and persisted rehearsal artifacts when --rounds 1",
+      "gate": "none",
+      "rollback": "revert to the previous single-pass report generator",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Use bounded backfill batch sizes if historical rehearsal data is reprocessed",
+      "scope": "Any migration or replay that writes prior rehearsal runs into new round-aware storage",
+      "gate": "monitor:IOPS<baseline+10%",
+      "rollback": "pause backfill and resume with smaller batches",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Run schema-altering storage migrations only in the maintenance window",
+      "scope": "Adding columns/tables for round history or evolution tracking",
+      "gate": "window:maintenance",
+      "rollback": "drop the new storage objects and keep the old schema",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Do not drop legacy plan columns until replication lag stays quiet",
+      "scope": "Removal of old single-pass plan fields after dual-write/backfill",
+      "gate": "monitor:replication_lag<5s",
+      "rollback": "restore the old columns/tables from backup or re-add them",
+      "blocking": false,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Keep round-1 output byte-for-byte identical to current behavior",
+      "scope": "pre-flight-rehearsal CLI default path when --rounds=1",
+      "gate": "monitor:golden_diff=0",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Warn on higher token/cost burn before enabling extra rounds",
+      "scope": "CLI startup when --rounds > 1",
+      "gate": "none",
+      "rollback": "disable --rounds>1 and revert to default single-pass",
+      "blocking": false,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Ship iterative rounds behind a flag with default-off behavior",
+      "scope": "New --rounds N flow and round_table adapter in simulation",
+      "gate": "approval:release_manager",
+      "rollback": "set --rounds 1 and redeploy_previous",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Do not cut over during an incident or active deploy freeze window",
+      "scope": "Production rollout of the new CLI behavior",
+      "gate": "window:outside_incident_window",
+      "rollback": "pause rollout and hold at current version",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "security",
+      "summary": "Keep all rehearsal plan contents inside the existing trust boundary",
+      "scope": "Round-table revision flow in pre-flight-rehearsal CLI and simulation adapter",
+      "gate": "none",
+      "rollback": "Disable multi-round sharing and revert to isolated first-pass plans",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Preserve audit trail for each round's inputs and outputs",
+      "scope": "Report generation for round 1..N and merged-plan visibility",
+      "gate": "approval:security",
+      "rollback": "Remove round-by-round transcript from reports and restore single-pass logs",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify customers before any externally visible report format change",
+      "scope": "Report output that adds per-round plan evolution sections",
+      "gate": "window:customer_notice_before_release",
+      "rollback": "Revert to the prior report layout without round history",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Allow partner review for new round-history visibility in outputs",
+      "scope": "Any shared reports or artifacts consumed outside the team",
+      "gate": "approval:partner_comms",
+      "rollback": "Suppress round-diff sections in externally shared reports",
+      "blocking": false,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Warn users before enabling multi-round plan generation",
+      "scope": "CLI behavior when --rounds > 1",
+      "gate": "approval:product_comms",
+      "rollback": "disable --rounds values greater than 1",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Publish release notes describing changed report evolution",
+      "scope": "pre-flight-rehearsal output and user-facing docs",
+      "gate": "wait_for:release_notes_published",
+      "rollback": "remove the release note and reissue the prior docs",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "business",
+      "summary": "Do not launch during active launch windows or major events",
+      "scope": "Deployment timing for this CLI change",
+      "gate": "window:no_launch_windows_or_major_events",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "business",
+      "summary": "Support must be briefed on rounds, cost, and stopping rules",
+      "scope": "Rollout readiness for customer-facing support teams",
+      "gate": "approval:support_lead",
+      "rollback": "pause rollout until support briefing is complete",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Assign a named owner for customer escalation handling",
+      "scope": "Rollout and early adopter support for --rounds",
+      "gate": "approval:escalation_owner",
+      "rollback": "revoke rollout ownership and halt customer exposure",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep default round-1 behavior byte-for-byte identical",
+      "scope": "pre-flight-rehearsal/cli.py --rounds default path and report formatting",
+      "gate": "wait_for:golden_output_parity_for_rounds_1",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Provide a compatibility shim for revision-style round_table input",
+      "scope": "mirofish_lab/simulation.py round_table adapter and CLI call site",
+      "gate": "approval:api_consumer_owner",
+      "rollback": "disable_round_table_adapter_and_use_fresh_contribution_path",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Require a dual-support window before making rounds>1 the norm",
+      "scope": "CLI rollout and team migration from single-pass to iterative planning",
+      "gate": "window:2_release_cycles",
+      "rollback": "redeploy_previous",
+      "blocking": false,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Add pre-cutover tests for multi-round report and early-stop behavior",
+      "scope": "pre-flight-rehearsal regression suite for rounds>1 and convergence detection",
+      "gate": "wait_for:multi_round_golden_and_stop_condition_tests",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "If new rounds path slips, preserve single-pass CLI as fallback",
+      "scope": "release plan for pre-flight-rehearsal if iterative refinement is not ready on time",
+      "gate": "none",
+      "rollback": "redeploy_previous",
+      "blocking": false,
+      "owner": "ConsumerSubsystem"
+    }
+  ],
+  "plan": {
+    "summary": "Add optional iterative plan refinement behind --rounds, preserving byte-for-byte round-1 behavior and adding cost warnings, audit trail, and early-stop convergence.",
+    "steps": [
+      {
+        "id": "S1",
+        "action": "Implement a revision-capable round_table adapter in mirofish_lab/simulation.py so each implementer can revise from prior outputs rather than only contribute fresh content.",
+        "owner": "mirofish_lab",
+        "depends_on": [],
+        "gate": "approval:api_consumer_owner",
+        "rollback": "disable_round_table_adapter_and_use_fresh_contribution_path",
+        "observability": "Adapter output shape, revision prompts, and parity of single-pass behavior when not used."
+      },
+      {
+        "id": "S2",
+        "action": "Add regression tests for multi-round report rendering, early-stop convergence per persona, and round-1 golden parity.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S1"
+        ],
+        "gate": "wait_for:multi_round_golden_and_stop_condition_tests",
+        "rollback": "revert the new test cases and keep the prior regression suite",
+        "observability": "Golden diffs for rounds=1, convergence stop cases, and transcript completeness across rounds."
+      },
+      {
+        "id": "S3",
+        "action": "Extend pre-flight-rehearsal/cli.py with --rounds N control flow that keeps the current single-pass path unchanged for N=1.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S1",
+          "S2"
+        ],
+        "gate": "wait_for:golden_output_parity_for_rounds_1",
+        "rollback": "revert to the prior single-pass CLI path",
+        "observability": "Byte-for-byte stdout/stderr parity for --rounds 1 and correct branching only when N>1."
+      },
+      {
+        "id": "S4",
+        "action": "Add estimated cost warning output at CLI startup when --rounds > 1, including the expectation that extra rounds increase LLM calls.",
+        "owner": "SRE",
+        "depends_on": [
+          "S3"
+        ],
+        "gate": "approval:product_comms",
+        "rollback": "disable --rounds>1 and revert to default single-pass",
+        "observability": "Presence and wording of the warning, plus no warning for --rounds 1."
+      },
+      {
+        "id": "S5",
+        "action": "Implement iterative refinement rounds in the CLI: after the initial parallel pass, run additional rounds where each persona sees the merged plan set, can revise, and stops early if two consecutive rounds are effectively identical for that persona.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S3",
+          "S4"
+        ],
+        "gate": "approval:release_manager",
+        "rollback": "set --rounds 1 and redeploy_previous",
+        "observability": "Per-persona round counts, stop-trigger events, and unchanged single-pass semantics when N=1."
+      },
+      {
+        "id": "S6",
+        "action": "Update report rendering to include per-round sections such as 'Plan: Minimalist (round 1)' and 'Plan: Minimalist (round 2)', plus explicit evolution visibility for the Judge input.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S5"
+        ],
+        "gate": "approval:security",
+        "rollback": "Remove round-by-round transcript from reports and restore single-pass logs",
+        "observability": "Report section ordering, round labels, and audit trail completeness for every emitted round."
+      },
+      {
+        "id": "S7",
+        "action": "Preserve the existing report schema and persisted artifacts exactly when --rounds 1, including judge payloads and output formatting.",
+        "owner": "DataPlatform",
+        "depends_on": [
+          "S3",
+          "S6"
+        ],
+        "gate": "monitor:golden_diff=0",
+        "rollback": "revert to the previous single-pass report generator",
+        "observability": "Golden diff checks on rendered reports and persisted artifacts for round-1 runs."
+      },
+      {
+        "id": "S8",
+        "action": "Add round-aware storage only if needed for history/evolution tracking, keeping any schema changes within the maintenance window and with bounded backfill batches.",
+        "owner": "DataPlatform",
+        "depends_on": [
+          "S6"
+        ],
+        "gate": "window:maintenance",
+        "rollback": "drop the new storage objects and keep the old schema",
+        "observability": "Schema migration success, IOPS during backfill, and whether legacy columns remain intact."
+      },
+      {
+        "id": "S9",
+        "action": "Brief support, assign an escalation owner, and publish release notes explaining the new multi-round behavior, cost warnings, and stopping rules.",
+        "owner": "ProductPM",
+        "depends_on": [
+          "S4",
+          "S6"
+        ],
+        "gate": "approval:support_lead",
+        "rollback": "pause rollout until support briefing is complete",
+        "observability": "Support readiness signoff, named escalation owner, and release note publication status."
+      },
+      {
+        "id": "S10",
+        "action": "Roll out the feature only outside incident windows, launch windows, and major events, with the new behavior staying behind the --rounds flag.",
+        "owner": "SRE",
+        "depends_on": [
+          "S5",
+          "S7",
+          "S8",
+          "S9"
+        ],
+        "gate": "window:outside_incident_window",
+        "rollback": "pause rollout and hold at current version",
+        "observability": "Incident status, deploy freeze status, and whether the flag remains default-off."
+      },
+      {
+        "id": "S11",
+        "action": "Enable customer-facing use of round-history reports only after customer notice and partner review approvals are satisfied.",
+        "owner": "ProductPM",
+        "depends_on": [
+          "S6",
+          "S9"
+        ],
+        "gate": "window:customer_notice_before_release",
+        "rollback": "Revert to the prior report layout without round history",
+        "observability": "Customer notice timing, partner review approval, and whether externally shared reports include round evolution sections."
+      }
+    ],
+    "open_questions": [
+      "What threshold should define 'effectively the same plan' for convergence detection?",
+      "Should the cost warning be a fixed message or include estimated dollar/token values?",
+      "Is round-aware storage actually required, or can round history live only in ephemeral reports and logs?",
+      "Who is the intended named escalation owner for customer support?"
+    ],
+    "conflicts": [
+      {
+        "between": [
+          "BackendOwner",
+          "Security"
+        ],
+        "issue": "BackendOwner requires byte-for-byte identical round-1 behavior, while Security requires an audit trail for each round's inputs and outputs. Resolved by keeping round-1 unchanged and only adding round transcript visibility on the multi-round path."
+      },
+      {
+        "between": [
+          "BackendOwner",
+          "ProductPM"
+        ],
+        "issue": "ProductPM requires release notes and customer notice before externally visible report changes, while the CLI change can be implemented earlier. Resolved by staging code behind the flag and gating external exposure on comms approvals."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "SRE"
+        ],
+        "issue": "Round-history storage changes, if needed, must happen in a maintenance window, while CLI behavior can be rolled out outside incident windows. Resolved by separating code rollout from any storage migration and sequencing storage work only if required."
+      }
+    ]
+  }
+}

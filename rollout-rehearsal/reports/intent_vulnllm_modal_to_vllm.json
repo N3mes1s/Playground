@@ -1,0 +1,340 @@
+{
+  "intent_path": "fixtures/intent_vulnllm_modal_to_vllm.md",
+  "constraints": [
+    {
+      "axis": "api",
+      "summary": "Keep verdict JSON shape/backward compatibility for scan scripts",
+      "scope": "analyzer.py and benchmark/scan_*.py client migration to OpenAI-compatible calls",
+      "gate": "wait_for:OpenAI-compatible Modal endpoint returns identical verdict fields",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Deploy vLLM service before switching analyzer to new base_url",
+      "scope": "Modal vLLM app rollout and analyzer.py client cutover",
+      "gate": "wait_for:vLLM server healthy on Modal URL",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Run dual-write/dual-read window via old endpoint until parity proven",
+      "scope": "Cutover period for scan_sliver_latest.py and scan_bottle.py",
+      "gate": "monitor:scan output parity>=99%",
+      "rollback": "point analyzer.py back to bespoke modal_service.py endpoint",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "api",
+      "summary": "Reject malformed vLLM responses instead of defaulting a verdict",
+      "scope": "OpenAI client response parsing in analyzer.py",
+      "gate": "none",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "data",
+      "summary": "Keep scan outputs stable across old and new model runs",
+      "scope": "vLLM-backed analyzer serving VulnLLM-R-7B on Modal and any model swap via LLM_MODEL_NAME",
+      "gate": "monitor:diff_rate<1%",
+      "rollback": "point analyzer back to the previous Modal endpoint and rerun scans from the last known-good checkpoint",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Use bounded batch sizes to avoid IOPS spikes during backfill",
+      "scope": "Any migration/reprocessing of advisory or scan result data needed to compare old /analyze output with vLLM output",
+      "gate": "monitor:replication_lag<5s",
+      "rollback": "pause backfill jobs and resume with the last successful batch watermark",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Do not run schema-affecting DDL during business hours",
+      "scope": "Any database schema changes required to store new analyzer/version metadata or comparison results",
+      "gate": "window:after-hours-only",
+      "rollback": "revert the migration by dropping the newly added columns/tables in a follow-up after-hours change",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Drop legacy analyzer tables only after a quiet period",
+      "scope": "Removal of any old result tables/columns once vLLM is fully cut over",
+      "gate": "wait_for:7d_no_old_endpoint_reads",
+      "rollback": "restore the dropped schema objects from backup or migration scripts",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Canary the new vLLM service before flipping scans over",
+      "scope": "modal_vllm_service deploy and analyzer base_url cutover",
+      "gate": "monitor:error_rate<0.1% for 24h",
+      "rollback": "Point analyzer back to the existing Modal endpoint",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Keep a fast rollback path via env-based service switch",
+      "scope": "analyzer.py client target selection via OPENAI_BASE_URL/LLM_MODEL_NAME",
+      "gate": "none",
+      "rollback": "Restore previous OPENAI_BASE_URL and LLM_MODEL_NAME values",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Avoid cutover during incident windows or Friday afternoon",
+      "scope": "production rollout of Modal vLLM service and scan script updates",
+      "gate": "window:Mon-Thu 09:00-16:00 local time, no active incident",
+      "rollback": "Pause rollout and leave traffic on the existing endpoint",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Verify cold-start tuning keeps common scans off the idle path",
+      "scope": "Modal idle timeout for A10G vLLM service",
+      "gate": "monitor:p95_startup_latency<35s over 24h",
+      "rollback": "Increase idle timeout or revert to prior endpoint behavior",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Protect scan throughput after cutover with error-budget gating",
+      "scope": "scan_sliver_latest.py and scan_bottle.py production runs",
+      "gate": "monitor:scan_failure_rate<0.1% for 24h",
+      "rollback": "Disable the new OpenAI client path and reroute to the old service",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "security",
+      "summary": "Rotate any embedded OpenAI/Modal credentials before cutover",
+      "scope": "analyzer.py client config, Modal app secrets, CI/runtime env vars",
+      "gate": "wait_for:secret-rotation-complete",
+      "rollback": "revoke new credentials and restore prior secret set",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Preserve end-to-end audit logs for old and new request paths",
+      "scope": "Modal vLLM service, analyzer client calls, error responses during migration",
+      "gate": "wait_for:audit-log-coverage-verified",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify customers before any externally visible verdict behavior change",
+      "scope": "scan_*.py outputs, JSON verdict format, any prompt/tokenizer-driven output drift",
+      "gate": "window:customer_notice_before_cutover",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Complete compliance review of Modal-hosted model endpoint before rollout",
+      "scope": "New Modal vLLM deployment and data flow through OpenAI-compatible API",
+      "gate": "approval:compliance",
+      "rollback": "disable new Modal endpoint and restore bespoke service",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep old /analyze semantics until scan scripts are migrated",
+      "scope": "analyzer.py call path and scan_*.py benchmark scripts",
+      "gate": "wait_for:scan_sliver_latest and scan_bottle parity checks",
+      "rollback": "revert analyzer.py to direct HTTP calls against modal_service.py",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Ship OpenAI-client compatibility shim for existing env vars",
+      "scope": "Client construction in analyzer.py and benchmark scripts",
+      "gate": "approval:API owner",
+      "rollback": "restore bespoke request builder and modal_service.py endpoint usage",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Maintain dual support until vLLM endpoint proves stable in prod",
+      "scope": "Modal rollout from modal_service.py to modal_vllm_service.py",
+      "gate": "window:2 release cycles",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Do not cut over until a warm-start idle timeout is validated",
+      "scope": "Modal deployment settings for the vLLM A10G service",
+      "gate": "monitor:cold_start_p95<30s",
+      "rollback": "increase idle timeout and keep old endpoint active",
+      "blocking": false,
+      "owner": "ConsumerSubsystem"
+    }
+  ],
+  "plan": {
+    "summary": "Roll out a Modal vLLM OpenAI-compatible analyzer with canarying, parity checks, warm-start tuning, and fast rollback while keeping scan outputs stable.",
+    "steps": [
+      {
+        "id": "S1",
+        "action": "Complete compliance review and customer notice, and rotate any embedded OpenAI/Modal credentials before changing traffic paths.",
+        "owner": "Security",
+        "depends_on": [],
+        "gate": "approval:compliance",
+        "rollback": "Revoke new credentials and restore prior secret set; postpone rollout notice state.",
+        "observability": "Approval status, secret rotation completion, and customer notice acknowledgement."
+      },
+      {
+        "id": "S2",
+        "action": "Implement the new modal_vllm_service.py to serve VulnLLM-R-7B on A10G with OpenAI-compatible responses and preserve audit logging on request/error paths.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S1"
+        ],
+        "gate": "wait_for:vLLM server healthy on Modal URL",
+        "rollback": "Disable the new Modal endpoint and restore the bespoke service.",
+        "observability": "Modal app health, request success/error logs, and OpenAI-compatible response shape."
+      },
+      {
+        "id": "S3",
+        "action": "Update analyzer.py to use openai.OpenAI(base_url, api_key), keep env-based service selection for fast rollback, and reject malformed vLLM responses instead of defaulting verdicts.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S2"
+        ],
+        "gate": "wait_for:OpenAI-compatible Modal endpoint returns identical verdict fields",
+        "rollback": "Restore previous OPENAI_BASE_URL and LLM_MODEL_NAME values and redeploy the prior analyzer client path.",
+        "observability": "Verdict field presence/shape, explicit parse errors, and base_url/model selection from env."
+      },
+      {
+        "id": "S4",
+        "action": "Update benchmark_advisories.py and scan_*.py to the new OpenAI client shape while preserving JSON verdict compatibility for downstream consumers.",
+        "owner": "ConsumerSubsystem",
+        "depends_on": [
+          "S3"
+        ],
+        "gate": "approval:API owner",
+        "rollback": "Restore bespoke request builder and modal_service.py endpoint usage.",
+        "observability": "Script output schema, client invocation success, and any drift in JSON fields."
+      },
+      {
+        "id": "S5",
+        "action": "Deploy the vLLM service with a warm idle timeout tuned to avoid common cold starts while staying within cost envelope.",
+        "owner": "SRE",
+        "depends_on": [
+          "S2"
+        ],
+        "gate": "monitor:cold_start_p95<30s",
+        "rollback": "Increase idle timeout or revert to prior endpoint behavior.",
+        "observability": "p95 startup latency, GPU uptime/idle time, and Modal spend per scan."
+      },
+      {
+        "id": "S6",
+        "action": "Run a limited canary of scan_sliver_latest.py and scan_bottle.py against the new endpoint while keeping the old endpoint available for rollback.",
+        "owner": "SRE",
+        "depends_on": [
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "gate": "monitor:error_rate<0.1% for 24h",
+        "rollback": "Point analyzer back to the existing Modal endpoint.",
+        "observability": "Scan failure rate, request error rate, and endpoint health during canary."
+      },
+      {
+        "id": "S7",
+        "action": "Execute dual-read/dual-write parity checks for scan_sliver_latest.py and scan_bottle.py outputs, comparing old and new runs without changing live consumers.",
+        "owner": "DataPlatform",
+        "depends_on": [
+          "S6"
+        ],
+        "gate": "monitor:scan output parity>=99%",
+        "rollback": "Point analyzer.py back to the bespoke modal_service.py endpoint and rerun from the last known-good checkpoint.",
+        "observability": "Per-file verdict diffs, parity percentage, and diff rate across the two scans."
+      },
+      {
+        "id": "S8",
+        "action": "Keep live workloads on the old endpoint until scan parity and stability gates are met, then switch scan_sliver_latest.py and scan_bottle.py fully to the new client path.",
+        "owner": "SRE",
+        "depends_on": [
+          "S7"
+        ],
+        "gate": "monitor:scan_failure_rate<0.1% for 24h",
+        "rollback": "Disable the new OpenAI client path and reroute to the old service.",
+        "observability": "Production scan failure rate, error budget burn, and any verdict drift."
+      },
+      {
+        "id": "S9",
+        "action": "Verify audit-log coverage end to end for both old and new request paths, including malformed-response errors, and confirm no silent fallback behavior.",
+        "owner": "Security",
+        "depends_on": [
+          "S2",
+          "S3"
+        ],
+        "gate": "wait_for:audit-log-coverage-verified",
+        "rollback": "Redeploy previous service/client versions.",
+        "observability": "Log completeness across client, service, and error paths."
+      },
+      {
+        "id": "S10",
+        "action": "After two stable release cycles and once no old-endpoint reads remain for 7 days, retire legacy analyzer tables or columns if any were added for comparison metadata.",
+        "owner": "DataPlatform",
+        "depends_on": [
+          "S8",
+          "S9"
+        ],
+        "gate": "wait_for:7d_no_old_endpoint_reads",
+        "rollback": "Restore the dropped schema objects from backup or migration scripts.",
+        "observability": "Legacy read counts, quiet-period duration, and schema references."
+      }
+    ],
+    "open_questions": [
+      "What exact Modal idle_timeout value should be used to balance the 30s cold start and the cost envelope?",
+      "What base_url and api_key/env var mapping should be used for the OpenAI client in CI and production?",
+      "How should 'identical verdict fields' be defined for tokenizer-driven drift: strict byte equality or normalized JSON equality?",
+      "Are any database schema changes actually needed for migration/comparison metadata, or can this be completed without DDL?"
+    ],
+    "conflicts": [
+      {
+        "between": [
+          "BackendOwner",
+          "SRE"
+        ],
+        "issue": "One constraint wants a 24h error-rate canary before flipping scans, while another requires two release cycles of dual support and a 7-day no-old-endpoint-read quiet period before retiring legacy paths. We chose the more conservative path: canary first, then dual-support/stability gates, then retirement."
+      },
+      {
+        "between": [
+          "BackendOwner",
+          "ConsumerSubsystem"
+        ],
+        "issue": "API migration wanted the analyzer switched to OpenAI-compatible calls, but scan scripts must keep old /analyze semantics until parity checks pass. We staged script migration after analyzer parity validation and retained rollback to the bespoke endpoint."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "SRE"
+        ],
+        "issue": "Live workload stability and output parity had to be maintained while also validating cold-start behavior. We sequenced warm-start tuning and service canarying before parity comparisons and production cutover."
+      }
+    ]
+  }
+}

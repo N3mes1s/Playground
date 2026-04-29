@@ -1,0 +1,400 @@
+{
+  "intent_path": "fixtures/intent_blastradius_javascript_support.md",
+  "constraints": [
+    {
+      "axis": "api",
+      "summary": "Keep existing .py symbol extraction output byte-identical",
+      "scope": "mirofish_lab/repo.py Python AST path used by extract_symbols() and sample report reproducibility",
+      "gate": "none",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "api",
+      "summary": "Preserve existing helper signatures for CLI compatibility",
+      "scope": "mirofish_lab/repo.py helpers consumed by blast-radius-prediction/cli.py",
+      "gate": "none",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Add tree-sitter deps before code relies on JS/TS parsing",
+      "scope": "requirements.txt and any code paths importing tree-sitter grammars",
+      "gate": "wait_for:dependency_install_success",
+      "rollback": "revert dependency additions and redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Ship fallback logic before enabling JS/TS repo processing",
+      "scope": "extract_symbols() / grep_callers() behavior for .js .ts .tsx .jsx when tree-sitter is unavailable",
+      "gate": "wait_for:graceful_fallback_verified",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "data",
+      "summary": "Keep Python symbol extraction byte-identical for sample report",
+      "scope": "mirofish_lab/repo.py Python AST path and sample report reproducibility",
+      "gate": "none",
+      "rollback": "revert the symbol-extraction change for .py files to the prior ast.parse path",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Backfill JS/TS symbol indexing in small batches to avoid IOPS spikes",
+      "scope": "Initial reprocessing of existing JS/TS repos through extract_symbols and diff-to-symbol mapping",
+      "gate": "monitor:replication_lag<2m",
+      "rollback": "pause backfill and resume with a smaller batch size after lag returns to baseline",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Do not drop legacy source-file handling until a quiet period passes",
+      "scope": "Renaming python_files() to source_files() and any retired file-discovery code",
+      "gate": "wait_for:7d_quiet_period",
+      "rollback": "restore the legacy python_files() path and keep old discovery code active",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "schema",
+      "summary": "Avoid storage schema/index changes during business hours",
+      "scope": "Any database or file-store schema changes needed for symbol outputs or repo metadata",
+      "gate": "window:after_hours",
+      "rollback": "defer schema migration and continue using the existing on-disk format",
+      "blocking": false,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Ship behind a feature flag for JS/TS symbol extraction",
+      "scope": "mirofish_lab/repo.py symbol extraction and diff-to-symbol mapping for .js/.ts/.jsx/.tsx",
+      "gate": "approval:release-owner",
+      "rollback": "disable the JS/TS extraction flag without redeploy",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Hold rollout until Python symbol output is unchanged",
+      "scope": "existing .py path in extract_symbols() and reports/sample.md reproducibility",
+      "gate": "monitor:python_symbol_diff==0",
+      "rollback": "revert to previous release or disable new parser dispatch for .py",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Require a 24h clean burn-in before expanding to JS/TS repos",
+      "scope": "first production use on representative JS/TS repositories",
+      "gate": "wait_for:24h_no_errors",
+      "rollback": "turn off JS/TS parsing flag and fall back to no-symbols path",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Do not cut over during incident windows or Friday afternoon",
+      "scope": "release of requirements.txt plus repo helper changes",
+      "gate": "window:business_hours_only_excluding_incident_windows",
+      "rollback": "postpone deployment and keep previous version active",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "security",
+      "summary": "Do not rotate or broaden any secret-bearing credentials in this change",
+      "scope": "requirements.txt dependency addition and repo helper code paths",
+      "gate": "none",
+      "rollback": "Remove added dependencies and revert repo helper changes; no secret changes to undo",
+      "blocking": false,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Maintain audit logs for parser fallback and symbol-extraction failures",
+      "scope": "tree-sitter import failure handling for JS/TS extraction",
+      "gate": "monitor:log_coverage100%",
+      "rollback": "Disable JS/TS extraction path and redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify users when JS/TS repos will now emit new blast-radius findings",
+      "scope": "externally visible behavior change for supported repository types",
+      "gate": "window:7d_notice",
+      "rollback": "Revert to Python-only extraction and redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Obtain security review before shipping new parser dependencies",
+      "scope": "new tree-sitter and grammar packages in requirements.txt",
+      "gate": "approval:security_review",
+      "rollback": "Remove tree-sitter dependencies and redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Warn users before JS/TS rollout that symbol extraction behavior changes",
+      "scope": "blast-radius-prediction release notes and user-facing changelog",
+      "gate": "approval:comms lead",
+      "rollback": "Remove the release-note entry and send a correction notice",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Publish support guidance for no-symbol fallback on missing tree-sitter",
+      "scope": "User docs and support runbook for JS/TS repositories",
+      "gate": "wait_for:support readiness confirmation",
+      "rollback": "Reinstate the prior support article and escalation script",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "ops",
+      "summary": "Do not launch during active customer launch windows or major events",
+      "scope": "Rollout timing for blast-radius-prediction to JS/TS users",
+      "gate": "window:outside launch windows and major events",
+      "rollback": "Pause rollout and revert to the pre-launch state",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "business",
+      "summary": "Assign a named escalation owner for customer issues during rollout",
+      "scope": "Customer escalation handling for JS/TS rollout period",
+      "gate": "approval:customer escalations owner",
+      "rollback": "Reassign escalations back to the previous owner",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep existing .py symbol output byte-identical",
+      "scope": "extract_symbols() fallback for Python files and sample report reproducibility",
+      "gate": "wait_for:golden_diff_review",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Provide compatibility shim for old python_files() callers",
+      "scope": "repo helper rename to source_files(langs=...) and any internal call sites",
+      "gate": "approval:api_owner",
+      "rollback": "restore python_files() wrapper and previous call signatures",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Dual-support window must cover one release after cutover",
+      "scope": "Migration period for .py-only behavior to source_files()/JS-TS support",
+      "gate": "window:one_release_after_cutover",
+      "rollback": "redeploy_previous",
+      "blocking": false,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Ship graceful no-symbol fallback if tree-sitter import fails",
+      "scope": "JS/TS extraction path when optional tree-sitter deps are unavailable",
+      "gate": "monitor:import_error_rate<1%",
+      "rollback": "disable JS/TS parsing path and revert to Python-only extraction",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    }
+  ],
+  "plan": {
+    "summary": "Add JS/TS symbol extraction with tree-sitter while preserving Python byte-identical output and safe fallback behavior.",
+    "steps": [
+      {
+        "id": "S1",
+        "action": "Implement repo helper changes in mirofish_lab/repo.py: add _LANG_PARSERS, dispatch extract_symbols() by suffix, add js_symbols()/ts_symbols(), and introduce source_files(langs=...) while keeping python_files() as a compatibility shim.",
+        "owner": "BackendOwner",
+        "depends_on": [],
+        "gate": "none",
+        "rollback": "restore the previous repo.py helper implementations and the original python_files() behavior",
+        "observability": "Verify .py extraction remains byte-identical via existing golden/sample report checks and that old call sites still resolve"
+      },
+      {
+        "id": "S2",
+        "action": "Add optional tree-sitter dependencies to requirements.txt for tree-sitter, tree-sitter-python, tree-sitter-javascript, and tree-sitter-typescript.",
+        "owner": "BackendOwner",
+        "depends_on": [],
+        "gate": "wait_for:dependency_install_success",
+        "rollback": "revert dependency additions and redeploy_previous",
+        "observability": "Track pip install success across supported environments and confirm no new install-time failures"
+      },
+      {
+        "id": "S3",
+        "action": "Wire tree-sitter import handling in repo.py so JS/TS parsing uses it when available, but falls back to no symbols with a clear warning when import/grammar loading fails.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S1",
+          "S2"
+        ],
+        "gate": "wait_for:graceful_fallback_verified",
+        "rollback": "disable the JS/TS parsing path and redeploy_previous",
+        "observability": "Watch parser import failures, warning log coverage, and confirm JS/TS inputs degrade to no-symbols instead of crashing"
+      },
+      {
+        "id": "S4",
+        "action": "Run regression validation on existing Python repos to prove extract_symbols() and sample report output remain byte-identical after the dispatch change.",
+        "owner": "DataPlatform",
+        "depends_on": [
+          "S1"
+        ],
+        "gate": "monitor:python_symbol_diff==0",
+        "rollback": "revert the symbol-extraction change for .py files to the prior ast.parse path",
+        "observability": "Compare Python symbol diffs against baseline and confirm reports/sample.md reproducibility is unchanged"
+      },
+      {
+        "id": "S5",
+        "action": "Add/refresh audit logging for parser fallback and symbol-extraction failures so JS/TS no-symbol cases are traceable.",
+        "owner": "Security",
+        "depends_on": [
+          "S3"
+        ],
+        "gate": "monitor:log_coverage100%",
+        "rollback": "disable JS/TS extraction path and redeploy_previous",
+        "observability": "Check logs for fallback events, parser failures, and coverage of emitted warnings"
+      },
+      {
+        "id": "S6",
+        "action": "Prepare the user-facing release note/changelog entry and support guidance describing JS/TS support and no-symbol fallback behavior.",
+        "owner": "ProductPM",
+        "depends_on": [
+          "S3"
+        ],
+        "gate": "approval:comms lead",
+        "rollback": "remove the release-note entry and send a correction notice",
+        "observability": "Confirm approved customer messaging and support runbook updates are published"
+      },
+      {
+        "id": "S7",
+        "action": "Obtain security review approval for the new tree-sitter dependency set before release.",
+        "owner": "Security",
+        "depends_on": [
+          "S2"
+        ],
+        "gate": "approval:security_review",
+        "rollback": "remove tree-sitter dependencies and redeploy_previous",
+        "observability": "Track security review decision and any dependency concerns"
+      },
+      {
+        "id": "S8",
+        "action": "Get API compatibility approval for the helper rename/shim so existing CLI consumers keep working without signature changes.",
+        "owner": "ConsumerSubsystem",
+        "depends_on": [
+          "S1"
+        ],
+        "gate": "approval:api_owner",
+        "rollback": "restore python_files() wrapper and previous call signatures",
+        "observability": "Verify internal callers still work with the compatibility shim"
+      },
+      {
+        "id": "S9",
+        "action": "Secure named customer escalation ownership for the rollout period.",
+        "owner": "ProductPM",
+        "depends_on": [],
+        "gate": "approval:customer escalations owner",
+        "rollback": "reassign escalations back to the previous owner",
+        "observability": "Confirm escalation contact is assigned and published internally"
+      },
+      {
+        "id": "S10",
+        "action": "Wait for required release timing windows: business-hours-only, outside incident/launch windows, not Friday afternoon, and after-hours only if any schema-related work is later introduced.",
+        "owner": "SRE",
+        "depends_on": [
+          "S3",
+          "S6",
+          "S7",
+          "S8",
+          "S9",
+          "S4",
+          "S5"
+        ],
+        "gate": "window:business_hours_only_excluding_incident_windows",
+        "rollback": "postpone deployment and keep previous version active",
+        "observability": "Confirm rollout timing satisfies all required change windows and no incident/launch window overlaps exist"
+      },
+      {
+        "id": "S11",
+        "action": "Deploy the code and dependency changes with the JS/TS extraction feature flag disabled by default, preserving Python-only behavior until approval to enable.",
+        "owner": "SRE",
+        "depends_on": [
+          "S10"
+        ],
+        "gate": "approval:release-owner",
+        "rollback": "disable the JS/TS extraction flag without redeploy",
+        "observability": "Watch deployment health, import errors, and confirm Python behavior stays unchanged post-deploy"
+      },
+      {
+        "id": "S12",
+        "action": "Enable JS/TS extraction on a limited set of representative repositories and backfill in small batches to avoid IOPS spikes.",
+        "owner": "DataPlatform",
+        "depends_on": [
+          "S11"
+        ],
+        "gate": "monitor:replication_lag<2m",
+        "rollback": "pause backfill and resume with a smaller batch size after lag returns to baseline",
+        "observability": "Track replication lag, indexing throughput, and diff-to-symbol mapping correctness on JS/TS repos"
+      },
+      {
+        "id": "S13",
+        "action": "Maintain a 24-hour clean burn-in on representative JS/TS repositories before broadening rollout.",
+        "owner": "SRE",
+        "depends_on": [
+          "S12"
+        ],
+        "gate": "wait_for:24h_no_errors",
+        "rollback": "turn off JS/TS parsing flag and fall back to no-symbols path",
+        "observability": "Watch error rates, fallback frequency, and any parser regressions during the burn-in period"
+      }
+    ],
+    "open_questions": [
+      "Which release-owner and API owner will provide the required approvals?",
+      "Who is the named customer escalations owner?",
+      "What representative JS/TS repositories should be used for the limited rollout and burn-in?",
+      "Is there any actual schema work involved, or can the after-hours schema window be considered not applicable?",
+      "Can the legacy python_files() wrapper remain indefinitely, or should it eventually be retired after the quiet-period constraint is satisfied?"
+    ],
+    "conflicts": [
+      {
+        "between": [
+          "DataPlatform",
+          "ConsumerSubsystem"
+        ],
+        "issue": "One stakeholder requires a 7-day quiet period before dropping legacy source-file handling, while another wants a compatibility shim for old python_files() callers. Resolved conservatively by keeping a python_files() shim and not retiring legacy handling in this plan."
+      },
+      {
+        "between": [
+          "BackendOwner",
+          "Security"
+        ],
+        "issue": "JS/TS support depends on adding tree-sitter dependencies, but security requires review before shipping them. Resolved by sequencing dependency installation before code reliance and gating release on security approval."
+      },
+      {
+        "between": [
+          "SRE",
+          "ProductPM"
+        ],
+        "issue": "Rollout requires business-hour/quiet timing and avoiding launch windows, while customer comms require advance notice. Resolved by placing comms and approvals before deployment and deferring launch to a compliant window."
+      }
+    ]
+  }
+}
