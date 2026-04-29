@@ -17,10 +17,16 @@ same repo accumulate reviewer history over time.
 # from repo root
 cp .env.example .env  # fill in OPENAI_API_KEY, MODEL=gpt-5.4-mini
 pip install -r requirements.txt
-python pr-review-rehearsal/cli.py https://github.com/<owner>/<repo>/pull/<n>
+
+# Live from GitHub:
+python pr-review-rehearsal/cli.py --pr-url https://github.com/<owner>/<repo>/pull/<n>
+
+# Or from a pre-fetched JSON fixture (useful in sandboxes without GitHub access):
+python pr-review-rehearsal/cli.py --from-file fixtures/pr_n3mes1s_playground_1.json
 ```
 
 Output lands in `pr-review-rehearsal/reports/<owner>_<repo>_pull_<n>.md`.
+A real example run is committed there.
 
 ## What it does
 

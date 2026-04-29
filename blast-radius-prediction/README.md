@@ -20,9 +20,14 @@ python blast-radius-prediction/cli.py \
     --pr https://github.com/<o>/<r>/pull/<n> \
     --repo /path/to/cloned/repo
 
+# from a pre-fetched PR JSON (sandbox-friendly):
+python blast-radius-prediction/cli.py \
+    --from-file fixtures/pr_n3mes1s_playground_1.json \
+    --repo .
+
 # or from a local diff file:
 python blast-radius-prediction/cli.py \
-    --diff change.diff --repo /path/to/repo
+    --diff fixtures/sample.diff --repo .
 ```
 
 Output: `blast-radius-prediction/reports/<slug>.md`.

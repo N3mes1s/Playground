@@ -42,16 +42,24 @@ class Finding:
 
 
 _HEADING_RE = re.compile(r"^(#{2,4})\s+(.+?)\s*$")
-_SEV_RE = re.compile(r"\b(CRITICAL|HIGH|MEDIUM|LOW|INFO)\b", re.IGNORECASE)
-_NUMBERED_RE = re.compile(r"^\d+[a-z]?[\.)]\s+|^[A-Z][\w ]+:\s*")
+_SEV_FIELD_RE = re.compile(
+    r"(?:\*\*Severity\*\*|Severity)\s*[:|-]\s*(?:\*\*)?(CRITICAL|HIGH|MEDIUM|LOW|INFO)",
+    re.IGNORECASE,
+)
+_NUMBERED_RE = re.compile(r"^\d+[a-z]?[\.)]\s+")
+_SUMMARY_TITLES = {
+    "executive summary", "critical risk summary", "risk summary",
+    "summary", "overview", "primary risk areas", "table of contents",
+    "recommendations", "remediation", "conclusion",
+}
 
 
 def parse_findings(md: str, *, max_findings: int = 30) -> list[Finding]:
     """Extract findings from a markdown audit. Tolerant of formatting variations.
 
-    Strategy: walk H2/H3/H4 headings; treat any heading whose body contains a
-    Severity marker as a finding. Body = text until next heading at same or
-    shallower depth.
+    Strategy: walk H2/H3/H4 headings; treat a heading as a finding only if
+    its body contains an explicit `Severity:` field (not just any severity
+    word in prose). Skip well-known summary section titles.
     """
     lines = md.splitlines()
     headings: list[tuple[int, int, str]] = []  # (line_index, depth, title)
@@ -70,12 +78,17 @@ def parse_findings(md: str, *, max_findings: int = 30) -> list[Finding]:
                 break
         body = "\n".join(lines[line_idx + 1 : end]).strip()
 
-        sev_m = _SEV_RE.search(body[:500])
+        normalised = re.sub(r"^\d+[a-z]?[\.)]\s*", "", title).strip().lower()
+        if normalised in _SUMMARY_TITLES:
+            continue
+
+        # Only leaf-ish findings: skip H2 grouping sections, take H3+/H4.
+        if depth < 3:
+            continue
+
+        sev_m = _SEV_FIELD_RE.search(body[:1500])
         if not sev_m:
             continue
-        if not _NUMBERED_RE.match(title) and depth > 2:
-            # also allow H3/H4 named findings
-            pass
 
         clean_title = re.sub(r"^\d+[a-z]?[\.)]\s*", "", title).strip()
         findings.append(

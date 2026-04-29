@@ -5,12 +5,6 @@ __pycache__/
 # Local agent memory (mirofish_lab LocalMemory)
 .mirofish_memory/
 
-# Generated experiment reports
-pr-review-rehearsal/reports/
-pre-flight-rehearsal/reports/
-adversarial-security-sim/reports/
-blast-radius-prediction/reports/
-
 # Reference files downloaded during research
 *.go
 

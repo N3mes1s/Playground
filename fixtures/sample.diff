@@ -1,0 +1,28 @@
+diff --git a/mirofish_lab/agent.py b/mirofish_lab/agent.py
+--- a/mirofish_lab/agent.py
++++ b/mirofish_lab/agent.py
+@@ -86,11 +86,15 @@ class Agent:
+     @property
+     def using_camel(self) -> bool:
+         return self._camel_agent is not None
+
+-    def respond(self, user_message: str, *, tags: tuple[str, ...] = ()) -> AgentResponse:
+-        self.memory.add("user", user_message, tags=tags)
++    def respond(
++        self,
++        prompt: str,
++        *,
++        tags: tuple[str, ...] = (),
++        stream: bool = False,
++    ) -> AgentResponse:
++        """BREAKING: 'user_message' kwarg renamed to positional 'prompt'.
++        New 'stream' kwarg added (currently a no-op stub).
++        """
++        self.memory.add("user", prompt, tags=tags)
+         if self._camel_agent is not None:
+             try:
+                 msg = self._BaseMessage.make_user_message(
+-                    role_name="User", content=user_message
++                    role_name="User", content=prompt
+                 )
+                 result = self._camel_agent.step(msg)

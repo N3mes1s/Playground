@@ -13,10 +13,16 @@ the strongest before any code is actually written.
 ```bash
 cp .env.example .env  # fill in OPENAI_API_KEY, MODEL=gpt-5.4-mini
 pip install -r requirements.txt
-python pre-flight-rehearsal/cli.py https://github.com/<owner>/<repo>/issues/<n>
+
+# Live from GitHub:
+python pre-flight-rehearsal/cli.py --issue-url https://github.com/<owner>/<repo>/issues/<n>
+
+# Or from a pre-fetched JSON fixture:
+python pre-flight-rehearsal/cli.py --from-file fixtures/issue_n3mes1s_playground_9.json
 ```
 
 Output: `pre-flight-rehearsal/reports/<owner>_<repo>_issues_<n>.md`.
+A real example run is committed there.
 
 ## What it does
 

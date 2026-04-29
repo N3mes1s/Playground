@@ -34,7 +34,7 @@ from mirofish_lab import (
     parallel_run,
 )
 from mirofish_lab.config import verify_model
-from mirofish_lab.github import fetch_pr
+from mirofish_lab.github import fetch_pr, load_pr_from_file
 from mirofish_lab.personas import REVIEWER_PERSONAS, JUDGE_PERSONA
 
 
@@ -60,15 +60,9 @@ def diff_prompt(pr) -> str:
     )
 
 
-def run(pr_url: str, *, rounds: int, out_path: Path) -> Path:
-    cfg = load_config()
-    print(f"[config] model={cfg.model} memory_dir={cfg.memory_dir}", file=sys.stderr)
-    verify_model(cfg)
-
-    print(f"[fetch] {pr_url}", file=sys.stderr)
-    pr = fetch_pr(pr_url)
+def _run(pr, cfg, *, rounds: int, out_path: Path) -> Path:
     print(
-        f"[fetch] PR #{pr.number}: {pr.title!r} ({len(pr.diff)} chars of diff)",
+        f"[pr] #{pr.number}: {pr.title!r} ({len(pr.diff)} chars of diff)",
         file=sys.stderr,
     )
 
@@ -140,18 +134,29 @@ def run(pr_url: str, *, rounds: int, out_path: Path) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Simulate a PR review before opening the PR.")
-    parser.add_argument("pr_url", help="GitHub PR URL, e.g. https://github.com/o/r/pull/123")
+    src = parser.add_mutually_exclusive_group(required=True)
+    src.add_argument("--pr-url", help="GitHub PR URL, e.g. https://github.com/o/r/pull/123")
+    src.add_argument("--from-file", type=Path, help="Pre-fetched PR JSON")
     parser.add_argument("--rounds", type=int, default=1, help="(reserved) reviewer-iteration rounds")
     parser.add_argument("--out", type=Path, default=None, help="Output markdown path")
     args = parser.parse_args(argv)
 
+    cfg = load_config()
+    print(f"[config] model={cfg.model} memory_dir={cfg.memory_dir}", file=sys.stderr)
+    verify_model(cfg)
+
+    if args.pr_url:
+        print(f"[fetch] {args.pr_url}", file=sys.stderr)
+        pr = fetch_pr(args.pr_url)
+    else:
+        print(f"[load] {args.from_file}", file=sys.stderr)
+        pr = load_pr_from_file(args.from_file)
+
     if args.out is None:
-        from urllib.parse import urlparse
-        parts = urlparse(args.pr_url).path.strip("/").split("/")
-        slug = "_".join(parts) if parts else "report"
+        slug = f"{pr.owner}_{pr.repo}_pull_{pr.number}"
         args.out = Path("pr-review-rehearsal/reports") / f"{slug}.md"
 
-    run(args.pr_url, rounds=args.rounds, out_path=args.out)
+    _run(pr, cfg, rounds=args.rounds, out_path=args.out)
     return 0
 
 

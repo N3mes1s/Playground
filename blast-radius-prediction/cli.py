@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from mirofish_lab import Agent, Persona, Report, load_config, round_table
 from mirofish_lab.config import verify_model
-from mirofish_lab.github import fetch_pr
+from mirofish_lab.github import fetch_pr, load_pr_from_file
 from mirofish_lab.personas import JUDGE_PERSONA
 from mirofish_lab.repo import (
     Subsystem,
@@ -70,20 +70,37 @@ def affected_subsystems(
     changed: list[tuple[str, Path, int]],
     all_subs: list[Subsystem],
 ) -> list[Subsystem]:
-    """Subsystems are 'affected' if any of their files mentions a changed symbol."""
+    """Subsystems are 'affected' if any of their files mentions a changed symbol.
+
+    For Class.method symbols we also grep the bare method name, since callers
+    typically write `instance.method(...)` rather than `Class.method(...)`.
+    """
     affected: list[Subsystem] = []
     changed_files = {p.resolve() for _, p, _ in changed}
+    # Build a flat list of name candidates per changed symbol.
+    candidates_per_sym: list[list[str]] = []
+    for sym_name, _, _ in changed:
+        names = [sym_name]
+        if "." in sym_name:
+            names.append(sym_name.split(".")[-1])
+        candidates_per_sym.append(names)
+
     for sub in all_subs:
         sub_files_resolved = {f.resolve() for f in sub.files}
-        # Subsystem hit if it contains a changed file OR grep-matches any changed symbol.
         if sub_files_resolved & changed_files:
             affected.append(sub)
             continue
-        for sym_name, _, _ in changed:
-            callers = grep_callers(repo_root, sym_name)
-            if any(c.resolve() in sub_files_resolved for c in callers):
-                affected.append(sub)
+        hit = False
+        for names in candidates_per_sym:
+            for n in names:
+                callers = grep_callers(repo_root, n)
+                if any(c.resolve() in sub_files_resolved for c in callers):
+                    hit = True
+                    break
+            if hit:
                 break
+        if hit:
+            affected.append(sub)
     return affected
 
 
@@ -169,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Predict blast radius of a diff via subsystem agents.")
     src = parser.add_mutually_exclusive_group(required=True)
     src.add_argument("--pr", help="GitHub PR URL")
+    src.add_argument("--from-file", type=Path, help="Pre-fetched PR JSON")
     src.add_argument("--diff", type=Path, help="Path to a unified diff file")
     parser.add_argument("--repo", type=Path, required=True, help="Path to the repo on disk")
     parser.add_argument("--out", type=Path, default=None)
@@ -179,6 +197,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.pr:
         pr = fetch_pr(args.pr)
+        diff_text = pr.diff
+        label = f"PR {pr.owner}/{pr.repo}#{pr.number}"
+        slug = f"{pr.owner}_{pr.repo}_pr{pr.number}"
+    elif args.from_file:
+        pr = load_pr_from_file(args.from_file)
         diff_text = pr.diff
         label = f"PR {pr.owner}/{pr.repo}#{pr.number}"
         slug = f"{pr.owner}_{pr.repo}_pr{pr.number}"

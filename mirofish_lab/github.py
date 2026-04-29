@@ -1,13 +1,17 @@
 """Tiny GitHub helpers. Public-API only, no auth required for public repos.
 
-Set GITHUB_TOKEN in env to lift rate limits.
+Set GITHUB_TOKEN in env to lift rate limits. For sandboxes without
+outbound GitHub access, use load_pr_from_file / load_issue_from_file
+with JSON fixtures.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 import requests
 
@@ -108,4 +112,36 @@ def fetch_issue(url: str) -> Issue:
         body=j.get("body") or "",
         labels=[l["name"] for l in j.get("labels", [])],
         url=url,
+    )
+
+
+def load_pr_from_file(path: Path | str) -> PullRequest:
+    """Load a pre-fetched PR JSON. Required keys: owner, repo, number, title,
+    body, diff, base_sha, head_sha, url."""
+    j = json.loads(Path(path).read_text())
+    return PullRequest(
+        owner=j["owner"],
+        repo=j["repo"],
+        number=int(j["number"]),
+        title=j.get("title", ""),
+        body=j.get("body") or "",
+        diff=j.get("diff", ""),
+        base_sha=j.get("base_sha", ""),
+        head_sha=j.get("head_sha", ""),
+        url=j.get("url", ""),
+    )
+
+
+def load_issue_from_file(path: Path | str) -> Issue:
+    """Load a pre-fetched issue JSON. Required keys: owner, repo, number,
+    title, body, labels, url."""
+    j = json.loads(Path(path).read_text())
+    return Issue(
+        owner=j["owner"],
+        repo=j["repo"],
+        number=int(j["number"]),
+        title=j.get("title", ""),
+        body=j.get("body") or "",
+        labels=list(j.get("labels", [])),
+        url=j.get("url", ""),
     )

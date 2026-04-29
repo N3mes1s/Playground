@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from mirofish_lab import Agent, Report, load_config, parallel_run
 from mirofish_lab.config import verify_model
-from mirofish_lab.github import fetch_issue
+from mirofish_lab.github import fetch_issue, load_issue_from_file
 from mirofish_lab.personas import IMPLEMENTER_PERSONAS, JUDGE_PERSONA
 
 
@@ -42,14 +42,8 @@ def issue_prompt(issue) -> str:
     )
 
 
-def run(issue_url: str, *, out_path: Path) -> Path:
-    cfg = load_config()
-    print(f"[config] model={cfg.model}", file=sys.stderr)
-    verify_model(cfg)
-
-    print(f"[fetch] {issue_url}", file=sys.stderr)
-    issue = fetch_issue(issue_url)
-    print(f"[fetch] #{issue.number}: {issue.title!r}", file=sys.stderr)
+def _run(issue, cfg, *, out_path: Path) -> Path:
+    print(f"[issue] #{issue.number}: {issue.title!r}", file=sys.stderr)
 
     implementers = [Agent(p, cfg) for p in IMPLEMENTER_PERSONAS]
     seed = issue_prompt(issue)
@@ -87,17 +81,28 @@ def run(issue_url: str, *, out_path: Path) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Rehearse multiple implementation strategies.")
-    parser.add_argument("issue_url", help="GitHub issue URL")
+    src = parser.add_mutually_exclusive_group(required=True)
+    src.add_argument("--issue-url", help="GitHub issue URL")
+    src.add_argument("--from-file", type=Path, help="Pre-fetched issue JSON")
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args(argv)
 
+    cfg = load_config()
+    print(f"[config] model={cfg.model}", file=sys.stderr)
+    verify_model(cfg)
+
+    if args.issue_url:
+        print(f"[fetch] {args.issue_url}", file=sys.stderr)
+        issue = fetch_issue(args.issue_url)
+    else:
+        print(f"[load] {args.from_file}", file=sys.stderr)
+        issue = load_issue_from_file(args.from_file)
+
     if args.out is None:
-        from urllib.parse import urlparse
-        parts = urlparse(args.issue_url).path.strip("/").split("/")
-        slug = "_".join(parts) if parts else "report"
+        slug = f"{issue.owner}_{issue.repo}_issues_{issue.number}"
         args.out = Path("pre-flight-rehearsal/reports") / f"{slug}.md"
 
-    run(args.issue_url, out_path=args.out)
+    _run(issue, cfg, out_path=args.out)
     return 0
 
 
