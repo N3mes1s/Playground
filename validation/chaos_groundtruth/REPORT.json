@@ -1,166 +1,284 @@
-[
-  {
-    "name": "linear_chain",
-    "n_steps": 5,
-    "probes": [
-      {
-        "target": "S1",
-        "true_downstream": [
-          "S2",
-          "S3",
-          "S4",
-          "S5"
-        ],
-        "predicted": [
-          "S2",
-          "S3",
-          "S4",
-          "S5"
-        ],
-        "jaccard": 1.0,
-        "overprediction_ratio": 0.0,
-        "underprediction_ratio": 0.0,
-        "rollback_holds": true,
-        "severity": "medium"
-      },
-      {
-        "target": "S2",
-        "true_downstream": [
-          "S3",
-          "S4",
-          "S5"
-        ],
-        "predicted": [
-          "S3",
-          "S4",
-          "S5"
-        ],
-        "jaccard": 1.0,
-        "overprediction_ratio": 0.0,
-        "underprediction_ratio": 0.0,
-        "rollback_holds": true,
-        "severity": "medium"
-      },
-      {
-        "target": "S3",
-        "true_downstream": [
-          "S4",
-          "S5"
-        ],
-        "predicted": [
-          "S4",
-          "S5"
-        ],
-        "jaccard": 1.0,
-        "overprediction_ratio": 0.0,
-        "underprediction_ratio": 0.0,
-        "rollback_holds": true,
-        "severity": "medium"
-      },
-      {
-        "target": "S4",
-        "true_downstream": [
-          "S5"
-        ],
-        "predicted": [
-          "S5"
-        ],
-        "jaccard": 1.0,
-        "overprediction_ratio": 0.0,
-        "underprediction_ratio": 0.0,
-        "rollback_holds": true,
-        "severity": "medium"
+{
+  "llm_probe": [
+    {
+      "name": "linear_chain",
+      "n_steps": 5,
+      "probes": [
+        {
+          "target": "S1",
+          "true_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5"
+          ],
+          "predicted": [
+            "S2",
+            "S3",
+            "S4",
+            "S5"
+          ],
+          "jaccard": 1.0,
+          "overprediction_ratio": 0.0,
+          "underprediction_ratio": 0.0,
+          "rollback_holds": true,
+          "severity": "medium"
+        },
+        {
+          "target": "S2",
+          "true_downstream": [
+            "S3",
+            "S4",
+            "S5"
+          ],
+          "predicted": [
+            "S3",
+            "S4",
+            "S5"
+          ],
+          "jaccard": 1.0,
+          "overprediction_ratio": 0.0,
+          "underprediction_ratio": 0.0,
+          "rollback_holds": true,
+          "severity": "medium"
+        },
+        {
+          "target": "S3",
+          "true_downstream": [
+            "S4",
+            "S5"
+          ],
+          "predicted": [
+            "S4",
+            "S5"
+          ],
+          "jaccard": 1.0,
+          "overprediction_ratio": 0.0,
+          "underprediction_ratio": 0.0,
+          "rollback_holds": true,
+          "severity": "medium"
+        },
+        {
+          "target": "S4",
+          "true_downstream": [
+            "S5"
+          ],
+          "predicted": [
+            "S5"
+          ],
+          "jaccard": 1.0,
+          "overprediction_ratio": 0.0,
+          "underprediction_ratio": 0.0,
+          "rollback_holds": true,
+          "severity": "medium"
+        }
+      ],
+      "avg_jaccard": 1.0,
+      "avg_underprediction": 0.0,
+      "avg_overprediction": 0.0,
+      "n_empty_predictions": 0
+    },
+    {
+      "name": "diamond",
+      "n_steps": 4,
+      "probes": [
+        {
+          "target": "S1",
+          "true_downstream": [
+            "S2",
+            "S3",
+            "S4"
+          ],
+          "predicted": [
+            "S2",
+            "S3",
+            "S4"
+          ],
+          "jaccard": 1.0,
+          "overprediction_ratio": 0.0,
+          "underprediction_ratio": 0.0,
+          "rollback_holds": true,
+          "severity": "high"
+        },
+        {
+          "target": "S2",
+          "true_downstream": [
+            "S4"
+          ],
+          "predicted": [
+            "S4"
+          ],
+          "jaccard": 1.0,
+          "overprediction_ratio": 0.0,
+          "underprediction_ratio": 0.0,
+          "rollback_holds": true,
+          "severity": "medium"
+        },
+        {
+          "target": "S3",
+          "true_downstream": [
+            "S4"
+          ],
+          "predicted": [
+            "S4"
+          ],
+          "jaccard": 1.0,
+          "overprediction_ratio": 0.0,
+          "underprediction_ratio": 0.0,
+          "rollback_holds": true,
+          "severity": "medium"
+        }
+      ],
+      "avg_jaccard": 1.0,
+      "avg_underprediction": 0.0,
+      "avg_overprediction": 0.0,
+      "n_empty_predictions": 0
+    },
+    {
+      "name": "parallel",
+      "n_steps": 5,
+      "probes": [
+        {
+          "target": "S1",
+          "true_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5"
+          ],
+          "predicted": [
+            "S2",
+            "S3",
+            "S4",
+            "S5"
+          ],
+          "jaccard": 1.0,
+          "overprediction_ratio": 0.0,
+          "underprediction_ratio": 0.0,
+          "rollback_holds": true,
+          "severity": "high"
+        }
+      ],
+      "avg_jaccard": 1.0,
+      "avg_underprediction": 0.0,
+      "avg_overprediction": 0.0,
+      "n_empty_predictions": 0
+    }
+  ],
+  "static_validation": [
+    {
+      "topology": "linear_chain",
+      "static_per_step_correct": "5/5",
+      "is_exact": true
+    },
+    {
+      "topology": "diamond",
+      "static_per_step_correct": "4/4",
+      "is_exact": true
+    },
+    {
+      "topology": "parallel",
+      "static_per_step_correct": "5/5",
+      "is_exact": true
+    }
+  ],
+  "search_validation": [
+    {
+      "topology": "linear_chain",
+      "k": 2,
+      "rounds": 2,
+      "n_proposed": 12,
+      "n_scored": 9,
+      "search_best_fragility": 1.0,
+      "exhaustive_best_fragility": 1.0,
+      "ratio": 1.0,
+      "search_top_set": [
+        "S1",
+        "S2"
+      ],
+      "exhaustive_top_set": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "topology": "diamond",
+      "k": 2,
+      "rounds": 2,
+      "n_proposed": 8,
+      "n_scored": 6,
+      "search_best_fragility": 1.0,
+      "exhaustive_best_fragility": 1.0,
+      "ratio": 1.0,
+      "search_top_set": [
+        "S1",
+        "S2"
+      ],
+      "exhaustive_top_set": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "topology": "parallel",
+      "k": 2,
+      "rounds": 2,
+      "n_proposed": 14,
+      "n_scored": 10,
+      "search_best_fragility": 1.0,
+      "exhaustive_best_fragility": 1.0,
+      "ratio": 1.0,
+      "search_top_set": [
+        "S1",
+        "S2"
+      ],
+      "exhaustive_top_set": [
+        "S1",
+        "S2"
+      ]
+    }
+  ],
+  "montecarlo_validation": [
+    {
+      "topology": "linear_chain",
+      "avg_success_rate": 0.891,
+      "p10": 0.4,
+      "full_success_rate": 0.822,
+      "full_failure_rate": 0.038,
+      "per_step_failure_rate": {
+        "S1": 0.038,
+        "S2": 0.042,
+        "S3": 0.028,
+        "S4": 0.048,
+        "S5": 0.036
       }
-    ],
-    "avg_jaccard": 1.0,
-    "avg_underprediction": 0.0,
-    "avg_overprediction": 0.0,
-    "n_empty_predictions": 0
-  },
-  {
-    "name": "diamond",
-    "n_steps": 4,
-    "probes": [
-      {
-        "target": "S1",
-        "true_downstream": [
-          "S2",
-          "S3",
-          "S4"
-        ],
-        "predicted": [
-          "S2",
-          "S3",
-          "S4"
-        ],
-        "jaccard": 1.0,
-        "overprediction_ratio": 0.0,
-        "underprediction_ratio": 0.0,
-        "rollback_holds": true,
-        "severity": "medium"
-      },
-      {
-        "target": "S2",
-        "true_downstream": [
-          "S4"
-        ],
-        "predicted": [
-          "S4"
-        ],
-        "jaccard": 1.0,
-        "overprediction_ratio": 0.0,
-        "underprediction_ratio": 0.0,
-        "rollback_holds": true,
-        "severity": "medium"
-      },
-      {
-        "target": "S3",
-        "true_downstream": [
-          "S4"
-        ],
-        "predicted": [
-          "S4"
-        ],
-        "jaccard": 1.0,
-        "overprediction_ratio": 0.0,
-        "underprediction_ratio": 0.0,
-        "rollback_holds": true,
-        "severity": "medium"
+    },
+    {
+      "topology": "diamond",
+      "avg_success_rate": 0.917,
+      "p10": 0.5,
+      "full_success_rate": 0.852,
+      "full_failure_rate": 0.028,
+      "per_step_failure_rate": {
+        "S1": 0.028,
+        "S2": 0.05,
+        "S3": 0.048,
+        "S4": 0.026
       }
-    ],
-    "avg_jaccard": 1.0,
-    "avg_underprediction": 0.0,
-    "avg_overprediction": 0.0,
-    "n_empty_predictions": 0
-  },
-  {
-    "name": "parallel",
-    "n_steps": 5,
-    "probes": [
-      {
-        "target": "S1",
-        "true_downstream": [
-          "S2",
-          "S3",
-          "S4",
-          "S5"
-        ],
-        "predicted": [
-          "S2",
-          "S3",
-          "S4",
-          "S5"
-        ],
-        "jaccard": 1.0,
-        "overprediction_ratio": 0.0,
-        "underprediction_ratio": 0.0,
-        "rollback_holds": true,
-        "severity": "medium"
+    },
+    {
+      "topology": "parallel",
+      "avg_success_rate": 0.933,
+      "p10": 0.8,
+      "full_success_rate": 0.822,
+      "full_failure_rate": 0.038,
+      "per_step_failure_rate": {
+        "S1": 0.038,
+        "S2": 0.042,
+        "S3": 0.028,
+        "S4": 0.048,
+        "S5": 0.036
       }
-    ],
-    "avg_jaccard": 1.0,
-    "avg_underprediction": 0.0,
-    "avg_overprediction": 0.0,
-    "n_empty_predictions": 0
-  }
-]
+    }
+  ]
+}
