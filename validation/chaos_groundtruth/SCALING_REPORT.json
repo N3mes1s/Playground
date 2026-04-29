@@ -1,0 +1,588 @@
+{
+  "plan_n_steps": 15,
+  "results": {
+    "k=2,rounds=2": {
+      "k": 2,
+      "rounds": 2,
+      "exhaustive_best": 1.0,
+      "search_best": 1.0,
+      "ratio": 1.0,
+      "search_proposed": 12,
+      "search_scored": 12,
+      "search_top_in_exhaustive_top5": 2,
+      "search_top_3": [
+        {
+          "ids": [
+            "S1",
+            "S8"
+          ],
+          "blocked": [
+            "S10",
+            "S11",
+            "S12",
+            "S13",
+            "S14",
+            "S15",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "ids": [
+            "S1",
+            "S12"
+          ],
+          "blocked": [
+            "S10",
+            "S11",
+            "S13",
+            "S14",
+            "S15",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "ids": [
+            "S1",
+            "S9"
+          ],
+          "blocked": [
+            "S10",
+            "S11",
+            "S12",
+            "S13",
+            "S14",
+            "S15",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8"
+          ],
+          "fragility": 1.0
+        }
+      ],
+      "exhaustive_top_3": [
+        {
+          "failure_set": [
+            "S1",
+            "S10"
+          ],
+          "blocked": [
+            "S11",
+            "S12",
+            "S13",
+            "S14",
+            "S15",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "failure_set": [
+            "S1",
+            "S11"
+          ],
+          "blocked": [
+            "S10",
+            "S12",
+            "S13",
+            "S14",
+            "S15",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "failure_set": [
+            "S1",
+            "S12"
+          ],
+          "blocked": [
+            "S10",
+            "S11",
+            "S13",
+            "S14",
+            "S15",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        }
+      ]
+    },
+    "k=2,rounds=4": {
+      "k": 2,
+      "rounds": 4,
+      "exhaustive_best": 1.0,
+      "search_best": 1.0,
+      "ratio": 1.0,
+      "search_proposed": 25,
+      "search_scored": 25,
+      "search_top_in_exhaustive_top5": 1,
+      "search_top_3": [
+        {
+          "ids": [
+            "S1",
+            "S8"
+          ],
+          "blocked": [
+            "S10",
+            "S11",
+            "S12",
+            "S13",
+            "S14",
+            "S15",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "ids": [
+            "S1",
+            "S12"
+          ],
+          "blocked": [
+            "S10",
+            "S11",
+            "S13",
+            "S14",
+            "S15",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "ids": [
+            "S1",
+            "S2"
+          ],
+          "blocked": [
+            "S10",
+            "S11",
+            "S12",
+            "S13",
+            "S14",
+            "S15",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        }
+      ],
+      "exhaustive_top_3": [
+        {
+          "failure_set": [
+            "S1",
+            "S10"
+          ],
+          "blocked": [
+            "S11",
+            "S12",
+            "S13",
+            "S14",
+            "S15",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "failure_set": [
+            "S1",
+            "S11"
+          ],
+          "blocked": [
+            "S10",
+            "S12",
+            "S13",
+            "S14",
+            "S15",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "failure_set": [
+            "S1",
+            "S12"
+          ],
+          "blocked": [
+            "S10",
+            "S11",
+            "S13",
+            "S14",
+            "S15",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        }
+      ]
+    },
+    "k=3,rounds=2": {
+      "k": 3,
+      "rounds": 2,
+      "exhaustive_best": 1.0,
+      "search_best": 1.0,
+      "ratio": 1.0,
+      "search_proposed": 6,
+      "search_scored": 6,
+      "search_top_in_exhaustive_top5": 0,
+      "search_top_3": [
+        {
+          "ids": [
+            "S1",
+            "S5",
+            "S8"
+          ],
+          "blocked": [
+            "S10",
+            "S11",
+            "S12",
+            "S13",
+            "S14",
+            "S15",
+            "S2",
+            "S3",
+            "S4",
+            "S6",
+            "S7",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "ids": [
+            "S1",
+            "S12",
+            "S8"
+          ],
+          "blocked": [
+            "S10",
+            "S11",
+            "S13",
+            "S14",
+            "S15",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "ids": [
+            "S12",
+            "S2",
+            "S5"
+          ],
+          "blocked": [
+            "S10",
+            "S11",
+            "S13",
+            "S14",
+            "S15",
+            "S3",
+            "S4",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 0.917
+        }
+      ],
+      "exhaustive_top_3": [
+        {
+          "failure_set": [
+            "S1",
+            "S10",
+            "S11"
+          ],
+          "blocked": [
+            "S12",
+            "S13",
+            "S14",
+            "S15",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "failure_set": [
+            "S1",
+            "S10",
+            "S13"
+          ],
+          "blocked": [
+            "S11",
+            "S12",
+            "S14",
+            "S15",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "failure_set": [
+            "S1",
+            "S10",
+            "S14"
+          ],
+          "blocked": [
+            "S11",
+            "S12",
+            "S13",
+            "S15",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        }
+      ]
+    },
+    "k=3,rounds=4": {
+      "k": 3,
+      "rounds": 4,
+      "exhaustive_best": 1.0,
+      "search_best": 1.0,
+      "ratio": 1.0,
+      "search_proposed": 24,
+      "search_scored": 23,
+      "search_top_in_exhaustive_top5": 0,
+      "search_top_3": [
+        {
+          "ids": [
+            "S1",
+            "S5",
+            "S8"
+          ],
+          "blocked": [
+            "S10",
+            "S11",
+            "S12",
+            "S13",
+            "S14",
+            "S15",
+            "S2",
+            "S3",
+            "S4",
+            "S6",
+            "S7",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "ids": [
+            "S1",
+            "S12",
+            "S8"
+          ],
+          "blocked": [
+            "S10",
+            "S11",
+            "S13",
+            "S14",
+            "S15",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "ids": [
+            "S1",
+            "S2",
+            "S5"
+          ],
+          "blocked": [
+            "S10",
+            "S11",
+            "S12",
+            "S13",
+            "S14",
+            "S15",
+            "S3",
+            "S4",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        }
+      ],
+      "exhaustive_top_3": [
+        {
+          "failure_set": [
+            "S1",
+            "S10",
+            "S11"
+          ],
+          "blocked": [
+            "S12",
+            "S13",
+            "S14",
+            "S15",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "failure_set": [
+            "S1",
+            "S10",
+            "S13"
+          ],
+          "blocked": [
+            "S11",
+            "S12",
+            "S14",
+            "S15",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "failure_set": [
+            "S1",
+            "S10",
+            "S14"
+          ],
+          "blocked": [
+            "S11",
+            "S12",
+            "S13",
+            "S15",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        }
+      ]
+    }
+  }
+}
