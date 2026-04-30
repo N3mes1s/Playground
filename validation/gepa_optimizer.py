@@ -261,8 +261,14 @@ def _bench_single_config(*, n: int, sources: list[str], run_label: str) -> dict:
     ]
     env = dict(os.environ)
     env.setdefault("MODEL", "gpt-5.4-mini")
+    # 1800s = 30 min per bench-runner subprocess. Empirical: a 15-element
+    # judge-scored bench takes 8-15 min on the incumbent and longer when a
+    # candidate's patched prompt produces verbose plans. Setting the
+    # timeout too tight (was 900s) silently disqualifies "better but
+    # slower" candidates and biases GEPA toward terse fixes -- a real ops
+    # issue we hit on the patch-grounding candidate's first run.
     res = subprocess.run(cmd, env=env, cwd=str(ROOT),
-                         capture_output=True, text=True, timeout=900)
+                         capture_output=True, text=True, timeout=1800)
     if res.returncode != 0:
         raise RuntimeError(f"bench failed for {run_label}: {res.stderr[-400:]}")
     return json.loads(out_md.with_suffix(".json").read_text())
