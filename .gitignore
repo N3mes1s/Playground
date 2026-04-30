@@ -13,10 +13,3 @@ vulnllm-analyzer/sliver-src/
 .clones/
 .ab_runs/
 .bench_runs/
-
-# Bulk dataset jsonl files (regenerate via dataset/sources/ + dataset/synthetic/)
-dataset/data/real/
-dataset/data/synthetic/
-
-# But keep the verification sample
-!dataset/data/SAMPLE.jsonl

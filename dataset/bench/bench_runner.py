@@ -152,8 +152,13 @@ def _winner_family(label: str | None) -> str:
     return "other"
 
 
-def _score_element(elem: dict, sidecar: dict) -> dict:
-    """Compute per-element score: ground-truth-aware where possible."""
+def _score_element(elem: dict, sidecar: dict, *, judge: bool = False,
+                    judge_cfg=None) -> dict:
+    """Compute per-element score: ground-truth-aware where possible.
+
+    If judge=True, ALSO run an LLM judge (mirofish_lab-aware) and
+    record verdict_judge alongside verdict (the literal-overlap one).
+    """
     if sidecar.get("_skipped") or sidecar.get("_failed"):
         return {"id": elem["id"], "verdict": "error",
                 "details": {k: v for k, v in sidecar.items() if k.startswith("_")}}
@@ -212,7 +217,7 @@ def _score_element(elem: dict, sidecar: dict) -> dict:
     else:
         verdict = "no_ground_truth"
 
-    return {
+    out = {
         "id": elem["id"],
         "source": elem["source"],
         "winner": winner,
@@ -225,9 +230,22 @@ def _score_element(elem: dict, sidecar: dict) -> dict:
         "keyword_total": keyword_total,
         "expected_stakeholders_hit": expected_stakeholders_hit,
         "expected_stakeholders_total": expected_stakeholders_total,
-        "verdict": verdict,
+        "verdict": verdict,                 # literal-overlap verdict
         "elapsed_s": sidecar.get("_elapsed_s"),
     }
+    if judge and not (sidecar.get("_skipped") or sidecar.get("_failed")):
+        try:
+            from llm_judge import judge_element
+        except ImportError:
+            sys.path.insert(0, str(ROOT / "dataset" / "bench"))
+            from llm_judge import judge_element
+        judge_result = judge_element(elem, sidecar, cfg=judge_cfg)
+        out["verdict_judge"] = judge_result["verdict"]
+        out["judge_rationale"] = judge_result["rationale"]
+        out["judge_captured"] = judge_result["captured"]
+        out["judge_missed"] = judge_result["missed"]
+        out["judge_confidence"] = judge_result["judge_confidence"]
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -240,6 +258,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-tokens", type=int, default=1500)
     parser.add_argument("--n-plans", type=int, default=4)
     parser.add_argument("--seed", type=int, default=1337)
+    parser.add_argument("--judge", action="store_true",
+                        help="Add an LLM judge verdict alongside the literal verdict")
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args(argv)
 
@@ -247,6 +267,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[load] {len(items)} elements available", file=sys.stderr)
     sample = _stratified_sample(items, args.n, seed=args.seed)
     print(f"[sample] {len(sample)} elements", file=sys.stderr)
+
+    judge_cfg = None
+    if args.judge:
+        sys.path.insert(0, str(ROOT))
+        from mirofish_lab.config import load_config
+        judge_cfg = load_config()
 
     scores = []
     for i, elem in enumerate(sample, 1):
@@ -258,7 +284,8 @@ def main(argv: list[str] | None = None) -> int:
             )
         except Exception as e:
             sidecar = {"_failed": True, "_exc": str(e)}
-        scores.append(_score_element(elem, sidecar))
+        scores.append(_score_element(elem, sidecar, judge=args.judge,
+                                     judge_cfg=judge_cfg))
 
     # Aggregate.
     by_source: dict[str, list[dict]] = defaultdict(list)
@@ -310,11 +337,35 @@ def main(argv: list[str] | None = None) -> int:
 
     overall = Counter(s["verdict"] for s in scores)
     lines.append("")
-    lines.append(f"## Overall: caught={overall.get('caught', 0)}, "
+    lines.append(f"## Overall (literal scorer): caught={overall.get('caught', 0)}, "
                  f"partial={overall.get('partial', 0)}, "
                  f"missed={overall.get('missed', 0)}, "
                  f"error={overall.get('error', 0)}, "
                  f"no_GT={overall.get('no_ground_truth', 0)}")
+
+    if args.judge:
+        overall_j = Counter(s.get("verdict_judge", "?") for s in scores)
+        lines.append("")
+        lines.append("## Overall (LLM judge)")
+        lines.append("")
+        lines.append(
+            f"caught={overall_j.get('caught', 0)}, "
+            f"partial={overall_j.get('partial', 0)}, "
+            f"missed={overall_j.get('missed', 0)}, "
+            f"no_GT={overall_j.get('no_ground_truth', 0)}"
+        )
+        lines.append("")
+        lines.append("## Per-element verdicts (literal vs judge)")
+        lines.append("")
+        lines.append("| Element | literal | judge | judge rationale |")
+        lines.append("|---|---|---|---|")
+        for s in scores:
+            lit = s.get("verdict", "—")
+            jud = s.get("verdict_judge", "—")
+            rat = (s.get("judge_rationale", "") or "")[:80]
+            lines.append(
+                f"| `{s.get('id', '?')[:60]}` | {lit} | {jud} | {rat} |"
+            )
 
     out_md.write_text("\n".join(lines))
     out_json.write_text(json.dumps({
