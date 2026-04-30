@@ -245,12 +245,17 @@ def reflect(traces: list[dict], cfg=None) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _bench_single_config(*, n: int, sources: list[str], run_label: str) -> dict:
-    """Run bench_runner.py once with current code, return the JSON sidecar."""
+def _bench_single_config(*, n: int, sources: list[str], run_label: str,
+                          ids_file: Path | None = None) -> dict:
+    """Run bench_runner.py once with current code, return the JSON sidecar.
+
+    If ids_file is given, the bench runs on those exact elements
+    (eval and holdout slices are pinned this way so different
+    candidates are scored on the SAME inputs).
+    """
     out_md = ROOT / ".bench_runs" / f"gepa_{run_label}.md"
     cmd = [
         sys.executable, str(ROOT / "dataset" / "bench" / "bench_runner.py"),
-        "--n", str(n),
         "--sources", *sources,
         "--pipeline", "cli_pro",
         "--max-tokens", "1200",
@@ -259,6 +264,10 @@ def _bench_single_config(*, n: int, sources: list[str], run_label: str) -> dict:
         "--run-label", f"gepa_{run_label}",
         "--out", str(out_md),
     ]
+    if ids_file is not None:
+        cmd += ["--ids-file", str(ids_file)]
+    else:
+        cmd += ["--n", str(n)]
     env = dict(os.environ)
     env.setdefault("MODEL", "gpt-5.4-mini")
     # 1800s = 30 min per bench-runner subprocess. Empirical: a 15-element
@@ -306,16 +315,42 @@ def _composite_score(agg: dict) -> float:
     )
 
 
+def _presample_disjoint_slices(*, n_eval: int, n_holdout: int,
+                                sources: list[str], seed: int = 1337
+                                ) -> tuple[Path, Path]:
+    """Stratified-sample (n_eval + n_holdout) distinct elements, write the
+    first n_eval ids to an eval file and the next n_holdout to a holdout
+    file. Returns the two paths."""
+    sys.path.insert(0, str(ROOT / "dataset" / "bench"))
+    from bench_runner import _load_dataset, _stratified_sample
+
+    items = _load_dataset(sources)
+    sample = _stratified_sample(items, n_eval + n_holdout, seed=seed)
+    eval_ids = [s["id"] for s in sample[:n_eval]]
+    holdout_ids = [s["id"] for s in sample[n_eval : n_eval + n_holdout]]
+
+    out_dir = ROOT / ".bench_runs"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    eval_file = out_dir / f"gepa_eval_ids_{seed}.txt"
+    holdout_file = out_dir / f"gepa_holdout_ids_{seed}.txt"
+    eval_file.write_text("\n".join(eval_ids) + "\n")
+    holdout_file.write_text("\n".join(holdout_ids) + "\n")
+    return eval_file, holdout_file
+
+
 def evaluate_candidate(
     *, name: str, patch_block: str, n: int, sources: list[str],
-    backup: Path, target: Path,
+    backup: Path, target: Path, ids_file: Path | None = None,
+    label_suffix: str = "",
 ) -> dict:
     """Apply the candidate patch to pareto.py, run bench, restore."""
     tmp = _patch_base_tail(patch_block)
     shutil.copy(tmp, target)
     try:
         result = _bench_single_config(
-            n=n, sources=sources, run_label=name,
+            n=n, sources=sources,
+            run_label=f"{name}{label_suffix}",
+            ids_file=ids_file,
         )
     finally:
         shutil.copy(backup, target)   # always restore
@@ -335,7 +370,16 @@ def evaluate_candidate(
 
 
 def run_cycle(*, n_per_candidate: int, max_candidates: int,
-              sources: list[str], n_traces: int) -> dict:
+              sources: list[str], n_traces: int,
+              n_holdout: int = 0, seed: int = 1337) -> dict:
+    """Run one GEPA cycle.
+
+    If n_holdout > 0, pre-sample disjoint eval (n_per_candidate) +
+    holdout (n_holdout) slices, score every candidate AND the
+    incumbent on the eval slice, then re-validate the provisional
+    winner against the holdout. The cycle reports "applied" only
+    when the winner beats incumbent on BOTH slices.
+    """
     print(f"[gepa] collecting up to {n_traces} failure traces", file=sys.stderr)
     traces = collect_traces(n_max=n_traces)
     if not traces:
@@ -360,13 +404,25 @@ def run_cycle(*, n_per_candidate: int, max_candidates: int,
     backup = target.with_suffix(".py.gepa_bak")
     shutil.copy(target, backup)
 
+    eval_ids_file: Path | None = None
+    holdout_ids_file: Path | None = None
+    if n_holdout > 0:
+        eval_ids_file, holdout_ids_file = _presample_disjoint_slices(
+            n_eval=n_per_candidate, n_holdout=n_holdout,
+            sources=sources, seed=seed,
+        )
+        print(f"[gepa] pre-sampled {n_per_candidate} eval + {n_holdout} "
+              f"holdout disjoint elements (seed {seed})", file=sys.stderr)
+
     incumbent_run = None
     eval_results: list[dict] = []
+    holdout_validation = None
     try:
-        # Evaluate the incumbent (no patch) once.
-        print("[gepa] evaluating incumbent (no patch)", file=sys.stderr)
+        # Evaluate the incumbent on the eval slice.
+        print("[gepa] evaluating incumbent (no patch) on eval slice", file=sys.stderr)
         incumbent_result = _bench_single_config(
-            n=n_per_candidate, sources=sources, run_label="incumbent",
+            n=n_per_candidate, sources=sources, run_label="incumbent_eval",
+            ids_file=eval_ids_file,
         )
         incumbent_agg = _aggregate(incumbent_result["scores"])
         incumbent_score = _composite_score(incumbent_agg)
@@ -376,52 +432,116 @@ def run_cycle(*, n_per_candidate: int, max_candidates: int,
             "agg": incumbent_agg,
             "score": incumbent_score,
             "scores": incumbent_result["scores"],
+            "slice": "eval",
         }
-        print(f"[gepa] incumbent score = {incumbent_score:.3f} "
+        print(f"[gepa] incumbent eval score = {incumbent_score:.3f} "
               f"(useful={incumbent_agg['useful_rate']:.0%})",
               file=sys.stderr)
 
-        # Evaluate each candidate.
+        # Evaluate each candidate on the eval slice.
         for c in candidates:
             try:
                 er = evaluate_candidate(
                     name=c["name"], patch_block=c["patch_block"],
                     n=n_per_candidate, sources=sources,
                     backup=backup, target=target,
+                    ids_file=eval_ids_file, label_suffix="_eval",
                 )
                 er["theory"] = c.get("theory", "")
+                er["slice"] = "eval"
                 eval_results.append(er)
                 print(
-                    f"[gepa]   {c['name']} score={er['score']:.3f} "
+                    f"[gepa]   {c['name']} eval score={er['score']:.3f} "
                     f"useful={er['agg']['useful_rate']:.0%}",
                     file=sys.stderr,
                 )
             except Exception as e:
-                print(f"[gepa]   {c['name']} FAILED: {e}", file=sys.stderr)
+                print(f"[gepa]   {c['name']} FAILED on eval: {e}", file=sys.stderr)
+
+        # Pick provisional winner on eval slice.
+        all_eval = [incumbent_run] + eval_results
+        provisional = max(all_eval, key=lambda r: r["score"])
+        provisional_beats = (
+            provisional["name"] != "incumbent"
+            and provisional["score"] > incumcent_run_score(incumbent_run) + 0.02
+        ) if incumbent_run else False
+
+        # Holdout validation: re-score incumbent + provisional winner.
+        if n_holdout > 0 and provisional_beats:
+            print(f"[gepa] holdout validation: re-scoring "
+                  f"incumbent + {provisional['name']} on holdout slice",
+                  file=sys.stderr)
+            inc_holdout_result = _bench_single_config(
+                n=n_holdout, sources=sources,
+                run_label="incumbent_holdout", ids_file=holdout_ids_file,
+            )
+            inc_holdout_agg = _aggregate(inc_holdout_result["scores"])
+            inc_holdout_score = _composite_score(inc_holdout_agg)
+            cand_holdout = evaluate_candidate(
+                name=provisional["name"], patch_block=provisional["patch_block"],
+                n=n_holdout, sources=sources,
+                backup=backup, target=target,
+                ids_file=holdout_ids_file, label_suffix="_holdout",
+            )
+            holdout_confirms = (
+                cand_holdout["score"] > inc_holdout_score + 0.01
+            )
+            holdout_validation = {
+                "incumbent_holdout_score": inc_holdout_score,
+                "incumbent_holdout_useful": inc_holdout_agg["useful_rate"],
+                "winner_holdout_score": cand_holdout["score"],
+                "winner_holdout_useful": cand_holdout["agg"]["useful_rate"],
+                "confirmed": holdout_confirms,
+            }
+            print(
+                f"[gepa] holdout: incumbent={inc_holdout_score:.3f} "
+                f"vs {provisional['name']}={cand_holdout['score']:.3f} "
+                f"-> {'CONFIRMED' if holdout_confirms else 'OVERFIT (rejected)'}",
+                file=sys.stderr,
+            )
+        elif n_holdout > 0:
+            print("[gepa] no candidate beat incumbent on eval; skipping holdout",
+                  file=sys.stderr)
     finally:
         # Always restore.
         shutil.copy(backup, target)
         backup.unlink(missing_ok=True)
 
-    # Pick winner.
-    all_runs = [incumbent_run] + eval_results if incumbent_run else eval_results
-    winner = max(all_runs, key=lambda r: r["score"])
-    winner_better = (
-        incumbent_run is not None
-        and winner["name"] != "incumbent"
-        and winner["score"] > incumbent_run["score"] + 0.02
-    )
+    # Final winner determination.
+    if n_holdout > 0:
+        if holdout_validation and holdout_validation.get("confirmed"):
+            winner = provisional
+            winner_better = True
+        else:
+            winner = incumbent_run if incumbent_run else (eval_results[0] if eval_results else {})
+            winner_better = False
+    else:
+        # Legacy single-slice path.
+        all_runs = [incumbent_run] + eval_results if incumbent_run else eval_results
+        winner = max(all_runs, key=lambda r: r.get("score", 0))
+        winner_better = (
+            incumbent_run is not None
+            and winner["name"] != "incumbent"
+            and winner["score"] > incumbent_run["score"] + 0.02
+        )
 
     return {
         "n_traces": len(traces),
         "diagnosis": diagnosis,
+        "n_holdout": n_holdout,
         "incumbent": incumbent_run,
         "candidates": eval_results,
-        "winner_name": winner["name"],
-        "winner_score": winner["score"],
+        "holdout_validation": holdout_validation,
+        "winner_name": winner.get("name", "?"),
+        "winner_score": winner.get("score", 0),
         "winner_beats_incumbent": winner_better,
         "winner_patch_block": winner.get("patch_block") if winner_better else None,
     }
+
+
+def incumcent_run_score(r):
+    """Tiny helper (typo-tolerant alias) for the incumbent's eval score."""
+    return r["score"] if r else 0.0
 
 
 def write_report(result: dict, *, out_md: Path) -> Path:
@@ -479,6 +599,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--n", type=int, default=20,
                         help="Bench-sample size per candidate (default 20 ≈ "
                              "$0.40/cycle on gpt-5.4-mini, ~30 min wall)")
+    parser.add_argument("--holdout-n", type=int, default=0,
+                        help="If >0, also sample N disjoint elements as a "
+                             "held-out validation slice. The cycle picks a "
+                             "provisional winner on the eval slice; only "
+                             "applies if the winner ALSO beats the incumbent "
+                             "on the holdout slice. Recommended: holdout-n "
+                             "≈ 0.6 * --n.")
     parser.add_argument("--max-candidates", type=int, default=2,
                         help="Max candidates from one reflector call")
     parser.add_argument("--sources", nargs="+",
@@ -500,6 +627,7 @@ def main(argv: list[str] | None = None) -> int:
         max_candidates=args.max_candidates,
         sources=args.sources,
         n_traces=args.n_traces,
+        n_holdout=args.holdout_n,
     )
     write_report(result, out_md=args.out)
     args.out.with_suffix(".json").write_text(json.dumps(result, indent=2,

@@ -275,13 +275,35 @@ def main(argv: list[str] | None = None) -> int:
                         help='UtilityWeights string for cli_pro, e.g. "fragility=0.2,coverage=0.25,..."')
     parser.add_argument("--run-label", default="",
                         help="Prefix for per-element run output files (used by A/B)")
+    parser.add_argument("--ids-file", type=Path, default=None,
+                        help="Path to a file with one element id per line. When "
+                             "given, the bench runs ONLY on those elements (in "
+                             "order) and ignores --n / --seed. Used by GEPA to "
+                             "pin disjoint eval and holdout slices.")
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args(argv)
 
     items = _load_dataset(args.sources)
     print(f"[load] {len(items)} elements available", file=sys.stderr)
-    sample = _stratified_sample(items, args.n, seed=args.seed)
-    print(f"[sample] {len(sample)} elements", file=sys.stderr)
+    if args.ids_file and args.ids_file.exists():
+        wanted = [
+            line.strip()
+            for line in args.ids_file.read_text().splitlines()
+            if line.strip() and not line.startswith("#")
+        ]
+        wanted_set = set(wanted)
+        by_id = {it.get("id"): it for it in items}
+        sample = [by_id[w] for w in wanted if w in by_id]
+        missing = [w for w in wanted if w not in by_id]
+        if missing:
+            print(f"[ids-file] WARNING: {len(missing)} ids not found in corpus",
+                  file=sys.stderr)
+        print(f"[ids-file] resolved {len(sample)} of {len(wanted)} requested",
+              file=sys.stderr)
+    else:
+        sample = _stratified_sample(items, args.n, seed=args.seed)
+        print(f"[sample] {len(sample)} elements (stratified, seed {args.seed})",
+              file=sys.stderr)
 
     judge_cfg = None
     if args.judge:
