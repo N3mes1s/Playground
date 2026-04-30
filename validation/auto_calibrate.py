@@ -96,6 +96,10 @@ KNOWN_WARNINGS = {
         "fixes": {
             "prompt_revision": "Append SPECIFICITY directive to all Sequencer "
                                "prompts.",
+            "gepa_revise": "GEPA-style autonomous prompt evolution: reflector "
+                           "reads failure traces from existing bench output "
+                           "and proposes candidate prompt mutations; each is "
+                           "bench-evaluated and the winner picked.",
         },
     },
 }
@@ -298,8 +302,10 @@ def _candidate_config(name: str, fix: str, intents: list[str], repo_for: dict) -
             "n_plans": 4,
             "repo_for": repo_for,
         }
-    if fix in ("antiparallel", "topological_explicit", "prompt_revision"):
-        # Code patches; baseline weights, patched code in place.
+    if fix in ("antiparallel", "topological_explicit", "prompt_revision",
+               "gepa_revise"):
+        # Code patches (or in gepa_revise, runtime-derived patch); baseline
+        # weights, patched code in place.
         return _baseline_config(name, intents, repo_for)
     raise ValueError(f"unknown fix: {fix}")
 
@@ -438,6 +444,20 @@ def main(argv: list[str] | None = None) -> int:
         patched_target = ROOT / "mirofish_lab" / "pareto.py"
         backup = patched_target.with_suffix(".py.autocal_bak")
         shutil.copy(patched_target, backup)
+    elif args.fix == "gepa_revise":
+        # Hand off entirely to gepa_optimizer.py; it owns the reflect +
+        # evaluate + apply loop and writes its own calibration record.
+        cmd = [
+            sys.executable, str(ROOT / "validation" / "gepa_optimizer.py"),
+            "--n", str(max(args.bench_n, 6)),
+            "--max-candidates", "2",
+            "--sources", *args.bench_sources,
+            "--out", str(ROOT / "validation" / f"GEPA_{args.warning}.md"),
+        ]
+        if args.apply:
+            cmd.append("--apply")
+        res = subprocess.run(cmd, cwd=str(ROOT), capture_output=False)
+        return res.returncode
 
     decision = "no_apply"   # fail-safe default for the finally block
     try:
