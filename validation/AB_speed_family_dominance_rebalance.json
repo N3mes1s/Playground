@@ -1,0 +1,71 @@
+{
+  "criterion": "balanced",
+  "a": {
+    "config_name": "baseline",
+    "n_runs": 2,
+    "rows": [
+      {
+        "intent": "validation/postmortems/intents/04_gitlab_db_replica.md",
+        "winner": "01-safety-leaning",
+        "n_plans": 4,
+        "smt_feasible_count": 2,
+        "winner_fragility": 0.4
+      },
+      {
+        "intent": "validation/postmortems/intents/05_linear_cascade_migration.md",
+        "winner": "00-cost-leaning",
+        "n_plans": 4,
+        "smt_feasible_count": 0,
+        "winner_fragility": 0.688
+      }
+    ]
+  },
+  "b": {
+    "config_name": "candidate_rebalance",
+    "n_runs": 2,
+    "rows": [
+      {
+        "intent": "validation/postmortems/intents/04_gitlab_db_replica.md",
+        "winner": "03-safety-tilted",
+        "n_plans": 4,
+        "smt_feasible_count": 0,
+        "winner_fragility": 0.688
+      },
+      {
+        "intent": "validation/postmortems/intents/05_linear_cascade_migration.md",
+        "winner": "00-cost-leaning",
+        "n_plans": 4,
+        "smt_feasible_count": 2,
+        "winner_fragility": 1.0
+      }
+    ]
+  },
+  "agg_a": {
+    "n_runs": 2,
+    "winner_family_dist": {
+      "safety": 1,
+      "cost": 1
+    },
+    "max_family_share": 0.5,
+    "smt_feasibility_rate": 0.25,
+    "avg_winner_fragility": 0.544,
+    "median_winner_fragility": 0.544,
+    "winner_fragility_p90": 0.688
+  },
+  "agg_b": {
+    "n_runs": 2,
+    "winner_family_dist": {
+      "safety": 1,
+      "cost": 1
+    },
+    "max_family_share": 0.5,
+    "smt_feasibility_rate": 0.25,
+    "avg_winner_fragility": 0.844,
+    "median_winner_fragility": 0.844,
+    "winner_fragility_p90": 1.0
+  },
+  "verdict": {
+    "label": "A better",
+    "reason": "composite score A=-0.794 \u2192 B=-1.094"
+  }
+}

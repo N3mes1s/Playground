@@ -11,3 +11,4 @@ __pycache__/
 # Sliver source files fetched for scanning (not our code)
 vulnllm-analyzer/sliver-src/
 .clones/
+.ab_runs/
