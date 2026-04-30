@@ -1,0 +1,1342 @@
+{
+  "intent_path": "validation/real_world_demo/intent_teleport_sqlite_cache.md",
+  "repo_path": "/home/user/Playground/.clones/claude-teleport-analyzer",
+  "search_plan": {
+    "intent_excerpt": "# Add local SQLite cache layer with TTL invalidation to `n3mes1s/claude-teleport-analyzer`\n\n## What\n\n`claude-teleport-analyzer` is a Rust CLI that reads Claude Code\nremote-session data from the Anthropic API. Today every invocation\nhits the API live: `list_sessions()`, `get_session(id)`,\n`get_events(id, max)` (which can paginate 10k+ events at 1000/page),\nand `get_loglines(id)`. Repeated invocations against the same\nsession re-fetch the same data, bouncing off the same OAuth flow.\n\nWe are adding",
+    "patterns": [
+      {
+        "description": "Rust client methods that should be wrapped by cache checks",
+        "regex": null,
+        "ast_kind": "FunctionDef",
+        "ast_name_regex": "^(list_sessions|get_session|get_events|get_loglines|fetch_org_uuid)$",
+        "file_globs": [
+          "**/*.rs"
+        ]
+      },
+      {
+        "description": "Rust CLI entrypoint and subcommand/flag wiring",
+        "regex": null,
+        "ast_kind": "FunctionDef",
+        "ast_name_regex": "^main$",
+        "file_globs": [
+          "**/*.rs"
+        ]
+      },
+      {
+        "description": "Rust cache module type definitions and helpers",
+        "regex": null,
+        "ast_kind": "ClassDef",
+        "ast_name_regex": "^(Cache|CacheEntry|.*Cache.*)$",
+        "file_globs": [
+          "**/*.rs"
+        ]
+      },
+      {
+        "description": "Rust imports of rusqlite for SQLite cache implementation",
+        "regex": null,
+        "ast_kind": "ImportFrom",
+        "ast_name_regex": "^(rusqlite)$",
+        "file_globs": [
+          "**/*.rs"
+        ]
+      },
+      {
+        "description": "Rust imports of serde traits for cacheable types",
+        "regex": null,
+        "ast_kind": "ImportFrom",
+        "ast_name_regex": "^(serde)$",
+        "file_globs": [
+          "**/*.rs"
+        ]
+      },
+      {
+        "description": "Rust struct/enum definitions for API response types needing serde/clone",
+        "regex": null,
+        "ast_kind": "ClassDef",
+        "ast_name_regex": "^(Session|Sessions|Event|Events|Logline|Loglines|Profile|.*Response.*)$",
+        "file_globs": [
+          "**/*.rs"
+        ]
+      },
+      {
+        "description": "Cargo dependency entry for rusqlite bundled SQLite",
+        "regex": "\\brusqlite\\s*=\\s*\\{[^\\n]*bundled[^\\n]*\\}",
+        "ast_kind": null,
+        "ast_name_regex": null,
+        "file_globs": [
+          "Cargo.toml"
+        ]
+      },
+      {
+        "description": "Cache-related CLI flags and subcommand names in docs or code",
+        "regex": "--(?:no-cache|clear-cache|cache-stats)\\b",
+        "ast_kind": null,
+        "ast_name_regex": null,
+        "file_globs": [
+          "**/*.{rs,md,toml}"
+        ]
+      },
+      {
+        "description": "Docs mentioning cache path, permissions, WAL, or TTL policy",
+        "regex": "(?i)\\b(cache\\.db|WAL|0600|TTL|user_version|clear-cache|no-cache)\\b",
+        "ast_kind": null,
+        "ast_name_regex": null,
+        "file_globs": [
+          "**/*.{md,rs,toml}"
+        ]
+      }
+    ]
+  },
+  "findings": {
+    "repo_path": "/home/user/Playground/.clones/claude-teleport-analyzer",
+    "n_files_scanned": 5,
+    "n_matches": 0,
+    "matches_by_pattern": {},
+    "hot_files": []
+  },
+  "constraints": [
+    {
+      "axis": "api",
+      "summary": "Keep default responses identical when cache is absent or disabled",
+      "scope": "src/client.rs and src/main.rs cache gating around list_sessions/get_session/get_events/get_loglines/fetch_org_uuid",
+      "gate": "none",
+      "rollback": "Disable cache lookup/write paths so all calls go directly to HTTP",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "api",
+      "summary": "Add cache read before OAuth, but still validate auth-required flows",
+      "scope": "src/client.rs auth flow for cached list-sessions/org-uuid and related auth-required surfaces",
+      "gate": "wait_for:cached auth-required commands still complete with explicit auth validation",
+      "rollback": "Restore pre-cache OAuth-first request flow for those commands",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Deploy SQLite schema support before code that writes cache.db",
+      "scope": "Cargo.toml, src/cache.rs initialization, and any first-run DB creation logic",
+      "gate": "wait_for:cache schema init/migration tests pass",
+      "rollback": "Redeploy previous binary without cache DB creation or writes",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Ship --no-cache and --clear-cache wired before enabling cache by default",
+      "scope": "src/main.rs CLI parsing and command dispatch",
+      "gate": "wait_for:CLI regression tests for --no-cache stdout parity and --clear-cache exit 0",
+      "rollback": "Remove cache flags from the binary and redeploy previous release",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "api",
+      "summary": "Serve cache by method+params only, not token identity",
+      "scope": "src/cache.rs keying and src/client.rs read/write lookup logic",
+      "gate": "none",
+      "rollback": "Change lookup to bypass cache for all requests until keying is corrected",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "schema",
+      "summary": "Gate cache.db schema changes on user_version migration",
+      "scope": "src/cache.rs SQLite schema and any future table/index changes",
+      "gate": "wait_for:migration_test_pass",
+      "rollback": "drop cache.db and recreate from the previous schema version",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Use WAL mode and verify no write stalls under concurrent access",
+      "scope": "src/cache.rs connection setup and write path for cache.db",
+      "gate": "monitor:sqlite_busy_errors=0",
+      "rollback": "disable WAL and redeploy_previous",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Keep backfill/write batches small enough to avoid IOPS spikes",
+      "scope": "src/client.rs write-back of sessions, events, loglines, oauth_profile",
+      "gate": "monitor:replication_lag_seconds<0",
+      "rollback": "reduce batch size and temporarily disable cache writes",
+      "blocking": false,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Delete old cache rows only after TTL quiet period expires",
+      "scope": "src/cache.rs eviction for expired sessions/events/loglines/profile",
+      "gate": "wait_for:ttl_quiet_period_elapsed",
+      "rollback": "restore expired rows from backup or recache on next read",
+      "blocking": false,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Ensure cache.db file permissions are 0600 on creation",
+      "scope": "cache file creation under ~/.claude-teleport-analyzer or env path",
+      "gate": "approval:security",
+      "rollback": "chmod 0600 cache.db or remove and recreate with stricter perms",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Gate cache rollout on post-change cache-hit/error stability",
+      "scope": "src/client.rs cache reads/writes for list_sessions/get_session/get_events/get_loglines/fetch_org_uuid",
+      "gate": "monitor:debug_cache_hit_miss_and_api_error_rate<0.1%",
+      "rollback": "revert to the previous release or ship with --no-cache defaulted on",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Avoid deploying during incident windows or Friday afternoon",
+      "scope": "Release of cache.db + CLI flag changes in src/main.rs and src/cache.rs",
+      "gate": "window:business_hours_only;no_friday_afternoon;no_incident_window",
+      "rollback": "pause rollout and redeploy_previous if an incident starts",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Require a rollback path that disables cache without redeploy",
+      "scope": "New --no-cache and --clear-cache paths in src/main.rs",
+      "gate": "approval:release_manager",
+      "rollback": "use --no-cache for all invocations, then --clear-cache to remove cache.db",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Validate WAL concurrent-access and cache corruption recovery",
+      "scope": "SQLite initialization and schema migration in src/cache.rs",
+      "gate": "wait_for:concurrent_process_cache_access_test_pass",
+      "rollback": "drop cache.db and recreate it from scratch",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "security",
+      "summary": "cache.db must be mode 0600 and created that way",
+      "scope": "src/cache.rs cache file creation under ~/.claude-teleport-analyzer or env override",
+      "gate": "approval:Security",
+      "rollback": "delete cache.db and recreate with restrictive permissions",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Document transcript-content sensitivity and clear-cache guidance",
+      "scope": "README.md and ARCHITECTURE.md security notes for local SQLite cache",
+      "gate": "approval:Security",
+      "rollback": "revert the documentation change and add a warning for local cache secrecy",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Add release-note notice for visible cache footer and --no-cache",
+      "scope": "CLI behavior in src/main.rs and user-facing docs about served-from-cache footer",
+      "gate": "window:before_release",
+      "rollback": "remove the footer/flag announcement from release notes and docs",
+      "blocking": false,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Preserve auth validation for auth-required cached commands",
+      "scope": "src/client.rs paths for list-sessions --org-uuid and similar auth-required calls",
+      "gate": "approval:Security",
+      "rollback": "disable cache-first short-circuit for auth-required surfaces",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Announce cache behavior and --no-cache before release",
+      "scope": "README, ARCHITECTURE.md, release notes, and CLI help for the new cache layer",
+      "gate": "approval:ProductPM",
+      "rollback": "Remove cache messaging from docs/help and revert to prior release notes",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Show served-from-cache age footer on cached command output",
+      "scope": "CLI output for cache hits in src/client.rs and any user-facing wrappers",
+      "gate": "approval:ProductPM",
+      "rollback": "Suppress the cache-age footer and revert to non-cached output formatting",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Document cache privacy and clear-cache steps in security guidance",
+      "scope": "README security section and ARCHITECTURE.md caching section",
+      "gate": "approval:Security",
+      "rollback": "Remove the privacy guidance and clear-cache instructions from docs",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Warn script users about cached output and bypass option",
+      "scope": "CLI documentation for --no-cache and any notes for cron or wrapper usage",
+      "gate": "approval:ConsumerSubsystem",
+      "rollback": "Restore docs to indicate no cache-specific output or bypass behavior",
+      "blocking": false,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "api",
+      "summary": "Ship a no-cache path that preserves current stdout exactly",
+      "scope": "src/main.rs and src/client.rs command execution for all existing API methods",
+      "gate": "approval:Backend",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Add cache-hit shims before OAuth flow for auth-dependent calls",
+      "scope": "src/client.rs lookup path for list_sessions, get_session, get_events, get_loglines, fetch_org_uuid",
+      "gate": "wait_for:cache-hit-path tests passing",
+      "rollback": "disable cache-first lookup and redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Keep dual-support window until cached and uncached runs match",
+      "scope": "Release cutover for CLI flag rollout and default cache-on behavior",
+      "gate": "monitor:stdout-diff=0",
+      "rollback": "revert default-to-cache change and keep --no-cache as baseline",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Provide fallback if cache release slips: ship only --no-cache",
+      "scope": "Release plan for src/main.rs flag wiring and cache enablement",
+      "gate": "window:until cache-specific tests and docs are ready",
+      "rollback": "deploy build with cache code disabled behind --no-cache only",
+      "blocking": false,
+      "owner": "ConsumerSubsystem"
+    }
+  ],
+  "plans": {
+    "00-cost-leaning": {
+      "summary": "Add SQLite cache with TTL, WAL, 0600 perms, cache-first reads, CLI flags, docs, and tests without changing no-cache behavior.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Update Cargo.toml to add rusqlite { version = \"0.32\", features = [\"bundled\"] } and ensure dirs remains available for cache path resolution.",
+          "owner": "BackendOwner",
+          "depends_on": [],
+          "gate": "none",
+          "rollback": "Remove the rusqlite dependency line from Cargo.toml and restore the previous lockfile state.",
+          "observability": "Cargo build resolves rusqlite successfully and the lockfile changes only as expected.",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S2",
+          "action": "Implement src/cache.rs with SQLite initialization, user_version migration handling, WAL mode, 0600 file creation, cache keying by method+params, and typed CacheEntry<T: Serialize + DeserializeOwned> helpers.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "wait_for:cache schema init/migration tests pass",
+          "rollback": "Delete src/cache.rs changes and drop any created cache.db files, then recreate from the prior schema version.",
+          "observability": "Tests cover schema versioning, drop-and-recreate on mismatch, WAL setup, and file mode 0600 on first create.",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S3",
+          "action": "Derive Serialize, Deserialize, and Clone where needed in src/types.rs for session, event, logline, and oauth profile payloads that will be cached.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "none",
+          "rollback": "Remove the added derives from src/types.rs and keep the original type definitions.",
+          "observability": "Rust compile succeeds and cache payloads round-trip through serde in tests.",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S4",
+          "action": "Wrap src/client.rs methods list_sessions, get_session, get_events, get_loglines, and fetch_org_uuid with cache lookup-before-OAuth, HTTP fallthrough, and write-back; preserve auth validation for auth-required cached flows and TTL policy including infinite cache for terminated sessions.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S2",
+            "S3"
+          ],
+          "gate": "wait_for:cached auth-required commands still complete with explicit auth validation",
+          "rollback": "Disable cache lookup/write paths in src/client.rs so all calls go directly to HTTP.",
+          "observability": "Debug logs show cache hit/miss per method, OAuth is skipped only on valid cache hits, and terminated sessions remain cached indefinitely.",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S5",
+          "action": "Wire src/main.rs CLI parsing for --no-cache and --clear-cache, ensuring --no-cache preserves current stdout exactly and --clear-cache deletes cache.db then exits 0.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "wait_for:CLI regression tests for --no-cache stdout parity and --clear-cache exit 0",
+          "rollback": "Remove the cache flags from src/main.rs and revert to the previous command dispatch.",
+          "observability": "Golden-output tests show byte-for-byte parity under --no-cache and clear-cache removes the DB file.",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S6",
+          "action": "Update ARCHITECTURE.md with the Command Data Flow diagram changes and add a Caching section describing TTLs, WAL, user_version migrations, 0600 perms, and cache-first behavior.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S4",
+            "S5"
+          ],
+          "gate": "approval:ProductPM",
+          "rollback": "Revert the ARCHITECTURE.md edits to the prior diagram and remove the caching section.",
+          "observability": "Documentation explicitly states cache semantics, privacy, and the no-cache/clear-cache controls.",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S7",
+          "action": "Update README.md security guidance to document transcript-content sensitivity, 0600 permissions, and clear-cache usage; include notes for wrapper/cron users about --no-cache.",
+          "owner": "Security",
+          "depends_on": [
+            "S5",
+            "S6"
+          ],
+          "gate": "approval:Security",
+          "rollback": "Remove the cache privacy and clear-cache guidance from README.md and restore the previous text.",
+          "observability": "README includes the local-only privacy warning and explicit cache clearing instructions.",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S8",
+          "action": "Add/adjust tests for src/cache.rs and src/client.rs covering TTL expiry, terminated-session infinite caching, schema migration drop-and-recreate, concurrent access with WAL, and cache-hit-before-OAuth paths.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S2",
+            "S4"
+          ],
+          "gate": "wait_for:concurrent_process_cache_access_test_pass",
+          "rollback": "Remove the new cache tests and keep the previous test suite unchanged.",
+          "observability": "Test suite verifies no sqlite_busy_errors, correct TTL behavior, and stable cache reads under concurrent processes.",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S9",
+          "action": "Run end-to-end validation for cached and uncached command flows in src/main.rs and src/client.rs, including auth-required surfaces, stdout parity with --no-cache, and visible 'served from cache, age Xs' footer on cache hits.",
+          "owner": "SRE",
+          "depends_on": [
+            "S4",
+            "S5",
+            "S8"
+          ],
+          "gate": "monitor:debug_cache_hit_miss_and_api_error_rate<0.1%",
+          "rollback": "Revert to the previous release or ship with --no-cache defaulted on.",
+          "observability": "Debug logs show hit/miss per API method, API error rate stays under threshold, and cached output includes the age footer.",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S10",
+          "action": "Release with cache enabled by default after documentation and tests pass, keeping the ability to bypass via --no-cache and clear via --clear-cache.",
+          "owner": "SRE",
+          "depends_on": [
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "gate": "window:business_hours_only;no_friday_afternoon;no_incident_window",
+          "rollback": "Pause rollout and redeploy_previous if an incident starts.",
+          "observability": "Post-release runs show cache hits, no regressions in stdout, and stable SQLite access across concurrent processes.",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        }
+      ],
+      "open_questions": [
+        "Should --clear-cache also recreate an empty cache.db immediately, or only delete and exit?",
+        "Do auth-required cache hits still need a lightweight token refresh check, or only explicit auth validation of the command surface?",
+        "Should the cache-age footer appear on every cached command or only on user-facing subcommands like read/show/summary/loglines?",
+        "What exact schema version number should be assigned for the initial cache.db layout?",
+        "Should expired rows be deleted eagerly on read or only during write/maintenance paths?"
+      ],
+      "conflicts": [
+        {
+          "owners": [
+            "SRE",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Gate: window:business_hours_only;no_friday_afternoon;no_incident_window",
+            "Gate: approval:ProductPM for cache-age footer and cache-facing UX"
+          ],
+          "conflict": "Release timing is constrained by SRE windows while ProductPM approval is needed for the visible cache footer/UX, which can delay the same release path."
+        },
+        {
+          "owners": [
+            "SRE",
+            "Security"
+          ],
+          "blocking_constraints": [
+            "Gate: approval:Security for cache.db permissions/privacy documentation",
+            "Gate: monitor:debug_cache_hit_miss_and_api_error_rate<0.1%"
+          ],
+          "conflict": "Security approval for privacy/perms and SRE's rollout stability gate both block the release path and can pull in different operational directions."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ConsumerSubsystem"
+          ],
+          "blocking_constraints": [
+            "Keep default responses identical when cache is absent or disabled",
+            "Ship a no-cache path that preserves current stdout exactly"
+          ],
+          "conflict": "Both require unchanged stdout for the no-cache path; the conflict is operationally coupled because cache-first work must not alter baseline output."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "Security"
+          ],
+          "blocking_constraints": [
+            "Add cache read before OAuth, but still validate auth-required flows",
+            "Preserve auth validation for auth-required cached commands"
+          ],
+          "conflict": "Cache-first lookup before OAuth can bypass credential loading, while Security requires explicit auth validation for auth-required surfaces."
+        },
+        {
+          "owners": [
+            "DataPlatform",
+            "SRE"
+          ],
+          "blocking_constraints": [
+            "Use WAL mode and verify no write stalls under concurrent access",
+            "Validate WAL concurrent-access and cache corruption recovery"
+          ],
+          "conflict": "Both block on concurrent-access correctness, but DataPlatform emphasizes WAL write-stall avoidance while SRE adds corruption recovery requirements that may force slower or more conservative behavior."
+        },
+        {
+          "owners": [
+            "Security",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Document transcript-content sensitivity and clear-cache guidance",
+            "Show served-from-cache age footer on cached command output"
+          ],
+          "conflict": "Security documentation needs to emphasize privacy and clearing data, while ProductPM requires a user-visible cache footer that makes cached behavior explicit."
+        },
+        {
+          "owners": [
+            "ConsumerSubsystem",
+            "SRE"
+          ],
+          "blocking_constraints": [
+            "Keep dual-support window until cached and uncached runs match",
+            "Avoid deploying during incident windows or Friday afternoon"
+          ],
+          "conflict": "ConsumerSubsystem wants a prolonged dual-support rollout until parity is proven, while SRE restricts the deployment window and can force delay."
+        }
+      ]
+    },
+    "01-safety-leaning": {
+      "summary": "Add SQLite cache behind flags, validate auth-sensitive paths, then enable with WAL, 0600 perms, TTLs, and migration-safe rollout.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Add rusqlite bundled dependency in Cargo.toml and create src/cache.rs with cache.db path resolution via dirs + env override, SQLite user_version init/migration, WAL mode, 0600 creation, and drop-and-recreate on schema mismatch.",
+          "owner": "DataPlatform",
+          "depends_on": [],
+          "gate": "wait_for:cache schema init/migration tests pass",
+          "rollback": "Remove src/cache.rs initialization paths and revert Cargo.toml dependency addition",
+          "observability": "SQLite open/init logs, user_version value, WAL pragma success, file mode 0600 checks, migration test results",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S2",
+          "action": "Update src/types.rs to derive Serialize, Deserialize, and Clone on all cache-bound types used by list_sessions, get_session, get_events, get_loglines, and fetch_org_uuid.",
+          "owner": "Backend",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "none",
+          "rollback": "Remove the added derives from src/types.rs",
+          "observability": "Rust compile errors, serde round-trip test results, type coverage for cache payloads",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S3",
+          "action": "Implement typed CacheEntry<T> helpers in src/cache.rs for method+params keys, TTL evaluation, infinite retention for terminated session_events/loglines, and age metadata for cache-hit footers.",
+          "owner": "Backend",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "none",
+          "rollback": "Disable cache lookup/write paths and fall back to direct HTTP calls",
+          "observability": "Cache hit/miss logs, TTL expiry decisions, age calculation correctness, key consistency by method+params",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S4",
+          "action": "Wrap client methods in src/client.rs: list_sessions, get_session, get_events, get_loglines, fetch_org_uuid should consult src/cache.rs before OAuth, then fetch HTTP and write back on miss, while keeping auth validation for auth-required surfaces.",
+          "owner": "Backend",
+          "depends_on": [
+            "S2",
+            "S3"
+          ],
+          "gate": "wait_for:cache-hit-path tests passing",
+          "rollback": "Disable cache-first lookup and restore pre-cache OAuth-first request flow",
+          "observability": "Per-method hit/miss debug logs, OAuth invocation frequency, stdout parity on no-cache path, auth validation success on cached org/session flows",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S5",
+          "action": "Add CLI wiring in src/main.rs for --no-cache and --clear-cache, ensuring --clear-cache deletes the DB and exits 0, and --no-cache preserves current stdout byte-for-byte.",
+          "owner": "Backend",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "wait_for:CLI regression tests for --no-cache stdout parity and --clear-cache exit 0",
+          "rollback": "Remove cache flags from src/main.rs and redeploy previous release",
+          "observability": "CLI parsing results, command exit codes, stdout diff tests, cache bypass behavior",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S6",
+          "action": "Add and run tests for TTL expiry, terminated-session infinite caching, schema migration drop-and-recreate, and concurrent WAL access in src/cache.rs and src/client.rs.",
+          "owner": "SRE",
+          "depends_on": [
+            "S3",
+            "S4"
+          ],
+          "gate": "wait_for:concurrent_process_cache_access_test_pass",
+          "rollback": "Drop cache.db and recreate it from scratch; disable WAL if concurrent access fails",
+          "observability": "sqlite_busy_errors, concurrent process test outcomes, cache corruption recovery behavior, migration test pass/fail",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S7",
+          "action": "Add debug logging for cache hit/miss and API error rate in src/client.rs, and optionally expose cache stats behind an env-var-controlled flag if already supported by CLI patterns in src/main.rs.",
+          "owner": "SRE",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "monitor:debug_cache_hit_miss_and_api_error_rate<0.1%",
+          "rollback": "Revert to previous release or ship with --no-cache defaulted on",
+          "observability": "RUST_LOG=debug output, hit/miss ratios, API error rate, cache write/read failures",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S8",
+          "action": "Update ARCHITECTURE.md with the command data flow diagram and a caching section covering SQLite WAL, TTL policy, user_version migrations, 0600 perms, and auth-required cache-first caveats.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S3",
+            "S4"
+          ],
+          "gate": "approval:ProductPM",
+          "rollback": "Revert the documentation change",
+          "observability": "Doc review feedback, presence of WAL/privacy/migration details, consistency with implemented CLI behavior",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S9",
+          "action": "Update README.md security guidance to document transcript-content sensitivity, cache.db 0600 permissions, and --clear-cache usage for local secret cleanup.",
+          "owner": "Security",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "approval:Security",
+          "rollback": "Remove the privacy guidance and clear-cache instructions from README.md",
+          "observability": "Security review comments, clarity of cache privacy warnings, accuracy of clear-cache instructions",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S10",
+          "action": "Add release-note and help-text messaging in src/main.rs/docs for served-from-cache age footer and --no-cache usage, keeping the footer explicit on cache hits.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S5",
+            "S8"
+          ],
+          "gate": "approval:ProductPM",
+          "rollback": "Suppress the cache-age footer and remove cache messaging from release notes/docs",
+          "observability": "User-facing output format, footer presence on cache hits, help text accuracy, release-note review",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S11",
+          "action": "Run a staged rollout with cache enabled by default only after S6 and S7 stabilize, while preserving --no-cache as an immediate single-step rollback path.",
+          "owner": "SRE",
+          "depends_on": [
+            "S6",
+            "S7",
+            "S10",
+            "S9"
+          ],
+          "gate": "monitor:stdout-diff=0;monitor:debug_cache_hit_miss_and_api_error_rate<0.1%;window:business_hours_only;no_friday_afternoon;no_incident_window",
+          "rollback": "Flip default to --no-cache for all invocations and, if needed, clear cache.db via --clear-cache",
+          "observability": "stdout parity, cache hit stability, API error rates, incident window status, user reports of footer or auth issues",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        }
+      ],
+      "open_questions": [
+        "Should --cache-stats be added now, or deferred since it was only suggested as optional?",
+        "Which commands besides list-sessions require auth validation even on cache hits, beyond org-uuid-related flows?",
+        "Should get_session use the same TTL as events/loglines, or an independent TTL policy?",
+        "What exact footer format should be used for 'served from cache, age Xs'?",
+        "Should cache eviction be eager on read, or only opportunistic during writes/open?"
+      ],
+      "conflicts": [
+        {
+          "owners": [
+            "BackendOwner",
+            "DataPlatform"
+          ],
+          "constraints": [
+            "Deploy SQLite schema support before code that writes cache.db",
+            "Keep default responses identical when cache is absent or disabled"
+          ],
+          "resolution": "Sequence schema/init first, then gate all writes behind cache-enable paths so no-cache remains identical."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "SRE"
+          ],
+          "constraints": [
+            "Ship --no-cache and --clear-cache wired before enabling cache by default",
+            "Avoid deploying during incident windows or Friday afternoon"
+          ],
+          "resolution": "Implement flags first, then release only inside allowed windows."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "Security"
+          ],
+          "constraints": [
+            "Add cache read before OAuth, but still validate auth-required flows",
+            "No silent OAuth bypass"
+          ],
+          "resolution": "Use cache-first only for data fetches, not as a blanket auth bypass; preserve explicit auth checks on auth-required commands."
+        },
+        {
+          "owners": [
+            "DataPlatform",
+            "SRE"
+          ],
+          "constraints": [
+            "Use WAL mode and verify no write stalls under concurrent access",
+            "Validate WAL concurrent-access and cache corruption recovery"
+          ],
+          "resolution": "Treat WAL/concurrency as mandatory pre-rollout validation and keep drop-and-recreate rollback available."
+        },
+        {
+          "owners": [
+            "DataPlatform",
+            "Security"
+          ],
+          "constraints": [
+            "Keep cache.db file permissions are 0600 on creation",
+            "cache.db must be mode 0600 and created that way"
+          ],
+          "resolution": "Implement 0600 creation at initial DB setup and verify on every creation path."
+        },
+        {
+          "owners": [
+            "SRE",
+            "ProductPM"
+          ],
+          "constraints": [
+            "Gate cache rollout on post-change cache-hit/error stability",
+            "Add release-note notice for visible cache footer and --no-cache"
+          ],
+          "resolution": "Document first, then rollout only after stability monitoring passes."
+        },
+        {
+          "owners": [
+            "ProductPM",
+            "ConsumerSubsystem"
+          ],
+          "constraints": [
+            "Show served-from-cache age footer on cached command output",
+            "Ship a no-cache path that preserves current stdout exactly"
+          ],
+          "resolution": "Keep footer only on cached runs and ensure --no-cache bypasses all output changes."
+        },
+        {
+          "owners": [
+            "ProductPM",
+            "Security"
+          ],
+          "constraints": [
+            "Document cache privacy and clear-cache steps in security guidance",
+            "Document transcript-content sensitivity and clear-cache guidance"
+          ],
+          "resolution": "Merge both into README/ARCHITECTURE security sections before release."
+        },
+        {
+          "owners": [
+            "ConsumerSubsystem",
+            "BackendOwner"
+          ],
+          "constraints": [
+            "Add cache-hit shims before OAuth flow for auth-dependent calls",
+            "Keep default responses identical when cache is absent or disabled"
+          ],
+          "resolution": "Introduce cache-hit shims behind the same default behavior and retain no-cache parity tests."
+        },
+        {
+          "owners": [
+            "ConsumerSubsystem",
+            "SRE"
+          ],
+          "constraints": [
+            "Keep dual-support window until cached and uncached runs match",
+            "Avoid deploying during incident windows or Friday afternoon"
+          ],
+          "resolution": "Hold the cutover until stdout diff is zero and the deployment window is safe."
+        }
+      ]
+    },
+    "02-speed-leaning": {
+      "summary": "Add SQLite cache, CLI controls, docs, and tests behind auth-safe cache-first lookup with WAL and 0600 perms.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Add rusqlite to Cargo.toml and implement src/cache.rs with SQLite init, user_version migration/drop-recreate, WAL mode, 0600 creation, cache keying by method+params, and typed CacheEntry<T> helpers.",
+          "owner": "BackendOwner",
+          "depends_on": [],
+          "gate": "wait_for:cache schema init/migration tests pass",
+          "rollback": "Remove src/cache.rs usage, delete cache.db, and rebuild without rusqlite support",
+          "observability": "sqlite user_version, WAL mode enabled, cache file permissions, migration test results",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S2",
+          "action": "Update src/types.rs to derive Serialize + Deserialize + Clone on all cached response types used by sessions, events, loglines, and oauth_profile lookups.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "none",
+          "rollback": "Revert type derives in src/types.rs and disable cache serialization paths",
+          "observability": "Rust compile success and serde round-trip tests for cached payload types",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S3",
+          "action": "Wrap src/client.rs methods list_sessions, get_session, get_events, get_loglines, and fetch_org_uuid to consult src/cache.rs before OAuth/HTTP, write-through on miss, and keep cache lookup keyed only by method+params.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "wait_for:cache-hit-path tests passing",
+          "rollback": "Disable cache-first lookup and restore direct HTTP/OAuth flow",
+          "observability": "debug logs for hit/miss, API call counts, stdout parity on --no-cache",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S4",
+          "action": "Add auth-safe cache behavior in src/client.rs for auth-required surfaces like list-sessions --org-uuid so cached responses still perform explicit auth validation when required, without using token identity in cache keys.",
+          "owner": "Security",
+          "depends_on": [
+            "S3"
+          ],
+          "gate": "approval:Security",
+          "rollback": "Disable cache-first short-circuit for auth-required surfaces",
+          "observability": "auth validation still occurs for protected flows, no stale-token-dependent cache hits",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S5",
+          "action": "Add CLI wiring in src/main.rs for --no-cache and --clear-cache, plus command dispatch to bypass cache per invocation and drop cache.db cleanly on clear.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S3"
+          ],
+          "gate": "wait_for:CLI regression tests for --no-cache stdout parity and --clear-cache exit 0",
+          "rollback": "Remove cache flags from src/main.rs and redeploy previous CLI behavior",
+          "observability": "flag parsing, clear-cache exit code, stdout byte-for-byte parity under --no-cache",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S6",
+          "action": "Update ARCHITECTURE.md and README.md with the command data flow diagram, caching section, cache privacy notes, 0600 permissions, clear-cache guidance, served-from-cache age footer, and --no-cache usage for scripts.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S3",
+            "S5"
+          ],
+          "gate": "approval:ProductPM",
+          "rollback": "Revert the documentation changes and remove cache messaging",
+          "observability": "doc review completeness and presence of security guidance",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S7",
+          "action": "Add cache-specific tests covering TTL expiry, terminated-session infinite cache, schema migration drop-and-recreate, concurrent WAL access, and permission creation behavior.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S1",
+            "S3",
+            "S5"
+          ],
+          "gate": "wait_for:concurrent_process_cache_access_test_pass",
+          "rollback": "Delete cache tests and revert to uncached behavior",
+          "observability": "test suite results, sqlite_busy_errors=0, migration behavior, TTL assertions",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S8",
+          "action": "Add RUST_LOG=debug cache hit/miss logging and cache-age footer emission for cached command output in src/client.rs, with stats hooks left optional behind an env-controlled path if implemented.",
+          "owner": "SRE",
+          "depends_on": [
+            "S3",
+            "S5"
+          ],
+          "gate": "monitor:debug_cache_hit_miss_and_api_error_rate<0.1%",
+          "rollback": "Suppress cache debug/footer output and revert to previous release",
+          "observability": "stderr debug logs, API error rate, cache age footer presence on hits",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S9",
+          "action": "Run integration verification for repeated read/show/summary/loglines flows against the same session to confirm first-run fetch then sub-100ms cache hit behavior, plus no-cache byte-for-byte parity.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S3",
+            "S5",
+            "S7",
+            "S8"
+          ],
+          "gate": "monitor:stdout-diff=0",
+          "rollback": "Revert default cache behavior and keep --no-cache as baseline",
+          "observability": "wall-clock latency, stdout diffs, cache hit rate on repeated commands",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S10",
+          "action": "Release with cache enabled by default only after docs, tests, auth validation, and observability are green; keep --no-cache and --clear-cache available as fallback controls.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S4",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "gate": "window:business_hours_only;no_friday_afternoon;no_incident_window",
+          "rollback": "Ship previous binary or disable cache by default while preserving --no-cache",
+          "observability": "post-change cache-hit/error stability, release health, incident window checks",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        }
+      ],
+      "open_questions": [
+        "Should cache_age footer appear for all cached hits or only user-facing commands?",
+        "Should --cache-stats be added now or left for a later release?",
+        "What exact auth-required command list besides list-sessions --org-uuid must force validation on cache hits?"
+      ],
+      "conflicts": [
+        {
+          "owners": [
+            "BackendOwner",
+            "SRE"
+          ],
+          "blocking_constraints": [
+            "Avoid deploying during incident windows or Friday afternoon",
+            "Require a rollback path that disables cache without redeploy"
+          ],
+          "why": "One requires a timed release window, the other requires a non-redeploy rollback path; these constrain rollout mechanics in different directions but can coexist by keeping --no-cache and --clear-cache available.",
+          "chosen_path": "Schedule release in allowed window and preserve flag-based rollback without redeploy."
+        },
+        {
+          "owners": [
+            "Security",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Document transcript-content sensitivity and clear-cache guidance",
+            "Show served-from-cache age footer on cached command output"
+          ],
+          "why": "Security wants privacy-focused documentation; ProductPM wants visible cache UX. These are not logically incompatible, but they pull on the user-facing surface in opposite directions.",
+          "chosen_path": "Keep the footer and include prominent privacy/clear-cache guidance in README and ARCHITECTURE.md."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ConsumerSubsystem"
+          ],
+          "blocking_constraints": [
+            "Keep default responses identical when cache is absent or disabled",
+            "Ship a no-cache path that preserves current stdout exactly"
+          ],
+          "why": "Both require exact parity without cache, and the cache layer must not alter output when disabled.",
+          "chosen_path": "Implement cache behind an explicit bypass so stdout stays byte-for-byte identical under --no-cache."
+        }
+      ]
+    },
+    "03-safety-tilted": {
+      "summary": "Add SQLite cache with TTL, auth-safe cache-first reads, CLI controls, and docs; keep no-cache parity and secure 0600/WAL behavior.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Design and implement `src/cache.rs` schema/init with `rusqlite` + `bundled`, `user_version` migration/drop-and-recreate, WAL mode, 0600 file creation, and path resolution via `dirs`/`$CLAUDE_TELEPORT_ANALYZER_CACHE`.",
+          "owner": "DataPlatform",
+          "depends_on": [],
+          "gate": "wait_for:migration_test_pass",
+          "rollback": "Drop `cache.db` and recreate it from the previous schema version; disable cache writes until fixed.",
+          "observability": "SQLite open/init errors, `user_version` mismatch handling, WAL journal mode, and file mode checks on new cache.db",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S2",
+          "action": "Add typed cache primitives in `src/cache.rs` (`CacheEntry<T: Serialize + DeserializeOwned>`) plus TTL policy helpers for `sessions` (60s), `session_events` and `loglines` (5m or infinite for terminated sessions), and `oauth_profile` (1h).",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "none",
+          "rollback": "Remove TTL/cache helpers and fall back to direct HTTP fetches.",
+          "observability": "Cache age computation, expiry decisions, and terminated-session infinite-cache branch behavior",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S3",
+          "action": "Wire `src/client.rs` to consult cache before OAuth for `list_sessions`, `get_session`, `get_events`, `get_loglines`, and `fetch_org_uuid`, keyed by method+params only; keep auth validation for auth-required surfaces like `list-sessions --org-uuid`.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "wait_for:cached auth-required commands still complete with explicit auth validation",
+          "rollback": "Restore pre-cache OAuth-first request flow for auth-required commands and disable cache-first short-circuit.",
+          "observability": "Per-method cache hit/miss, OAuth skipped vs performed, auth-required command success/failure, and cache-age footer emission",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S4",
+          "action": "Add cache write-back paths in `src/client.rs` after successful HTTP responses for sessions/events/loglines/oauth_profile, honoring no token identity in keys and keeping writes small and sequential.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S2",
+            "S3"
+          ],
+          "gate": "monitor:debug_cache_hit_miss_and_api_error_rate<0.1%",
+          "rollback": "Disable cache writes and continue serving direct HTTP responses.",
+          "observability": "Write failures, SQLite busy errors, API error rate, and any regression in response payloads",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S5",
+          "action": "Implement `--no-cache` and `--clear-cache` in `src/main.rs`, including `--clear-cache` DB deletion and one-invocation bypass semantics without changing stdout for the no-cache path.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S3"
+          ],
+          "gate": "wait_for:CLI regression tests for --no-cache stdout parity and --clear-cache exit 0",
+          "rollback": "Remove cache flags from the binary and redeploy the previous release.",
+          "observability": "CLI parsing, subcommand dispatch, stdout byte-for-byte parity under `--no-cache`, and `--clear-cache` exit codes",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S6",
+          "action": "Update `src/types.rs` to derive `Serialize + Deserialize + Clone` on cached payload types used by sessions, events, loglines, and oauth profile responses.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "none",
+          "rollback": "Remove derived cache traits and keep those types uncached.",
+          "observability": "Serde compile coverage and cache round-trip test failures",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S7",
+          "action": "Add cache-specific tests for TTL expiry, terminated-session infinite cache, schema migration drop-and-recreate, WAL concurrent process access, and `--no-cache` stdout parity.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S1",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6"
+          ],
+          "gate": "wait_for:concurrent_process_cache_access_test_pass",
+          "rollback": "Remove the new cache tests and block cache-default behavior until they pass.",
+          "observability": "Test failures around expiry, migration, concurrent access, and CLI output diffs",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S8",
+          "action": "Update `ARCHITECTURE.md` command data flow and add a Caching section documenting WAL, TTLs, user_version migrations, 0600 permissions, and `--clear-cache` / `--no-cache` behavior.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S1",
+            "S3",
+            "S5"
+          ],
+          "gate": "approval:ProductPM",
+          "rollback": "Revert the architecture doc changes and remove cache behavior explanations.",
+          "observability": "Doc consistency with implementation, coverage of privacy/security notes, and command flow accuracy",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S9",
+          "action": "Update README security guidance to explain transcript-content sensitivity, local-only cache storage, 0600 permissions, and explicit `--clear-cache` instructions.",
+          "owner": "Security",
+          "depends_on": [
+            "S1",
+            "S5"
+          ],
+          "gate": "approval:Security",
+          "rollback": "Remove the privacy guidance and clear-cache instructions from README.",
+          "observability": "Presence of security warning, cache secrecy guidance, and clear-cache usage examples",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S10",
+          "action": "Add release-note and help text updates for served-from-cache age footer and `--no-cache` / cache bypass guidance, including notes for cron/wrapper users.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S3",
+            "S5"
+          ],
+          "gate": "approval:ProductPM",
+          "rollback": "Suppress the cache-age footer announcement and revert the docs/help copy.",
+          "observability": "CLI help text, release-note phrasing, and footer wording consistency",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S11",
+          "action": "Run an end-to-end validation on `claude-teleport-analyzer read <session-id>` to confirm first-run live fetch, second-run cache hit, auth-required cached flows, and `RUST_LOG=debug` hit/miss logging.",
+          "owner": "SRE",
+          "depends_on": [
+            "S4",
+            "S5",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "gate": "monitor:debug_cache_hit_miss_and_api_error_rate<0.1%",
+          "rollback": "Revert to the previous release or ship with `--no-cache` defaulted on.",
+          "observability": "Wall-clock latency, debug cache hit/miss lines, API error rates, and served-from-cache age footer",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        },
+        {
+          "id": "S12",
+          "action": "Perform the release cutover during an allowed window, keeping the default behavior conservative until post-change stability is observed; if needed, preserve `--no-cache` as the fallback path.",
+          "owner": "SRE",
+          "depends_on": [
+            "S11"
+          ],
+          "gate": "window:business_hours_only;no_friday_afternoon;no_incident_window",
+          "rollback": "Pause rollout and redeploy_previous if an incident starts.",
+          "observability": "Post-deploy cache-hit stability, error rates, and any SQLite busy or corruption signals",
+          "file_paths": [],
+          "agent_instructions": "No grounded matches \u2014 this step is exploratory or non-code (comms / coordination)."
+        }
+      ],
+      "open_questions": [
+        "Should the default cache behavior remain opt-in only for this release, or flip on by default after soak?",
+        "Should `--cache-stats` be added now, or deferred since `RUST_LOG=debug` already satisfies observability?",
+        "Should cache eviction actually delete expired rows immediately, or rely on lazy refresh except for manual `--clear-cache`?"
+      ],
+      "conflicts": [
+        {
+          "between": [
+            "BackendOwner: Keep default responses identical when cache is absent or disabled",
+            "ConsumerSubsystem: Keep dual-support window until cached and uncached runs match"
+          ],
+          "why": "Both are blocking and favor preserving no-cache parity; no direct conflict, but they constrain rollout sequencing to keep a conservative fallback until parity is proven."
+        },
+        {
+          "between": [
+            "DataPlatform: Keep backfill/write batches small enough to avoid IOPS spikes",
+            "SRE: Use WAL mode and verify no write stalls under concurrent access"
+          ],
+          "why": "Both are blocking but pull on write-path behavior differently; small batches can reduce IOPS while WAL/concurrency validation requires a live multi-process write workload."
+        },
+        {
+          "between": [
+            "SRE: Avoid deploying during incident windows or Friday afternoon",
+            "ConsumerSubsystem: Provide fallback if cache release slips: ship only --no-cache"
+          ],
+          "why": "The release-window blocker can delay even a fallback-only shipment; fallback-only still needs a permitted window."
+        },
+        {
+          "between": [
+            "Security: Preserve auth validation for auth-required cached commands",
+            "BackendOwner: Add cache read before OAuth, but still validate auth-required flows"
+          ],
+          "why": "Both are blocking and aligned on auth safety, but they create an implementation tension: cache-first must not become auth-bypass-first."
+        },
+        {
+          "between": [
+            "ProductPM: Show served-from-cache age footer on cached command output",
+            "ConsumerSubsystem: Ship a no-cache path that preserves current stdout exactly"
+          ],
+          "why": "The footer changes stdout for cached runs, so the no-cache path must remain byte-for-byte identical while cached output necessarily diverges."
+        }
+      ]
+    }
+  },
+  "smt": {
+    "00-cost-leaning": {
+      "feasible": false,
+      "unsat_core_size": 2,
+      "unsat_core_explanations": [
+        "step `S4` depends_on `S2` (so `S2` must be earlier)",
+        "ConsumerSubsystem's blocking constraint requires `S4` before `S2` (gate `wait_for:cache-hit-path tests passing`)"
+      ]
+    },
+    "01-safety-leaning": {
+      "feasible": true,
+      "unsat_core_size": 0,
+      "unsat_core_explanations": []
+    },
+    "02-speed-leaning": {
+      "feasible": true,
+      "unsat_core_size": 0,
+      "unsat_core_explanations": []
+    },
+    "03-safety-tilted": {
+      "feasible": true,
+      "unsat_core_size": 0,
+      "unsat_core_explanations": []
+    }
+  },
+  "chaos": {
+    "00-cost-leaning": {
+      "fragility": 0.444,
+      "fragility_curve": {
+        "1": 0.444,
+        "2": 0.633
+      },
+      "achilles_top_k1": [
+        [
+          "S1"
+        ],
+        [
+          "S2"
+        ],
+        [
+          "S3"
+        ]
+      ]
+    },
+    "01-safety-leaning": {
+      "fragility": 0.391,
+      "fragility_curve": {
+        "1": 0.391,
+        "2": 0.584
+      },
+      "achilles_top_k1": [
+        [
+          "S1"
+        ],
+        [
+          "S2"
+        ],
+        [
+          "S3"
+        ]
+      ]
+    },
+    "02-speed-leaning": {
+      "fragility": 0.4,
+      "fragility_curve": {
+        "1": 0.4,
+        "2": 0.589
+      },
+      "achilles_top_k1": [
+        [
+          "S1"
+        ],
+        [
+          "S2"
+        ],
+        [
+          "S3"
+        ]
+      ]
+    },
+    "03-safety-tilted": {
+      "fragility": 0.379,
+      "fragility_curve": {
+        "1": 0.379,
+        "2": 0.544
+      },
+      "achilles_top_k1": [
+        [
+          "S1"
+        ],
+        [
+          "S2"
+        ],
+        [
+          "S3"
+        ]
+      ]
+    }
+  },
+  "winner": "02-speed-leaning"
+}

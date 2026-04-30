@@ -313,6 +313,8 @@ def run(
     *,
     n_plans: int,
     out_path: Path,
+    prefer: str | None = None,
+    utility: str | None = None,
 ) -> Path:
     cfg = load_config()
     verify_model(cfg)
@@ -378,23 +380,55 @@ def run(
         print(f"[verify] {label}: smt={smt.feasible} fragility={static.overall_fragility}",
               file=sys.stderr)
 
-    # 7. Pick the best plan: feasible + low fragility + most-grounded.
-    def score(label):
-        p = plans[label]
-        n_steps = len(p.get("steps") or [])
+    # 7. Pick the best plan via user-specified preference (or balanced default).
+    from mirofish_lab.pareto_frontier import (
+        FrontierPoint, UtilityWeights, _to_objectives,
+        non_dominated_sort, crowding_distance, utility_score,
+    )
+
+    weights = (
+        UtilityWeights.preset(prefer) if prefer
+        else (UtilityWeights.from_string(utility) if utility else UtilityWeights())
+    )
+
+    points = []
+    for label, plan in plans.items():
+        n_steps = len(plan.get("steps") or [])
         n_grounded = sum(
-            1 for s in p.get("steps") or []
+            1 for s in plan.get("steps") or []
             if isinstance(s, dict) and s.get("file_paths")
         )
-        return (
-            -int(smt_results[label]["feasible"]),
-            chaos_results[label]["fragility"],
-            -(n_grounded / max(1, n_steps)),
-            n_steps,
-        )
+        score_dict = {
+            "fragility": chaos_results[label]["fragility"],
+            "avg_severity": 2.0,                   # not measured on this fast path
+            "rollback_failure_rate": 0.0,           # ditto
+            "steps": n_steps,
+            "coverage_ratio": (
+                n_grounded / max(1, n_steps)
+                if smt_results[label]["feasible"] else 0.0
+            ),
+        }
+        points.append(FrontierPoint(
+            label=label, weights=(0, 0, 0), metrics=_to_objectives(score_dict)
+        ))
+    fronts = non_dominated_sort(points)
+    if fronts:
+        crowding_distance(fronts[0])
 
-    winner = sorted(plans, key=score)[0]
-    print(f"[recommend] {winner}", file=sys.stderr)
+    # Score every plan under the user's weights so we can show rationale.
+    plan_utilities = {p.label: utility_score(p, weights) for p in points}
+    feasible = {l for l in plans if smt_results[l]["feasible"]}
+    candidates = [p for p in (fronts[0] if fronts else points) if p.label in feasible]
+    if not candidates:
+        candidates = fronts[0] if fronts else points
+    winner_point = max(candidates, key=lambda p: plan_utilities[p.label])
+    winner = winner_point.label
+    print(
+        f"[recommend] {winner} (preset={prefer or 'balanced'}, "
+        f"utility={plan_utilities[winner]:.3f}, "
+        f"runners-up={[(l, round(u, 3)) for l, u in sorted(plan_utilities.items(), key=lambda kv: -kv[1])[1:3]]})",
+        file=sys.stderr,
+    )
 
     # 8. Build report.
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -411,13 +445,38 @@ def run(
             "Model": cfg.model,
         },
     )
-    report.add(
-        "Recommendation",
-        f"**{winner}** (smt_feasible={smt_results[winner]['feasible']}, "
-        f"fragility={chaos_results[winner]['fragility']}, "
-        f"{sum(1 for s in plans[winner].get('steps') or [] if isinstance(s, dict) and s.get('file_paths'))} "
-        f"of {len(plans[winner].get('steps') or [])} steps grounded to real files)."
-    )
+    # Build rationale: why this winner, and what each runner-up traded off.
+    sorted_utils = sorted(plan_utilities.items(), key=lambda kv: -kv[1])
+    rationale_lines = [
+        f"**Winner: `{winner}`** under preset `{prefer or 'balanced'}`. "
+        f"Utility score {plan_utilities[winner]:.3f}.",
+        "",
+        f"User weights: fragility={weights.fragility:.2f}, "
+        f"coverage={weights.coverage:.2f}, "
+        f"steps={weights.steps:.2f}, "
+        f"severity={weights.severity:.2f}, "
+        f"rollback_failure={weights.rollback_failure:.2f}",
+        "",
+        "| Plan | Utility | Fragility | Steps | SMT feas. | Notes |",
+        "|---|---|---|---|---|---|",
+    ]
+    for label, u in sorted_utils:
+        p = plans[label]
+        n = len(p.get("steps") or [])
+        notes = []
+        if label == winner:
+            notes.append("**WINNER**")
+        elif label not in feasible:
+            notes.append("infeasible")
+        if u == sorted_utils[0][1] and label != winner:
+            notes.append("ties at utility")
+        rationale_lines.append(
+            f"| {label} | {u:.3f} | "
+            f"{chaos_results[label]['fragility']} | {n} | "
+            f"{'Y' if smt_results[label]['feasible'] else 'N'} | "
+            f"{'; '.join(notes) or '—'} |"
+        )
+    report.add("Recommendation rationale", "\n".join(rationale_lines))
     report.add("Codebase findings", findings_summary)
 
     # Pareto scoreboard.
@@ -464,6 +523,17 @@ def main(argv: list[str] | None = None) -> int:
     src.add_argument("--repo", type=Path, help="Path to a local repo")
     src.add_argument("--clone", help="git URL to shallow-clone")
     parser.add_argument("--n-plans", type=int, default=4)
+    parser.add_argument(
+        "--prefer",
+        choices=["safety", "speed", "cost", "balanced"],
+        default=None,
+        help="Pick recommendation lens. Overrides --utility.",
+    )
+    parser.add_argument(
+        "--utility",
+        default=None,
+        help='Custom weights, e.g. "fragility=0.4,coverage=0.3,steps=0.1,severity=0.15,rollback_failure=0.05"',
+    )
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args(argv)
 
@@ -476,7 +546,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.out is None:
         args.out = Path("verified-rollout/reports") / f"{args.intent.stem}.grounded.md"
 
-    run(args.intent, repo_path, n_plans=args.n_plans, out_path=args.out)
+    run(
+        args.intent,
+        repo_path,
+        n_plans=args.n_plans,
+        out_path=args.out,
+        prefer=args.prefer,
+        utility=args.utility,
+    )
     return 0
 
 

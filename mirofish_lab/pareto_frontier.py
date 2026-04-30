@@ -256,11 +256,17 @@ def crowding_distance(front: list[FrontierPoint]) -> None:
 
 @dataclass
 class UtilityWeights:
-    fragility: float = 0.30
+    """Default weights are deliberately balanced after observing the
+    speed-leaning bias: cascade fragility was weighted at 0.40 and
+    drove recommendations toward parallel structures regardless of
+    operational safety. These rebalanced defaults give rollback-
+    failure rate a fair share, since cleaner rollback chains are a
+    real safety win that the cascade metric ignores."""
+    fragility: float = 0.20
     coverage: float = 0.25
     steps: float = 0.10
     severity: float = 0.20
-    rollback_failure: float = 0.15
+    rollback_failure: float = 0.25
 
     @classmethod
     def from_string(cls, s: str | None) -> "UtilityWeights":
@@ -277,12 +283,55 @@ class UtilityWeights:
             except ValueError:
                 pass
         total = sum(kv.values()) or 1.0
+        d = cls()
         return cls(
-            fragility=kv.get("fragility", 0.30) / total,
-            coverage=kv.get("coverage", 0.25) / total,
-            steps=kv.get("steps", 0.10) / total,
-            severity=kv.get("severity", 0.20) / total,
-            rollback_failure=kv.get("rollback_failure", 0.15) / total,
+            fragility=kv.get("fragility", d.fragility) / total,
+            coverage=kv.get("coverage", d.coverage) / total,
+            steps=kv.get("steps", d.steps) / total,
+            severity=kv.get("severity", d.severity) / total,
+            rollback_failure=kv.get("rollback_failure", d.rollback_failure) / total,
+        )
+
+    @classmethod
+    def preset(cls, name: str) -> "UtilityWeights":
+        """Named presets for --prefer flag.
+
+        - **safety**: rollback-chain integrity matters more than
+          parallel cascade. Sequential-but-rollback-clean plans win.
+        - **speed**: parallelism wins; default if the user wants the
+          original behaviour back.
+        - **cost**: minimise step count + approval gates that block
+          humans.
+        - **balanced**: rebalanced defaults (the new default).
+        """
+        if name == "safety":
+            return cls(
+                fragility=0.10,
+                coverage=0.20,
+                steps=0.05,
+                severity=0.20,
+                rollback_failure=0.45,
+            )
+        if name == "speed":
+            return cls(
+                fragility=0.45,
+                coverage=0.20,
+                steps=0.15,
+                severity=0.15,
+                rollback_failure=0.05,
+            )
+        if name == "cost":
+            return cls(
+                fragility=0.15,
+                coverage=0.20,
+                steps=0.40,
+                severity=0.10,
+                rollback_failure=0.15,
+            )
+        if name in ("balanced", "default", ""):
+            return cls()
+        raise ValueError(
+            f"unknown preset {name!r}; choose from safety, speed, cost, balanced"
         )
 
 
