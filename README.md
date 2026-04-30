@@ -53,17 +53,38 @@ bash validation/smoke.sh   # 60-second end-to-end check
 
 ## Statistical baseline
 
-The bench has been run, judge-scored, on a 15-element stratified
-sample of the 20k corpus. Incumbent (current defaults) score:
+The bench has been re-run on a **30-element stratified sample**
+across all 5 sources (`swebench_verified`, `swebench_pro`,
+`swebench_original`, `danluu_postmortems`, `synthetic`),
+judge-scored. Latest measurement (validation/REBASELINE_2026-04-30):
 
-- **useful_rate**: 93% (caught + partial)
-- **composite score**: 0.880
+- **useful_rate**: **97%** (29/30; caught + partial)
+- **caught_rate**: 33% (10/30; full semantic match with ground truth)
+- **missed_rate**: **3%** (1/30; pipeline produced unrelated output)
+- **SMT feasibility**: 82% (74/90 plans across 30 elements pass Z3)
+- **composite score**: ~0.98
+
+Per-source signal:
+
+- `danluu_postmortems` is strongest (4/6 caught): post-mortem-style
+  framing matches the multi-stakeholder pipeline well.
+- `swebench_pro` has the lone genuine miss (1/6); the others
+  partial-credit the right zone but miss specific files.
 
 That number is what `auto_calibrate` and `gepa_optimizer` improve
 against. See [`validation/RUN_LOG.md`](./validation/RUN_LOG.md) for
 the latest cross-run aggregation and active warnings; see
 [`validation/calibrations.jsonl`](./validation/calibrations.jsonl)
 for the audit log of every fix proposal and verdict.
+
+### Honest follow-up signal: family bias has flipped
+
+Previous warning was "speed family wins >40%" → triggered the
+rebalance + antiparallel + prompt_revision fix sequence. The
+re-baseline shows safety family now at 47%, above the same 40%
+threshold. The rebalance over-corrected. New active warning candidate
+to register: `safety_family_dominance` with the symmetric fix
+(restore some fragility weight).
 
 ## What's NOT here
 
