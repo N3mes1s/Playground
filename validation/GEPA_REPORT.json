@@ -1,0 +1,619 @@
+{
+  "n_traces": 8,
+  "diagnosis": "Over-general rollout planning dominates: the sequencer misses scenario/version/file-specific patch details and concrete code/schema/runtime quirks, collapsing distinct migrations into generic safety language.",
+  "n_holdout": 0,
+  "incumbent": {
+    "name": "incumbent",
+    "patch_block": "(none)",
+    "agg": {
+      "n": 6,
+      "verdicts": {
+        "partial": 4,
+        "caught": 1,
+        "missed": 1
+      },
+      "caught_rate": 0.16666666666666666,
+      "partial_rate": 0.6666666666666666,
+      "missed_rate": 0.16666666666666666,
+      "useful_rate": 0.8333333333333334,
+      "max_family_share": 0.5,
+      "smt_feasibility_rate": 0.7222222222222222
+    },
+    "score": 0.8,
+    "scores": [
+      {
+        "id": "synthetic/k8s_1_27_1_30/schema_migration/oss_project/tiny/00002",
+        "source": "synthetic",
+        "winner": "01-safety-leaning",
+        "winner_family": "safety",
+        "n_plans": 3,
+        "smt_feasible_count": 2,
+        "files_overlap": 0,
+        "files_total": 0,
+        "keyword_hits": 0,
+        "keyword_total": 3,
+        "expected_stakeholders_hit": 4,
+        "expected_stakeholders_total": 4,
+        "verdict": "missed",
+        "elapsed_s": 61.6017382144928,
+        "verdict_judge": "partial",
+        "judge_rationale": "It matches the schema-migration pattern with dual-write/backfill/drop-old-columns, but misses the Kubernetes 1.27\u21921.30 specifics like v1beta2 removal, PSA changes, and SRE/security/consumer stakeholde",
+        "judge_captured": [
+          "dual-write window until backfill and parity",
+          "backfill in small batches",
+          "drop old columns/tables only after a quiet period",
+          "keep old API handling until clients no longer depend on it"
+        ],
+        "judge_missed": [
+          "Kubernetes 1.27 \u2192 1.30 upgrade context",
+          "removed flowcontrol.apiserver.k8s.io/v1beta2",
+          "PSA changes",
+          "stakeholders: security, consumer, and SRE",
+          "manifests/controllers/admission webhooks surface area"
+        ],
+        "judge_confidence": "high"
+      },
+      {
+        "id": "swebench_verified/django__django-11880",
+        "source": "swebench_verified",
+        "winner": "02-balanced",
+        "winner_family": "balanced",
+        "n_plans": 3,
+        "smt_feasible_count": 2,
+        "files_overlap": 1,
+        "files_total": 1,
+        "keyword_hits": 2,
+        "keyword_total": 3,
+        "expected_stakeholders_hit": 0,
+        "expected_stakeholders_total": 0,
+        "verdict": "caught",
+        "elapsed_s": 98.10528516769409,
+        "verdict_judge": "caught",
+        "judge_rationale": "Plan names the correct file and root cause: deepcopy of Field.error_messages in django/forms/fields.py to isolate per-instance form field state.",
+        "judge_captured": [
+          "Touches django/forms/fields.py",
+          "Fixes Field.__deepcopy__ to deepcopy self.error_messages",
+          "Addresses shared mutable error_messages across Form/ModelForm instances",
+          "Adds regression tests for instance-isolated error_messages"
+        ],
+        "judge_missed": [
+          "Diff sketch specifics beyond the high-level deepcopy change",
+          "Concrete mention of preserving the copied result object/other deepcopy mechanics",
+          "No explicit evidence of the exact code-level patch structure"
+        ],
+        "judge_confidence": "high"
+      },
+      {
+        "id": "synthetic/postgres_12_16/framework_swap/enterprise/xlarge/00002",
+        "source": "synthetic",
+        "winner": "00-speed-leaning",
+        "winner_family": "speed",
+        "n_plans": 3,
+        "smt_feasible_count": 3,
+        "files_overlap": 0,
+        "files_total": 0,
+        "keyword_hits": 0,
+        "keyword_total": 4,
+        "expected_stakeholders_hit": 4,
+        "expected_stakeholders_total": 4,
+        "verdict": "missed",
+        "elapsed_s": 27.740902185440063,
+        "verdict_judge": "partial",
+        "judge_rationale": "It captures backward-compatible dual-write, parity testing, and data-platform rollout, but misses the specific PG12\u219216 concerns like logical replication, partitioning, TLS 1.3 defaults, and stakeholde",
+        "judge_captured": [
+          "Deploy PG16-compatible code before switching primaries",
+          "Keep API responses/backfills backward-compatible during dual-write",
+          "Maintain dual-write until PG16 reads match PG12 parity",
+          "Switch read traffic only after parity tests pass on PG16",
+          "DataPlatform manages schema/backfill/replication lag constraints"
+        ],
+        "judge_missed": [
+          "Explicit Postgres 12 \u2192 16 upgrade details",
+          "Logical replication topology",
+          "Partitioning changes",
+          "TLS 1.3 default tightening",
+          "Adapter shims and partial-port window",
+          "Named stakeholders: data, product, security, sre"
+        ],
+        "judge_confidence": "high"
+      },
+      {
+        "id": "swebench_verified/sympy__sympy-12419",
+        "source": "swebench_verified",
+        "winner": "02-balanced",
+        "winner_family": "balanced",
+        "n_plans": 3,
+        "smt_feasible_count": 1,
+        "files_overlap": 0,
+        "files_total": 1,
+        "keyword_hits": 0,
+        "keyword_total": 13,
+        "expected_stakeholders_hit": 0,
+        "expected_stakeholders_total": 0,
+        "verdict": "missed",
+        "elapsed_s": 92.84108805656433,
+        "verdict_judge": "missed",
+        "judge_rationale": "Plan is generic rollout ops text; it never mentions sympy/matexpr.py, MatrixElement/Sum logic, or the KroneckerDelta/identity-matrix bug.",
+        "judge_captured": [],
+        "judge_missed": [
+          "No reference to sympy/matrices/expressions/matexpr.py",
+          "No fix for Sum over MatrixElement / nested sums",
+          "No KroneckerDelta or identity-matrix summation logic",
+          "No matrix-expression evaluator/root-cause details"
+        ],
+        "judge_confidence": "high"
+      },
+      {
+        "id": "danluu_postmortems/metrist",
+        "source": "danluu_postmortems",
+        "winner": "01-safety-leaning",
+        "winner_family": "safety",
+        "n_plans": 3,
+        "smt_feasible_count": 3,
+        "files_overlap": 0,
+        "files_total": 0,
+        "keyword_hits": 1,
+        "keyword_total": 1,
+        "expected_stakeholders_hit": 0,
+        "expected_stakeholders_total": 0,
+        "verdict": "caught",
+        "elapsed_s": 141.05051040649414,
+        "verdict_judge": "partial",
+        "judge_rationale": "It clearly captures Azure as the affected dependency and a breaking payload-shape change, but invents a parser rollout rather than the postmortem's unannounced Azure-side change constraint.",
+        "judge_captured": [
+          "Azure is the vendor/dependency involved in the incident",
+          "The plan anticipates an Azure breaking change affecting response/payload shape",
+          "It emphasizes canarying, rollback readiness, and vendor escalation"
+        ],
+        "judge_missed": [
+          "The root cause was Azure's unannounced breaking change, not a planned Azure dependency rollout",
+          "No explicit constraint to require advance notice or compatibility guarantees from Azure",
+          "The plan focuses on internal parser compatibility instead of detecting an external service contract violation"
+        ],
+        "judge_confidence": "high"
+      },
+      {
+        "id": "danluu_postmortems/skyliner",
+        "source": "danluu_postmortems",
+        "winner": "01-safety-leaning",
+        "winner_family": "safety",
+        "n_plans": 3,
+        "smt_feasible_count": 2,
+        "files_overlap": 0,
+        "files_total": 0,
+        "keyword_hits": 1,
+        "keyword_total": 1,
+        "expected_stakeholders_hit": 0,
+        "expected_stakeholders_total": 0,
+        "verdict": "caught",
+        "elapsed_s": 122.24789810180664,
+        "verdict_judge": "partial",
+        "judge_rationale": "It reflects the third-party library upgrade and memory-leak risk, but misses the real outage-specific rollout constraint and broader incident context.",
+        "judge_captured": [
+          "third-party library upgrade",
+          "known memory leak risk",
+          "canary rollout behind a feature flag",
+          "hold rollout if leak-driven restarts or RSS growth appear"
+        ],
+        "judge_missed": [
+          "the specific outage post-mortem outcome and repeated unavailability incidents",
+          "any concrete root-cause constraint tied to the library\u2019s production behavior beyond generic leak monitoring",
+          "direct evidence from the Skyliner incident/post-mortem itself"
+        ],
+        "judge_confidence": "medium"
+      }
+    ],
+    "slice": "eval"
+  },
+  "candidates": [
+    {
+      "name": "specify-concrete-artifacts",
+      "extension_text": "\nCONCRETE ARTIFACTS:\n- Name the exact files, modules, schemas, or APIs to change.\n- Prefer canonical paths and symbols over broad rollout terms.\n- If the task is a code patch, write a patch plan, not an operational rollout.\n- If specific files are known, cite them explicitly in the plan.\n- Include what is added, removed, or edited in each artifact.\n- Do not substitute generic migration language for repository-specific edits.\n- Ground every step in a concrete object from the source trace.\n- For SWE-bench-style tasks, mention the patch target and test files if present.",
+      "agg": {
+        "n": 6,
+        "verdicts": {
+          "partial": 4,
+          "caught": 2
+        },
+        "caught_rate": 0.3333333333333333,
+        "partial_rate": 0.6666666666666666,
+        "missed_rate": 0.0,
+        "useful_rate": 1.0,
+        "max_family_share": 0.5,
+        "smt_feasibility_rate": 0.7777777777777778
+      },
+      "score": 0.9833333333333334,
+      "scores": [
+        {
+          "id": "synthetic/k8s_1_27_1_30/schema_migration/oss_project/tiny/00002",
+          "source": "synthetic",
+          "winner": "00-speed-leaning",
+          "winner_family": "speed",
+          "n_plans": 3,
+          "smt_feasible_count": 3,
+          "files_overlap": 0,
+          "files_total": 0,
+          "keyword_hits": 0,
+          "keyword_total": 3,
+          "expected_stakeholders_hit": 4,
+          "expected_stakeholders_total": 4,
+          "verdict": "missed",
+          "elapsed_s": 28.81710386276245,
+          "verdict_judge": "partial",
+          "judge_rationale": "It captures the backfill/dual-write/drop-old-columns migration pattern, but misses the Kubernetes 1.27\u21921.30 specifics and key GT changes like removed flowcontrol.v1beta2 and PSA.",
+          "judge_captured": [
+            "Backfill before dropping legacy columns/fields",
+            "Dual-write window retained until new schema is fully populated",
+            "Backwards compatibility during transition"
+          ],
+          "judge_missed": [
+            "Kubernetes 1.27 \u2192 1.30 upgrade context",
+            "Removed flowcontrol.apiserver.k8s.io/v1beta2",
+            "Pod Security Admission (PSA) changes",
+            "Manifest/controller/admission webhook touchpoints",
+            "Expected stakeholders: backend, consumer, security, sre"
+          ],
+          "judge_confidence": "high"
+        },
+        {
+          "id": "swebench_verified/django__django-11880",
+          "source": "swebench_verified",
+          "winner": "00-speed-leaning",
+          "winner_family": "speed",
+          "n_plans": 3,
+          "smt_feasible_count": 2,
+          "files_overlap": 1,
+          "files_total": 1,
+          "keyword_hits": 2,
+          "keyword_total": 3,
+          "expected_stakeholders_hit": 0,
+          "expected_stakeholders_total": 0,
+          "verdict": "caught",
+          "elapsed_s": 135.3637011051178,
+          "verdict_judge": "caught",
+          "judge_rationale": "Plan directly fixes django/forms/fields.py Field.__deepcopy__ by deepcopying error_messages and adds tests for per-instance isolation, matching the issue root cause.",
+          "judge_captured": [
+            "Touches django/forms/fields.py",
+            "Updates Field.__deepcopy__",
+            "Deepcopies self.error_messages instead of shallow-sharing it",
+            "Adds regression tests for Form and ModelForm field cloning",
+            "Focuses on per-instance error_messages isolation"
+          ],
+          "judge_missed": [
+            "No explicit diff sketch shown, only plan",
+            "Rollout/feature-flag steps are irrelevant to this patch-only Django issue"
+          ],
+          "judge_confidence": "high"
+        },
+        {
+          "id": "synthetic/postgres_12_16/framework_swap/enterprise/xlarge/00002",
+          "source": "synthetic",
+          "winner": "00-speed-leaning",
+          "winner_family": "speed",
+          "n_plans": 3,
+          "smt_feasible_count": 3,
+          "files_overlap": 0,
+          "files_total": 0,
+          "keyword_hits": 0,
+          "keyword_total": 4,
+          "expected_stakeholders_hit": 4,
+          "expected_stakeholders_total": 4,
+          "verdict": "missed",
+          "elapsed_s": 19.391515731811523,
+          "verdict_judge": "partial",
+          "judge_rationale": "It captures dual-write, backward compatibility, partition backfill, and replication parity, but misses PG12\u219216 specifics like logical replication, TLS 1.3, adapter shims, and stakeholder set.",
+          "judge_captured": [
+            "backward compatibility during DB dual-write",
+            "old readers/writers live until replication parity is confirmed",
+            "partition backfill in small batches",
+            "replication lag within migration budget"
+          ],
+          "judge_missed": [
+            "Postgres 12 \u2192 16 upgrade",
+            "logical replication",
+            "TLS 1.3 default tightening",
+            "adapter shims / partial-port window / e2e parity tests",
+            "data, product, security, and SRE stakeholders"
+          ],
+          "judge_confidence": "high"
+        },
+        {
+          "id": "swebench_verified/sympy__sympy-12419",
+          "source": "swebench_verified",
+          "winner": "01-safety-leaning",
+          "winner_family": "safety",
+          "n_plans": 3,
+          "smt_feasible_count": 1,
+          "files_overlap": 0,
+          "files_total": 1,
+          "keyword_hits": 0,
+          "keyword_total": 13,
+          "expected_stakeholders_hit": 0,
+          "expected_stakeholders_total": 0,
+          "verdict": "missed",
+          "elapsed_s": 127.25831055641174,
+          "verdict_judge": "partial",
+          "judge_rationale": "Plan targets matrix identity nested Sum semantics, but stays generic and never identifies the actual fix in sympy/matrices/expressions/matexpr.py or KroneckerDelta handling.",
+          "judge_captured": [
+            "mentions nested double-sum over a MatrixSymbol identity",
+            "preserve backward-compatible identity behavior",
+            "add regression test for matrix-sum behavior"
+          ],
+          "judge_missed": [
+            "canonical file sympy/matrices/expressions/matexpr.py",
+            "root-cause involving KroneckerDelta/special tensor functions in the sum logic",
+            "specific fix for identity matrix entries summing to n instead of 0"
+          ],
+          "judge_confidence": "high"
+        },
+        {
+          "id": "danluu_postmortems/metrist",
+          "source": "danluu_postmortems",
+          "winner": "02-balanced",
+          "winner_family": "balanced",
+          "n_plans": 3,
+          "smt_feasible_count": 2,
+          "files_overlap": 0,
+          "files_total": 0,
+          "keyword_hits": 0,
+          "keyword_total": 1,
+          "expected_stakeholders_hit": 0,
+          "expected_stakeholders_total": 0,
+          "verdict": "missed",
+          "elapsed_s": 90.08348798751831,
+          "verdict_judge": "caught",
+          "judge_rationale": "Plan directly centers Azure contract/backward-compatibility and treating unannounced Azure changes as non-breaking, matching the post-mortem's Azure breaking-change root cause.",
+          "judge_captured": [
+            "Azure-specific change handling",
+            "Backward-compatible API parsing / response handling",
+            "Assumes unannounced Azure contract changes could break downstream systems"
+          ],
+          "judge_missed": [
+            "No explicit mention of the real post-mortem's downstream detection/recovery process",
+            "Does not identify the specific Azure surface or component that changed"
+          ],
+          "judge_confidence": "medium"
+        },
+        {
+          "id": "danluu_postmortems/skyliner",
+          "source": "danluu_postmortems",
+          "winner": "01-safety-leaning",
+          "winner_family": "safety",
+          "n_plans": 3,
+          "smt_feasible_count": 3,
+          "files_overlap": 0,
+          "files_total": 0,
+          "keyword_hits": 0,
+          "keyword_total": 1,
+          "expected_stakeholders_hit": 0,
+          "expected_stakeholders_total": 0,
+          "verdict": "missed",
+          "elapsed_s": 96.99003386497498,
+          "verdict_judge": "partial",
+          "judge_rationale": "It captures the memory-leak/outage rollout constraint, but it is generic and misses the third-party library dependency specifics from the post-mortem.",
+          "judge_captured": [
+            "staging burn-in to check RSS/memory climb",
+            "canary/gradual cutover with rollback",
+            "keeping old version live before full cutover"
+          ],
+          "judge_missed": [
+            "the incident was caused by a third-party library memory leak",
+            "the Skyliner-specific outage context from the linked post-mortem"
+          ],
+          "judge_confidence": "medium"
+        }
+      ],
+      "theory": "Traces show rollout mechanics without file/module/schema anchors; force explicit artifact names, exact code paths, and concrete change units to stop generic plans.",
+      "slice": "eval"
+    },
+    {
+      "name": "force-domain-specific-signals",
+      "extension_text": "\nDOMAIN-SPECIFICITY:\n- Detect and restate the exact version jump, product, or subsystem named in the task.\n- Include runtime/library quirks called out by the prompt, not just generic compatibility language.\n- Preserve named features, removed APIs, and behavioral deltas from the source.\n- Call out security, compliance, or platform constraints when the trace names them.\n- Mention framework-specific internals when they are part of the bug or migration.\n- Do not collapse distinct scenarios into the same \u201cbackward compatibility\u201d template.\n- If a source mentions concrete APIs, data models, or flags, those must appear in the plan.\n- Add the specific regression risk that is unique to the named version or platform.",
+      "agg": {
+        "n": 6,
+        "verdicts": {
+          "partial": 4,
+          "caught": 2
+        },
+        "caught_rate": 0.3333333333333333,
+        "partial_rate": 0.6666666666666666,
+        "missed_rate": 0.0,
+        "useful_rate": 1.0,
+        "max_family_share": 0.8333333333333334,
+        "smt_feasibility_rate": 0.8333333333333334
+      },
+      "score": 0.8333333333333333,
+      "scores": [
+        {
+          "id": "synthetic/k8s_1_27_1_30/schema_migration/oss_project/tiny/00002",
+          "source": "synthetic",
+          "winner": "00-speed-leaning",
+          "winner_family": "speed",
+          "n_plans": 3,
+          "smt_feasible_count": 3,
+          "files_overlap": 0,
+          "files_total": 0,
+          "keyword_hits": 0,
+          "keyword_total": 3,
+          "expected_stakeholders_hit": 4,
+          "expected_stakeholders_total": 4,
+          "verdict": "missed",
+          "elapsed_s": 32.53900218009949,
+          "verdict_judge": "partial",
+          "judge_rationale": "It captures the schema-migration pattern (backfill, dual-write, old-column retention) but misses the specific Kubernetes 1.27\u21921.30 signals like v1beta2 removal and PSA changes.",
+          "judge_captured": [
+            "backfill in capped batches",
+            "dual-write window / backward-compatible API",
+            "drop old columns later / keep old columns until cutover"
+          ],
+          "judge_missed": [
+            "removed flowcontrol.apiserver.k8s.io/v1beta2",
+            "PSA changes",
+            "Kubernetes 1.27 \u2192 1.30 upgrade context",
+            "OSS project / no central team stakeholder framing",
+            "security and consumer stakeholder emphasis"
+          ],
+          "judge_confidence": "high"
+        },
+        {
+          "id": "swebench_verified/django__django-11880",
+          "source": "swebench_verified",
+          "winner": "00-speed-leaning",
+          "winner_family": "speed",
+          "n_plans": 3,
+          "smt_feasible_count": 3,
+          "files_overlap": 1,
+          "files_total": 1,
+          "keyword_hits": 2,
+          "keyword_total": 3,
+          "expected_stakeholders_hit": 0,
+          "expected_stakeholders_total": 0,
+          "verdict": "caught",
+          "elapsed_s": 168.4237461090088,
+          "verdict_judge": "caught",
+          "judge_rationale": "It targets django/forms/fields.py Field.__deepcopy__ and explicitly deepcopies error_messages, matching the root cause and fix.",
+          "judge_captured": [
+            "Touches django/forms/fields.py",
+            "Updates Field.__deepcopy__",
+            "Deepcopies self.error_messages onto the cloned field",
+            "Mentions regression tests for isolated error_messages on Form and ModelForm copies",
+            "Keeps error_messages API shape and keys unchanged"
+          ],
+          "judge_missed": [
+            "No actual diff sketch shown beyond the plan",
+            "Adds rollout/security/customer-notification steps that are irrelevant to the code patch"
+          ],
+          "judge_confidence": "high"
+        },
+        {
+          "id": "synthetic/postgres_12_16/framework_swap/enterprise/xlarge/00002",
+          "source": "synthetic",
+          "winner": "00-speed-leaning",
+          "winner_family": "speed",
+          "n_plans": 3,
+          "smt_feasible_count": 3,
+          "files_overlap": 0,
+          "files_total": 0,
+          "keyword_hits": 0,
+          "keyword_total": 4,
+          "expected_stakeholders_hit": 4,
+          "expected_stakeholders_total": 4,
+          "verdict": "missed",
+          "elapsed_s": 30.455509662628174,
+          "verdict_judge": "partial",
+          "judge_rationale": "It matches Postgres upgrade and logical replication/parity window, but misses key GT signals: partitioning, TLS 1.3 default, adapter shims, and named stakeholders.",
+          "judge_captured": [
+            "Postgres 12\u219216-style upgrade",
+            "logical replication cutover / replication lag budget",
+            "parallel old/new versions until parity is proven",
+            "30-day quiet period after cutover"
+          ],
+          "judge_missed": [
+            "partitioning changes",
+            "TLS 1.3 default tightening",
+            "adapter shims / partial-port window",
+            "e2e parity tests",
+            "expected stakeholders: data, product, security, sre"
+          ],
+          "judge_confidence": "high"
+        },
+        {
+          "id": "swebench_verified/sympy__sympy-12419",
+          "source": "swebench_verified",
+          "winner": "01-safety-leaning",
+          "winner_family": "safety",
+          "n_plans": 3,
+          "smt_feasible_count": 0,
+          "files_overlap": 0,
+          "files_total": 1,
+          "keyword_hits": 3,
+          "keyword_total": 13,
+          "expected_stakeholders_hit": 0,
+          "expected_stakeholders_total": 0,
+          "verdict": "missed",
+          "elapsed_s": 130.7273199558258,
+          "verdict_judge": "partial",
+          "judge_rationale": "Plan matches the bug at a high level and targets matrix-sum evaluation, but it never identifies the actual matexpr.py/KroneckerDelta-style root cause.",
+          "judge_captured": [
+            "Regression test for nested Sum over refined orthogonal M.T*M identity expecting n",
+            "Fix scoped to total-sum evaluation path for MatrixExpr/IdentityMatrix-derived elements",
+            "Preserve elementwise MatrixExpr indexing and existing scalar Sum API"
+          ],
+          "judge_missed": [
+            "Canonical file sympy/matrices/expressions/matexpr.py is not named",
+            "Root cause involving KroneckerDelta / special-case handling in core expr functions is not reflected",
+            "Specific symbol/tuple/integer/basic/expr/functions/tensor_functions branching details are absent"
+          ],
+          "judge_confidence": "medium"
+        },
+        {
+          "id": "danluu_postmortems/metrist",
+          "source": "danluu_postmortems",
+          "winner": "00-speed-leaning",
+          "winner_family": "speed",
+          "n_plans": 3,
+          "smt_feasible_count": 3,
+          "files_overlap": 0,
+          "files_total": 0,
+          "keyword_hits": 0,
+          "keyword_total": 1,
+          "expected_stakeholders_hit": 0,
+          "expected_stakeholders_total": 0,
+          "verdict": "missed",
+          "elapsed_s": 16.929530382156372,
+          "verdict_judge": "caught",
+          "judge_rationale": "It directly captures the Azure breaking-change root cause and the needed guardrails around contract drift, canarying, and rollback.",
+          "judge_captured": [
+            "Azure API/client contract backward-compatibility constraint",
+            "Azure response schema drift treated as a hard stop",
+            "Canary validation before rollout/cutover",
+            "Verified rollback path before production enablement",
+            "Azure-specific outage prevention"
+          ],
+          "judge_missed": [
+            "No mention of the specific unannounced Azure breaking change mechanism from the post-mortem",
+            "No concrete reference to the affected downstream Metrist service behavior",
+            "No details on the actual Azure endpoint/behavior that changed"
+          ],
+          "judge_confidence": "medium"
+        },
+        {
+          "id": "danluu_postmortems/skyliner",
+          "source": "danluu_postmortems",
+          "winner": "00-speed-leaning",
+          "winner_family": "speed",
+          "n_plans": 3,
+          "smt_feasible_count": 3,
+          "files_overlap": 0,
+          "files_total": 0,
+          "keyword_hits": 0,
+          "keyword_total": 1,
+          "expected_stakeholders_hit": 0,
+          "expected_stakeholders_total": 0,
+          "verdict": "missed",
+          "elapsed_s": 29.73742651939392,
+          "verdict_judge": "partial",
+          "judge_rationale": "It captures a library-upgrade memory-growth rollout constraint, but misses the specific third-party leak causing Skyliner outages and the two-incident postmortem context.",
+          "judge_captured": [
+            "deploy library upgrade to a canary instance first",
+            "pause full rollout if memory climbs on the new build",
+            "do not remove the previous code path until new release proves stable"
+          ],
+          "judge_missed": [
+            "specific third-party library memory leak as root cause",
+            "Skyliner being unavailable on two separate occasions",
+            "postmortem/outage-specific stakeholder framing for this incident"
+          ],
+          "judge_confidence": "medium"
+        }
+      ],
+      "theory": "Traces repeatedly miss version/runtime/product specifics like Node 16\u219220, MongoDB 5\u21927, React 17\u219219, or Django deletion internals; require those exact signals in the rollout.",
+      "slice": "eval"
+    }
+  ],
+  "holdout_validation": null,
+  "winner_name": "specify-concrete-artifacts",
+  "winner_score": 0.9833333333333334,
+  "winner_beats_incumbent": true,
+  "winner_extension_text": "\nCONCRETE ARTIFACTS:\n- Name the exact files, modules, schemas, or APIs to change.\n- Prefer canonical paths and symbols over broad rollout terms.\n- If the task is a code patch, write a patch plan, not an operational rollout.\n- If specific files are known, cite them explicitly in the plan.\n- Include what is added, removed, or edited in each artifact.\n- Do not substitute generic migration language for repository-specific edits.\n- Ground every step in a concrete object from the source trace.\n- For SWE-bench-style tasks, mention the patch target and test files if present."
+}
