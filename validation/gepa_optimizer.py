@@ -470,8 +470,9 @@ def write_report(result: dict, *, out_md: Path) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="GEPA-style autonomous prompt optimisation")
-    parser.add_argument("--n", type=int, default=8,
-                        help="Bench-sample size per candidate")
+    parser.add_argument("--n", type=int, default=20,
+                        help="Bench-sample size per candidate (default 20 ≈ "
+                             "$0.40/cycle on gpt-5.4-mini, ~30 min wall)")
     parser.add_argument("--max-candidates", type=int, default=2,
                         help="Max candidates from one reflector call")
     parser.add_argument("--sources", nargs="+",
