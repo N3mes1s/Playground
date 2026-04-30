@@ -76,8 +76,8 @@ You are a prompt engineer optimising an LLM Sequencer that produces
 rollout plans for migration / breaking-change scenarios. You read
 failure traces from a bench evaluation (each trace has: intent
 excerpt, judge verdict, judge rationale, captured / missed
-ground-truth signals) and propose mutations to the Sequencer
-system prompt that would fix the observed failure modes.
+ground-truth signals) and propose textual extensions to the
+Sequencer system prompt that would fix the observed failure modes.
 
 You output ONLY a JSON object wrapped in a ```json fenced block:
 
@@ -87,29 +87,25 @@ You output ONLY a JSON object wrapped in a ```json fenced block:
     {
       "name": "short label (kebab-case, <= 24 chars)",
       "theory": "<= 200 chars: what this mutation hypothesises will fix",
-      "patch_block": "valid Python source-string-concatenation lines"
+      "extension_text": "raw text appended after the BASE_TAIL of every Sequencer prompt"
     }
   ]
 }
 
-Rules for `patch_block`:
-- It will be APPENDED to BASE_TAIL inside `pareto.py`, between the
-  closing `"... fenced block.\\n"` line and the closing `)`.
-- Format: each line is exactly `    "<text>\\n"` (four-space indent,
-  double quotes, content escaped to single line, ends with `\\n`).
-- The first line should be `    "\\n"` to give the new block visual
-  separation from the existing instructions.
+Rules for `extension_text`:
+- Plain text (NOT Python source). Use real newlines.
+- Should start with `\\n` for visual separation from the existing prompt.
 - Use ALL CAPS HEADER lines (e.g. "ANTI-VAGUENESS:" or "DEP-AWARE:")
   to make the new directives stand out for the LLM that will read
-  the prompt.
-- Keep each patch ~6-12 lines; longer is fine if justified.
+  the combined prompt.
+- 6-12 short bullet lines is typical; longer is fine if justified.
+- Reference the specific failure mode from the traces.
 
 Rules for diversity:
-- Propose 2-3 DIFFERENT THEORIES. Don't all variations of one
-  directive.
-- Cite specific failure modes from the traces in the `theory` field
-  ("traces show 'generic feature flags' rationale 4x → forbid
-  vague gates").
+- Propose 2-3 DIFFERENT THEORIES. Don't write variations of the same
+  directive under different names.
+- Cite specific failure modes in the `theory` field ("traces show
+  'generic feature flags' rationale 4x → forbid vague gates").
 
 Output ONLY the JSON. No prose around it.
 """
@@ -246,12 +242,19 @@ def reflect(traces: list[dict], cfg=None) -> dict:
 
 
 def _bench_single_config(*, n: int, sources: list[str], run_label: str,
-                          ids_file: Path | None = None) -> dict:
+                          ids_file: Path | None = None,
+                          prompt_extension: str | None = None) -> dict:
     """Run bench_runner.py once with current code, return the JSON sidecar.
 
     If ids_file is given, the bench runs on those exact elements
     (eval and holdout slices are pinned this way so different
     candidates are scored on the SAME inputs).
+
+    If prompt_extension is given, MIROFISH_PARETO_TAIL_EXTRA is set
+    in the subprocess environment so pareto.py picks it up at import
+    time. The on-disk pareto.py is NOT modified — this is the GEPA-
+    friendly path that lets a cycle be killed mid-flight without
+    leaving the working tree dirty.
     """
     out_md = ROOT / ".bench_runs" / f"gepa_{run_label}.md"
     cmd = [
@@ -270,12 +273,14 @@ def _bench_single_config(*, n: int, sources: list[str], run_label: str,
         cmd += ["--n", str(n)]
     env = dict(os.environ)
     env.setdefault("MODEL", "gpt-5.4-mini")
+    if prompt_extension is not None:
+        env["MIROFISH_PARETO_TAIL_EXTRA"] = prompt_extension
+    else:
+        # Make sure no leftover env var leaks in from the caller's shell.
+        env.pop("MIROFISH_PARETO_TAIL_EXTRA", None)
     # 1800s = 30 min per bench-runner subprocess. Empirical: a 15-element
     # judge-scored bench takes 8-15 min on the incumbent and longer when a
-    # candidate's patched prompt produces verbose plans. Setting the
-    # timeout too tight (was 900s) silently disqualifies "better but
-    # slower" candidates and biases GEPA toward terse fixes -- a real ops
-    # issue we hit on the patch-grounding candidate's first run.
+    # candidate's patched prompt produces verbose plans.
     res = subprocess.run(cmd, env=env, cwd=str(ROOT),
                          capture_output=True, text=True, timeout=1800)
     if res.returncode != 0:
@@ -339,29 +344,65 @@ def _presample_disjoint_slices(*, n_eval: int, n_holdout: int,
 
 
 def evaluate_candidate(
-    *, name: str, patch_block: str, n: int, sources: list[str],
-    backup: Path, target: Path, ids_file: Path | None = None,
-    label_suffix: str = "",
+    *, name: str, extension_text: str, n: int, sources: list[str],
+    ids_file: Path | None = None, label_suffix: str = "",
+    # legacy parameters kept so older callers continue to work; ignored.
+    backup: Path | None = None, target: Path | None = None,
+    patch_block: str | None = None,
 ) -> dict:
-    """Apply the candidate patch to pareto.py, run bench, restore."""
-    tmp = _patch_base_tail(patch_block)
-    shutil.copy(tmp, target)
-    try:
-        result = _bench_single_config(
-            n=n, sources=sources,
-            run_label=f"{name}{label_suffix}",
-            ids_file=ids_file,
-        )
-    finally:
-        shutil.copy(backup, target)   # always restore
+    """Run bench against the candidate prompt extension.
+
+    No source-file modification: the extension is passed through the
+    subprocess env var MIROFISH_PARETO_TAIL_EXTRA, which `pareto.py`
+    picks up at module import. This means the cycle can be killed at
+    any point without leaving the on-disk pareto.py in a patched
+    state — the principled fix to the recurring stop-hook problem.
+
+    `patch_block` (legacy, Python-source-concat lines) is converted
+    to plain text on the fly when present and `extension_text` is
+    not.
+    """
+    if not extension_text and patch_block:
+        extension_text = _patch_block_to_text(patch_block)
+    result = _bench_single_config(
+        n=n, sources=sources,
+        run_label=f"{name}{label_suffix}",
+        ids_file=ids_file,
+        prompt_extension=extension_text,
+    )
     agg = _aggregate(result["scores"])
     return {
         "name": name,
-        "patch_block": patch_block,
+        "extension_text": extension_text,
         "agg": agg,
         "score": _composite_score(agg),
         "scores": result["scores"],
     }
+
+
+def _patch_block_to_text(patch_block: str) -> str:
+    """Best-effort conversion: legacy `patch_block`s are Python
+    source-string-concat lines like:
+
+        '    "\\n"\\n    "FOO:\\n"\\n    "- bar.\\n"'
+
+    Convert to the runtime string they would have produced when
+    inserted into the source file."""
+    out: list[str] = []
+    for line in patch_block.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        # Strip leading/trailing quotes
+        if s.startswith('"') and s.endswith('"'):
+            s = s[1:-1]
+        # Resolve Python escapes (\n, \", \\)
+        try:
+            s = s.encode().decode("unicode_escape")
+        except Exception:
+            pass
+        out.append(s)
+    return "".join(out)
 
 
 # ---------------------------------------------------------------------------
@@ -400,10 +441,6 @@ def run_cycle(*, n_per_candidate: int, max_candidates: int,
     for c in candidates:
         print(f"  - {c.get('name')}: {c.get('theory','')[:80]}", file=sys.stderr)
 
-    target = ROOT / "mirofish_lab" / "pareto.py"
-    backup = target.with_suffix(".py.gepa_bak")
-    shutil.copy(target, backup)
-
     eval_ids_file: Path | None = None
     holdout_ids_file: Path | None = None
     if n_holdout > 0:
@@ -414,15 +451,20 @@ def run_cycle(*, n_per_candidate: int, max_candidates: int,
         print(f"[gepa] pre-sampled {n_per_candidate} eval + {n_holdout} "
               f"holdout disjoint elements (seed {seed})", file=sys.stderr)
 
+    # Note: no longer back up / patch pareto.py — candidates pass their
+    # text extension through the MIROFISH_PARETO_TAIL_EXTRA env var.
+    target = ROOT / "mirofish_lab" / "pareto.py"   # only used by --apply
+
     incumbent_run = None
     eval_results: list[dict] = []
     holdout_validation = None
     try:
-        # Evaluate the incumbent on the eval slice.
+        # Evaluate the incumbent (no extension) on the eval slice.
         print("[gepa] evaluating incumbent (no patch) on eval slice", file=sys.stderr)
         incumbent_result = _bench_single_config(
             n=n_per_candidate, sources=sources, run_label="incumbent_eval",
             ids_file=eval_ids_file,
+            prompt_extension=None,
         )
         incumbent_agg = _aggregate(incumbent_result["scores"])
         incumbent_score = _composite_score(incumbent_agg)
@@ -442,9 +484,10 @@ def run_cycle(*, n_per_candidate: int, max_candidates: int,
         for c in candidates:
             try:
                 er = evaluate_candidate(
-                    name=c["name"], patch_block=c["patch_block"],
+                    name=c["name"],
+                    extension_text=c.get("extension_text", ""),
+                    patch_block=c.get("patch_block"),       # legacy fallback
                     n=n_per_candidate, sources=sources,
-                    backup=backup, target=target,
                     ids_file=eval_ids_file, label_suffix="_eval",
                 )
                 er["theory"] = c.get("theory", "")
@@ -474,13 +517,15 @@ def run_cycle(*, n_per_candidate: int, max_candidates: int,
             inc_holdout_result = _bench_single_config(
                 n=n_holdout, sources=sources,
                 run_label="incumbent_holdout", ids_file=holdout_ids_file,
+                prompt_extension=None,
             )
             inc_holdout_agg = _aggregate(inc_holdout_result["scores"])
             inc_holdout_score = _composite_score(inc_holdout_agg)
             cand_holdout = evaluate_candidate(
-                name=provisional["name"], patch_block=provisional["patch_block"],
+                name=provisional["name"],
+                extension_text=provisional.get("extension_text", ""),
+                patch_block=provisional.get("patch_block"),  # legacy fallback
                 n=n_holdout, sources=sources,
-                backup=backup, target=target,
                 ids_file=holdout_ids_file, label_suffix="_holdout",
             )
             holdout_confirms = (
@@ -503,9 +548,9 @@ def run_cycle(*, n_per_candidate: int, max_candidates: int,
             print("[gepa] no candidate beat incumbent on eval; skipping holdout",
                   file=sys.stderr)
     finally:
-        # Always restore.
-        shutil.copy(backup, target)
-        backup.unlink(missing_ok=True)
+        # No on-disk patching to undo any more — the env-var path keeps
+        # pareto.py untouched throughout the cycle.
+        pass
 
     # Final winner determination.
     if n_holdout > 0:
@@ -535,7 +580,9 @@ def run_cycle(*, n_per_candidate: int, max_candidates: int,
         "winner_name": winner.get("name", "?"),
         "winner_score": winner.get("score", 0),
         "winner_beats_incumbent": winner_better,
-        "winner_patch_block": winner.get("patch_block") if winner_better else None,
+        "winner_extension_text": (
+            winner.get("extension_text") if winner_better else None
+        ),
     }
 
 
@@ -656,13 +703,14 @@ def main(argv: list[str] | None = None) -> int:
         f.write(json.dumps(record) + "\n")
 
     if args.apply and result.get("winner_beats_incumbent"):
-        patch = result.get("winner_patch_block")
-        if patch:
-            tmp = _patch_base_tail(patch)
-            target = ROOT / "mirofish_lab" / "pareto.py"
-            shutil.copy(tmp, target)
+        ext = result.get("winner_extension_text")
+        if ext:
+            target = ROOT / "mirofish_lab" / "pareto_extra.txt"
+            target.write_text(ext)
             print(f"[gepa] APPLIED winner '{result.get('winner_name')}' "
-                  f"to {target.relative_to(ROOT)}", file=sys.stderr)
+                  f"to {target.relative_to(ROOT)} "
+                  f"(persistent prompt extension; pareto.py UNCHANGED)",
+                  file=sys.stderr)
 
     print(f"\n[gepa] verdict: {record['verdict']['label']} "
           f"({record['verdict']['reason']})", file=sys.stderr)

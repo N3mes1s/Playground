@@ -7,14 +7,57 @@ synthesised plan.
 
 This is the BAO-style behavioural Pareto exploration (arXiv 2602.11351)
 applied to migration-plan synthesis.
+
+## Runtime prompt extension (added for GEPA-friendly experiments)
+
+Two complementary mechanisms append additional instructions to the
+Sequencer BASE_TAIL without modifying this file:
+
+  1. Environment variable `MIROFISH_PARETO_TAIL_EXTRA` — set to a raw
+     string. Used by `gepa_optimizer.py` when running candidate
+     bench evaluations: the candidate's text is set in the env, the
+     bench subprocess inherits it, and pareto.py picks it up at
+     module-import time. The next subprocess (without the env var)
+     gets the unmodified prompt.
+
+  2. Persistent file `mirofish_lab/pareto_extra.txt` — when present,
+     its contents are appended to BASE_TAIL by default. This is
+     where GEPA's `--apply` writes a winning candidate's text so it
+     survives across processes without source-code modification.
+
+Both can be active simultaneously; the env var wins when set so
+ad-hoc experiments do not bleed into persisted defaults.
 """
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from mirofish_lab.personas import Persona
 
 
-_BASE_TAIL = (
+_PARETO_EXTRA_FILE = Path(__file__).parent / "pareto_extra.txt"
+
+
+def _load_runtime_tail_extra() -> str:
+    """Resolve the runtime extension text in priority order:
+    1. MIROFISH_PARETO_TAIL_EXTRA env var (if set, even to empty string).
+    2. mirofish_lab/pareto_extra.txt file contents (if present).
+    3. Empty string.
+    """
+    env_val = os.environ.get("MIROFISH_PARETO_TAIL_EXTRA")
+    if env_val is not None:
+        return env_val
+    if _PARETO_EXTRA_FILE.exists():
+        try:
+            return _PARETO_EXTRA_FILE.read_text()
+        except Exception:
+            return ""
+    return ""
+
+
+_BASE_TAIL_CORE = (
     "\n\nCRITICAL conflict-detection instruction:\n"
     "- Walk EVERY pair of stakeholder constraints in the input.\n"
     "- A conflict exists whenever two BLOCKING constraints from different owners "
@@ -30,6 +73,8 @@ _BASE_TAIL = (
     "- Don't invent constraints not in the input.\n"
     "- 5-15 steps. Wrap the JSON in a ```json fenced block."
 )
+
+_BASE_TAIL = _BASE_TAIL_CORE + _load_runtime_tail_extra()
 
 
 _SCHEMA = (
