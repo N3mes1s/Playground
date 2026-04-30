@@ -1,0 +1,48 @@
+{
+  "n": 6,
+  "agg_a_winner_active": {
+    "n": 6,
+    "verdicts": {
+      "partial": 2,
+      "caught": 4
+    },
+    "caught_rate": 0.6666666666666666,
+    "partial_rate": 0.3333333333333333,
+    "missed_rate": 0.0,
+    "useful_rate": 1.0,
+    "winner_family_dist": {
+      "safety": 3,
+      "balanced": 3
+    },
+    "max_family_share": 0.5,
+    "smt_feasibility_rate": 0.6111111111111112
+  },
+  "agg_b_winner_off": {
+    "n": 6,
+    "verdicts": {
+      "partial": 2,
+      "caught": 4
+    },
+    "caught_rate": 0.6666666666666666,
+    "partial_rate": 0.3333333333333333,
+    "missed_rate": 0.0,
+    "useful_rate": 1.0,
+    "winner_family_dist": {
+      "safety": 2,
+      "balanced": 3,
+      "speed": 1
+    },
+    "max_family_share": 0.5,
+    "smt_feasibility_rate": 0.5555555555555556
+  },
+  "verdict_useful_rate": {
+    "label": "tie",
+    "reason": "useful (caught+partial) rate A=100% \u2192 B=100%"
+  },
+  "verdict_balanced": {
+    "label": "A better",
+    "reason": "composite useful + 0.5*smt - 0.5*family-bias: A=1.056 \u2192 B=1.028"
+  },
+  "generalises": true,
+  "regression": false
+}

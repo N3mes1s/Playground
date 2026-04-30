@@ -1,0 +1,207 @@
+{
+  "timestamp": "20260430T143409Z",
+  "args": {
+    "n": 20,
+    "sources": null,
+    "pipeline": "cli_pro",
+    "max_tokens": 1500,
+    "n_plans": 3,
+    "seed": 1337,
+    "judge": true,
+    "utility": null,
+    "run_label": "holdout_A",
+    "ids_file": "validation/holdout_ids.txt",
+    "out": "validation/holdout/A_winner_active.md"
+  },
+  "scores": [
+    {
+      "id": "synthetic/react_17_19/security_hardening/mid_saas/tiny/00001",
+      "source": "synthetic",
+      "winner": "01-safety-leaning",
+      "winner_family": "safety",
+      "n_plans": 3,
+      "smt_feasible_count": 2,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 3,
+      "expected_stakeholders_hit": 4,
+      "expected_stakeholders_total": 4,
+      "verdict": "missed",
+      "elapsed_s": 215.80020594596863,
+      "verdict_judge": "partial",
+      "judge_rationale": "Plan matches React 19 cutover, legacy context shim, dual-run, and allowlist/default-deny security gating, but misses the concurrent-features-default root cause and explicit stakeholder alignment.",
+      "judge_captured": [
+        "React 17\u219219 deployment/cutover",
+        "legacy context compatibility shim / React 17 compatibility",
+        "default-deny enforcement and allowlist tightening",
+        "SOC2/security approval",
+        "customer-visible API/UX notice and support readiness",
+        "dual-run audit logging and canary rollout"
+      ],
+      "judge_missed": [
+        "concurrent features default in React 19",
+        "explicit stakeholder set: backend, consumer, product, security",
+        "default-deny audit, allowlist migration, comms as the stated migration driver",
+        "components/hooks/SSR surface area specificity"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "synthetic/elasticsearch_7_8/schema_migration/mid_saas/medium/00001",
+      "source": "synthetic",
+      "winner": "02-balanced",
+      "winner_family": "balanced",
+      "n_plans": 3,
+      "smt_feasible_count": 2,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 4,
+      "expected_stakeholders_total": 4,
+      "verdict": "missed",
+      "elapsed_s": 181.28036379814148,
+      "verdict_judge": "caught",
+      "judge_rationale": "It explicitly covers ES8 security/mTLS, index template/mapping changes, reindex/backfill, dual-write, and phased cutover/rollback\u2014the core GT migration signals.",
+      "judge_captured": [
+        "SOC2/security review and ES8 security config with TLS/mTLS trust chain",
+        "ES8-compatible readers and ES7-compatible query/response shim",
+        "Index templates, mappings, and aliases for ES8",
+        "Small-batch reindex/backfill from ES7 to ES8",
+        "Dual-write window with ES7 and ES8 in parallel",
+        "Phased read cutover with ES7 fallback and validation",
+        "Stakeholder actions for support/customer notices"
+      ],
+      "judge_missed": [
+        "Removed types / schema-shape specifics are not explicitly called out",
+        "Drop old columns later / deprecated field removal is only implicit, not clearly planned",
+        "Security auto-defaults are implied but not named as ES8 auto-security",
+        "Explicit product/data/sre stakeholder ownership is incomplete"
+      ],
+      "judge_confidence": "medium"
+    },
+    {
+      "id": "swebench_verified/scikit-learn__scikit-learn-10908",
+      "source": "swebench_verified",
+      "winner": "01-safety-leaning",
+      "winner_family": "safety",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 1,
+      "keyword_total": 3,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 179.35800552368164,
+      "verdict_judge": "caught",
+      "judge_rationale": "It targets sklearn/feature_extraction/text.py and the exact fitted-state fix: use provided vocabulary/vocabulary_ so get_feature_names stops raising NotFittedError.",
+      "judge_captured": [
+        "Touches the canonical file sklearn/feature_extraction/text.py",
+        "Plans to change CountVectorizer.get_feature_names",
+        "Uses constructor-provided vocabulary when vocabulary_ is missing",
+        "References fitted-state / vocabulary_ / _validate_vocabulary behavior",
+        "Includes regression tests for unfitted CountVectorizer with vocabulary"
+      ],
+      "judge_missed": [
+        "Does not mention the precise hasattr(vocabulary_) check or _validate_vocabulary implementation detail",
+        "Adds unrelated rollout/security/deployment steps not in the patch"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/sympy__sympy-18763",
+      "source": "swebench_verified",
+      "winner": "02-balanced",
+      "winner_family": "balanced",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 1,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "caught",
+      "elapsed_s": 239.01300477981567,
+      "verdict_judge": "caught",
+      "judge_rationale": "Plan directly targets sympy/printing/latex.py _print_Subs and parentheses around Subs output, matching the issue\u2019s latex_expr/left-right substack fix.",
+      "judge_captured": [
+        "Touches sympy/printing/latex.py, the canonical patched file",
+        "Plans a change in _print_Subs to parenthesize Subs when the inner expression is a Mul",
+        "References the exact rendering concern: LaTeX output for 3*Subs(-x+y, ...) should gain parentheses",
+        "Includes tests for simple and nested Subs cases in the LaTeX printer"
+      ],
+      "judge_missed": [
+        "Does not explicitly mention the root-cause keywords around left/right/substack or latex_expr",
+        "Adds unrelated release/approval/rollout steps that are not part of the code fix",
+        "Does not specify the exact formatting logic change in terms of printer internals beyond high-level wrapping"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_pro/instance_internetarchive__openlibrary-30bc73a1395fba2300087c7f307e54bb5372b60a-v76304ecdb3a5954fcf13feb710e8c40fcf24b73c",
+      "source": "swebench_pro",
+      "winner": "01-safety-leaning",
+      "winner_family": "safety",
+      "n_plans": 3,
+      "smt_feasible_count": 1,
+      "files_overlap": 0,
+      "files_total": 4,
+      "keyword_hits": 0,
+      "keyword_total": 30,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 124.70820760726929,
+      "verdict_judge": "partial",
+      "judge_rationale": "It matches the cover-archive migration and schema-first rollout, but misses the concrete zip/batch/redirect/README/file-level edits in the real patch.",
+      "judge_captured": [
+        "cover archive path support",
+        "schema fields and indexes before code reads upload status",
+        "dual-read compatibility for tar and zip cover batches",
+        "backward-compatible redirect rollout for cover URLs"
+      ],
+      "judge_missed": [
+        "specific files: coverstore/README.md, archive.py, code.py, schema.sql",
+        "zip-based batch processing and pending/complete batch checks",
+        "redirect uploaded cover IDs above 8,000,000 to Archive.org",
+        "handling zips within covers_0008",
+        "README clarifying historical cover archive locations"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/amazon",
+      "source": "danluu_postmortems",
+      "winner": "02-balanced",
+      "winner_family": "balanced",
+      "n_plans": 3,
+      "smt_feasible_count": 0,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 1,
+      "keyword_total": 1,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "caught",
+      "elapsed_s": 189.70892453193665,
+      "verdict_judge": "caught",
+      "judge_rationale": "Plan explicitly limits the scaling change to a canary/off-peak rollout with hard caps on reconnects/retries and inter-network latency, matching the AWS congestion root cause.",
+      "judge_captured": [
+        "AWS service scaling automation as the change being rolled out",
+        "connection attempts and retries are constrained",
+        "inter-network latency/error stability is used as a go/no-go gate",
+        "staged canary rollout before widening"
+      ],
+      "judge_missed": [
+        "No explicit mention of the internal network to main AWS network link being the failure point",
+        "No mention of the service-hosted-in-main-AWS-network topology that triggered client behavior",
+        "No explicit constraint about preventing client retry storms caused by network device congestion"
+      ],
+      "judge_confidence": "medium"
+    }
+  ]
+}
