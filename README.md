@@ -84,9 +84,30 @@ for the audit log of every fix proposal and verdict.
 Previous warning was "speed family wins >40%" → triggered the
 rebalance + antiparallel + prompt_revision fix sequence. The
 re-baseline shows safety family now at 47%, above the same 40%
-threshold. The rebalance over-corrected. New active warning candidate
-to register: `safety_family_dominance` with the symmetric fix
-(restore some fragility weight).
+threshold. The rebalance over-corrected. The symmetric fix
+`safety_family_dominance` / `rebalance_safetyward` is now wired
+into `auto_calibrate.KNOWN_WARNINGS` (commit `74b595e`); it
+reads the latest snapshot section of RUN_LOG and would pull
+fragility back up (0.20 → 0.25) if applied.
+
+### Honest follow-up signal: GEPA cycle 4 didn't generalise
+
+Cycle 4 reported `specify-concrete-artifacts` beat the incumbent
+by +0.183 composite / +17pp useful on a 6-element eval slice. The
+matched **held-out** validation on a disjoint 6-element slice
+(`validation/holdout/HOLDOUT_REPORT.md`) found:
+
+- useful_rate 100% / 100% — tied (both hit the ceiling)
+- caught_rate 67% / 67% — tied
+- composite +0.028 (only just above the 2pp threshold)
+- SMT feasibility +5pp (the lone real signal)
+
+The cycle-4 incumbent's 83% useful was an unlucky eval-slice draw,
+not a fixable failure mode. The directive isn't harmful and gives a
+small SMT-feasibility lift, so `mirofish_lab/pareto_extra.txt` is
+retained — but treat the cycle-4 +17pp as eval-slice bias, not a
+real headline gain. Next cycle should target SMT or family-bias
+where headroom remains, not useful_rate.
 
 ## What's NOT here
 
