@@ -107,6 +107,9 @@ def _row_to_element(row: dict) -> dict:
 
 
 def ingest() -> int:
+    """Stream-load Multi-SWE-Bench. Some rows have schema mismatches that
+    crash the standard `load_dataset(... split=...)` call; use streaming
+    so we can skip bad rows."""
     from datasets import load_dataset
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -117,28 +120,29 @@ def ingest() -> int:
         return existing
 
     n = 0
-    # Multi-SWE-Bench has multiple splits per language; try all.
-    print("[load] ByteDance-Seed/Multi-SWE-bench", file=sys.stderr)
+    print("[load] ByteDance-Seed/Multi-SWE-bench (streaming)", file=sys.stderr)
+    bad = 0
     try:
-        ds = load_dataset("ByteDance-Seed/Multi-SWE-bench", split="test")
+        ds = load_dataset("ByteDance-Seed/Multi-SWE-bench",
+                          split="train", streaming=True)
     except Exception as e:
         print(f"[err] {e}", file=sys.stderr)
-        # fallback: try without split
-        try:
-            ds_dict = load_dataset("ByteDance-Seed/Multi-SWE-bench")
-            ds = []
-            for s in ds_dict.values():
-                ds.extend(list(s))
-        except Exception as ee:
-            print(f"[err2] {ee}", file=sys.stderr)
-            return 0
+        return 0
 
     with out_path.open("w") as f:
-        for row in ds:
-            elem = _row_to_element(dict(row))
-            f.write(json.dumps(elem) + "\n")
-            n += 1
-    print(f"[done] wrote {n} rows", file=sys.stderr)
+        try:
+            for row in ds:
+                try:
+                    elem = _row_to_element(dict(row))
+                    f.write(json.dumps(elem) + "\n")
+                    n += 1
+                except Exception:
+                    bad += 1
+        except Exception as e:
+            # Streaming itself failed mid-iteration on a bad row.
+            print(f"[stream-stop] after {n} rows: {e.__class__.__name__}",
+                  file=sys.stderr)
+    print(f"[done] wrote {n} rows ({bad} skipped)", file=sys.stderr)
     return n
 
 

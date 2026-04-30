@@ -1,0 +1,227 @@
+{
+  "verdict": {
+    "label": "tie",
+    "reason": "useful (caught+partial) rate A=100% \u2192 B=100%"
+  },
+  "agg_a": {
+    "n": 3,
+    "verdicts": {
+      "caught": 2,
+      "partial": 1
+    },
+    "caught_rate": 0.6666666666666666,
+    "partial_rate": 0.3333333333333333,
+    "missed_rate": 0.0,
+    "useful_rate": 1.0,
+    "winner_family_dist": {
+      "safety": 2,
+      "speed": 1
+    },
+    "max_family_share": 0.6666666666666666,
+    "smt_feasibility_rate": 0.7777777777777778
+  },
+  "agg_b": {
+    "n": 3,
+    "verdicts": {
+      "caught": 2,
+      "partial": 1
+    },
+    "caught_rate": 0.6666666666666666,
+    "partial_rate": 0.3333333333333333,
+    "missed_rate": 0.0,
+    "useful_rate": 1.0,
+    "winner_family_dist": {
+      "speed": 2,
+      "safety": 1
+    },
+    "max_family_share": 0.6666666666666666,
+    "smt_feasibility_rate": 0.8888888888888888
+  },
+  "scores_a": [
+    {
+      "id": "swebench_verified/django__django-11880",
+      "source": "swebench_verified",
+      "winner": "01-safety-leaning",
+      "winner_family": "safety",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 1,
+      "files_total": 1,
+      "keyword_hits": 3,
+      "keyword_total": 3,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "caught",
+      "elapsed_s": 81.29320549964905,
+      "verdict_judge": "caught",
+      "judge_rationale": "Plan directly targets django/forms/fields.py Field.__deepcopy__ and deepcopies error_messages, matching the root cause and fix.",
+      "judge_captured": [
+        "Touches django/forms/fields.py",
+        "Fixes Field.__deepcopy__",
+        "Deepcopies self.error_messages",
+        "Keeps existing error_messages keys/defaults unchanged",
+        "Adds regression tests for copied Form/ModelForm fields"
+      ],
+      "judge_missed": [
+        "No explicit mention of the result/copy relationship in the deepcopy implementation",
+        "Release/monitoring steps are generic rollout noise, not part of the patch"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "synthetic/k8s_1_27_1_30/schema_migration/oss_project/tiny/00002",
+      "source": "synthetic",
+      "winner": "01-safety-leaning",
+      "winner_family": "safety",
+      "n_plans": 3,
+      "smt_feasible_count": 2,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 3,
+      "expected_stakeholders_hit": 4,
+      "expected_stakeholders_total": 4,
+      "verdict": "missed",
+      "elapsed_s": 45.54448747634888,
+      "verdict_judge": "caught",
+      "judge_rationale": "Plan directly matches the schema-migration rollout pattern: dual-write, backfill, keep old API/columns, preserve webhook compatibility.",
+      "judge_captured": [
+        "dual-write window before switching reads",
+        "backfill old-to-new field mappings in small batches",
+        "do not drop old columns until stable",
+        "keep old API versions accepted during rollout",
+        "preserve webhook request/response compatibility"
+      ],
+      "judge_missed": [
+        "explicit Kubernetes 1.27 \u2192 1.30 upgrade context",
+        "removed flowcontrol.apiserver.k8s.io/v1beta2",
+        "PSA changes",
+        "explicit stakeholders backend/consumer/security/sre"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/skyliner",
+      "source": "danluu_postmortems",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 2,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 1,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 92.85642266273499,
+      "verdict_judge": "partial",
+      "judge_rationale": "It matches the memory-leak-third-party-library root cause and adds a canary/flat-RSS gate, but misses the concrete outage context and two-occurrence postmortem specifics.",
+      "judge_captured": [
+        "third-party library upgrade as the change",
+        "memory growth / RSS stability as rollout gate",
+        "single-instance canary before fleet expansion",
+        "keep fallback/old path available"
+      ],
+      "judge_missed": [
+        "the specific Skyliner outage/postmortem context",
+        "the fact it was unavailable on two separate occasions (1/19/17 and 1/23/17)",
+        "the exact violated constraint implied by the postmortem title/brief, beyond generic memory stability"
+      ],
+      "judge_confidence": "medium"
+    }
+  ],
+  "scores_b": [
+    {
+      "id": "swebench_verified/django__django-11880",
+      "source": "swebench_verified",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 3,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 67.15459108352661,
+      "verdict_judge": "caught",
+      "judge_rationale": "Plan targets FormField __deepcopy__ and explicitly isolates error_messages, matching the issue's root cause and file scope.",
+      "judge_captured": [
+        "django/forms/fields.py / FormField __deepcopy__ behavior",
+        "error_messages isolation during deepcopy",
+        "preserve existing Form and ModelForm API behavior"
+      ],
+      "judge_missed": [
+        "No explicit mention of copying the error_messages dict via copy.deepcopy/result assignment",
+        "No concrete diff sketch or exact code change shown"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "synthetic/k8s_1_27_1_30/schema_migration/oss_project/tiny/00002",
+      "source": "synthetic",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 3,
+      "expected_stakeholders_hit": 4,
+      "expected_stakeholders_total": 4,
+      "verdict": "missed",
+      "elapsed_s": 41.098318338394165,
+      "verdict_judge": "caught",
+      "judge_rationale": "It directly reflects the schema-migration GT: removed APIs, backward-compatible dual-write/backfill, and dropping old columns after cutover.",
+      "judge_captured": [
+        "Upgrade control-plane configs before code using removed APIs (matches removed flowcontrol.apiserver.k8s.io/v1beta2)",
+        "Preserve backward-compatible API behavior until cutover completes",
+        "Keep old and new storage paths live during backfill",
+        "Keep dual-write until replication lag stays within budget",
+        "Only drop old columns after readers no longer depend on them"
+      ],
+      "judge_missed": [
+        "Explicit PSA changes are not mentioned",
+        "Stakeholders are not mapped to backend, consumer, security, and sre",
+        "No explicit rollback per step or measurable observability criteria are stated"
+      ],
+      "judge_confidence": "medium"
+    },
+    {
+      "id": "danluu_postmortems/skyliner",
+      "source": "danluu_postmortems",
+      "winner": "01-safety-leaning",
+      "winner_family": "safety",
+      "n_plans": 3,
+      "smt_feasible_count": 2,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 1,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 41.107014656066895,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures a third-party library upgrade and canary rollout, but misses the actual outage root cause: a memory leak causing unavailability.",
+      "judge_captured": [
+        "deployment of a library upgrade",
+        "canary-first rollout before full release",
+        "need to keep service stable before advancing rollout"
+      ],
+      "judge_missed": [
+        "memory leak in a third-party library",
+        "Skyliner being unavailable/on outage",
+        "specific constraint to detect resource growth or leak under load"
+      ],
+      "judge_confidence": "high"
+    }
+  ],
+  "config_a": "fragility=0.2,coverage=0.25,steps=0.1,severity=0.2,rollback_failure=0.25",
+  "config_b": "fragility=0.2,coverage=0.25,steps=0.1,severity=0.2,rollback_failure=0.25",
+  "fix": "topological_explicit"
+}
