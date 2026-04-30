@@ -1,34 +1,34 @@
-# A/B harness: `baseline` vs `candidate_rebalance`
+# Bench-driven A/B — 2026-04-30T05:06:06Z
 
-_Generated 2026-04-30T04:21:32Z_
+Sample size per config: **6**. Sources: ['swebench_verified', 'danluu_postmortems', 'synthetic']. Criterion: **useful_rate**.
 
-Criterion: **balanced**
+## Configs
 
-## Summary
+- **A**: `fragility=0.2,coverage=0.25,steps=0.1,severity=0.2,rollback_failure=0.25`
+- **B**: `fragility=0.15,coverage=0.25,steps=0.1,severity=0.2,rollback_failure=0.3`
 
-| Metric | A: `baseline` | B: `candidate_rebalance` | Δ (B − A) |
+## Aggregate verdict
+
+**B better** — useful (caught+partial) rate A=83% → B=100%
+
+## Metrics A vs B
+
+| Metric | A | B | Δ (B − A) |
 |---|---|---|---|
-| n runs | 2.00 | 2.00 | +0.00 |
-| max winner-family share | 50.00% | 50.00% | +0.00% |
-| SMT feasibility rate | 25.00% | 25.00% | +0.00% |
-| avg winner fragility | 0.54 | 0.84 | +0.30 |
-| median winner fragility | 0.54 | 0.84 | +0.30 |
-| winner fragility p90 | 0.69 | 1.00 | +0.31 |
+| caught rate | 50.0% | 50.0% | +0.0% |
+| partial rate | 33.3% | 50.0% | +16.7% |
+| missed rate | 16.7% | 0.0% | -16.7% |
+| useful (caught+partial) rate | 83.3% | 100.0% | +16.7% |
+| SMT feasibility rate | 77.8% | 88.9% | +11.1% |
+| max family share | 50.0% | 50.0% | +0.0% |
 
-## Verdict
+## Per-element verdicts
 
-**A better** — composite score A=-0.794 → B=-1.094
-
-## Per-intent
-
-| Intent | A winner | A frag | B winner | B frag |
-|---|---|---|---|---|
-| `04_gitlab_db_replica.md` | 01-safety-leaning | 0.4 | 03-safety-tilted | 0.688 |
-| `05_linear_cascade_migration.md` | 00-cost-leaning | 0.688 | 00-cost-leaning | 1.0 |
-
-## Family distributions
-
-| Family | A count | B count |
+| Element | A verdict | B verdict |
 |---|---|---|
-| cost | 1 | 1 |
-| safety | 1 | 1 |
+| `synthetic/k8s_1_27_1_30/schema_migration/oss_project/tiny/00` | partial | partial |
+| `swebench_verified/django__django-11880` | caught | caught |
+| `synthetic/postgres_12_16/framework_swap/enterprise/xlarge/00` | partial | partial |
+| `swebench_verified/sympy__sympy-12419` | missed | partial |
+| `danluu_postmortems/metrist` | caught | caught |
+| `danluu_postmortems/skyliner` | caught | caught |

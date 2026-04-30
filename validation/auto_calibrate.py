@@ -195,6 +195,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--apply", action="store_true",
                         help="Apply the fix to the real source if A/B verdict is 'B better'")
     parser.add_argument(
+        "--bench-n", type=int, default=0,
+        help="If > 0, run the bench-driven A/B (caught/partial/missed via "
+             "LLM judge across N stratified elements per config) instead of "
+             "the 2-intent internal-metric A/B.",
+    )
+    parser.add_argument(
+        "--bench-criterion", default="useful_rate",
+        choices=["useful_rate", "caught_rate", "balanced"],
+        help="Criterion for the bench-driven A/B (only used with --bench-n > 0)",
+    )
+    parser.add_argument(
+        "--bench-sources", nargs="+",
+        default=["swebench_verified", "danluu_postmortems", "synthetic"],
+        help="Sources to sample from for bench-driven A/B",
+    )
+    parser.add_argument(
         "--intents",
         nargs="+",
         default=[
@@ -245,8 +261,64 @@ def main(argv: list[str] | None = None) -> int:
         shutil.copy(patched_target, backup)
 
     try:
-        # 3. Run A first (with original code).
         ab_out = ROOT / "validation" / f"AB_{args.warning}_{args.fix}.md"
+
+        # 3a. Bench-driven A/B path (preferred when --bench-n is set).
+        if args.bench_n > 0 and args.fix == "rebalance":
+            print(f"\n=== bench-driven A/B: {args.bench_n} elements per config ===",
+                  file=sys.stderr)
+            a_weights = baseline["utility_weights"]
+            b_weights = candidate["utility_weights"]
+            a_str = ",".join(f"{k}={v}" for k, v in a_weights.items())
+            b_str = ",".join(f"{k}={v}" for k, v in b_weights.items())
+            cmd = [
+                sys.executable, str(ROOT / "dataset" / "bench" / "bench_ab.py"),
+                "--a", a_str, "--b", b_str,
+                "--n", str(args.bench_n),
+                "--sources", *args.bench_sources,
+                "--criterion", args.bench_criterion,
+                "--out", str(ab_out),
+            ]
+            res = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
+            if res.returncode != 0:
+                print("--- bench_ab stderr ---\n" + res.stderr[-1500:],
+                      file=sys.stderr)
+                raise RuntimeError("bench_ab failed")
+            ab_result = json.loads(ab_out.with_suffix(".json").read_text())
+            verdict = ab_result["verdict"]
+            decision = "B better" if "B better" in verdict["label"] else "no_apply"
+
+            # Bypass the rest of the legacy A/B branches; jump to apply logic.
+            applied = False
+            if decision == "B better" and args.apply:
+                if args.fix == "rebalance":
+                    src = ROOT / "mirofish_lab" / "pareto_frontier.py"
+                    tmp = fix_rebalance(weight_fragility=0.15, weight_rollback=0.30)
+                    shutil.copy(tmp, src)
+                    applied = True
+            record = {
+                "timestamp": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                "warning": args.warning,
+                "fix": args.fix,
+                "criterion": args.bench_criterion,
+                "bench_n": args.bench_n,
+                "verdict": verdict,
+                "applied": applied,
+                "ab_report_path": str(ab_out.relative_to(ROOT)),
+                "agg_a": ab_result["agg_a"],
+                "agg_b": ab_result["agg_b"],
+            }
+            CALIBRATION_LOG.parent.mkdir(parents=True, exist_ok=True)
+            with CALIBRATION_LOG.open("a") as f:
+                f.write(json.dumps(record) + "\n")
+            print(f"\n[verdict] {verdict['label']}: {verdict['reason']}",
+                  file=sys.stderr)
+            print(f"[applied] {applied}", file=sys.stderr)
+            print(f"[record] {CALIBRATION_LOG.relative_to(ROOT)}",
+                  file=sys.stderr)
+            return 0
+
+        # 3b. Legacy 2-intent internal-metric A/B path.
         if patched_tmp:
             # Temporarily install patched candidate code; A run uses original,
             # so we install AFTER A. ab_harness runs A then B sequentially.

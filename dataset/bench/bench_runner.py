@@ -88,11 +88,20 @@ def _stratified_sample(items: list[dict], n: int, *,
 
 def _run_pipeline_for(elem: dict, *, pipeline: str,
                       max_tokens: int = 1500,
-                      n_plans: int = 4) -> dict:
+                      n_plans: int = 4,
+                      utility: str | None = None,
+                      run_label: str = "") -> dict:
     """Write the intent_md to a temp file, run the chosen pipeline,
-    return the JSON sidecar."""
+    return the JSON sidecar.
+
+    `utility` is passed through to cli_pro/cli_grounded as --utility
+    so the bench can A/B test different weight configurations.
+    `run_label` lets concurrent A/B runs avoid output-file collisions.
+    """
     RUN_OUT_DIR.mkdir(parents=True, exist_ok=True)
     safe_id = elem["id"].replace("/", "_").replace("\\", "_")[:120]
+    if run_label:
+        safe_id = f"{run_label}__{safe_id}"
     intent_path = RUN_OUT_DIR / f"{safe_id}.intent.md"
     intent_path.write_text(elem["intent_md"])
 
@@ -107,6 +116,8 @@ def _run_pipeline_for(elem: dict, *, pipeline: str,
             "--n-plans", str(n_plans),
             "--out", str(out_path),
         ]
+        if utility:
+            cmd += ["--utility", utility]
     elif pipeline == "cli_grounded":
         if not elem.get("repo_clone_url"):
             return {"_skipped": "no repo for grounded pipeline"}
@@ -260,6 +271,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--judge", action="store_true",
                         help="Add an LLM judge verdict alongside the literal verdict")
+    parser.add_argument("--utility", default=None,
+                        help='UtilityWeights string for cli_pro, e.g. "fragility=0.2,coverage=0.25,..."')
+    parser.add_argument("--run-label", default="",
+                        help="Prefix for per-element run output files (used by A/B)")
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args(argv)
 
@@ -281,6 +296,7 @@ def main(argv: list[str] | None = None) -> int:
             sidecar = _run_pipeline_for(
                 elem, pipeline=args.pipeline,
                 max_tokens=args.max_tokens, n_plans=args.n_plans,
+                utility=args.utility, run_label=args.run_label,
             )
         except Exception as e:
             sidecar = {"_failed": True, "_exc": str(e)}
