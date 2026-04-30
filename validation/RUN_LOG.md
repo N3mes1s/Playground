@@ -1,8 +1,20 @@
 # Pipeline run log — meta-analysis
 
-_14 eligible runs across `validation/` and `verified-rollout/reports/`._
+_All-time aggregate: 14 eligible runs across `validation/` and `verified-rollout/reports/`. Older runs may dominate; for the latest snapshot see the section below._
 
-## Bias check: winner family distribution
+## Latest snapshot — REBASELINE_2026-04-30
+
+_N=30, timestamp `20260430T124101Z`. Use these numbers (not the all-time aggregate) for current-state checks._
+
+| Family | Wins |
+|---|---|
+| safety | 14 (47%) ⚠️ over 40% |
+| speed | 11 (37%) |
+| balanced | 5 (17%) |
+
+- SMT-feasible (snapshot): **74** / 90 (82%)
+
+## Bias check: winner family distribution (all-time)
 
 | Family | Wins |
 |---|---|
@@ -13,7 +25,7 @@ _14 eligible runs across `validation/` and `verified-rollout/reports/`._
 
 If any one family wins >40%, the recommendation logic likely has a bias and the utility weights / preset defaults should be reviewed.
 
-## SMT feasibility rate
+## SMT feasibility rate (all-time)
 
 - Plans across all runs: **59**
 - SMT-feasible: **24** (41%)

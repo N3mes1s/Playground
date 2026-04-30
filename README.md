@@ -73,7 +73,9 @@ Per-source signal:
 
 That number is what `auto_calibrate` and `gepa_optimizer` improve
 against. See [`validation/RUN_LOG.md`](./validation/RUN_LOG.md) for
-the latest cross-run aggregation and active warnings; see
+both the **latest snapshot** section (auto-pulled from the newest
+`REBASELINE_*.json` — what the calibrator gates against) and the
+all-time aggregate below it (older runs may dominate); see
 [`validation/calibrations.jsonl`](./validation/calibrations.jsonl)
 for the audit log of every fix proposal and verdict.
 

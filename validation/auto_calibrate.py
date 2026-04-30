@@ -61,6 +61,23 @@ KNOWN_WARNINGS = {
                                "in each step (targets genericity in plans).",
         },
     },
+    "safety_family_dominance": {
+        "detect": (
+            "Symmetric to speed_family_dominance. If the safety family wins > 40% "
+            "of runs across RUN_LOG, the rebalance over-corrected and we need to "
+            "restore some fragility weight."
+        ),
+        "severity": 2,
+        "fixes": {
+            "rebalance_safetyward": "Inverse of speed-rebalance: bump fragility "
+                                     "back up (0.15 -> 0.20), drop rollback_failure "
+                                     "(0.30 -> 0.25). Restores the original balance "
+                                     "after a speed-rebalance over-correction.",
+            "prompt_revision": "Same SPECIFICITY directive as the speed case — "
+                               "applies regardless of which family is dominant since "
+                               "genericity is family-agnostic.",
+        },
+    },
     "smt_feasibility_low": {
         "detect": "SMT feasibility rate < 50% across runs.",
         "severity": 3,
@@ -127,19 +144,48 @@ def _choose_warning_from_run_log() -> tuple[str, str] | None:
 
     active: list[tuple[int, str, str]] = []  # (severity, warning_key, default_fix)
 
-    if "(43%) ⚠" in text or "(>40%)" in text or any(
-        f"({pct}%)" in text and "speed" in text.lower()
-        for pct in (41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55)
-    ):
-        active.append((
-            KNOWN_WARNINGS["speed_family_dominance"]["severity"],
-            "speed_family_dominance", "rebalance",
-        ))
-
-    # SMT feasibility - crude pattern: "SMT-feasible: **X**" with X% < 50%
+    # Prefer the latest-snapshot section (current cohort) over the all-time
+    # aggregate (older runs dominate). Both sections share the same regex
+    # shape; the snapshot lives between '## Latest snapshot' and the next
+    # '## ' header.
     import re
-    m = re.search(r"SMT-feasible:\s*\*\*\d+\*\*\s*\((\d+)%\)", text)
-    if m and int(m.group(1)) < 50:
+    snap_match = re.search(
+        r"## Latest snapshot[^\n]*\n(.*?)(?=\n## )", text, re.DOTALL,
+    )
+    family_scope = snap_match.group(1) if snap_match else text
+
+    fam_rows = re.findall(
+        r"\|\s*(speed|safety|cost|balanced|other)\s*\|\s*\d+\s*\((\d+)%\)",
+        family_scope,
+    )
+    for fam, pct_s in fam_rows:
+        pct = int(pct_s)
+        if pct <= 40:
+            continue
+        if fam == "speed":
+            active.append((
+                KNOWN_WARNINGS["speed_family_dominance"]["severity"],
+                "speed_family_dominance", "rebalance",
+            ))
+        elif fam == "safety":
+            active.append((
+                KNOWN_WARNINGS["safety_family_dominance"]["severity"],
+                "safety_family_dominance", "rebalance_safetyward",
+            ))
+
+    # SMT feasibility - check snapshot first, fall back to all-time.
+    smt_pct = None
+    m_snap = re.search(
+        r"SMT-feasible \(snapshot\):\s*\*\*\d+\*\*\s*/\s*\d+\s*\((\d+)%\)",
+        text,
+    )
+    if m_snap:
+        smt_pct = int(m_snap.group(1))
+    else:
+        m = re.search(r"SMT-feasible:\s*\*\*\d+\*\*\s*\((\d+)%\)", text)
+        if m:
+            smt_pct = int(m.group(1))
+    if smt_pct is not None and smt_pct < 50:
         active.append((
             KNOWN_WARNINGS["smt_feasibility_low"]["severity"],
             "smt_feasibility_low", "topological_explicit",
@@ -298,6 +344,19 @@ def _candidate_config(name: str, fix: str, intents: list[str], repo_for: dict) -
             "utility_weights": {"fragility": 0.15, "coverage": 0.25,
                                 "steps": 0.10, "severity": 0.20,
                                 "rollback_failure": 0.30},
+            "intents": intents,
+            "n_plans": 4,
+            "repo_for": repo_for,
+        }
+    if fix == "rebalance_safetyward":
+        # Symmetric inverse of `rebalance`: pulls back toward fragility
+        # when the safety family is over-represented. Used after a speed
+        # rebalance has over-corrected.
+        return {
+            "name": name,
+            "utility_weights": {"fragility": 0.25, "coverage": 0.25,
+                                "steps": 0.10, "severity": 0.20,
+                                "rollback_failure": 0.20},
             "intents": intents,
             "n_plans": 4,
             "repo_for": repo_for,
@@ -468,7 +527,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"\n=== bench-driven A/B: {args.bench_n} elements per config ===",
                   file=sys.stderr)
             ab_result = None
-            if args.fix == "rebalance":
+            if args.fix in ("rebalance", "rebalance_safetyward"):
                 # Pure utility-weight swap: bench_ab.py handles it directly.
                 a_weights = baseline["utility_weights"]
                 b_weights = candidate["utility_weights"]
@@ -552,6 +611,12 @@ def main(argv: list[str] | None = None) -> int:
                 if args.fix == "rebalance":
                     src = ROOT / "mirofish_lab" / "pareto_frontier.py"
                     tmp = fix_rebalance(weight_fragility=0.15, weight_rollback=0.30)
+                    shutil.copy(tmp, src)
+                    applied = True
+                    applied_path = str(src.relative_to(ROOT))
+                elif args.fix == "rebalance_safetyward":
+                    src = ROOT / "mirofish_lab" / "pareto_frontier.py"
+                    tmp = fix_rebalance(weight_fragility=0.25, weight_rollback=0.20)
                     shutil.copy(tmp, src)
                     applied = True
                     applied_path = str(src.relative_to(ROOT))

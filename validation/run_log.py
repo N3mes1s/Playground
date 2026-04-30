@@ -79,6 +79,55 @@ def _row_for(path: Path, j: dict) -> dict | None:
     }
 
 
+def _latest_rebaseline_snapshot() -> list[str] | None:
+    """Render a 'Latest snapshot' section from the newest REBASELINE_*.json
+    sidecar in validation/. Returns markdown lines or None if absent.
+
+    The all-time aggregate weights every historical run equally, so old
+    runs from before a fix landed dominate. The snapshot section gives
+    the freshest cohort visibility so the calibrator and the README can
+    reconcile against it.
+    """
+    snaps = sorted((ROOT / "validation").glob("REBASELINE_*.json"))
+    if not snaps:
+        return None
+    latest = snaps[-1]
+    try:
+        j = json.loads(latest.read_text())
+    except Exception:
+        return None
+    scores = j.get("scores") or []
+    if not scores:
+        return None
+    total = len(scores)
+    by_family: Counter[str] = Counter()
+    for r in scores:
+        fam = r.get("winner_family") or "other"
+        by_family[fam] += 1
+    plans_total = sum(r.get("n_plans", 0) for r in scores)
+    smt_total = sum(r.get("smt_feasible_count", 0) for r in scores)
+    smt_pct = 100 * smt_total / max(1, plans_total)
+    lines = [
+        f"## Latest snapshot — {latest.stem}",
+        "",
+        f"_N={total}, timestamp `{j.get('timestamp', '?')}`. "
+        "Use these numbers (not the all-time aggregate) for current-state checks._",
+        "",
+        "| Family | Wins |",
+        "|---|---|",
+    ]
+    for fam, count in by_family.most_common():
+        pct = 100 * count / total
+        warn = " ⚠️ over 40%" if pct > 40 else ""
+        lines.append(f"| {fam} | {count} ({pct:.0f}%){warn} |")
+    lines.append("")
+    lines.append(
+        f"- SMT-feasible (snapshot): **{smt_total}** / {plans_total} "
+        f"({smt_pct:.0f}%)"
+    )
+    return lines
+
+
 def main() -> None:
     rows = []
     for path, j in _load_all():
@@ -108,12 +157,21 @@ def main() -> None:
         / max(1, sum(1 for r in rows if r["winner_fragility"] is not None))
     )
 
+    snapshot_md = _latest_rebaseline_snapshot()
+
     out = [
         "# Pipeline run log — meta-analysis",
         "",
-        f"_{len(rows)} eligible runs across `validation/` and `verified-rollout/reports/`._",
+        f"_All-time aggregate: {len(rows)} eligible runs across `validation/` "
+        "and `verified-rollout/reports/`. Older runs may dominate; for the "
+        "latest snapshot see the section below._",
         "",
-        "## Bias check: winner family distribution",
+    ]
+    if snapshot_md:
+        out.extend(snapshot_md)
+        out.append("")
+    out += [
+        "## Bias check: winner family distribution (all-time)",
         "",
         "| Family | Wins |",
         "|---|---|",
@@ -129,7 +187,7 @@ def main() -> None:
     )
     out.append("")
 
-    out.append("## SMT feasibility rate")
+    out.append("## SMT feasibility rate (all-time)")
     out.append("")
     out.append(
         f"- Plans across all runs: **{plans_total}**"
