@@ -126,8 +126,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="Utility-weight string for config A")
     parser.add_argument("--b", required=True,
                         help="Utility-weight string for config B")
-    parser.add_argument("--n", type=int, default=8,
-                        help="Sample size PER config (total = 2*n bench runs)")
+    parser.add_argument("--n", type=int, default=30,
+                        help="Sample size PER config (total = 2*n bench runs). "
+                             "Default 30 gives ~$0.15/run on gpt-5.4-mini and "
+                             "α=0.05 stability for ≥20pp deltas.")
     parser.add_argument(
         "--sources", nargs="+",
         default=["swebench_verified", "danluu_postmortems", "synthetic"],

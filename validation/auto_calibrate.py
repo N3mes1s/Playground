@@ -56,6 +56,9 @@ KNOWN_WARNINGS = {
                           "bump rollback_failure (0.25 -> 0.30).",
             "antiparallel": "Drop 'parallelise wherever possible' from the speed-"
                             "leaning Sequencer prompt.",
+            "prompt_revision": "Append a SPECIFICITY directive to all Sequencer "
+                               "prompts forcing concrete file/identifier references "
+                               "in each step (targets genericity in plans).",
         },
     },
     "smt_feasibility_low": {
@@ -66,6 +69,9 @@ KNOWN_WARNINGS = {
                 "Append explicit topological-validity instruction to every "
                 "Sequencer system prompt."
             ),
+            "prompt_revision": "Specificity directive may also reduce ordering "
+                               "contradictions by anchoring each step to concrete "
+                               "objects.",
         },
     },
     "winner_fragility_low": {
@@ -76,6 +82,20 @@ KNOWN_WARNINGS = {
         "severity": 1,
         "fixes": {
             "rebalance": "Same as speed-family rebalance — punish cascade less.",
+        },
+    },
+    "low_specificity": {
+        "detect": (
+            "Bench output flags many plans as 'generic rollout/safety plan' "
+            "(no concrete file/identifier references). Detected manually for "
+            "now; future: parse bench REPORT for low caught_rate + presence "
+            "of 'generic' / 'feature flags and maintenance windows' "
+            "rationales."
+        ),
+        "severity": 2,
+        "fixes": {
+            "prompt_revision": "Append SPECIFICITY directive to all Sequencer "
+                               "prompts.",
         },
     },
 }
@@ -186,30 +206,69 @@ def fix_antiparallel() -> Path:
     return tmp
 
 
-def fix_topological_explicit() -> Path:
-    """Append an explicit topological-validity instruction to the
-    BASE_TAIL shared by all Pareto sequencers, so every plan they
-    produce honours dependency ordering. This targets the
-    smt_feasibility_low warning."""
+def _patch_base_tail(extra_block: str) -> Path:
+    """Append `extra_block` (already-formatted Python source lines) inside
+    the BASE_TAIL string-concatenation in pareto.py, before the closing
+    paren. Returns a tmp file with the patched content."""
     src = ROOT / "mirofish_lab" / "pareto.py"
     text = src.read_text()
-    needle = '- 5-15 steps. Wrap the JSON in a ```json fenced block."'
+    # The current BASE_TAIL ends with this exact line followed by `)`.
+    needle = '    "- 5-15 steps. Wrap the JSON in a ```json fenced block."\n)'
     if needle not in text:
         raise RuntimeError(
-            "pareto.py BASE_TAIL doesn't have the expected closing line; "
+            "pareto.py BASE_TAIL closing pattern not found; "
             "auto-fix template is stale"
         )
-    addition = (
-        '\n\n"\n    "TOPOLOGICAL VALIDITY (CRITICAL):\\n"\n'
-        '    "- Every step\'s `depends_on` MUST list IDs that appear EARLIER in `steps`.\\n"\n'
-        '    "- If a stakeholder constraint requires step A before step B, then A must NOT depend on B.\\n"\n'
-        '    "- Re-read your plan once before emitting and ensure NO step transitively depends on something later in the array.\\n"\n'
-        '    "- A plan with an ordering cycle is wrong; rewrite it before emitting.'
+    replacement = (
+        '    "- 5-15 steps. Wrap the JSON in a ```json fenced block.\\n"\n'
+        + extra_block
+        + ")"
     )
-    new_text = text.replace(needle, needle + addition)
+    new_text = text.replace(needle, replacement)
     tmp = Path(tempfile.mkdtemp(prefix="autocal_")) / "pareto.py"
     tmp.write_text(new_text)
+    # Syntax-check (compile only; do not import — it would need
+    # the mirofish_lab package on sys.path which the tmp location
+    # doesn't provide).
+    try:
+        compile(new_text, str(tmp), "exec")
+    except SyntaxError as e:
+        raise RuntimeError(f"patched pareto.py has a syntax error: {e}") from e
     return tmp
+
+
+def fix_topological_explicit() -> Path:
+    """Append explicit topological-validity instruction to BASE_TAIL.
+    Targets the smt_feasibility_low warning."""
+    extra = (
+        '    "\\n"\n'
+        '    "TOPOLOGICAL VALIDITY (CRITICAL):\\n"\n'
+        '    "- Every steps depends_on MUST list IDs that appear EARLIER in steps.\\n"\n'
+        '    "- If a constraint requires step A before step B, A must NOT depend on B.\\n"\n'
+        '    "- Re-read your plan once before emitting and ensure no cycle.\\n"\n'
+        '    "- A plan with an ordering cycle is wrong; rewrite it before emitting."\n'
+    )
+    return _patch_base_tail(extra)
+
+
+def fix_sequencer_specificity() -> Path:
+    """Append SPECIFICITY directive to BASE_TAIL across all Pareto
+    sequencers. Targets the genericity issue observed in bench output."""
+    extra = (
+        '    "\\n"\n'
+        '    "SPECIFICITY (CRITICAL):\\n"\n'
+        '    "- Each step action MUST reference at least one concrete file path, "\n'
+        '    "function name, identifier, or numeric value drawn from the intent or "\n'
+        '    "codebase findings.\\n"\n'
+        '    "- Generic phrasings like apply hardening cutover, rollout via feature "\n'
+        '    "flag, or monitor for issues are FORBIDDEN unless paired with a specific "\n'
+        '    "target (file, table, endpoint, env var, etc.).\\n"\n'
+        '    "- Each step gate MUST cite a concrete metric, event name, or approver "\n'
+        '    "role rather than abstract wait for review.\\n"\n'
+        '    "- If a step could apply to ANY migration, rewrite it to refer to THIS "\n'
+        '    "specific change."\n'
+    )
+    return _patch_base_tail(extra)
 
 
 # --- A/B test driver -----------------------------------------------------
@@ -239,7 +298,7 @@ def _candidate_config(name: str, fix: str, intents: list[str], repo_for: dict) -
             "n_plans": 4,
             "repo_for": repo_for,
         }
-    if fix in ("antiparallel", "topological_explicit"):
+    if fix in ("antiparallel", "topological_explicit", "prompt_revision"):
         # Code patches; baseline weights, patched code in place.
         return _baseline_config(name, intents, repo_for)
     raise ValueError(f"unknown fix: {fix}")
@@ -280,10 +339,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--apply", action="store_true",
                         help="Apply the fix to the real source if A/B verdict is 'B better'")
     parser.add_argument(
-        "--bench-n", type=int, default=0,
+        "--bench-n", type=int, default=30,
         help="If > 0, run the bench-driven A/B (caught/partial/missed via "
              "LLM judge across N stratified elements per config) instead of "
-             "the 2-intent internal-metric A/B.",
+             "the 2-intent internal-metric A/B. Default 30 = ~$0.15/run on "
+             "gpt-5.4-mini and a stable signal at α=0.05 for 20pp deltas.",
     )
     parser.add_argument(
         "--bench-criterion", default="useful_rate",
@@ -373,6 +433,11 @@ def main(argv: list[str] | None = None) -> int:
         patched_target = ROOT / "mirofish_lab" / "pareto.py"
         backup = patched_target.with_suffix(".py.autocal_bak")
         shutil.copy(patched_target, backup)
+    elif args.fix == "prompt_revision":
+        patched_tmp = fix_sequencer_specificity()
+        patched_target = ROOT / "mirofish_lab" / "pareto.py"
+        backup = patched_target.with_suffix(".py.autocal_bak")
+        shutil.copy(patched_target, backup)
 
     decision = "no_apply"   # fail-safe default for the finally block
     try:
@@ -403,7 +468,7 @@ def main(argv: list[str] | None = None) -> int:
                           file=sys.stderr)
                     raise RuntimeError("bench_ab failed")
                 ab_result = json.loads(ab_out.with_suffix(".json").read_text())
-            elif args.fix in ("antiparallel", "topological_explicit"):
+            elif args.fix in ("antiparallel", "topological_explicit", "prompt_revision"):
                 # Code-patch fix: run bench against ORIGINAL code, then
                 # patch in place, run bench against PATCHED code, restore
                 # (unless --apply applies it permanently below).
@@ -470,7 +535,7 @@ def main(argv: list[str] | None = None) -> int:
                     shutil.copy(tmp, src)
                     applied = True
                     applied_path = str(src.relative_to(ROOT))
-                elif args.fix in ("antiparallel", "topological_explicit") and patched_tmp:
+                elif args.fix in ("antiparallel", "topological_explicit", "prompt_revision") and patched_tmp:
                     # Already patched in place; retain the patched version.
                     if backup is not None and backup.exists():
                         backup.unlink()
