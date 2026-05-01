@@ -643,16 +643,20 @@ def write_report(result: dict, *, out_md: Path) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="GEPA-style autonomous prompt optimisation")
-    parser.add_argument("--n", type=int, default=20,
-                        help="Bench-sample size per candidate (default 20 ≈ "
-                             "$0.40/cycle on gpt-5.4-mini, ~30 min wall)")
-    parser.add_argument("--holdout-n", type=int, default=0,
-                        help="If >0, also sample N disjoint elements as a "
-                             "held-out validation slice. The cycle picks a "
+    parser.add_argument("--n", type=int, default=30,
+                        help="Bench-sample size per candidate (default 30 ≈ "
+                             "$0.60/cycle on gpt-5.4-mini, ~45 min wall). "
+                             "DO NOT drop below 20: the cycle-4 retrospective "
+                             "showed n=6 winners can swing -10pp useful at "
+                             "N=30 because of eval-slice variance and ceiling "
+                             "effects (calibrations.jsonl 2026-05-01 entry).")
+    parser.add_argument("--holdout-n", type=int, default=18,
+                        help="Held-out validation slice size, sampled disjoint "
+                             "from the eval slice. The cycle picks a "
                              "provisional winner on the eval slice; only "
                              "applies if the winner ALSO beats the incumbent "
-                             "on the holdout slice. Recommended: holdout-n "
-                             "≈ 0.6 * --n.")
+                             "on the holdout slice. Default 18 ≈ 0.6 * --n=30. "
+                             "Set to 0 to skip holdout (NOT recommended).")
     parser.add_argument("--max-candidates", type=int, default=2,
                         help="Max candidates from one reflector call")
     parser.add_argument("--sources", nargs="+",
@@ -668,6 +672,15 @@ def main(argv: list[str] | None = None) -> int:
                         help="If a candidate beats the incumbent, write the "
                              "patch into mirofish_lab/pareto.py.")
     args = parser.parse_args(argv)
+
+    if args.n < 20:
+        print(
+            f"[gepa] WARNING: --n={args.n} is below the n=20 floor learned "
+            "from the cycle-4 regression (n=6 winner showed -10pp useful at "
+            "N=30 rebaseline). Cycles below n=20 are exploratory only and "
+            "their winners MUST NOT be applied. Run with --n 30 to gate.",
+            file=sys.stderr,
+        )
 
     result = run_cycle(
         n_per_candidate=args.n,
