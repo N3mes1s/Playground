@@ -90,24 +90,38 @@ into `auto_calibrate.KNOWN_WARNINGS` (commit `74b595e`); it
 reads the latest snapshot section of RUN_LOG and would pull
 fragility back up (0.20 → 0.25) if applied.
 
-### Honest follow-up signal: GEPA cycle 4 didn't generalise
+### Honest follow-up signal: GEPA cycle 4 was a regression at scale
 
 Cycle 4 reported `specify-concrete-artifacts` beat the incumbent
 by +0.183 composite / +17pp useful on a 6-element eval slice. The
 matched **held-out** validation on a disjoint 6-element slice
-(`validation/holdout/HOLDOUT_REPORT.md`) found:
+(`validation/holdout/HOLDOUT_REPORT.md`) found a tie on useful_rate
+(both 100%, ceiling effect) and a +0.028 composite — too thin to
+trust but not a regression at that sample size.
 
-- useful_rate 100% / 100% — tied (both hit the ceiling)
-- caught_rate 67% / 67% — tied
-- composite +0.028 (only just above the 2pp threshold)
-- SMT feasibility +5pp (the lone real signal)
+The **N=30 re-baseline with the extension active**
+(`validation/REBASELINE_with_extension_DIFF.md`, same seed and
+sources as the prior baseline) revealed it was actually a clear
+regression:
 
-The cycle-4 incumbent's 83% useful was an unlucky eval-slice draw,
-not a fixable failure mode. The directive isn't harmful and gives a
-small SMT-feasibility lift, so `mirofish_lab/pareto_extra.txt` is
-retained — but treat the cycle-4 +17pp as eval-slice bias, not a
-real headline gain. Next cycle should target SMT or family-bias
-where headroom remains, not useful_rate.
+| metric | no extension | with extension | Δ |
+|---|---|---|---|
+| useful_rate | 97% | 87% | −10pp |
+| caught_rate | 33% | 20% | −13pp |
+| missed_rate | 3% | 13% | +10pp (4× worse) |
+| SMT feasibility | 82% | 82% | 0pp |
+| family share max | 47% | 67% | +20pp worse |
+
+The `CONCRETE ARTIFACTS` directive forces file/symbol references in
+every step, which works against operational-rollout plans (post-mortems,
+multi-stakeholder coordination) that need high-level orchestration, not
+patch details. The cycle-4 +17pp was eval-slice bias from an unlucky
+83%-useful incumbent draw; the n=6 holdout was underpowered.
+
+**Action:** `mirofish_lab/pareto_extra.txt` deleted; baseline restored.
+Calibration record logged with `applied=False`. Lesson encoded: GEPA
+cycles must validate at N≥20 before claiming a win, not n=6 where
+ceiling effects and variance dominate.
 
 ## What's NOT here
 

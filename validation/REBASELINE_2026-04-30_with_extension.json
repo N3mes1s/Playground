@@ -1,0 +1,922 @@
+{
+  "timestamp": "20260501T065032Z",
+  "args": {
+    "n": 30,
+    "sources": [
+      "swebench_verified",
+      "swebench_pro",
+      "swebench_original",
+      "danluu_postmortems",
+      "synthetic"
+    ],
+    "pipeline": "cli_pro",
+    "max_tokens": 1200,
+    "n_plans": 3,
+    "seed": 1337,
+    "judge": true,
+    "utility": null,
+    "run_label": "rebaseline_with_ext",
+    "ids_file": null,
+    "out": "validation/REBASELINE_2026-04-30_with_extension.md"
+  },
+  "scores": [
+    {
+      "id": "swebench_verified/django__django-12663",
+      "source": "swebench_verified",
+      "winner": "02-balanced",
+      "winner_family": "balanced",
+      "n_plans": 3,
+      "smt_feasible_count": 2,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 73.32686448097229,
+      "verdict_judge": "partial",
+      "judge_rationale": "It matches the SimpleLazyObject queryset RHS coercion regression, but not the concrete django/db/models/sql/query.py target or the select/field/getattr/target fix details.",
+      "judge_captured": [
+        "Keeps queryset RHS coercion compatible with SimpleLazyObject",
+        "Preserve behavior for non-lazy queryset values",
+        "Regression test-first rollout aligns with the bug being a regression"
+      ],
+      "judge_missed": [
+        "Canonical patch touched django/db/models/sql/query.py",
+        "Root-cause fix involved select/field/getattr/target handling",
+        "No concrete reflection of the nested subquery annotation failure path"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/django__django-12193",
+      "source": "swebench_verified",
+      "winner": "01-safety-leaning",
+      "winner_family": "safety",
+      "n_plans": 3,
+      "smt_feasible_count": 1,
+      "files_overlap": 1,
+      "files_total": 1,
+      "keyword_hits": 2,
+      "keyword_total": 2,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "caught",
+      "elapsed_s": 91.58474397659302,
+      "verdict_judge": "caught",
+      "judge_rationale": "Directly identifies django/forms/widgets.py and the attrs/checked mutation in CheckboxInput.get_context(), matching the root cause.",
+      "judge_captured": [
+        "Touches django/forms/widgets.py",
+        "Fixes CheckboxInput.get_context() attrs mutation",
+        "Mentions attrs / checked as the bug mechanism",
+        "Adds regression coverage for SplitArrayField(BooleanField)"
+      ],
+      "judge_missed": [
+        "Does not mention the exact shared-state issue where attrs is mutated and reused across subsequent widgets",
+        "Includes rollout/deploy/soak steps irrelevant to the patch ground truth"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "synthetic/go_1_20_1_23/infra_cutover/mid_saas/small/00001",
+      "source": "synthetic",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 4,
+      "expected_stakeholders_total": 4,
+      "verdict": "missed",
+      "elapsed_s": 14.18479585647583,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures infra cutover concerns like dual-run, DNS/traffic shift, and backward compatibility, but misses the Go 1.20\u21921.23-specific risks and stakeholder set.",
+      "judge_captured": [
+        "Deploy code that supports both runtimes before switching traffic",
+        "Preserve request/response contracts during dual-run and DNS shift",
+        "Keep Go 1.20 compatibility until cutover is fully complete",
+        "DNS/traffic shifting and parallel-run style cutover"
+      ],
+      "judge_missed": [
+        "Go 1.20 \u2192 1.23 upgrade specifics",
+        "loopvar default change",
+        "generics in stdlib",
+        "slog default",
+        "Expected stakeholders: backend, product, security, sre"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "synthetic/go_1_20_1_23/framework_swap/regulated_fintech/large/00001",
+      "source": "synthetic",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 4,
+      "expected_stakeholders_total": 4,
+      "verdict": "missed",
+      "elapsed_s": 15.012757539749146,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures backend compatibility/rollback themes, but misses the Go 1.20\u21921.23 specifics and key signals like loopvar, generics in stdlib, slog, and e2e parity tests.",
+      "judge_captured": [
+        "adapter shims before flipping callers",
+        "compatibility window with old API behavior",
+        "rollback-friendly staged rollout / dual-write style transition"
+      ],
+      "judge_missed": [
+        "Go 1.20 \u2192 1.23 framework swap",
+        "loopvar default change",
+        "generics in stdlib",
+        "slog default",
+        "partial-port window",
+        "e2e parity tests",
+        "regulated fintech / PCI-DSS stakeholder context",
+        "security, product, and SRE involvement"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/django__django-15467",
+      "source": "swebench_verified",
+      "winner": "01-safety-leaning",
+      "winner_family": "safety",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 1,
+      "files_total": 1,
+      "keyword_hits": 2,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "caught",
+      "elapsed_s": 93.43367910385132,
+      "verdict_judge": "caught",
+      "judge_rationale": "Touches django/contrib/admin/options.py and explicitly preserves custom empty_label when radio_fields/blank FK logic runs, matching the bug fix.",
+      "judge_captured": [
+        "Edits django/contrib/admin/options.py",
+        "ModelAdmin.formfield_for_foreignkey / radio_fields behavior",
+        "Preserve custom empty_label via kwargs.get('empty_label')",
+        "blank ForeignKey choice handling"
+      ],
+      "judge_missed": [
+        "No exact diff sketch shown",
+        "No explicit mention of the else branch condition in the code change"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_original/matplotlib__matplotlib-23476",
+      "source": "swebench_original",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 6,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 76.82594537734985,
+      "verdict_judge": "partial",
+      "judge_rationale": "It matches the pickle/unpickle DPI inflation on MacOSX, but misses the specific figure.py state handling fix using original_dpi/pixel-ratio semantics.",
+      "judge_captured": [
+        "preserve existing figure dpi value across repeated unpickle",
+        "preserve existing pickled figures' stored dpi value on load",
+        "verify no DPI inflation in repeated pickle round-trips",
+        "MacOSX pickle fix"
+      ],
+      "judge_missed": [
+        "canonical patch touches lib/matplotlib/figure.py",
+        "root cause in __setstate__ state changes being discarded",
+        "original_dpi / pixel ratio handling"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_original/PrefectHQ__prefect-3085",
+      "source": "swebench_original",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 6,
+      "keyword_total": 12,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 83.57914066314697,
+      "verdict_judge": "partial",
+      "judge_rationale": "It clearly targets DaskExecutor checkpoint/result writes and flows.checkpointing config propagation, but misses the actual task_runner.py context/setdefault KeyError root cause.",
+      "judge_captured": [
+        "DaskExecutor missing LocalResult JSONSerializer writes",
+        "worker-side propagation of flows.checkpointing config",
+        "checkpointed tasks writing result artifacts in the Dask path",
+        "regression/integration tests around the reproducer"
+      ],
+      "judge_missed": [
+        "canonical fix location in src/prefect/engine/task_runner.py",
+        "specific context/config setdefault KeyError issue",
+        "root-cause that config should always be present in task-runner context"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_pro/instance_flipt-io__flipt-f808b4dd6e36b9dc8b011eb26b196f4e2cc64c41",
+      "source": "swebench_pro",
+      "winner": "01-safety-leaning",
+      "winner_family": "safety",
+      "n_plans": 3,
+      "smt_feasible_count": 2,
+      "files_overlap": 0,
+      "files_total": 8,
+      "keyword_hits": 0,
+      "keyword_total": 30,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 78.44811725616455,
+      "verdict_judge": "missed",
+      "judge_rationale": "It only gives generic migration ops advice; it misses the actual config/DB credential parsing change and touched Flipt code paths.",
+      "judge_captured": [
+        "Keeps existing DB URL config working unchanged",
+        "Prefers full DB URL over discrete fields when both set"
+      ],
+      "judge_missed": [
+        "No mention of config/config.go or db-related code changes",
+        "Misses separate host/user/password/port/name fields and validation",
+        "Misses Flipt-specific files like cmd/flipt/* and storage/db/*",
+        "Introduces irrelevant data migration/backfill/schema-change guidance"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/scikit-learn__scikit-learn-13496",
+      "source": "swebench_verified",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 2,
+      "files_overlap": 1,
+      "files_total": 1,
+      "keyword_hits": 9,
+      "keyword_total": 19,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "caught",
+      "elapsed_s": 86.94932699203491,
+      "verdict_judge": "partial",
+      "judge_rationale": "It matches the core fix: exposing warm_start in IsolationForest, updating docs, and adding tests; but it adds unrelated release/security/rollout concerns and names a different file path.",
+      "judge_captured": [
+        "Expose warm_start in IsolationForest.__init__ with default False",
+        "Warm-start behavior across repeated fit calls / adding more estimators",
+        "Add regression tests in sklearn/ensemble/tests/test_iforest.py",
+        "Document warm_start similarly to RandomForestClassifier",
+        "Update the IsolationForest example/docs entry"
+      ],
+      "judge_missed": [
+        "Canonical patch file is sklearn/ensemble/iforest.py, while plan refers to sklearn/ensemble/_iforest.py",
+        "Does not clearly mention the exact docstring wording from the issue",
+        "Includes unrelated release/security/incident-window rollout steps not present in the ground truth patch"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_pro/instance_ansible__ansible-e0c91af45fa9af575d10fd3e724ebc59d2b2d6ac-v30a923fb5c164d6cd18280c02422f75e611e8fb2",
+      "source": "swebench_pro",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 1,
+      "files_total": 4,
+      "keyword_hits": 6,
+      "keyword_total": 30,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "partial",
+      "elapsed_s": 87.05904459953308,
+      "verdict_judge": "partial",
+      "judge_rationale": "Correctly targets lib/ansible/plugins/lookup/env.py and direct os.environ.get() with order/UTF-8 tests, but misses the key compat cleanup in py3compat/config manager.",
+      "judge_captured": [
+        "Touches lib/ansible/plugins/lookup/env.py",
+        "Plans to replace ansible.utils.py3compat.environ with os.environ.get()",
+        "Preserve request order and empty-string vs missing-variable semantics",
+        "Add tests for ordering and UTF-8 handling"
+      ],
+      "judge_missed": [
+        "No mention of lib/ansible/utils/py3compat.py cleanup",
+        "No mention of lib/ansible/config/manager.py related changes",
+        "No changelog fragment/changelog file update",
+        "Does not reflect the compat/raw_environ/value_cache/encoding root-cause cleanup"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "synthetic/python_310_312/feature_flag_consolidation/regulated_fintech/tiny/00002",
+      "source": "synthetic",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 3,
+      "expected_stakeholders_hit": 4,
+      "expected_stakeholders_total": 4,
+      "verdict": "missed",
+      "elapsed_s": 19.377159357070923,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures feature-flag cleanup and 3.12 runtime concerns, but misses the key PEP 695/stdlib-deprecation specifics and the regulated-fintech stakeholder set.",
+      "judge_captured": [
+        "feature-flag cleanup implied by 'Remove dead-flag code' and 'default-on path is live'",
+        "Python 3.12 upgrade timing in 'Deploy 3.12 code only after runtime supports removed stdlib changes'",
+        "backwards-compatibility/rollback window via 'maintain dual-write/dual-read only during migration window'"
+      ],
+      "judge_missed": [
+        "PEP 695 type aliases",
+        "removed deprecated stdlib modules such as asynchat/distutils",
+        "explicit audit of live flags and default-on transition",
+        "regulated fintech / PCI-DSS context",
+        "stakeholders backend, product, security, sre"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "synthetic/mongodb_5_7/split_monolith/small_startup/small/00001",
+      "source": "synthetic",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 3,
+      "expected_stakeholders_total": 3,
+      "verdict": "missed",
+      "elapsed_s": 16.962888479232788,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures a generic split-monolith dual-write/backfill migration, but misses the MongoDB 5\u21927-specific issues and named stack signals.",
+      "judge_captured": [
+        "strangler-like dual-write/parallel writers during cutover",
+        "backward-compatible API during transition",
+        "schema/index changes before dependent code",
+        "rollback-safe phased migration",
+        "backend and data stakeholders"
+      ],
+      "judge_missed": [
+        "MongoDB 5\u21927 upgrade specifics",
+        "queryable encryption / CSFLE",
+        "time-series collections",
+        "traffic mirroring",
+        "data contracts",
+        "security stakeholder"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_original/pydata__xarray-6135",
+      "source": "swebench_original",
+      "winner": "01-safety-leaning",
+      "winner_family": "safety",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 2,
+      "keyword_hits": 0,
+      "keyword_total": 30,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 47.19468069076538,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures the float-shift feature and backward-compatible int behavior, but misses the concrete xarray code areas and the CFTimeIndex/cftime offset type logic.",
+      "judge_captured": [
+        "float shift support for CFTimeIndex",
+        "preserve existing integer-shift behavior"
+      ],
+      "judge_missed": [
+        "specific files xarray/coding/cftime_offsets.py and xarray/coding/cftimeindex.py",
+        "type/class logic around BaseCFTimeOffset/tick/isinstance/classvar",
+        "freq-specific handling for hour/minute/second/millisecond and NotImplemented cases"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_pro/instance_flipt-io__flipt-292fdaca9be39e6a921aaa8874c011d0fdd3e874",
+      "source": "swebench_pro",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 0,
+      "files_overlap": 0,
+      "files_total": 8,
+      "keyword_hits": 2,
+      "keyword_total": 30,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 107.91647815704346,
+      "verdict_judge": "partial",
+      "judge_rationale": "Captures the core version-field/default/reject behavior, but misses the concrete Flipt files and schema/testdata changes from the ground truth.",
+      "judge_captured": [
+        "Optional config version field",
+        "Default missing version to 1.0",
+        "Reject unsupported explicit versions",
+        "Backward-compatible loading for legacy configs",
+        "Tests for missing, valid, and invalid versions"
+      ],
+      "judge_missed": [
+        "Specific touched files: config/default.yml, config/flipt.schema.cue, config/flipt.schema.json, config/local.yml, config/production.yml",
+        "Parser implementation in internal/config/config.go",
+        "Version fixtures in internal/config/testdata/version/v1.yml and invalid.yml",
+        "Ground-truth code-path details involving viper/reflect/value handling"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_pro/instance_protonmail__webclients-815695401137dac2975400fc610149a16db8214b",
+      "source": "swebench_pro",
+      "winner": "02-balanced",
+      "winner_family": "balanced",
+      "n_plans": 3,
+      "smt_feasible_count": 2,
+      "files_overlap": 0,
+      "files_total": 12,
+      "keyword_hits": 0,
+      "keyword_total": 18,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 68.27469325065613,
+      "verdict_judge": "missed",
+      "judge_rationale": "Plan is a generic rollout/compatibility strategy; it never names the chunk utility extraction or any of the affected source files from the patch.",
+      "judge_captured": [],
+      "judge_missed": [
+        "No mention of extracting the array chunk utility into a dedicated module",
+        "No reference to the actual touched files in calendar, drive, contacts, or hooks",
+        "No evidence of the import-path refactor/tree-shaking issue"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/cloudflare",
+      "source": "danluu_postmortems",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 15.06025242805481,
+      "verdict_judge": "caught",
+      "judge_rationale": "It explicitly targets BGP prefix-order rollout, canarying one DC before all 19 datacenters, matching the Cloudflare config-order outage root cause.",
+      "judge_captured": [
+        "BGP prefix-order change",
+        "disable prefixes / advertised prefixes rollout",
+        "one PoP / one DC canary before wider rollout",
+        "avoid batching to all 19 datacenters",
+        "pause on routing divergence / traffic loss"
+      ],
+      "judge_missed": [
+        "The specific Cloudflare outage context is not named in the plan",
+        "The exact failure mode of incorrect ordering of disabled BGP advertised prefixes is not stated verbatim"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_original/scikit-learn__scikit-learn-10306",
+      "source": "swebench_original",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 2,
+      "files_overlap": 0,
+      "files_total": 9,
+      "keyword_hits": 3,
+      "keyword_total": 20,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 98.14810419082642,
+      "verdict_judge": "partial",
+      "judge_rationale": "It correctly targets FastICA/Birch warning-class fixes, but misses most canonical files and broader converge-related warnings across the patch.",
+      "judge_captured": [
+        "FastICA warning should become ConvergenceWarning",
+        "Birch warning should become ConvergenceWarning",
+        "Regression tests should be updated for warning class"
+      ],
+      "judge_missed": [
+        "affinity_propagation_.py, pls_.py, gpc.py, gpr.py, logistic.py, ransac.py are not mentioned",
+        "broader converge-related warning audit beyond FastICA/Birch is absent",
+        "root-cause signals like ConvergenceWarning usage across exceptions/warnings in fit convergence paths are not reflected"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/browserstack",
+      "source": "danluu_postmortems",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 0,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "no_ground_truth",
+      "elapsed_s": 14.026072025299072,
+      "verdict_judge": "caught",
+      "judge_rationale": "Plan directly targets the Shellshock-vulnerable prototype host and the secret-key exposure that caused the BrowserStack production breach.",
+      "judge_captured": [
+        "old prototype machine is explicitly identified",
+        "Shellshock/vulnerable host is quarantined and patched",
+        "secret keys are removed/purged from the prototype before exposure",
+        "Production credentials are kept unreachable from prototype hosts",
+        "prototype host is isolated/decommissioned"
+      ],
+      "judge_missed": [
+        "does not mention the post-mortem's security breach specifics beyond generic secret-key exposure",
+        "does not reference the exact production compromise path from the external incident report"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/amazon",
+      "source": "danluu_postmortems",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 1,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 14.080312490463257,
+      "verdict_judge": "caught",
+      "judge_rationale": "It directly names the ELB production state data maintenance mistake and the needed constraint to keep maintenance off live prod data.",
+      "judge_captured": [
+        "Elastic Load Balancer maintenance against production ELB state data",
+        "Constraint to not run maintenance directly on live production data",
+        "Rollout guard to validate non-production target before execution",
+        "Stakeholder specificity around BackendOwner/DataPlatform for ELB state maintenance"
+      ],
+      "judge_missed": [
+        "The post-mortem's AWS incident context is only implicit, not referenced by name",
+        "No explicit mention of the exact maintenance process being the triggering change"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/django__django-15503",
+      "source": "swebench_verified",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 1,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 3,
+      "keyword_total": 26,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 101.71320605278015,
+      "verdict_judge": "partial",
+      "judge_rationale": "It matches the JSONField numeric-key lookup bug and adds tests, but lacks the concrete django/db/models/fields/json.py SQL-path fix details.",
+      "judge_captured": [
+        "Fixes JSONField has_key/has_keys/has_any_keys for numeric-looking keys",
+        "Targets SQLite/MySQL/Oracle backend behavior",
+        "Adds regression tests for numeric keys in has_key/has_keys/has_any_keys"
+      ],
+      "judge_missed": [
+        "Canonical file django/db/models/fields/json.py",
+        "Root-cause SQL path logic around key_transform/rhs_key_transforms/haskeyorarrayindex",
+        "Specific as_sql / compile_json_path_final_key / compile_json_path edits"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_pro/instance_ansible__ansible-189fcb37f973f0b1d52b555728208eeb9a6fce83-v906c969b551b346ef54a2c0b41e04f632b7b73c2",
+      "source": "swebench_pro",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 2,
+      "keyword_hits": 0,
+      "keyword_total": 30,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 17.301010370254517,
+      "verdict_judge": "missed",
+      "judge_rationale": "The plan is a generic backend/data rollout; it never mentions the NIOS module or the fixedaddress/module_utils files, or the DHCP/IP/MAC arg spec changes.",
+      "judge_captured": [],
+      "judge_missed": [
+        "lib/ansible/modules/net_tools/nios/nios_fixed_address.py",
+        "lib/ansible/module_utils/net_tools/nios/api.py",
+        "new Ansible module for NIOS fixed address management",
+        "DHCP fixed address semantics (IPv4/IPv6, MAC, network, address, comment, extattrs, options)",
+        "argument spec/required fields like name, network, address, type, present"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_original/Qiskit__qiskit-7733",
+      "source": "swebench_original",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 4,
+      "keyword_hits": 0,
+      "keyword_total": 30,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 18.787699222564697,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures the optional-dependency/removal intent, but not the actual Qiskit files or solver/time-limit code changes in _csp_custom_solver.py and csp_layout.py.",
+      "judge_captured": [
+        "make csplayout import/API usable without hard hard dependency",
+        "remove python-constraint only after compatibility code and optional-install checks"
+      ],
+      "judge_missed": [
+        "specific changes in qiskit/transpiler/passes/layout/_csp_custom_solver.py",
+        "specific changes in qiskit/transpiler/passes/layout/csp_layout.py",
+        "optionals wiring in qiskit/utils/optionals.py",
+        "setup.py dependency metadata update",
+        "solver logic details like call_limit, time_limit, recursivebacktrackingsolver, getsolution"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "synthetic/mysql_5_8/api_breaking/regulated_fintech/medium/00001",
+      "source": "synthetic",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 5,
+      "expected_stakeholders_total": 5,
+      "verdict": "missed",
+      "elapsed_s": 18.291586875915527,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures versioned endpoints, backward compatibility, and SDK regen, but misses the MySQL 8-specific breaking issues and regulated-fintech/security stakeholder signals.",
+      "judge_captured": [
+        "versioned endpoints backward-compatible during DB cutover",
+        "dual-write/dual-read window until 8.0 responses match 5.7",
+        "do not remove deprecated response fields until SDK regen ships",
+        "schema checks for 5.7\u21928.0 incompatibilities"
+      ],
+      "judge_missed": [
+        "SHA-256 default auth plugin change",
+        "JSON_TABLE-related compatibility risk",
+        "removed query cache impact",
+        "PCI-DSS / regulated fintech security review constraints",
+        "expected stakeholders: security, product, SRE, backend, data"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/webkit-code-repository",
+      "source": "danluu_postmortems",
+      "winner": "01-safety-leaning",
+      "winner_family": "safety",
+      "n_plans": 3,
+      "smt_feasible_count": 2,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 1,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 48.3660352230072,
+      "verdict_judge": "caught",
+      "judge_rationale": "Plan directly addresses SHA-1 collision/dedup conflict risk by gating collision-test files, matching the repo outage root cause.",
+      "judge_captured": [
+        "SHA-1 collision rollout",
+        "collision-test files",
+        "deduped repository paths",
+        "checkout consistency failures",
+        "non-production replica / SVN mirror first"
+      ],
+      "judge_missed": [
+        "Specific WebKit/Subversion repository context is not named",
+        "The exact two colliding test files with different MD5 sums are not mentioned",
+        "No explicit reference to the recent public SHA-1 collision example"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/amazon",
+      "source": "danluu_postmortems",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 2,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 2,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 45.46575427055359,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures generator/PLC phase-check and backup power failover, but misses the broader AWS datacenter transformer/phase-loss root cause and affected services.",
+      "judge_captured": [
+        "phase-check logic for generators/PLC",
+        "backup generators failing to come online",
+        "need for validated failover before cutover"
+      ],
+      "judge_missed": [
+        "transformer failure / power-phase mismatch as the underlying incident trigger",
+        "AWS EU West impact scope",
+        "customer-facing services affected: EC2, EBS, RDS",
+        "real postmortem-specific hardware-power-failure context"
+      ],
+      "judge_confidence": "medium"
+    },
+    {
+      "id": "swebench_verified/django__django-14771",
+      "source": "swebench_verified",
+      "winner": "01-safety-leaning",
+      "winner_family": "safety",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 7,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 70.41581869125366,
+      "verdict_judge": "partial",
+      "judge_rationale": "It matches the reload/xoptions issue and mentions child-process spawn logic, but it\u2019s rollout/SRE-oriented rather than the concrete Django patch in autoreload.py.",
+      "judge_captured": [
+        "runserver/reloader behavior with -X options",
+        "reloader spawn logic before relying on xoptions in child process",
+        "preserve --noreload semantics"
+      ],
+      "judge_missed": [
+        "specific file django/utils/autoreload.py",
+        "CPython __xoptions / sys._xoptions implementation detail",
+        "patch-level edit to extend passing xoptions items to the reloader subprocess"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "synthetic/redis_5_7/schema_migration/enterprise/xlarge/00002",
+      "source": "synthetic",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 5,
+      "expected_stakeholders_hit": 5,
+      "expected_stakeholders_total": 5,
+      "verdict": "missed",
+      "elapsed_s": 19.670180320739746,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures Redis 7 migration with RESP2/dual-write/backfill/drop-old-later, but misses ACLs, Functions/Streams explicitly and stakeholder coverage beyond backend/data.",
+      "judge_captured": [
+        "Redis 5\u21927 upgrade via Redis 7-capable clients",
+        "RESP2-compatible client API during transition",
+        "dual-write window and old-read fallback",
+        "backfill before dropping old schema objects",
+        "data-platform backfill/cutover controls"
+      ],
+      "judge_missed": [
+        "explicit ACLs, Streams, Functions, RESP3 concerns",
+        "product, security, and SRE stakeholder involvement",
+        "enterprise change advisory board / approval-gate context"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/google",
+      "source": "danluu_postmortems",
+      "winner": "01-safety-leaning",
+      "winner_family": "safety",
+      "n_plans": 3,
+      "smt_feasible_count": 2,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 3,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 40.75458812713623,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures a latent infra-feature rollout behind canary for a Google FE/LB incident, but misses the specific config-error/root-cause constraint and downstream Europe impact.",
+      "judge_captured": [
+        "Google front-end load balancing / internal network load balancer context",
+        "New infrastructure feature rollout",
+        "Canary-before-fleet-wide rollout constraint",
+        "Need to avoid assuming new NLB behavior until validation",
+        "EU front-end LB cell mentioned"
+      ],
+      "judge_missed": [
+        "Specific config-error nature of the ground truth",
+        "The exact violated constraint from the postmortem/root cause",
+        "Impact to several downstream Google Cloud services in Europe",
+        "The latent issue triggered inside internal network load balancer code"
+      ],
+      "judge_confidence": "medium"
+    },
+    {
+      "id": "swebench_pro/instance_tutao__tutanota-fe240cbf7f0fdd6744ef7bef8cb61676bcdbb621-vc4e41fd0029957297843cb9dec4a25c7c756f029",
+      "source": "swebench_pro",
+      "winner": "01-safety-leaning",
+      "winner_family": "safety",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 9,
+      "keyword_hits": 0,
+      "keyword_total": 30,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 53.90685677528381,
+      "verdict_judge": "missed",
+      "judge_rationale": "Plan is generic rollout/safety guidance and never mentions calendar date validation, invalid event dates, or the touched files from the patch.",
+      "judge_captured": [],
+      "judge_missed": [
+        "Calendar event validation for invalid dates and start/end ordering",
+        "Specific files like DateUtils.ts, CalendarEventViewModel.ts, CalendarUtils.ts, CustomCacheHandler.ts",
+        "Import/creation consistency between manual events and ICS imports",
+        "Translation/validation-message changes"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_original/pytest-dev__pytest-6186",
+      "source": "swebench_original",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 2,
+      "files_overlap": 0,
+      "files_total": 2,
+      "keyword_hits": 8,
+      "keyword_total": 27,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 93.68859553337097,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures the core junit_family deprecation warning when unset and preserving explicit values, but adds unrelated rollout/process steps and misses concrete pytest internals/files.",
+      "judge_captured": [
+        "Warn only when config omits junit_family",
+        "Preserve current JUnit XML output unless junit_family is unset",
+        "Mentions junitxml warning behavior and deprecation"
+      ],
+      "judge_missed": [
+        "No reference to src/_pytest/deprecated.py or src/_pytest/junitxml.py",
+        "Misses pytest-specific mechanics like getini, issue_warning_captured, pytestdeprecationwarning, xunit1/xunit2 default handling",
+        "Adds unrelated release/rollout gating not in the patch ground truth"
+      ],
+      "judge_confidence": "high"
+    }
+  ]
+}
