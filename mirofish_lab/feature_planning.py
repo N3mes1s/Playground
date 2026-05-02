@@ -290,11 +290,10 @@ class FeatureUtilityWeights:
       slip_risk       — penalise timeline-risk fragility (longer slip cascades worse)
       conflicts       — penalise count of unresolved conflicts
     """
-    time_to_market: float = 0.30
-    polish: float = 0.25
-    slip_risk: float = 0.30
+    time_to_market: float = 0.15
+    polish: float = 0.20
+    slip_risk: float = 0.50
     conflicts: float = 0.15
-
     @classmethod
     def from_string(cls, s: str | None) -> "FeatureUtilityWeights":
         if not s:

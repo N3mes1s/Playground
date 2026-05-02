@@ -1,0 +1,41 @@
+{
+  "n_overlap": 48,
+  "agg_balanced": {
+    "n": 48,
+    "literal_caught_rate": 0.5208333333333334,
+    "literal_useful_rate": 1.0,
+    "judge_caught_rate": 0.375,
+    "judge_useful_rate": 1.0,
+    "winners": {
+      "mvp_fast": 32,
+      "standard": 16
+    },
+    "max_family_share": 0.6666666666666666,
+    "launch_strategy_ok_rate": 0.7083333333333334,
+    "security_step_compliance_rate": 0.9583333333333334
+  },
+  "agg_safe": {
+    "n": 48,
+    "literal_caught_rate": 0.5625,
+    "literal_useful_rate": 1.0,
+    "judge_caught_rate": 0.3958333333333333,
+    "judge_useful_rate": 1.0,
+    "winners": {
+      "standard": 28,
+      "mvp_fast": 18,
+      "robust_launch": 2
+    },
+    "max_family_share": 0.5833333333333334,
+    "launch_strategy_ok_rate": 0.7083333333333334,
+    "security_step_compliance_rate": 1.0
+  },
+  "judge_transitions": {
+    "partial -> partial": 21,
+    "caught -> partial": 8,
+    "caught -> caught": 10,
+    "partial -> caught": 9
+  },
+  "delta_judge_caught_pp": 2.0833333333333313,
+  "delta_max_family_share_pp": -8.333333333333325,
+  "delta_launch_strat_ok_pp": 0.0
+}
