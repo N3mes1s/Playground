@@ -35,8 +35,15 @@ from mirofish_lab.feature_planning import (
     FEATURE_SEQUENCERS,
     FEATURE_STAKEHOLDER_PERSONAS,
     FeatureConstraint,
+    FeatureUtilityWeights,
+    score_feature_plan,
+    utility_score,
 )
 from mirofish_lab.rollout import extract_json
+from mirofish_lab.timeline_chaos import (
+    TimelineChaosResult,
+    timeline_chaos_summary,
+)
 from mirofish_lab.verify_smt import (
     SMTVerificationResult,
     explain_infeasibility,
@@ -154,13 +161,62 @@ def _render_smt(smt: SMTVerificationResult) -> str:
     return f"_Z3 SMT: **INFEASIBLE** — {core}_"
 
 
-def run(intent_path: Path, *, out_md: Path | None = None) -> dict:
+def _render_timeline_chaos(tl: TimelineChaosResult) -> list[str]:
+    if tl.n_steps == 0:
+        return ["_Timeline chaos: empty plan_"]
+    cp = " -> ".join(tl.critical_path) if tl.critical_path else "(none)"
+    lines = [
+        f"_Timeline: base **{tl.base_total_days} days** (critical path "
+        f"{len(tl.critical_path)}/{tl.n_steps} steps), slip-fragility "
+        f"**{tl.slip_fragility:.2f}** (1.0 = every step is binding)._",
+        "",
+        f"- Critical path: `{cp}`",
+    ]
+    if tl.top_single_slips:
+        worst = tl.top_single_slips[0]
+        lines.append(
+            f"- Worst single slip (+{worst.slip_days}d): `{worst.step_ids[0]}` "
+            f"→ project +{worst.delta_days}d"
+        )
+    if tl.top_pair_slips:
+        worst = tl.top_pair_slips[0]
+        lines.append(
+            f"- Worst pair slip (+{worst.slip_days}d each): "
+            f"`{worst.step_ids[0]}` + `{worst.step_ids[1]}` "
+            f"→ project +{worst.delta_days}d"
+        )
+    # Steps with most slack (safest to slip)
+    slack_sorted = sorted(tl.slack_per_step.items(), key=lambda kv: -kv[1])
+    safest = [f"`{sid}` ({d}d)" for sid, d in slack_sorted[:3] if d > 0]
+    if safest:
+        lines.append(f"- Steps with most slack (safest to slip): {', '.join(safest)}")
+    return lines
+
+
+def run(
+    intent_path: Path,
+    *,
+    out_md: Path | None = None,
+    weights: FeatureUtilityWeights | None = None,
+) -> dict:
     cfg = load_config()
     intent = intent_path.read_text()
+    weights = weights or FeatureUtilityWeights()
 
     constraints = _gather_constraints(intent, cfg)
     plans = _generate_plans(intent, constraints, cfg)
     smt = _smt_verify_all(plans, constraints)
+    timeline = {label: timeline_chaos_summary(plan, plan_id=label)
+                for label, plan in plans.items()}
+    metrics = {
+        label: score_feature_plan(
+            plans[label], constraints,
+            slip_fragility=timeline[label].slip_fragility,
+        )
+        for label in plans
+    }
+    scores = {label: utility_score(metrics[label], weights)
+              for label in plans}
 
     # Render report.
     lines = [
@@ -184,11 +240,21 @@ def run(intent_path: Path, *, out_md: Path | None = None) -> dict:
     for label, plan in plans.items():
         s_total = _total_days(plan)
         lines += [
-            f"## Plan: `{label}` ({len(plan.get('steps', []))} steps, ~{s_total} days)",
+            f"## Plan: `{label}` ({len(plan.get('steps', []))} steps, "
+            f"~{s_total} sum-days, **{timeline[label].base_total_days} "
+            f"critical-path days**)",
             "",
             f"_{plan.get('summary','(no summary)')}_",
             "",
             _render_smt(smt[label]),
+            "",
+            *_render_timeline_chaos(timeline[label]),
+            "",
+            f"_Utility score: **{scores[label]:.3f}** "
+            f"(polish={metrics[label]['polish_coverage']:.0%}, "
+            f"days={metrics[label]['total_days']}, "
+            f"slip-fragility={metrics[label]['slip_fragility']:.2f}, "
+            f"conflicts={metrics[label]['n_conflicts']})_",
             "",
             _render_plan_table(plan),
             "",
@@ -207,20 +273,39 @@ def run(intent_path: Path, *, out_md: Path | None = None) -> dict:
                 lines.append(f"- {q}")
             lines.append("")
 
-    # Pick a winner: shortest feasible plan by total days. Simple for the spike.
-    feasible = [(label, _total_days(plans[label])) for label in plans
-                if smt[label].feasible]
-    if feasible:
-        winner = min(feasible, key=lambda kv: kv[1])[0]
+    # Pick a winner: highest utility score among Z3-feasible plans.
+    feasible_scored = [(label, scores[label]) for label in plans
+                       if smt[label].feasible]
+    if feasible_scored:
+        winner = max(feasible_scored, key=lambda kv: kv[1])[0]
         lines += [
             "## Recommendation",
             "",
-            f"**Winner:** `{winner}` — shortest feasible by estimated days "
-            f"({_total_days(plans[winner])} days).",
+            f"**Winner:** `{winner}` — highest utility score "
+            f"({scores[winner]:.3f}) under weights "
+            f"`time_to_market={weights.time_to_market:.2f}, "
+            f"polish={weights.polish:.2f}, "
+            f"slip_risk={weights.slip_risk:.2f}, "
+            f"conflicts={weights.conflicts:.2f}`.",
             "",
-            "_Spike heuristic: shortest feasible. Production version would "
-            "use Pareto utility weights (polish vs speed vs risk) like cli_pro._",
+            "| Plan | Utility | Polish | Days (cp) | Slip-fragility | Conflicts |",
+            "|---|---|---|---|---|---|",
         ]
+        for label in plans:
+            m = metrics[label]
+            lines.append(
+                f"| `{label}` | {scores[label]:.3f} | "
+                f"{m['polish_coverage']:.0%} | "
+                f"{timeline[label].base_total_days} | "
+                f"{m['slip_fragility']:.2f} | "
+                f"{m['n_conflicts']} |"
+            )
+        lines.append("")
+        lines.append(
+            "_Use `--prefer fast|polished|safe|balanced` or "
+            "`--utility 'time_to_market=0.5,polish=0.2,slip_risk=0.2,conflicts=0.1'` "
+            "to override._"
+        )
     else:
         lines += ["## Recommendation", "", "_No feasible plan; review conflicts._"]
 
@@ -236,7 +321,29 @@ def run(intent_path: Path, *, out_md: Path | None = None) -> dict:
                         "n_steps": r.n_steps, "notes": r.notes,
                         "unsat_core": list(r.unsat_core)}
                 for label, r in smt.items()},
-        "winner": winner if feasible else None,
+        "timeline": {label: {
+            "base_total_days": tl.base_total_days,
+            "critical_path": list(tl.critical_path),
+            "slack_per_step": tl.slack_per_step,
+            "slip_fragility": tl.slip_fragility,
+            "top_single_slips": [
+                {"step_ids": list(e.step_ids), "slip_days": e.slip_days,
+                 "delta_days": e.delta_days, "new_total": e.new_total}
+                for e in tl.top_single_slips],
+            "top_pair_slips": [
+                {"step_ids": list(e.step_ids), "slip_days": e.slip_days,
+                 "delta_days": e.delta_days, "new_total": e.new_total}
+                for e in tl.top_pair_slips],
+        } for label, tl in timeline.items()},
+        "metrics": metrics,
+        "scores": scores,
+        "weights": {
+            "time_to_market": weights.time_to_market,
+            "polish": weights.polish,
+            "slip_risk": weights.slip_risk,
+            "conflicts": weights.conflicts,
+        },
+        "winner": winner if feasible_scored else None,
     }
     out_md.with_suffix(".json").write_text(json.dumps(sidecar, indent=2))
     print(f"\n[done] wrote {out_md}", file=sys.stderr)
@@ -245,17 +352,35 @@ def run(intent_path: Path, *, out_md: Path | None = None) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Feature plan synthesiser — multi-stakeholder + Z3 verified"
+        description="Feature plan synthesiser — multi-stakeholder + Z3 + timeline-risk"
     )
     parser.add_argument("intent_path", type=Path)
     parser.add_argument("--out", type=Path, default=None)
+    parser.add_argument(
+        "--prefer", choices=["fast", "polished", "safe", "balanced"],
+        default=None,
+        help="Named utility-weight preset for the recommendation.",
+    )
+    parser.add_argument(
+        "--utility", default=None,
+        help="Custom utility weights, e.g. "
+             "'time_to_market=0.5,polish=0.2,slip_risk=0.2,conflicts=0.1'. "
+             "Overrides --prefer.",
+    )
     args = parser.parse_args(argv)
 
     if not args.intent_path.exists():
         print(f"intent not found: {args.intent_path}", file=sys.stderr)
         return 1
 
-    run(args.intent_path, out_md=args.out)
+    if args.utility:
+        weights = FeatureUtilityWeights.from_string(args.utility)
+    elif args.prefer:
+        weights = FeatureUtilityWeights.preset(args.prefer)
+    else:
+        weights = FeatureUtilityWeights()
+
+    run(args.intent_path, out_md=args.out, weights=weights)
     return 0
 
 

@@ -17,3 +17,4 @@ vulnllm-analyzer/sliver-src/
 # Transient autocalibrate / GEPA backup files (created during in-place patching)
 *.gepa_bak
 *.autocal_bak
+.bench_runs_feature/

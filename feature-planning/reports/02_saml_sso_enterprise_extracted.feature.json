@@ -1,0 +1,1356 @@
+{
+  "intent_path": "feature-planning/intents/02_saml_sso_enterprise_extracted.md",
+  "constraints": [
+    {
+      "axis": "scope",
+      "summary": "Ship SAML 2.0 only for Enterprise tier",
+      "scope": "Authentication methods and plan eligibility",
+      "prereq": "none",
+      "blocking": true,
+      "acceptance": "Enterprise workspaces can use SAML 2.0; no non-Enterprise exposure and no OIDC/other SSO added in this release.",
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "scope",
+      "summary": "Admins can self-serve SAML setup in app",
+      "scope": "Workspace admin configuration flow",
+      "prereq": "none",
+      "blocking": true,
+      "acceptance": "A workspace admin can complete SAML configuration without support assistance using the in-product admin experience.",
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "scope",
+      "summary": "Support IdP metadata via URL or XML upload",
+      "scope": "SAML metadata ingestion",
+      "prereq": "none",
+      "blocking": true,
+      "acceptance": "The launch plan covers SAML metadata entry through at least one supported admin path; if both URL and XML are in scope, both are explicitly listed as launch criteria.",
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "scope",
+      "summary": "Enable just-in-time provisioning on first login",
+      "scope": "User creation and onboarding on SSO sign-in",
+      "prereq": "none",
+      "blocking": true,
+      "acceptance": "A new user is created automatically on first successful SAML login for a configured workspace.",
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "scope",
+      "summary": "Map groups from IdP attributes to roles",
+      "scope": "Authorization mapping from SAML assertions",
+      "prereq": "none",
+      "blocking": true,
+      "acceptance": "Workspace admins can define group-to-role mappings using IdP attributes and users receive the expected role on SSO login.",
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "scope",
+      "summary": "Force SSO by disabling email/password per workspace",
+      "scope": "Workspace login policy",
+      "prereq": "none",
+      "blocking": true,
+      "acceptance": "An admin can turn on forced SSO so email/password login is disabled for the workspace, with no unsupported exceptions at launch.",
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "scope",
+      "summary": "Record SSO config changes and sessions in audit log",
+      "scope": "Audit events for SAML setup and usage",
+      "prereq": "none",
+      "blocking": true,
+      "acceptance": "Audit logs include workspace SAML configuration changes and SSO session events with parity to email/password session visibility.",
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "scope",
+      "summary": "Verify Okta, OneLogin, and Azure AD as primary IdPs",
+      "scope": "Launch-supported identity provider coverage",
+      "prereq": "none",
+      "blocking": true,
+      "acceptance": "The launch plan explicitly includes successful verification of SAML sign-in with Okta, OneLogin, and Azure AD.",
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "gtm",
+      "summary": "Align launch timing to GA or late beta by Oct 28",
+      "scope": "Release announcement and sales readiness",
+      "prereq": "window:by Oct 28",
+      "blocking": true,
+      "acceptance": "The release is either GA or late beta by Oct 28 and can be announced for Q4 sales kickoff.",
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "gtm",
+      "summary": "Launch definition must be explicit before announcement",
+      "scope": "Readiness gate for external comms",
+      "prereq": "approval:product",
+      "blocking": true,
+      "acceptance": "The plan states concretely whether launch means GA or late beta and what user segment is covered at release.",
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "ux",
+      "summary": "Ship self-serve SAML admin flow with design sign-off first",
+      "scope": "Workspace admin UI for SAML setup, edit, and enable/disable",
+      "prereq": "approval:design",
+      "blocking": true,
+      "acceptance": "Approved design spec exists for all admin states before frontend build starts",
+      "owner": "Designer"
+    },
+    {
+      "axis": "ux",
+      "summary": "Cover setup, empty, loading, and error states in the design spec",
+      "scope": "SAML metadata URL/XML upload, JIT provisioning, group mapping, forced SSO",
+      "prereq": "approval:design",
+      "blocking": true,
+      "acceptance": "Design includes primary, empty, validation, failure, and success states for each admin step",
+      "owner": "Designer"
+    },
+    {
+      "axis": "ux",
+      "summary": "Meet WCAG AA for all SAML admin and login experiences",
+      "scope": "Admin configuration UI, SSO enable/disable controls, login and error screens",
+      "prereq": "review:accessibility",
+      "blocking": true,
+      "acceptance": "Accessibility review confirms keyboard support, visible focus, contrast AA, labels, and screen-reader text",
+      "owner": "Designer"
+    },
+    {
+      "axis": "ux",
+      "summary": "Design and QA verify built SAML flows before launch",
+      "scope": "End-to-end admin setup, first login provisioning, forced SSO, and error recovery",
+      "prereq": "wait_for:staging_build",
+      "blocking": true,
+      "acceptance": "UX QA sign-off completed on staging for the intended IdPs and core flows",
+      "owner": "Designer"
+    },
+    {
+      "axis": "eng",
+      "summary": "Freeze SAML auth API contract before client implementation",
+      "scope": "SAML configuration, login, provisioning, role-mapping, forced-SSO endpoints and payloads",
+      "prereq": "wait_for:API_contract_spec",
+      "blocking": true,
+      "acceptance": "An approved contract spec exists and no client work starts before it is versioned and signed off",
+      "owner": "EngLead"
+    },
+    {
+      "axis": "eng",
+      "summary": "Resolve identity model for second SSO class before build",
+      "scope": "User identity, workspace SSO type, and linkage between SAML and existing OIDC/Google auth",
+      "prereq": "wait_for:identity_model_decision",
+      "blocking": true,
+      "acceptance": "Decision recorded on extending identity model vs enforcing one SSO type per workspace, with implementation path documented",
+      "owner": "EngLead"
+    },
+    {
+      "axis": "eng",
+      "summary": "Plan platform/library upgrade dependency before coding",
+      "scope": "SAML library, auth middleware, XML parsing, signature validation, and metadata ingestion stack",
+      "prereq": "wait_for:dependency_upgrade_assessment",
+      "blocking": true,
+      "acceptance": "Upgrade matrix lists required library/platform changes, versions, and sequencing with no unresolved blockers",
+      "owner": "EngLead"
+    },
+    {
+      "axis": "eng",
+      "summary": "Instrument feature flags and rollout telemetry from day one",
+      "scope": "SAML enablement, forced-SSO mode, JIT provisioning, and IdP group-to-role mapping",
+      "prereq": "none",
+      "blocking": true,
+      "acceptance": "Feature flags and telemetry hooks exist in the initial implementation plan, including rollout and kill-switch events",
+      "owner": "EngLead"
+    },
+    {
+      "axis": "eng",
+      "summary": "Include second-engineer review on auth and audit-log changes",
+      "scope": "SAML auth flow, session handling, workspace config mutations, and audit logging",
+      "prereq": "review:second_engineer",
+      "blocking": true,
+      "acceptance": "PRs touching auth/audit paths have documented review approval from a second engineer before merge",
+      "owner": "EngLead"
+    },
+    {
+      "axis": "eng",
+      "summary": "Explicitly capture technical-debt tradeoffs for SSO parity work",
+      "scope": "Temporary compatibility shims, one-SSO-per-workspace assumptions, and audit-log schema extensions",
+      "prereq": "approval:eng",
+      "blocking": false,
+      "acceptance": "Plan lists each debt item, rationale, and a follow-up owner/date for removal or hardening",
+      "owner": "EngLead"
+    },
+    {
+      "axis": "quality",
+      "summary": "Test plan must cover SAML happy path and core edge cases",
+      "scope": "SAML login, JIT provisioning, group-role mapping, forced SSO, audit logs",
+      "prereq": "wait_for:test_plan",
+      "blocking": true,
+      "acceptance": "Reviewed test plan includes happy-path, negative-path, and regression cases for each in-scope flow",
+      "owner": "QA"
+    },
+    {
+      "axis": "quality",
+      "summary": "Automated coverage required for SAML config and auth paths",
+      "scope": "Admin SAML setup via URL/XML, first-login provisioning, IdP group mapping, SSO disable-email/password",
+      "prereq": "wait_for:automation_suite",
+      "blocking": true,
+      "acceptance": "Automated tests pass for successful logins, invalid metadata, provisioning, role mapping, and forced-SSO enforcement",
+      "owner": "QA"
+    },
+    {
+      "axis": "quality",
+      "summary": "Regression suite must stay green before launch",
+      "scope": "Auth middleware, existing Google SSO behavior, workspace auth settings, audit logging",
+      "prereq": "none",
+      "blocking": true,
+      "acceptance": "Full regression suite passes with no auth or audit-log regressions introduced by SAML changes",
+      "owner": "QA"
+    },
+    {
+      "axis": "quality",
+      "summary": "Manual QA on staging must validate primary IdPs",
+      "scope": "Okta, OneLogin, and Azure AD end-to-end SAML flows on staging",
+      "prereq": "wait_for:staging_build",
+      "blocking": true,
+      "acceptance": "QA sign-off recorded after successful staging validation with all three primary IdPs",
+      "owner": "QA"
+    },
+    {
+      "axis": "quality",
+      "summary": "Bug bash with stakeholders required before GA",
+      "scope": "Enterprise SAML end-to-end experience and audit logging behavior",
+      "prereq": "window:pre_GA_bug_bash",
+      "blocking": false,
+      "acceptance": "Stakeholder bug-bash completed and any critical findings triaged before GA",
+      "owner": "QA"
+    },
+    {
+      "axis": "quality",
+      "summary": "SOC2-relevant audit evidence must be verified",
+      "scope": "SAML config changes, SSO sessions, and forced-SSO events in audit logs",
+      "prereq": "review:security",
+      "blocking": true,
+      "acceptance": "Audit log entries are verified for config changes and session events, with evidence captured for review",
+      "owner": "QA"
+    },
+    {
+      "axis": "security",
+      "summary": "Complete SAML threat model before implementation starts",
+      "scope": "SAML auth flow, JIT provisioning, forced SSO, group-role mapping, metadata import",
+      "prereq": "wait_for:threat_model",
+      "blocking": true,
+      "acceptance": "Reviewed threat model exists covering authn/authz, replay, account takeover, and metadata abuse cases",
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Review auth/authz model changes for multi-IdP support",
+      "scope": "Identity model changes caused by adding SAML alongside existing OIDC/Google SSO behavior",
+      "prereq": "review:security",
+      "blocking": true,
+      "acceptance": "Security review approves the identity-linking and workspace-SSO-type enforcement design",
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Audit JIT provisioning for account creation and linking risks",
+      "scope": "First-login provisioning, user identity mapping, and email/attribute-based account matching",
+      "prereq": "review:security",
+      "blocking": true,
+      "acceptance": "Design documents controls preventing unauthorized account takeover, duplicate accounts, and unsafe auto-linking",
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Audit IdP attribute group mapping for privilege escalation",
+      "scope": "Group-to-role mapping from SAML assertions and role assignment logic",
+      "prereq": "review:security",
+      "blocking": true,
+      "acceptance": "Security signs off that role mapping is allowlisted, validated, and cannot grant roles outside policy",
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Ensure forced SSO cannot create auth bypass exceptions",
+      "scope": "Workspace setting that disables email/password and any fallback or recovery paths",
+      "prereq": "review:security",
+      "blocking": true,
+      "acceptance": "Confirmed behavior shows no password-login bypass, with only approved admin recovery path if any",
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Log SSO config changes and sessions with audit parity",
+      "scope": "SAML metadata updates, enable/disable actions, forced SSO changes, SSO logins, and provisioning events",
+      "prereq": "wait_for:audit_log_schema_update",
+      "blocking": true,
+      "acceptance": "Audit log design covers all new user actions and workspace config changes with actor, target, and timestamp",
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Review PII and sensitive SAML assertion handling",
+      "scope": "SAML assertions, NameID, email, groups, metadata XML/URL storage, logs, and error handling",
+      "prereq": "review:security",
+      "blocking": true,
+      "acceptance": "PII inventory completed and logging/storage rules defined to avoid persisting unnecessary assertion data",
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Obtain SOC2 sign-off lead time for launch readiness",
+      "scope": "Enterprise SAML feature release plan and controls",
+      "prereq": "approval:compliance",
+      "blocking": true,
+      "acceptance": "Compliance/SOC2 reviewer explicitly signs off before launch window",
+      "owner": "Security"
+    },
+    {
+      "axis": "support",
+      "summary": "Support docs must cover SAML setup, login, and troubleshooting",
+      "scope": "Enterprise SAML admin configuration, first-login JIT provisioning, group-role mapping, forced SSO, and audit log visibility",
+      "prereq": "wait_for:feature_spec",
+      "blocking": true,
+      "acceptance": "Help center articles and an internal runbook exist for setup, common errors, recovery steps, and where to verify audit log entries",
+      "owner": "GTM"
+    },
+    {
+      "axis": "support",
+      "summary": "Support team must be trained before launch",
+      "scope": "Tickets related to SAML metadata upload/URL setup, IdP attribute mapping, forced SSO lockout, and SSO audit logs",
+      "prereq": "window:pre-launch_training",
+      "blocking": true,
+      "acceptance": "Support has completed a live training session and has a recorded Q&A / escalation guide",
+      "owner": "GTM"
+    },
+    {
+      "axis": "gtm",
+      "summary": "Sales enablement must explain enterprise SAML value and limits",
+      "scope": "Enterprise positioning for SAML SSO, JIT provisioning, group mapping, forced SSO, and tested IdPs",
+      "prereq": "wait_for:launch_positioning",
+      "blocking": false,
+      "acceptance": "Sales deck, talk track, and objection-handling notes are published for enterprise reps and SEs",
+      "owner": "GTM"
+    },
+    {
+      "axis": "gtm",
+      "summary": "Launch-day comms plan must be approved and scheduled",
+      "scope": "External announcement, in-app / email comms, and customer-facing launch notes for Enterprise SAML availability",
+      "prereq": "approval:marketing",
+      "blocking": true,
+      "acceptance": "Comms calendar, channels, and draft messaging are approved with a send plan for launch day",
+      "owner": "GTM"
+    },
+    {
+      "axis": "support",
+      "summary": "Week-1 user feedback channel must be established",
+      "scope": "Early Enterprise adopters of SAML configuration and first sign-in flows",
+      "prereq": "window:week_1_post_launch",
+      "blocking": false,
+      "acceptance": "A monitored feedback channel exists with an owner, intake process, and escalation path for early issues",
+      "owner": "GTM"
+    }
+  ],
+  "plans": {
+    "mvp_fast": {
+      "summary": "Enterprise-only SAML 2.0 beta with self-serve admin setup, JIT, group-role mapping, forced SSO, audit logs, and 3 primary IdP validations.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Decide the minimal identity model and rollout posture: enforce one SSO type per workspace for launch, and gate SAML behind feature flags with kill switches.",
+          "owner": "EngLead",
+          "depends_on": [],
+          "success_criterion": "Identity decision is documented and approved; feature-flag plan exists for SAML enablement, forced SSO, JIT, and group mapping.",
+          "definition_of_done": "Approved decision record and flag plan checked into the project spec; no client implementation starts before approval.",
+          "instrumentation": "decision_log:identity_model; feature_flag_registry:saml_enabled, forced_sso, jit_provisioning, group_mapping",
+          "launch_strategy": "dark_launch",
+          "estimated_days": 2
+        },
+        {
+          "id": "S2",
+          "action": "Complete security threat modeling and compliance review for SAML authn/authz, JIT provisioning, forced SSO, group-role mapping, and PII handling.",
+          "owner": "Security",
+          "depends_on": [
+            "S1"
+          ],
+          "success_criterion": "Reviewed threat model and SOC2 sign-off exist for the launch design.",
+          "definition_of_done": "Threat model document is approved; compliance reviewer signs off before implementation proceeds to release.",
+          "instrumentation": "security_review_approved; threat_model_closed; compliance_signoff_record",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 3
+        },
+        {
+          "id": "S3",
+          "action": "Freeze the SAML API contract and audit-log schema extension for workspace config changes, SSO logins, and provisioning events.",
+          "owner": "EngLead",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "success_criterion": "Versioned contract covers metadata ingest, login, JIT, role mapping, forced SSO, and audit events.",
+          "definition_of_done": "Approved API spec exists; audit-log schema changes are reviewed and ready for implementation.",
+          "instrumentation": "api_contract_versioned;saml_audit_schema_updated",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 2
+        },
+        {
+          "id": "S4",
+          "action": "Build backend SAML core: metadata URL/XML ingestion, assertion validation, first-login provisioning, group-to-role mapping, forced SSO enforcement, and audit event emission.",
+          "owner": "BackendEng",
+          "depends_on": [
+            "S3"
+          ],
+          "success_criterion": "Backend endpoints and auth flow work for the core launch scenarios behind flags.",
+          "definition_of_done": "Unit/integration tests pass for valid/invalid metadata, JIT creation, role mapping, forced SSO lockout, and audit writes.",
+          "instrumentation": "backend_saml_login_success; audit_event_emitted;saml_feature_flag_hit",
+          "launch_strategy": "feature_flag",
+          "estimated_days": 8
+        },
+        {
+          "id": "S5",
+          "action": "Build the self-serve Enterprise admin UI for SAML config with the smallest set of launchable states: metadata URL or XML upload, attribute mapping, enable/disable, and forced SSO toggle.",
+          "owner": "FrontendEng",
+          "depends_on": [
+            "S3",
+            "S4"
+          ],
+          "success_criterion": "An admin can configure SAML end-to-end in-app without support assistance.",
+          "definition_of_done": "UI is merged behind flags and all primary states have working validation, success, and error handling on staging.",
+          "instrumentation": "admin_saml_config_saved; admin_ui_saml_flow_started; admin_ui_validation_error",
+          "launch_strategy": "feature_flag",
+          "estimated_days": 6
+        },
+        {
+          "id": "S6",
+          "action": "Implement test automation and regression coverage for SAML happy path, negative cases, existing Google SSO, and audit-log parity.",
+          "owner": "QA",
+          "depends_on": [
+            "S4",
+            "S5"
+          ],
+          "success_criterion": "Automated tests pass for the core flows and no regressions are introduced in existing auth paths.",
+          "definition_of_done": "CI includes passing automated tests for login, invalid metadata, provisioning, role mapping, forced SSO, and audit events.",
+          "instrumentation": "ci_saml_suite_green; regression_suite_green; audit_parity_test_passed",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 4
+        },
+        {
+          "id": "S7",
+          "action": "Run staging validation with Okta, OneLogin, and Azure AD; complete UX/accessibility review of the core admin flow and login errors only.",
+          "owner": "QA",
+          "depends_on": [
+            "S5",
+            "S6"
+          ],
+          "success_criterion": "All three IdPs authenticate successfully on staging and the critical admin/login flows are accepted.",
+          "definition_of_done": "Staging sign-off recorded with evidence for the three IdPs; accessibility review covers keyboard, focus, labels, and error text on the shipped surfaces.",
+          "instrumentation": "staging_idp_verified; ux_qa_signoff; a11y_smoke_passed",
+          "launch_strategy": "beta_program",
+          "estimated_days": 5
+        },
+        {
+          "id": "S8",
+          "action": "Prepare launch-readiness materials: support docs/runbook, sales notes, marketing approval, and a beta feedback channel for early adopters.",
+          "owner": "GTM",
+          "depends_on": [
+            "S5",
+            "S7"
+          ],
+          "success_criterion": "Support and launch comms are ready for a late-beta announcement.",
+          "definition_of_done": "Help center article, internal runbook, training notes, and approved launch-day comms are published; feedback channel is staffed.",
+          "instrumentation": "help_center_published; support_training_complete; marketing_approval_recorded; feedback_channel_live",
+          "launch_strategy": "beta_program",
+          "estimated_days": 4
+        }
+      ],
+      "open_questions": [
+        "Is launch target late-beta or GA by Oct 28; this plan assumes late-beta for faster customer feedback.",
+        "Does forced SSO need any recovery exceptions for admins, or is it truly no-exception at launch?",
+        "Are both metadata URL and XML upload required at launch, or can one be the initial launch path?",
+        "Should IdP-initiated SAML only be supported at launch, with any SP-initiated/custom-domain behavior deferred?",
+        "What are the exact compliance evidence artifacts required for SOC2 sign-off?",
+        "v1.1 follow-up: full WCAG AA audit, exhaustive analytics, localization/i18n, and richer launch-state polish.",
+        "v1.1 follow-up: whether to support multiple SSO types per workspace instead of the one-SSO-per-workspace launch assumption."
+      ],
+      "conflicts": [
+        {
+          "between": [
+            "ProductPM",
+            "EngLead"
+          ],
+          "issue": "Product requires SAML alongside existing auth scope, while Eng flags a second IdP class conflict with the current single-OIDC identity model. Resolved by launching with one SSO type per workspace and feature-flagging SAML to keep the identity model reversible."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "Designer"
+          ],
+          "issue": "Product wants launchable self-serve admin setup, while Designer requires full design sign-off and complete state coverage before frontend build. Resolved by limiting the launch UI to the minimal admin states needed for setup and doing design approval first on only those states."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "Security"
+          ],
+          "issue": "Product wants SAML launch scope, while Security requires threat modeling, auth/authz review, JIT risk review, forced-SSO bypass review, PII review, and SOC2 sign-off before launch. Resolved by making security gating a prerequisite and choosing late-beta rather than GA to shorten feedback loop while still meeting security review."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "QA"
+          ],
+          "issue": "Product wants the feature shipped by Oct 28, while QA requires full regression, automation, staging IdP validation, audit evidence, and bug bash before GA. Resolved by treating launch as late-beta with automated coverage and staging verification, deferring nonessential polish and keeping the release reversible behind flags."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "GTM"
+          ],
+          "issue": "Product wants an external announcement-ready launch, while GTM requires support docs, training, and approved comms before launch. Resolved by sequencing launch-readiness work after the core staging pass and using late-beta announcement timing instead of full GA."
+        },
+        {
+          "between": [
+            "EngLead",
+            "Security"
+          ],
+          "issue": "Eng needs an identity-model decision and contract freeze, while Security requires review of multi-IdP support, JIT, forced SSO, and PII handling. Resolved by making the identity decision explicit up front and constraining launch to a single SSO type per workspace to reduce attack surface."
+        },
+        {
+          "between": [
+            "EngLead",
+            "QA"
+          ],
+          "issue": "Eng wants feature flags and telemetry from day one, while QA requires a complete automation suite and regression stability before launch. Resolved by implementing flags and telemetry in the initial backend work and validating them through the automated test suite before beta."
+        },
+        {
+          "between": [
+            "Designer",
+            "QA"
+          ],
+          "issue": "Designer requests WCAG AA for all SAML admin and login experiences, while QA needs staging validation and test coverage first. Resolved by limiting launch accessibility validation to the shipped surfaces in the beta and deferring a full accessibility audit to v1.1.",
+          "issue_resolution": "Core keyboard/focus/label checks are included in staging QA; exhaustive accessibility audit is deferred."
+        }
+      ]
+    },
+    "standard": {
+      "summary": "Enterprise SAML 2.0 with self-serve admin setup, JIT provisioning, group-role mapping, forced SSO, audit logs, and tested IdPs; rollout via gradual rollout.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Run SAML threat modeling, security review of identity-linking options, and decide whether to extend the identity model or enforce one SSO type per workspace; capture audit-log schema needs for workspace config changes.",
+          "owner": "Security",
+          "depends_on": [],
+          "success_criterion": "Reviewed threat model and security-approved identity/authz approach are documented, including audit-log schema requirements.",
+          "definition_of_done": "Threat model approved; security review complete; identity-model decision recorded; audit-log schema gaps for workspace config changes identified.",
+          "instrumentation": "Threat model doc revision, security sign-off record, decision log for identity model, audit-log schema change ticket.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 5
+        },
+        {
+          "id": "S2",
+          "action": "Produce the approved SAML API contract, upgrade assessment, and backend implementation plan for metadata ingestion, login, provisioning, role mapping, forced SSO, and audit events.",
+          "owner": "EngLead",
+          "depends_on": [
+            "S1"
+          ],
+          "success_criterion": "Versioned contract spec and dependency-upgrade plan are approved for implementation.",
+          "definition_of_done": "API contract signed off; dependency matrix completed; implementation sequencing agreed.",
+          "instrumentation": "Contract version tag, architecture decision record, dependency upgrade matrix.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 4
+        },
+        {
+          "id": "S3",
+          "action": "Design self-serve SAML admin flows, including metadata via URL/XML upload, JIT provisioning settings, group-role mapping, forced SSO controls, and all empty/loading/error states.",
+          "owner": "Designer",
+          "depends_on": [
+            "S2"
+          ],
+          "success_criterion": "Design spec for all admin and login states is approved.",
+          "definition_of_done": "Design sign-off completed; accessibility considerations documented; UX states cover setup, validation, failure, and success.",
+          "instrumentation": "Approved design spec, accessibility checklist in design artifacts.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 5
+        },
+        {
+          "id": "S4",
+          "action": "Build backend SAML foundation: metadata ingestion, signature validation, first-login JIT provisioning, IdP group-to-role mapping, forced SSO enforcement, and audit-log events for config changes and SSO sessions.",
+          "owner": "BackendEng",
+          "depends_on": [
+            "S2",
+            "S1"
+          ],
+          "success_criterion": "Backend services support end-to-end SAML auth and emit required audit events.",
+          "definition_of_done": "Unit/integration tests pass; audit events emitted for config changes and sessions; feature flags wired; second-engineer review approved.",
+          "instrumentation": "Backend test suite results, audit log event stream, feature-flag metrics, PR review records.",
+          "launch_strategy": "dark_launch",
+          "estimated_days": 10
+        },
+        {
+          "id": "S5",
+          "action": "Implement the self-serve admin UI for SAML configuration, including metadata entry, JIT provisioning, group mapping, and forced SSO controls.",
+          "owner": "FrontendEng",
+          "depends_on": [
+            "S3",
+            "S4"
+          ],
+          "success_criterion": "Admins can configure SAML end-to-end in the product UI.",
+          "definition_of_done": "Frontend merged; contract tests pass; design-approved states implemented; second-engineer review approved for auth-sensitive UI paths.",
+          "instrumentation": "UI E2E test results, feature-flag exposure metrics, completed admin flows in staging.",
+          "launch_strategy": "feature_flag",
+          "estimated_days": 8
+        },
+        {
+          "id": "S6",
+          "action": "Update audit-log schema and pipelines to record SAML configuration changes, forced-SSO changes, provisioning events, and SSO sessions with parity to email/password session visibility.",
+          "owner": "DataEng",
+          "depends_on": [
+            "S1",
+            "S4"
+          ],
+          "success_criterion": "Audit logs can store and display all required SSO-related events.",
+          "definition_of_done": "Schema migration deployed; event coverage verified; security/QA evidence captured for SOC2-relevant audit parity.",
+          "instrumentation": "Audit-log event records, schema migration status, log query results for SSO events.",
+          "launch_strategy": "dark_launch",
+          "estimated_days": 4
+        },
+        {
+          "id": "S7",
+          "action": "Create automated test coverage and a reviewed test plan for SAML happy paths, negative cases, invalid metadata, JIT provisioning, group mapping, forced SSO, and audit-log assertions.",
+          "owner": "QA",
+          "depends_on": [
+            "S4",
+            "S5",
+            "S6"
+          ],
+          "success_criterion": "Automated tests and test plan cover all in-scope flows and pass in CI.",
+          "definition_of_done": "Reviewed QA plan approved; automated suite green; regression suite remains green; audit-log checks included.",
+          "instrumentation": "CI test reports, regression suite status, test-plan approval record.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 6
+        },
+        {
+          "id": "S8",
+          "action": "Validate the staging build manually with Okta, OneLogin, and Azure AD, then run design QA on the built flows for setup, first login, forced SSO, and error recovery.",
+          "owner": "Designer",
+          "depends_on": [
+            "S5",
+            "S7"
+          ],
+          "success_criterion": "Design QA sign-off on staging for the intended IdPs and core user flows.",
+          "definition_of_done": "Single design-QA pass completed; staging sign-off recorded; accessibility checks confirmed on implemented screens.",
+          "instrumentation": "Staging QA checklist, sign-off note, IdP test evidence screenshots/logs.",
+          "launch_strategy": "beta_program",
+          "estimated_days": 5
+        },
+        {
+          "id": "S9",
+          "action": "Complete security review of the implemented auth/authz changes, JIT provisioning, forced SSO, group mapping, and PII/SAML assertion handling; verify audit evidence for SOC2 readiness.",
+          "owner": "Security",
+          "depends_on": [
+            "S6",
+            "S8"
+          ],
+          "success_criterion": "Security approval and SOC2 evidence verification are complete before launch.",
+          "definition_of_done": "Single security review complete; risks closed or accepted; audit evidence captured; compliance sign-off obtained.",
+          "instrumentation": "Security review ticket, compliance approval record, stored audit evidence package.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 4
+        },
+        {
+          "id": "S10",
+          "action": "Publish support docs, internal runbook, and training for SAML setup, troubleshooting, forced SSO recovery, and audit-log verification; prepare launch communications and enable gradual rollout.",
+          "owner": "GTM",
+          "depends_on": [
+            "S3",
+            "S8",
+            "S9"
+          ],
+          "success_criterion": "Support and launch readiness materials are approved and teams are trained.",
+          "definition_of_done": "Help-center docs published; support training completed; launch-day comms approved; rollout plan defined.",
+          "instrumentation": "Doc publish links, training attendance record, approved comms calendar, rollout checklist.",
+          "launch_strategy": "gradual_rollout",
+          "estimated_days": 4
+        },
+        {
+          "id": "S11",
+          "action": "Roll out SAML to Enterprise via gradual rollout with feature flags, monitor auth success, audit-log completeness, and rollback signals, then expand to full Enterprise availability after metrics are healthy.",
+          "owner": "BackendEng",
+          "depends_on": [
+            "S10",
+            "S7",
+            "S9"
+          ],
+          "success_criterion": "Enterprise SAML is live for the rollout cohort and metrics show stable auth and audit behavior.",
+          "definition_of_done": "Gradual rollout started; success/error metrics monitored; kill switch verified; rollout expanded after stability check.",
+          "instrumentation": "Rollout dashboards, auth success rate, audit-event completeness metric, feature-flag exposure logs.",
+          "launch_strategy": "gradual_rollout",
+          "estimated_days": 3
+        }
+      ],
+      "open_questions": [
+        "Does forced SSO apply to all workspace users with no exceptions, or is there an approved admin recovery path?",
+        "Are both metadata URL and XML upload required at launch, or is one sufficient for initial release?",
+        "Should launch support IdP-initiated login only, or any partial SP-initiated behavior as well?",
+        "Is GA by Oct 28 a hard deadline, or is late beta acceptable if sales kickoff needs can be met?",
+        "What exact workaround, if any, is allowed for account recovery when email/password is disabled?"
+      ],
+      "conflicts": [
+        {
+          "between": [
+            "ProductPM",
+            "Security"
+          ],
+          "issue": "Product wants forced SSO with no unsupported exceptions, while Security requires that forced SSO not create auth-bypass exceptions but leaves only an approved admin recovery path. Resolved by designing a tightly controlled admin recovery path if security approves it; otherwise forced SSO remains strict."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "EngLead"
+          ],
+          "issue": "Product scope assumes SAML can coexist with existing Google/OIDC behavior, but Engineering notes the current identity model only supports a single OIDC identity and may require enforcing one SSO type per workspace. Resolved by making the identity-model decision first and allowing either extension or one-SSO-per-workspace enforcement before build."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "QA"
+          ],
+          "issue": "Product requires audit-log parity for SSO sessions and config changes, while QA requires the regression suite to stay green before launch and explicitly validates audit logging. Resolved by making audit-log schema and assertions part of the automated and regression test plan before rollout."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "Security"
+          ],
+          "issue": "Product wants SAML plus JIT provisioning and group mapping, while Security requires review of account-creation/linking risks and privilege-escalation risks. Resolved by gating implementation on threat modeling and security sign-off for provisioning, linking, and role-mapping logic."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "Security"
+          ],
+          "issue": "Product wants SAML alongside existing auth methods for Enterprise, while Security requires explicit review of multi-IdP support and workspace SSO-type enforcement. Resolved by documenting and approving the chosen identity-linking strategy before implementation."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "GTM"
+          ],
+          "issue": "Product wants launch by Oct 28 for Q4 sales kickoff, while GTM requires launch-day comms approval and support training before launch, which can constrain timing. Resolved by sequencing docs, training, and comms in parallel early and using gradual rollout to stay on track."
+        }
+      ]
+    },
+    "robust_launch": {
+      "summary": "Ship Enterprise-only SAML 2.0 with self-serve admin setup, JIT provisioning, group-role mapping, forced SSO, audit logs, beta, and GA-ready rollout.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Finalize feature spec and launch scope: Enterprise-only SAML 2.0, self-serve admin UI, metadata URL/XML path, JIT provisioning, group-role mapping, forced SSO, and audit logging; explicitly confirm no OIDC/SCIM/multi-IdP/SP-initiated scope.",
+          "owner": "ProductPM",
+          "depends_on": [],
+          "success_criterion": "Approved feature spec exists with explicit in-scope/out-of-scope boundaries and launch segment.",
+          "definition_of_done": "Spec review approved by Product, Eng, Security, Design, QA, Support, and GTM; launch segment and beta/GA path documented.",
+          "instrumentation": "Feature-spec version tagged; launch readiness checklist updated; scope decision logged.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 2
+        },
+        {
+          "id": "S2",
+          "action": "Resolve identity-model and SSO-type strategy for adding SAML alongside existing Google/OIDC auth, including whether to enforce one SSO type per workspace and how forced SSO interacts with that choice.",
+          "owner": "EngLead",
+          "depends_on": [
+            "S1"
+          ],
+          "success_criterion": "Architecture decision is recorded and signed off.",
+          "definition_of_done": "Approved decision doc exists for identity-linking model, workspace SSO type, and any compatibility shims; second-engineer review complete.",
+          "instrumentation": "Architecture decision record; identity model tests added.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 3
+        },
+        {
+          "id": "S3",
+          "action": "Complete SAML threat model and security review covering authn/authz, replay, account takeover, metadata abuse, JIT provisioning, group-role mapping, forced SSO, and PII handling.",
+          "owner": "Security",
+          "depends_on": [
+            "S2"
+          ],
+          "success_criterion": "Threat model and security requirements are approved before implementation starts.",
+          "definition_of_done": "Reviewed threat model signed off; security controls documented for account linking, attribute validation, logging, and recovery paths.",
+          "instrumentation": "Threat model document; security review approval; risk register entries.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 4
+        },
+        {
+          "id": "S4",
+          "action": "Define and approve the audit-log schema updates needed for SAML config changes, forced SSO changes, JIT provisioning, and SSO session events, ensuring parity with email/password session visibility.",
+          "owner": "Security",
+          "depends_on": [
+            "S2",
+            "S3"
+          ],
+          "success_criterion": "Audit schema design covers all required events and fields.",
+          "definition_of_done": "Schema update approved; event taxonomy includes actor, target, timestamp, workspace, and session/config mutation details.",
+          "instrumentation": "Audit-log schema migration spec; emitted event definitions.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 3
+        },
+        {
+          "id": "S5",
+          "action": "Produce approved SAML admin UX design covering setup, empty, loading, validation, error, and success states for metadata URL/XML, JIT provisioning, group mapping, forced SSO, and audit visibility; include accessibility requirements.",
+          "owner": "Designer",
+          "depends_on": [
+            "S1",
+            "S3"
+          ],
+          "success_criterion": "Design spec is signed off and ready for build.",
+          "definition_of_done": "Design approval recorded; WCAG AA checklist included; all admin states mapped.",
+          "instrumentation": "Design spec version; accessibility review notes; state matrix.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 5
+        },
+        {
+          "id": "S6",
+          "action": "Implement backend SAML foundation: metadata ingestion via URL/XML, signature validation, login flow, JIT provisioning, group-to-role mapping, forced SSO enforcement, and audit-event emission hooks.",
+          "owner": "EngLead",
+          "depends_on": [
+            "S2",
+            "S3",
+            "S4"
+          ],
+          "success_criterion": "Core backend flows work in a development environment with feature flags.",
+          "definition_of_done": "PRs merged with second-engineer approval; unit/integration tests passing; telemetry hooks present from day one.",
+          "instrumentation": "Auth event logs, audit events, feature-flag exposure metrics, login success/failure counters.",
+          "launch_strategy": "dark_launch",
+          "estimated_days": 8
+        },
+        {
+          "id": "S7",
+          "action": "Build the self-serve admin UI and API wiring for SAML setup, edit, enable/disable, metadata entry, role mapping, forced SSO, and audit-log visibility.",
+          "owner": "Designer",
+          "depends_on": [
+            "S5",
+            "S6"
+          ],
+          "success_criterion": "Admins can complete end-to-end setup in staging without support assistance.",
+          "definition_of_done": "Frontend merged behind flag; accessibility checks pass; design sign-off retained; UI telemetry added.",
+          "instrumentation": "UI interaction events, setup completion funnel, validation-error rates, admin action logs.",
+          "launch_strategy": "feature_flag",
+          "estimated_days": 8
+        },
+        {
+          "id": "S8",
+          "action": "Extend audit-log implementation and compliance evidence capture for SAML config changes, forced SSO changes, JIT provisioning, and SSO sessions.",
+          "owner": "EngLead",
+          "depends_on": [
+            "S4",
+            "S6"
+          ],
+          "success_criterion": "All required audit events are emitted and queryable.",
+          "definition_of_done": "Migration applied in staging; event payloads verified; audit parity checks pass; security evidence captured.",
+          "instrumentation": "Audit-log event emission metrics, audit-search results, compliance evidence artifact IDs.",
+          "launch_strategy": "dark_launch",
+          "estimated_days": 4
+        },
+        {
+          "id": "S9",
+          "action": "Create automated test suite and manual QA plan for SAML happy path, invalid metadata, JIT provisioning, group-role mapping, forced SSO lockout, audit logs, and regression coverage including existing Google SSO.",
+          "owner": "QA",
+          "depends_on": [
+            "S6",
+            "S7",
+            "S8"
+          ],
+          "success_criterion": "Reviewed test plan and automated coverage are ready before beta.",
+          "definition_of_done": "Automated tests passing in CI; regression suite green; QA plan approved; staging test matrix includes Okta, OneLogin, Azure AD.",
+          "instrumentation": "CI test pass rates, staging test results, regression dashboard, defect counts.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 6
+        },
+        {
+          "id": "S10",
+          "action": "Run staged QA validation on staging with Okta, OneLogin, and Azure AD; perform accessibility verification and bug bash with stakeholders before beta exit.",
+          "owner": "QA",
+          "depends_on": [
+            "S9"
+          ],
+          "success_criterion": "Primary IdPs work and critical bugs are resolved or triaged.",
+          "definition_of_done": "Staging sign-off recorded; accessibility review passed; stakeholder bug bash completed; critical issues have owners and dates.",
+          "instrumentation": "Staging success logs, bug-bash findings, accessibility audit results, IdP-specific test metrics.",
+          "launch_strategy": "beta_program",
+          "estimated_days": 5
+        },
+        {
+          "id": "S11",
+          "action": "Prepare support readiness: help-center docs, internal runbook, escalation paths, and live support training for metadata setup, group mapping, forced SSO lockouts, and audit-log troubleshooting.",
+          "owner": "GTM",
+          "depends_on": [
+            "S10"
+          ],
+          "success_criterion": "Support can handle expected tickets without engineering assistance for routine issues.",
+          "definition_of_done": "Docs published; training completed; Q&A recorded; support escalation guide approved.",
+          "instrumentation": "Training attendance, support readiness checklist, doc page analytics, ticket category tags.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 4
+        },
+        {
+          "id": "S12",
+          "action": "Prepare sales enablement and external launch communications, including enterprise positioning, objections, beta/GA messaging, and launch-day announcement approval.",
+          "owner": "GTM",
+          "depends_on": [
+            "S10",
+            "S11"
+          ],
+          "success_criterion": "Sales and marketing are ready to announce the feature at late beta or GA.",
+          "definition_of_done": "Sales deck, talk track, and objection notes published; external comms approved and scheduled; launch definition explicit.",
+          "instrumentation": "Enablement asset publish date, approved comms calendar, sales training completion, launch-readiness signoff.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 4
+        },
+        {
+          "id": "S13",
+          "action": "Run closed beta with selected Enterprise workspaces using feature flags, collect telemetry, monitor audit-log parity, and fix issues discovered in real usage.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S11",
+            "S12"
+          ],
+          "success_criterion": "Beta cohort completes real SAML sign-in and admin setup successfully.",
+          "definition_of_done": "Beta cohort onboarded; metrics reviewed; bugs triaged; go/no-go note for broader rollout recorded.",
+          "instrumentation": "Beta cohort activation, login success rate, setup completion rate, audit-event completeness, error-rate dashboards.",
+          "launch_strategy": "beta_program",
+          "estimated_days": 7
+        },
+        {
+          "id": "S14",
+          "action": "Perform beta bug bash and metrics review, then open a gradual rollout to a larger Enterprise subset if success thresholds are met.",
+          "owner": "QA",
+          "depends_on": [
+            "S13"
+          ],
+          "success_criterion": "Beta findings are closed enough to expand rollout safely.",
+          "definition_of_done": "Bug bash completed; metrics reviewed; rollout criteria met; gradual rollout approved.",
+          "instrumentation": "Bug-bash report, rollout dashboard, fatal-error rate, audit parity checks, support ticket volume.",
+          "launch_strategy": "gradual_rollout",
+          "estimated_days": 3
+        },
+        {
+          "id": "S15",
+          "action": "Launch GA to all eligible Enterprise customers, with external announcement, sales support, support coverage, and rollback/kill-switch monitoring in place.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S14"
+          ],
+          "success_criterion": "Feature is generally available to Enterprise workspaces and announced on schedule.",
+          "definition_of_done": "GA sign-off completed; comms sent; all launch metrics within threshold; rollback plan validated.",
+          "instrumentation": "GA release flag state, adoption metrics, auth success rates, audit-log completeness, incident alerts.",
+          "launch_strategy": "full_release",
+          "estimated_days": 2
+        }
+      ],
+      "open_questions": [
+        "Is forced SSO meant to apply to every user in a workspace with no exceptions, or are there admin recovery exceptions?",
+        "At launch, do we require both metadata URL and XML upload, or is one sufficient?",
+        "Should SAML support be IdP-initiated only at launch, given SP-initiated/custom-domain SSO is out of scope?",
+        "Is the Oct 28 timing a hard deadline for late beta/GA, or a preferred announcement target?",
+        "Should the launch model enforce one SSO type per workspace, or extend the identity model to support both Google OIDC and SAML concurrently?"
+      ],
+      "conflicts": [
+        {
+          "between": [
+            "ProductPM",
+            "EngLead"
+          ],
+          "issue": "Product scopes SAML for Enterprise only, while Eng notes the current auth model assumes one OIDC identity per user and SAML adds a second IdP class; resolved by sequencing an identity-model decision first and explicitly allowing a one-SSO-per-workspace implementation path if needed."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "Designer"
+          ],
+          "issue": "Product wants self-serve SAML setup, while Design requires approved UX specs and accessibility review before build; resolved by placing design approval and WCAG review before implementation and before self-serve launch."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "QA"
+          ],
+          "issue": "Product wants Okta, OneLogin, and Azure AD verified for launch and a late-beta/GA announcement by Oct 28, while QA requires staging validation, regression green, and a pre-GA bug bash; resolved by using beta_program then gradual_rollout before full release and scheduling bug bash/metrics review before GA."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "Security"
+          ],
+          "issue": "Product needs forced SSO, JIT provisioning, group mapping, and audit parity, while Security requires threat modeling, PII review, and SOC2 sign-off before launch; resolved by making security approval a hard pre-build gate and capturing audit evidence before beta."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "GTM"
+          ],
+          "issue": "Product wants launch announcement readiness by Oct 28, while GTM requires support training, docs, sales enablement, and approved comms before launch; resolved by inserting support-readiness, sales-enablement, and external-comms steps before beta expansion and GA."
+        },
+        {
+          "between": [
+            "EngLead",
+            "Security"
+          ],
+          "issue": "Eng wants to decide whether to extend the identity model or enforce one SSO type per workspace, while Security must review multi-IdP auth/authz changes; resolved by making the architecture decision explicit and routing it through security review before implementation."
+        },
+        {
+          "between": [
+            "EngLead",
+            "QA"
+          ],
+          "issue": "Eng wants telemetry from day one, while QA requires automated coverage and regression stability before launch; resolved by threading instrumentation into implementation and gating beta/GA on passing automated and regression suites."
+        },
+        {
+          "between": [
+            "EngLead",
+            "Security"
+          ],
+          "issue": "Eng wants to proceed with platform/library upgrades and auth changes, while Security requires threat model and audit-log controls first; resolved by front-loading threat modeling and schema approvals before coding begins."
+        },
+        {
+          "between": [
+            "Designer",
+            "QA"
+          ],
+          "issue": "Design requires UX sign-off before frontend build, while QA requires staging QA on built flows; resolved by staging the build after design approval and validating with QA only once the staging build exists."
+        },
+        {
+          "between": [
+            "QA",
+            "Security"
+          ],
+          "issue": "QA requires audit-log evidence and regression stability, while Security requires audit-log schema coverage and SOC2 sign-off; resolved by implementing audit logging early and using it as an explicit pre-beta evidence gate."
+        },
+        {
+          "between": [
+            "GTM",
+            "Security"
+          ],
+          "issue": "GTM needs support/training/comms preparation for launch, while Security requires SOC2 sign-off and PII handling review before launch; resolved by making security approval a prerequisite to external comms and support training finalization."
+        }
+      ]
+    }
+  },
+  "smt": {
+    "mvp_fast": {
+      "feasible": true,
+      "backend": "z3",
+      "n_steps": 8,
+      "notes": [],
+      "unsat_core": []
+    },
+    "standard": {
+      "feasible": true,
+      "backend": "z3",
+      "n_steps": 11,
+      "notes": [],
+      "unsat_core": []
+    },
+    "robust_launch": {
+      "feasible": true,
+      "backend": "z3",
+      "n_steps": 15,
+      "notes": [],
+      "unsat_core": []
+    }
+  },
+  "timeline": {
+    "mvp_fast": {
+      "base_total_days": 34,
+      "critical_path": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5",
+        "S6",
+        "S7",
+        "S8"
+      ],
+      "slack_per_step": {
+        "S1": 0,
+        "S2": 0,
+        "S3": 0,
+        "S4": 0,
+        "S5": 0,
+        "S6": 0,
+        "S7": 0,
+        "S8": 0
+      },
+      "slip_fragility": 1.0,
+      "top_single_slips": [
+        {
+          "step_ids": [
+            "S1"
+          ],
+          "slip_days": 5,
+          "delta_days": 5,
+          "new_total": 39
+        },
+        {
+          "step_ids": [
+            "S2"
+          ],
+          "slip_days": 5,
+          "delta_days": 5,
+          "new_total": 39
+        },
+        {
+          "step_ids": [
+            "S3"
+          ],
+          "slip_days": 5,
+          "delta_days": 5,
+          "new_total": 39
+        }
+      ],
+      "top_pair_slips": [
+        {
+          "step_ids": [
+            "S1",
+            "S2"
+          ],
+          "slip_days": 5,
+          "delta_days": 10,
+          "new_total": 44
+        },
+        {
+          "step_ids": [
+            "S1",
+            "S3"
+          ],
+          "slip_days": 5,
+          "delta_days": 10,
+          "new_total": 44
+        },
+        {
+          "step_ids": [
+            "S1",
+            "S4"
+          ],
+          "slip_days": 5,
+          "delta_days": 10,
+          "new_total": 44
+        }
+      ]
+    },
+    "standard": {
+      "base_total_days": 49,
+      "critical_path": [
+        "S1",
+        "S2",
+        "S4",
+        "S5",
+        "S7",
+        "S8",
+        "S9",
+        "S10",
+        "S11"
+      ],
+      "slack_per_step": {
+        "S1": 0,
+        "S2": 0,
+        "S3": 5,
+        "S4": 0,
+        "S5": 0,
+        "S6": 4,
+        "S7": 0,
+        "S8": 0,
+        "S9": 0,
+        "S10": 0,
+        "S11": 0
+      },
+      "slip_fragility": 0.8363636363636363,
+      "top_single_slips": [
+        {
+          "step_ids": [
+            "S1"
+          ],
+          "slip_days": 5,
+          "delta_days": 5,
+          "new_total": 54
+        },
+        {
+          "step_ids": [
+            "S2"
+          ],
+          "slip_days": 5,
+          "delta_days": 5,
+          "new_total": 54
+        },
+        {
+          "step_ids": [
+            "S4"
+          ],
+          "slip_days": 5,
+          "delta_days": 5,
+          "new_total": 54
+        }
+      ],
+      "top_pair_slips": [
+        {
+          "step_ids": [
+            "S1",
+            "S2"
+          ],
+          "slip_days": 5,
+          "delta_days": 10,
+          "new_total": 59
+        },
+        {
+          "step_ids": [
+            "S1",
+            "S4"
+          ],
+          "slip_days": 5,
+          "delta_days": 10,
+          "new_total": 59
+        },
+        {
+          "step_ids": [
+            "S1",
+            "S5"
+          ],
+          "slip_days": 5,
+          "delta_days": 10,
+          "new_total": 59
+        }
+      ]
+    },
+    "robust_launch": {
+      "base_total_days": 59,
+      "critical_path": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S6",
+        "S7",
+        "S9",
+        "S10",
+        "S11",
+        "S12",
+        "S13",
+        "S14",
+        "S15"
+      ],
+      "slack_per_step": {
+        "S1": 0,
+        "S2": 0,
+        "S3": 0,
+        "S4": 0,
+        "S5": 6,
+        "S6": 0,
+        "S7": 0,
+        "S8": 4,
+        "S9": 0,
+        "S10": 0,
+        "S11": 0,
+        "S12": 0,
+        "S13": 0,
+        "S14": 0,
+        "S15": 0
+      },
+      "slip_fragility": 0.8800000000000001,
+      "top_single_slips": [
+        {
+          "step_ids": [
+            "S1"
+          ],
+          "slip_days": 5,
+          "delta_days": 5,
+          "new_total": 64
+        },
+        {
+          "step_ids": [
+            "S2"
+          ],
+          "slip_days": 5,
+          "delta_days": 5,
+          "new_total": 64
+        },
+        {
+          "step_ids": [
+            "S3"
+          ],
+          "slip_days": 5,
+          "delta_days": 5,
+          "new_total": 64
+        }
+      ],
+      "top_pair_slips": [
+        {
+          "step_ids": [
+            "S1",
+            "S2"
+          ],
+          "slip_days": 5,
+          "delta_days": 10,
+          "new_total": 69
+        },
+        {
+          "step_ids": [
+            "S1",
+            "S3"
+          ],
+          "slip_days": 5,
+          "delta_days": 10,
+          "new_total": 69
+        },
+        {
+          "step_ids": [
+            "S1",
+            "S4"
+          ],
+          "slip_days": 5,
+          "delta_days": 10,
+          "new_total": 69
+        }
+      ]
+    }
+  },
+  "metrics": {
+    "mvp_fast": {
+      "total_days": 34,
+      "norm_days": 0.37777777777777777,
+      "polish_coverage": 1.0,
+      "slip_fragility": 1.0,
+      "n_conflicts": 8,
+      "norm_conflicts": 0.8
+    },
+    "standard": {
+      "total_days": 58,
+      "norm_days": 0.6444444444444445,
+      "polish_coverage": 0.75,
+      "slip_fragility": 0.8363636363636363,
+      "n_conflicts": 6,
+      "norm_conflicts": 0.6
+    },
+    "robust_launch": {
+      "total_days": 68,
+      "norm_days": 0.7555555555555555,
+      "polish_coverage": 0.75,
+      "slip_fragility": 0.8800000000000001,
+      "n_conflicts": 11,
+      "norm_conflicts": 1.0
+    }
+  },
+  "scores": {
+    "mvp_fast": -0.2833333333333333,
+    "standard": -0.3467424242424242,
+    "robust_launch": -0.4531666666666667
+  },
+  "weights": {
+    "time_to_market": 0.3,
+    "polish": 0.25,
+    "slip_risk": 0.3,
+    "conflicts": 0.15
+  },
+  "winner": "mvp_fast"
+}

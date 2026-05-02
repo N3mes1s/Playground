@@ -276,3 +276,121 @@ class FeatureStep:
     launch_strategy: str
     estimated_days: int
     raw: dict = field(default_factory=dict)
+
+
+# --- Pareto utility weights ----------------------------------------------
+
+@dataclass
+class FeatureUtilityWeights:
+    """Weights for picking among 3 feature plan variants.
+
+    Axes (all >=0, sum normalised to 1):
+      time_to_market  — penalise total estimated_days (lower is better)
+      polish          — reward coverage of non-blocking 'nice-to-have' constraints
+      slip_risk       — penalise timeline-risk fragility (longer slip cascades worse)
+      conflicts       — penalise count of unresolved conflicts
+    """
+    time_to_market: float = 0.30
+    polish: float = 0.25
+    slip_risk: float = 0.30
+    conflicts: float = 0.15
+
+    @classmethod
+    def from_string(cls, s: str | None) -> "FeatureUtilityWeights":
+        if not s:
+            return cls()
+        kv: dict[str, float] = {}
+        for part in s.split(","):
+            if "=" not in part:
+                continue
+            k, v = part.split("=", 1)
+            try:
+                kv[k.strip()] = float(v.strip())
+            except ValueError:
+                pass
+        total = sum(kv.values()) or 1.0
+        d = cls()
+        return cls(
+            time_to_market=kv.get("time_to_market", d.time_to_market) / total,
+            polish=kv.get("polish", d.polish) / total,
+            slip_risk=kv.get("slip_risk", d.slip_risk) / total,
+            conflicts=kv.get("conflicts", d.conflicts) / total,
+        )
+
+    @classmethod
+    def preset(cls, name: str) -> "FeatureUtilityWeights":
+        if name == "fast":
+            return cls(time_to_market=0.55, polish=0.10, slip_risk=0.20, conflicts=0.15)
+        if name == "polished":
+            return cls(time_to_market=0.15, polish=0.50, slip_risk=0.20, conflicts=0.15)
+        if name == "safe":
+            return cls(time_to_market=0.15, polish=0.20, slip_risk=0.50, conflicts=0.15)
+        if name in ("balanced", "default", ""):
+            return cls()
+        raise ValueError(
+            f"unknown preset {name!r}; choose from fast, polished, safe, balanced"
+        )
+
+
+def score_feature_plan(
+    plan: dict,
+    constraints: list[FeatureConstraint],
+    *,
+    slip_fragility: float = 0.0,
+) -> dict[str, float]:
+    """Compute the four normalised metrics for a single feature plan.
+
+    Higher utility = better. `slip_fragility` is the timeline-risk
+    fragility from the timeline_chaos module (0..1, higher = worse).
+    Defaults to 0 when chaos was not run, so callers without chaos still
+    get a meaningful (though optimistic) score.
+    """
+    steps = [s for s in (plan.get("steps") or []) if isinstance(s, dict)]
+    total_days = sum(int(s.get("estimated_days", 0) or 0) for s in steps)
+
+    # time_to_market: penalise total days, soft cap 90d.
+    norm_days = min(total_days, 90) / 90.0
+
+    # polish: how many non-blocking constraints does the plan reference?
+    nice_to_have = [c for c in constraints if not c.blocking]
+    if nice_to_have:
+        # crude: count unique non-blocking constraint summaries that appear
+        # somewhere in the plan's step text.
+        plan_text = " ".join(
+            f"{s.get('action','')} {s.get('success_criterion','')} "
+            f"{s.get('definition_of_done','')}"
+            for s in steps
+        ).lower()
+        hits = sum(
+            1 for c in nice_to_have
+            if any(tok in plan_text
+                   for tok in c.summary.lower().split() if len(tok) > 4)
+        )
+        polish_coverage = hits / len(nice_to_have)
+    else:
+        polish_coverage = 1.0
+
+    conflicts = plan.get("conflicts") or []
+    n_conflicts = len([c for c in conflicts if isinstance(c, dict)])
+    norm_conflicts = min(n_conflicts, 10) / 10.0  # cap at 10
+
+    return {
+        "total_days": total_days,
+        "norm_days": norm_days,
+        "polish_coverage": polish_coverage,
+        "slip_fragility": slip_fragility,
+        "n_conflicts": n_conflicts,
+        "norm_conflicts": norm_conflicts,
+    }
+
+
+def utility_score(metrics: dict[str, float], w: FeatureUtilityWeights) -> float:
+    """Higher = better. Mirrors mirofish_lab.pareto_frontier.utility_score
+    but on feature-specific axes.
+    """
+    return (
+        w.polish * metrics["polish_coverage"]
+        - w.time_to_market * metrics["norm_days"]
+        - w.slip_risk * metrics["slip_fragility"]
+        - w.conflicts * metrics["norm_conflicts"]
+    )
