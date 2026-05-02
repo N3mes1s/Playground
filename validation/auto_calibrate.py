@@ -119,6 +119,44 @@ KNOWN_WARNINGS = {
                            "bench-evaluated and the winner picked.",
         },
     },
+    "feature_family_dominance": {
+        "detect": (
+            "Read latest validation/FEATURE_BASELINE_*.json. Compute winner "
+            "distribution across {mvp_fast, standard, robust_launch}. If any "
+            "one family wins > 40%, that's the warning. Mirrors the rollout "
+            "speed_family_dominance pattern but on feature plans."
+        ),
+        "severity": 2,
+        "fixes": {
+            "feature_rebalance_riskward": (
+                "Reduce time_to_market default 0.30 -> 0.15 and bump "
+                "slip_risk 0.30 -> 0.45. Targets mvp_fast over-dominance "
+                "(observed 67% in N=48 baseline vs 0% for robust_launch)."
+            ),
+            "feature_rebalance_speedward": (
+                "Inverse: bump time_to_market 0.30 -> 0.45, drop slip_risk "
+                "0.30 -> 0.15. Targets robust_launch dominance (when the "
+                "earlier riskward rebalance over-corrects)."
+            ),
+        },
+    },
+    "feature_launch_strategy_mismatch": {
+        "detect": (
+            "Read latest validation/FEATURE_BASELINE_*.json scores. If "
+            ">25% of plans pick a launch_strategy that doesn't match the "
+            "ground-truth expected_launch_strategy, that's the warning. "
+            "Symptom: 14/48 (29%) in baseline picked feature_flag when "
+            "GT expected gradual_rollout or full_release."
+        ),
+        "severity": 2,
+        "fixes": {
+            "gepa_revise": "GEPA-style: reflector reads the launch-strategy "
+                           "mismatch traces and proposes a sequencer-prompt "
+                           "mutation that better picks among feature_flag / "
+                           "gradual_rollout / beta_program / full_release "
+                           "based on the constraint context.",
+        },
+    },
 }
 
 
@@ -199,10 +237,82 @@ def _choose_warning_from_run_log() -> tuple[str, str] | None:
             "winner_fragility_low", "rebalance",
         ))
 
+    # --- Feature-side warnings: read latest FEATURE_BASELINE_*.json ---
+    feature_warnings = _detect_feature_warnings()
+    active.extend(feature_warnings)
+
     if not active:
         return None
     active.sort(key=lambda r: -r[0])
     return active[0][1], active[0][2]
+
+
+def _detect_feature_warnings() -> list[tuple[int, str, str]]:
+    """Mirror of the rollout RUN_LOG-based detector but for feature plans.
+
+    Reads the freshest validation/FEATURE_BASELINE_*.json (or the
+    spike-named FEATURE_BENCH_n*) and returns active warnings for:
+      - feature_family_dominance: any of mvp_fast/standard/robust_launch
+        wins > 40%
+      - feature_launch_strategy_mismatch: > 25% of plans pick a
+        launch_strategy that doesn't match GT
+    """
+    feature_files = sorted(
+        (ROOT / "validation").glob("FEATURE_BASELINE_*.json")
+    ) + sorted(
+        (ROOT / "validation").glob("FEATURE_BENCH_*.json")
+    )
+    if not feature_files:
+        return []
+    # Pick the file with the largest n (best-signal cohort).
+    def _n(p: Path) -> int:
+        try:
+            return len(json.loads(p.read_text()).get("scores") or [])
+        except Exception:
+            return 0
+    latest = max(feature_files, key=_n)
+
+    try:
+        j = json.loads(latest.read_text())
+    except Exception:
+        return []
+    scores = j.get("scores") or []
+    n = len(scores)
+    if n < 10:
+        return []
+
+    out: list[tuple[int, str, str]] = []
+
+    # Family dominance
+    from collections import Counter
+    winners = Counter(s.get("winner", "?") for s in scores
+                      if "winner" in s and s["winner"])
+    for fam, count in winners.items():
+        pct = 100 * count / max(1, n)
+        if pct > 40:
+            if fam == "mvp_fast":
+                out.append((
+                    KNOWN_WARNINGS["feature_family_dominance"]["severity"],
+                    "feature_family_dominance", "feature_rebalance_riskward",
+                ))
+            elif fam == "robust_launch":
+                out.append((
+                    KNOWN_WARNINGS["feature_family_dominance"]["severity"],
+                    "feature_family_dominance", "feature_rebalance_speedward",
+                ))
+
+    # Launch-strategy mismatch
+    n_mismatch = sum(
+        1 for s in scores
+        if "literal" in s and s["literal"].get("launch_strategy_ok") is False
+    )
+    if n > 0 and n_mismatch / n > 0.25:
+        out.append((
+            KNOWN_WARNINGS["feature_launch_strategy_mismatch"]["severity"],
+            "feature_launch_strategy_mismatch", "gepa_revise",
+        ))
+
+    return out
 
 
 def fix_rebalance(*, weight_fragility: float, weight_rollback: float) -> Path:
@@ -225,6 +335,58 @@ def fix_rebalance(*, weight_fragility: float, weight_rollback: float) -> Path:
     new_text = text.replace(needle_old_a, needle_new_a).replace(needle_old_b, needle_new_b)
     tmp = Path(tempfile.mkdtemp(prefix="autocal_")) / "pareto_frontier.py"
     tmp.write_text(new_text)
+    return tmp
+
+
+def fix_feature_rebalance(
+    *,
+    time_to_market: float,
+    polish: float,
+    slip_risk: float,
+    conflicts: float,
+) -> Path:
+    """Patch FeatureUtilityWeights defaults in a temp copy of feature_planning.py.
+
+    Returns the path to the patched file. Caller copies it onto the
+    real source under --apply.
+    """
+    src = ROOT / "mirofish_lab" / "feature_planning.py"
+    text = src.read_text()
+    needles = [
+        ("    time_to_market: float = ",
+         f"    time_to_market: float = {time_to_market:.2f}"),
+        ("    polish: float = ",
+         f"    polish: float = {polish:.2f}"),
+        ("    slip_risk: float = ",
+         f"    slip_risk: float = {slip_risk:.2f}"),
+        ("    conflicts: float = ",
+         f"    conflicts: float = {conflicts:.2f}"),
+    ]
+    new_text = text
+    for prefix, replacement in needles:
+        # Match the existing default line by prefix and replace the whole line.
+        import re as _re
+        pattern = _re.compile(rf"^{_re.escape(prefix)}[\d.]+\s*$",
+                              _re.MULTILINE)
+        if not pattern.search(new_text):
+            raise RuntimeError(
+                f"feature_planning.py default for {prefix!r} not found in "
+                "expected dataclass-default format; auto-fix template is stale"
+            )
+        new_text = pattern.sub(replacement, new_text, count=1)
+
+    if new_text == text:
+        raise RuntimeError(
+            "feature_planning.py defaults patch produced no change; "
+            "fix logic is broken"
+        )
+    tmp = Path(tempfile.mkdtemp(prefix="autocal_")) / "feature_planning.py"
+    tmp.write_text(new_text)
+    # Sanity: patched module must compile.
+    try:
+        compile(new_text, str(tmp), "exec")
+    except SyntaxError as e:
+        raise RuntimeError(f"patched feature_planning.py has syntax error: {e}") from e
     return tmp
 
 

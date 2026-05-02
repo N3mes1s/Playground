@@ -88,17 +88,22 @@ def _latest_rebaseline_snapshot() -> list[str] | None:
     the freshest cohort visibility so the calibrator and the README can
     reconcile against it.
     """
-    snaps = sorted((ROOT / "validation").glob("REBASELINE_*.json"))
-    if not snaps:
+    candidates = []
+    for p in (ROOT / "validation").glob("REBASELINE_*.json"):
+        try:
+            j = json.loads(p.read_text())
+        except Exception:
+            continue
+        scores = j.get("scores") or []
+        if scores:
+            candidates.append((len(scores), p, j))
+    if not candidates:
         return None
-    latest = snaps[-1]
-    try:
-        j = json.loads(latest.read_text())
-    except Exception:
-        return None
-    scores = j.get("scores") or []
-    if not scores:
-        return None
+    # Pick the file with the most scores (freshest meaningful cohort).
+    # `*_DIFF.json` and other sidecars without scores are filtered above.
+    candidates.sort(key=lambda t: -t[0])
+    _, latest, j = candidates[0]
+    scores = j["scores"]
     total = len(scores)
     by_family: Counter[str] = Counter()
     for r in scores:
