@@ -1,0 +1,993 @@
+{
+  "intent_path": "feature-planning/intents/01_google_sso_smb.md",
+  "constraints": [
+    {
+      "axis": "scope",
+      "summary": "Ship Google SSO only for SMB; exclude other IdPs and SCIM",
+      "scope": "SMB tier sign-in and account linking only; no Microsoft, Apple, Okta, or SCIM",
+      "prereq": "approval:product",
+      "blocking": true,
+      "acceptance": "Release scope explicitly includes Google OAuth/OIDC SSO, linking, and domain auto-provisioning only; all other SSO providers and SCIM remain out of scope",
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "scope",
+      "summary": "Preserve existing email/password auth without behavior changes",
+      "scope": "All current SMB and free-tier email/password login and signup paths",
+      "prereq": "none",
+      "blocking": true,
+      "acceptance": "Existing email/password users can continue to authenticate and create accounts exactly as before, with no forced migration",
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "scope",
+      "summary": "Support linking an existing free account to Google safely",
+      "scope": "Users with existing free-tier workspace state who want to attach Google SSO",
+      "prereq": "approval:product",
+      "blocking": true,
+      "acceptance": "A user with an existing email/password account can connect Google and retain the same workspace and data state",
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "scope",
+      "summary": "Auto-provision SMB workspaces from recognized domains only",
+      "scope": "New SMB workspace creation when Google domain is recognized",
+      "prereq": "none",
+      "blocking": true,
+      "acceptance": "Users with recognized Google Workspace domains are created into a workspace automatically without a manual admin or DNS verification step",
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "scope",
+      "summary": "Keep the flow self-serve with no IT/admin dependency",
+      "scope": "SMB onboarding, sign-in, and account linking journey",
+      "prereq": "none",
+      "blocking": true,
+      "acceptance": "A new SMB customer can complete SSO setup and sign-in without contacting support or providing DNS access",
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "gtm",
+      "summary": "Launch only when feature is GA for SMB by Sept 22",
+      "scope": "Public launch timing and readiness gate",
+      "prereq": "window:by_2026-09-22",
+      "blocking": true,
+      "acceptance": "Feature is generally available to the SMB tier by Sept 22 and is announced as such to the Q3 sales motion",
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "gtm",
+      "summary": "Define launch as GA to the full SMB tier, not partial beta",
+      "scope": "Launch criteria for free + paid SMB plans up to 50 seats",
+      "prereq": "approval:product",
+      "blocking": true,
+      "acceptance": "The release is available to 100% of eligible SMB users, with no beta label or partial allowlist remaining",
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "gtm",
+      "summary": "Communicate launch to sales after GA readiness is confirmed",
+      "scope": "Customer-facing and sales-facing announcement timing",
+      "prereq": "wait_for:ga_readiness_signoff",
+      "blocking": false,
+      "acceptance": "Sales kickoff messaging is released only after GA readiness is confirmed and the SMB feature is live",
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "gtm",
+      "summary": "Success criteria should be measured for first 30 days after launch",
+      "scope": "Post-launch KPI tracking for adoption and conversion",
+      "prereq": "none",
+      "blocking": false,
+      "acceptance": "A 30-day post-launch measurement window is defined for Google SSO adoption and free-to-paid conversion impact",
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "ux",
+      "summary": "Sign-in and signup IA must include Google SSO clearly",
+      "scope": "SMB auth entry points: login, signup, and account-linking entry",
+      "prereq": "wait_for:design_spec",
+      "blocking": true,
+      "acceptance": "Signed-off UX spec shows Google SSO placement, labels, and CTA hierarchy for SMB users",
+      "owner": "Designer"
+    },
+    {
+      "axis": "ux",
+      "summary": "Account linking flow must be explicit and reversible",
+      "scope": "Link existing email/password account to Google identity",
+      "prereq": "wait_for:flow_spec",
+      "blocking": true,
+      "acceptance": "Design includes step-by-step linking states, confirmation, and clear cancel/back-out behavior",
+      "owner": "Designer"
+    },
+    {
+      "axis": "ux",
+      "summary": "Provide clear error, empty, and edge-state guidance",
+      "scope": "Google OAuth failures, duplicate email, unrecognized domain, and no-workspace states",
+      "prereq": "wait_for:content_spec",
+      "blocking": true,
+      "acceptance": "Each error/empty state has user-facing copy and next-step actions in the approved design",
+      "owner": "Designer"
+    },
+    {
+      "axis": "ux",
+      "summary": "Workspace auto-provisioning must feel instant and understandable",
+      "scope": "Post-OAuth domain recognition and new workspace creation",
+      "prereq": "wait_for:flow_spec",
+      "blocking": true,
+      "acceptance": "Design shows loading, success, and fallback states for auto-provisioning with no dead ends",
+      "owner": "Designer"
+    },
+    {
+      "axis": "ux",
+      "summary": "Existing free users must preserve workspace context during upgrade",
+      "scope": "Free account upgrade path when email matches Google identity",
+      "prereq": "review:design_QA",
+      "blocking": true,
+      "acceptance": "Built flow preserves current workspace state and exposes a clear confirmation before account merge",
+      "owner": "Designer"
+    },
+    {
+      "axis": "ux",
+      "summary": "All auth screens and flows must meet WCAG AA",
+      "scope": "Google SSO buttons, dialogs, redirects, loading, and error states",
+      "prereq": "review:accessibility",
+      "blocking": true,
+      "acceptance": "Accessibility review confirms keyboard access, focus order, contrast, labels, and screen-reader support",
+      "owner": "Designer"
+    },
+    {
+      "axis": "ux",
+      "summary": "Design QA must validate the built experience before launch",
+      "scope": "SMB Google SSO end-to-end user journeys",
+      "prereq": "review:design_QA",
+      "blocking": true,
+      "acceptance": "QA sign-off confirms the implemented UI matches the approved spec across success and failure paths",
+      "owner": "Designer"
+    },
+    {
+      "axis": "eng",
+      "summary": "Freeze auth/account-linking API contract before client work",
+      "scope": "Google OAuth/OIDC sign-in endpoints, account-linking APIs, and workspace auto-provisioning integration points",
+      "prereq": "wait_for:auth-api-spec",
+      "blocking": true,
+      "acceptance": "Published API spec covers login, link, unlink, callback, error states, and identity mapping semantics; frontend/backend implementation starts only after sign-off",
+      "owner": "EngLead"
+    },
+    {
+      "axis": "eng",
+      "summary": "Refactor JWT auth to support multiple identities per user",
+      "scope": "Auth middleware, user identity model, session issuance, and account resolution logic",
+      "prereq": "wait_for:auth-identity-model-design",
+      "blocking": true,
+      "acceptance": "Design documents multi-identity schema and resolution rules; migration path preserves existing password users and supports Google identity linkage",
+      "owner": "EngLead"
+    },
+    {
+      "axis": "eng",
+      "summary": "Instrument feature-flagged rollout from day one",
+      "scope": "Google SSO enablement, account-linking flow, and domain auto-provisioning behavior",
+      "prereq": "none",
+      "blocking": true,
+      "acceptance": "All new paths are behind flags with logged exposure, success, failure, and linking events available in analytics from first deploy",
+      "owner": "EngLead"
+    },
+    {
+      "axis": "eng",
+      "summary": "Preserve existing email/password auth behavior unchanged",
+      "scope": "Current login, signup, password reset, and session flows",
+      "prereq": "none",
+      "blocking": true,
+      "acceptance": "Regression tests confirm password auth works unchanged for all tiers while Google SSO is optional and additive",
+      "owner": "EngLead"
+    },
+    {
+      "axis": "eng",
+      "summary": "Support seamless upgrade from existing free account to Google SSO",
+      "scope": "Account linking for users with an existing free-tier workspace",
+      "prereq": "wait_for:account-linking-migration-plan",
+      "blocking": true,
+      "acceptance": "Migration plan preserves workspace state and identity mapping when the same email is linked to Google without duplicate accounts",
+      "owner": "EngLead"
+    },
+    {
+      "axis": "eng",
+      "summary": "Require second-engineer review on auth and identity changes",
+      "scope": "All auth middleware refactors, OIDC integration, and linking logic",
+      "prereq": "review:second_engineer",
+      "blocking": true,
+      "acceptance": "At least one independent engineer approves the PRs for auth/identity changes before merge",
+      "owner": "EngLead"
+    },
+    {
+      "axis": "eng",
+      "summary": "Track explicit debt for platform/library upgrades",
+      "scope": "OIDC/OAuth libraries, JWT middleware dependencies, and any auth framework upgrades",
+      "prereq": "wait_for:dependency-upgrade-assessment",
+      "blocking": false,
+      "acceptance": "Plan includes identified upgrade path, version targets, and any deferred follow-up debt items with owners",
+      "owner": "EngLead"
+    },
+    {
+      "axis": "quality",
+      "summary": "Review and sign off the test plan before implementation starts",
+      "scope": "Google OAuth SSO sign-in, account linking, and domain auto-provisioning",
+      "prereq": "wait_for:test_plan",
+      "blocking": true,
+      "acceptance": "A written test plan exists, covers happy/edge/error paths, and is reviewed",
+      "owner": "QA"
+    },
+    {
+      "axis": "quality",
+      "summary": "Automate coverage for login, linking, and workspace creation flows",
+      "scope": "SMB Google SSO flows including existing email/password coexistence",
+      "prereq": "none",
+      "blocking": true,
+      "acceptance": "Automated tests cover successful Google SSO, account linking, and auto-provisioning, plus key failure cases",
+      "owner": "QA"
+    },
+    {
+      "axis": "quality",
+      "summary": "Regression suite must stay green across auth paths",
+      "scope": "Email/password auth, Google SSO, and linked-account behavior",
+      "prereq": "wait_for:regression_suite",
+      "blocking": true,
+      "acceptance": "Full regression suite passes with no auth regressions in CI before launch",
+      "owner": "QA"
+    },
+    {
+      "axis": "quality",
+      "summary": "Manual QA must pass on a staging build",
+      "scope": "End-to-end SMB SSO user journeys and recovery cases",
+      "prereq": "window:staging_QA",
+      "blocking": true,
+      "acceptance": "QA sign-off recorded for staging validation of sign-in, linking, and workspace provisioning",
+      "owner": "QA"
+    },
+    {
+      "axis": "quality",
+      "summary": "Run a stakeholder bug-bash before GA",
+      "scope": "Release candidate for Google SSO in SMB tier",
+      "prereq": "approval:stakeholders",
+      "blocking": true,
+      "acceptance": "Bug-bash completed, defects triaged, and launch blockers closed or explicitly waived",
+      "owner": "QA"
+    },
+    {
+      "axis": "security",
+      "summary": "Threat model Google OAuth, linking, and auto-provisioning first",
+      "scope": "Google OAuth sign-in, account linking, and domain-based auto-provisioning",
+      "prereq": "wait_for:threat_model",
+      "blocking": true,
+      "acceptance": "A completed threat model covers OAuth code flow, token handling, account takeover, replay, CSRF/state, and linkage abuse cases with mitigations tracked",
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Review authN/authZ refactor for multi-identity support",
+      "scope": "JWT auth middleware changes and one-user-multiple-identities data model",
+      "prereq": "review:security",
+      "blocking": true,
+      "acceptance": "Security review approves the refactor for identity binding, session issuance, account merge/link rules, and privilege checks before implementation or launch",
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Audit PII and sensitive-data handling for Google identity data",
+      "scope": "Google profile claims, email/domain attributes, tokens, and stored identity records",
+      "prereq": "review:security",
+      "blocking": true,
+      "acceptance": "Documented data handling shows only necessary Google claims are stored, tokens are protected, retention is defined, and sensitive fields are masked/encrypted as required",
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Log all SSO and linking actions in the audit trail",
+      "scope": "SSO login, account linking/unlinking, auto-provisioning, and failed linkage attempts",
+      "prereq": "wait_for:audit_log_spec",
+      "blocking": true,
+      "acceptance": "Audit log design captures actor, workspace, provider, outcome, timestamps, and linkage changes for Google SSO with parity to password sessions",
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Obtain compliance sign-off if Google SSO changes audit scope",
+      "scope": "SOC2-relevant authentication and account-linking controls",
+      "prereq": "approval:compliance",
+      "blocking": true,
+      "acceptance": "Compliance owner confirms SOC2 control mapping and audit evidence impact are reviewed with sufficient lead time before GA",
+      "owner": "Security"
+    },
+    {
+      "axis": "support",
+      "summary": "Support runbook for Google SSO signup/linking must be ready",
+      "scope": "Google sign-in, account linking, and auto-provisioning support scenarios for SMB users",
+      "prereq": "wait_for:support_runbook",
+      "blocking": true,
+      "acceptance": "Published runbook covers common failure cases, escalation paths, and self-serve fixes for account-linking failures",
+      "owner": "GTM"
+    },
+    {
+      "axis": "support",
+      "summary": "Support team training must complete before launch",
+      "scope": "Training on Google OAuth sign-in, existing-account linking, and workspace provisioning edge cases",
+      "prereq": "window:pre-launch_training_session",
+      "blocking": true,
+      "acceptance": "Support team attends training and can handle top failure scenarios using the runbook",
+      "owner": "GTM"
+    },
+    {
+      "axis": "gtm",
+      "summary": "Launch-day comms plan for SMB Google SSO must be approved",
+      "scope": "Customer-facing launch announcement, in-product messaging, and FAQ for SMB Google SSO",
+      "prereq": "approval:gtm_lead",
+      "blocking": true,
+      "acceptance": "Approved launch comms calendar and messaging assets are ready for Sept 22 release",
+      "owner": "GTM"
+    },
+    {
+      "axis": "gtm",
+      "summary": "Sales enablement materials must exist for paid SMB motion",
+      "scope": "Sales-facing positioning for Google SSO on SMB paid plans and workspace auto-provisioning",
+      "prereq": "wait_for:sales_enablement_kit",
+      "blocking": false,
+      "acceptance": "Sales has a one-pager and talk track covering who it is for, value prop, and common objections",
+      "owner": "GTM"
+    },
+    {
+      "axis": "support",
+      "summary": "Week-1 user feedback channel must be established",
+      "scope": "Post-launch feedback intake for SMB users hitting sign-in, linking, or provisioning issues",
+      "prereq": "window:week_1_post_launch",
+      "blocking": true,
+      "acceptance": "A named feedback channel is live, monitored, and routed to support for the first launch week",
+      "owner": "GTM"
+    }
+  ],
+  "plans": {
+    "mvp_fast": {
+      "summary": "Ship SMB Google SSO with account linking and domain-based auto-provisioning behind flags, then GA on Sept 22.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Write the API, identity-model, test-plan, threat-model, audit-log, and support-runbook specs for Google OIDC SSO, multi-identity accounts, linking, and auto-provisioning; get all required sign-offs.",
+          "owner": "ProductPM",
+          "depends_on": [],
+          "success_criterion": "All required specs exist and are approved: auth API, identity model, account-linking migration, test plan, threat model, audit log spec, support runbook.",
+          "definition_of_done": "Documents are signed off by Product, EngLead, QA, Security, and GTM/support owners where applicable.",
+          "instrumentation": "Spec approval records and linked doc IDs for auth-api-spec, auth-identity-model-design, account-linking-migration-plan, test_plan, threat_model, audit_log_spec, support_runbook.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 5
+        },
+        {
+          "id": "S2",
+          "action": "Produce the SMB Google SSO UX spec for sign-in, signup, linking, domain-recognition success/fallback, and free-account upgrade states; include clear copy for error and edge states.",
+          "owner": "Designer",
+          "depends_on": [
+            "S1"
+          ],
+          "success_criterion": "Signed-off UX spec covers all required SMB entry points and state transitions.",
+          "definition_of_done": "Design review, content review, and accessibility review are completed on the spec; edge states and back-out behavior are explicitly shown.",
+          "instrumentation": "Approved design spec with IA, wireframes, and content matrix for login, signup, link, provisioning, and failure states.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 4
+        },
+        {
+          "id": "S3",
+          "action": "Implement the backend refactor for multi-identity auth, Google OIDC login/link callback handling, and workspace auto-provisioning, all behind feature flags with audit events.",
+          "owner": "EngLead",
+          "depends_on": [
+            "S1"
+          ],
+          "success_criterion": "Backend supports Google sign-in, linking, and domain-based workspace creation without breaking password auth.",
+          "definition_of_done": "Unit/integration tests pass, second-engineer review is approved, security review for auth refactor is approved, and password auth regression tests stay green.",
+          "instrumentation": "Flag-gated auth event logs plus CI test results for identity resolution, linking, provisioning, and password-path regressions.",
+          "launch_strategy": "feature_flag",
+          "estimated_days": 10
+        },
+        {
+          "id": "S4",
+          "action": "Implement the SMB web UX and client integration for Google buttons, linking flows, success/failure states, and upgrade confirmation, wired to the new APIs behind feature flags.",
+          "owner": "FrontendEngineer",
+          "depends_on": [
+            "S2",
+            "S3"
+          ],
+          "success_criterion": "SMB users can start Google sign-in, link accounts, and see auto-provisioning/upgrade states in the product.",
+          "definition_of_done": "Frontend tests pass, design QA passes on staging, and all implemented screens match the approved spec.",
+          "instrumentation": "Frontend analytics events for Google CTA clicks, callback success/failure, link-confirmation, and provisioning states.",
+          "launch_strategy": "feature_flag",
+          "estimated_days": 8
+        },
+        {
+          "id": "S5",
+          "action": "Add automated coverage for success and failure paths, run regression across password auth and linked accounts, and execute manual staging QA plus stakeholder bug-bash.",
+          "owner": "QA",
+          "depends_on": [
+            "S4"
+          ],
+          "success_criterion": "Test suite and staging QA prove the feature works end-to-end without password-auth regressions.",
+          "definition_of_done": "Automated tests are green, regression suite is green, staging QA sign-off is recorded, and bug-bash blockers are closed or waived.",
+          "instrumentation": "CI test reports, staging QA checklist, and bug-bash defect tracker.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 6
+        },
+        {
+          "id": "S6",
+          "action": "Complete security and compliance checks on Google claims storage, token handling, audit parity, and linkage-abuse mitigation; approve release gating.",
+          "owner": "Security",
+          "depends_on": [
+            "S3"
+          ],
+          "success_criterion": "Security and compliance sign-off confirm the implementation is acceptable for SOC2 and account-linking safety.",
+          "definition_of_done": "Threat model actions are tracked, audit logs cover SSO/link/unlink/provisioning/failures, and compliance confirms SOC2 evidence impact is covered.",
+          "instrumentation": "Approved threat model, approved data-handling review, and audit-log event presence in staging/preview.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 4
+        },
+        {
+          "id": "S7",
+          "action": "Prepare support enablement: publish the runbook, train support, and set up the first-week feedback channel for SMB Google SSO issues.",
+          "owner": "GTM",
+          "depends_on": [
+            "S2",
+            "S5",
+            "S6"
+          ],
+          "success_criterion": "Support can resolve common account-linking and provisioning failures self-serve in under 10 minutes.",
+          "definition_of_done": "Runbook is published, training is completed, and a monitored feedback channel is live for launch week.",
+          "instrumentation": "Training attendance record, runbook link, and feedback-channel ticket metrics.",
+          "launch_strategy": "beta_program",
+          "estimated_days": 3
+        },
+        {
+          "id": "S8",
+          "action": "Do a short dark launch in production for internal and allowlisted SMB traffic, verify metrics and audit logs, then flip to GA for the full SMB tier by Sept 22.",
+          "owner": "ReleaseManager",
+          "depends_on": [
+            "S4",
+            "S5",
+            "S6",
+            "S7"
+          ],
+          "success_criterion": "Production rollout is stable and then made available to 100% of eligible SMB users by Sept 22.",
+          "definition_of_done": "Feature flag is enabled for internal/allowlisted traffic, success/failure metrics are within expected bounds, and GA approval is recorded before full enablement.",
+          "instrumentation": "Flag exposure metrics, Google SSO adoption rate, link success rate, provisioning success rate, and audit-log parity checks.",
+          "launch_strategy": "dark_launch",
+          "estimated_days": 2
+        }
+      ],
+      "open_questions": [
+        "Should domain recognition rely only on Google Workspace email domain heuristics, or do we need a provider-side domain verification heuristic for edge cases?",
+        "What exact GA readiness threshold should gate Sept 22 launch if staging/production metrics are close but not perfect?",
+        "Do we want to require explicit user confirmation before merging an existing free account with a Google identity, or auto-link when emails match and the user is already authenticated?",
+        "Should the first release include only account linking for signed-in existing users, or also show a self-serve 'Continue with Google' path on signup/login for all eligible SMB users?",
+        "v1.1 follow-up: full accessibility audit, exhaustive analytics funnels, and non-English localization for Google SSO screens."
+      ],
+      "conflicts": [
+        {
+          "between": [
+            "ProductPM",
+            "Designer"
+          ],
+          "issue": "Product wants GA by Sept 22, while design requires a signed-off UX spec, edge-state guidance, and review cycles first. Resolved by scoping the UX to only the minimum SMB sign-in/link/provisioning states and running design in parallel with backend spec work."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "QA"
+          ],
+          "issue": "Product requires full SMB GA, while QA requires a written test plan, automated coverage, regression green, staging manual QA, and bug-bash before launch. Resolved by treating QA as a gating step but keeping the test surface minimal to the Google SSO, linking, and provisioning paths only."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "Security"
+          ],
+          "issue": "Product needs fast GA, while Security requires threat modeling, auth refactor review, audit logging parity, and compliance sign-off. Resolved by doing security review on the reduced scope and making audit parity a first-class launch requirement, not a later hardening item."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "GTM"
+          ],
+          "issue": "Product wants GA and sales kickoff messaging on Sept 22, while Support/GTM need a runbook, training, and a week-1 feedback channel. Resolved by preparing support enablement before launch and using a short dark launch to flush operational issues before GA."
+        },
+        {
+          "between": [
+            "EngLead",
+            "ProductPM"
+          ],
+          "issue": "EngLead's required multi-identity refactor and migration path increases implementation time, while Product wants no disruption to existing password auth and seamless free-account upgrade. Resolved by limiting the refactor to the minimum identity-mapping changes needed for Google linking and preserving password sessions unchanged."
+        }
+      ]
+    },
+    "standard": {
+      "summary": "Ship Google OAuth/OIDC SSO for SMB with account linking, domain auto-provisioning, audit logging, support readiness, and GA rollout by Sept 22.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Write and review the auth/test/spec package: multi-identity auth model, Google OAuth/OIDC API contract, audit log events, and a complete test plan for login/linking/provisioning.",
+          "owner": "EngLead",
+          "depends_on": [],
+          "success_criterion": "All required specs are written and signed off by Eng, QA, Security, and Product.",
+          "definition_of_done": "Published auth-api-spec, auth-identity-model-design, audit_log_spec, and test_plan are approved; no open review blockers remain.",
+          "instrumentation": "Spec approval records and design-doc version tags in the docs repo.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 5
+        },
+        {
+          "id": "S2",
+          "action": "Complete security threat modeling, PII handling review, and compliance review for Google SSO, linking, auto-provisioning, and audit parity with password auth.",
+          "owner": "Security",
+          "depends_on": [
+            "S1"
+          ],
+          "success_criterion": "Security signs off on the threat model, data handling, auth refactor, and audit logging requirements.",
+          "definition_of_done": "Threat model completed; security review approved; compliance sign-off recorded for SOC2 audit impact.",
+          "instrumentation": "Security review approval, threat-model tracker, and compliance sign-off artifact.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 4
+        },
+        {
+          "id": "S3",
+          "action": "Create the SMB UX spec for Google SSO entry points, explicit account linking, auto-provisioning states, error states, and accessibility requirements.",
+          "owner": "Designer",
+          "depends_on": [
+            "S1"
+          ],
+          "success_criterion": "Approved design covers all SMB auth journeys and edge states, including WCAG AA considerations.",
+          "definition_of_done": "Design QA pass completed; accessibility review completed; signed-off UX spec available for build.",
+          "instrumentation": "Approved design files and accessibility review notes.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 5
+        },
+        {
+          "id": "S4",
+          "action": "Implement the backend auth refactor for multi-identity users, Google OAuth/OIDC sign-in, account linking/unlinking, domain recognition, and workspace auto-provisioning behind feature flags.",
+          "owner": "BackendEng",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "success_criterion": "Backend supports Google sign-in, safe linking, and auto-provisioning without breaking existing password auth.",
+          "definition_of_done": "Unit/integration tests pass; existing email/password flows remain unchanged; new endpoints and flags are merged.",
+          "instrumentation": "Deployment logs, feature-flag events, and backend test results.",
+          "launch_strategy": "feature_flag",
+          "estimated_days": 10
+        },
+        {
+          "id": "S5",
+          "action": "Implement client changes for SMB login, signup, linking flows, loading/fallback states, and clear Google SSO affordances using the approved design.",
+          "owner": "FrontendEng",
+          "depends_on": [
+            "S3",
+            "S4"
+          ],
+          "success_criterion": "Users can discover Google SSO, link accounts, and complete auto-provisioning flows in the SMB UI.",
+          "definition_of_done": "Frontend tests pass; UI matches signed-off design; flows are gated behind flags and wired to backend APIs.",
+          "instrumentation": "Client event logs for SSO entry, linking attempts, success, and failures.",
+          "launch_strategy": "feature_flag",
+          "estimated_days": 8
+        },
+        {
+          "id": "S6",
+          "action": "Add and run automated coverage for login, linking, workspace creation, regression cases, and audit-log parity.",
+          "owner": "QA",
+          "depends_on": [
+            "S4",
+            "S5"
+          ],
+          "success_criterion": "Automated tests cover the new Google SSO paths plus existing password auth coexistence.",
+          "definition_of_done": "CI passes with new automated coverage and regression suite green across auth paths.",
+          "instrumentation": "CI test reports and regression dashboard status.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 5
+        },
+        {
+          "id": "S7",
+          "action": "Prepare support documentation, self-serve troubleshooting flows, and internal training for Google SSO signup/linking failures.",
+          "owner": "GTM",
+          "depends_on": [
+            "S3",
+            "S4",
+            "S5"
+          ],
+          "success_criterion": "Support can resolve common account-linking and provisioning issues in under 10 minutes using documented flows.",
+          "definition_of_done": "Runbook published; training completed; support confirms readiness on top failure scenarios.",
+          "instrumentation": "Runbook URL, training attendance record, and support readiness sign-off.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 3
+        },
+        {
+          "id": "S8",
+          "action": "Run staging QA, design QA, accessibility verification, and a stakeholder bug-bash on the release candidate.",
+          "owner": "QA",
+          "depends_on": [
+            "S6",
+            "S7"
+          ],
+          "success_criterion": "The built experience matches the approved design and passes manual end-to-end validation.",
+          "definition_of_done": "Single design-QA pass completed; manual staging QA sign-off recorded; bug-bash defects triaged and blockers closed or waived.",
+          "instrumentation": "QA sign-off ticket, bug-bash notes, and staging validation log.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 4
+        },
+        {
+          "id": "S9",
+          "action": "Conduct the single security launch review on the implemented build, confirming audit logging, identity binding, linkage abuse protections, and readiness for GA.",
+          "owner": "Security",
+          "depends_on": [
+            "S8"
+          ],
+          "success_criterion": "Security approves the shipped implementation for launch.",
+          "definition_of_done": "Final security review completed once; no unresolved high-risk findings remain; audit trail parity confirmed.",
+          "instrumentation": "Security approval record and audit-log verification evidence.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 2
+        },
+        {
+          "id": "S10",
+          "action": "Enable Google SSO for 100% of eligible SMB users with gradual rollout controls, monitor adoption/conversion, and publish launch comms to sales and customers.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S9"
+          ],
+          "success_criterion": "Feature is GA for the full SMB tier by Sept 22 and announced to the Q3 sales motion.",
+          "definition_of_done": "Feature flag rollout complete to all eligible SMB users; launch comms approved and sent; metrics dashboard live for 30-day tracking.",
+          "instrumentation": "Rollout percentage, SSO adoption metric, free-to-paid conversion dashboard, and launch announcement timestamp.",
+          "launch_strategy": "gradual_rollout",
+          "estimated_days": 3
+        }
+      ],
+      "open_questions": [
+        "What exact Google Workspace domain-recognition rules should we use for auto-provisioning?",
+        "Should account linking require an explicit re-auth step before merging a free account with Google identity?",
+        "What is the preferred gradual-rollout ramp schedule before reaching 100% GA for SMB?",
+        "Which teams own the final wording for customer-facing launch comms and FAQ?"
+      ],
+      "conflicts": [
+        {
+          "between": [
+            "ProductPM",
+            "Security"
+          ],
+          "issue": "Product demands GA by Sept 22, while Security requires a complete threat model, auth refactor review, audit logging review, and compliance sign-off before launch. Resolved by sequencing security work before release and using gradual_rollout only after sign-off."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "Designer"
+          ],
+          "issue": "Product requires SMB GA by Sept 22 and full SMB availability, while Designer requires design sign-off, design QA, accessibility review, and explicit linked/free-upgrade states before launch. Resolved by treating design approval and QA as prerequisites to full GA."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "EngLead"
+          ],
+          "issue": "Product wants the feature launched as SMB GA, while Eng requires an API contract freeze, multi-identity refactor, and feature-flagged rollout before exposure. Resolved by completing contract/design work first and shipping behind flags before gradual rollout to full GA."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "QA"
+          ],
+          "issue": "Product wants GA by Sept 22, while QA requires a reviewed test plan, automated coverage, regression green, staging QA, and bug-bash before launch. Resolved by making QA sign-off a launch gate and allocating prelaunch time for all required checks."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "GTM"
+          ],
+          "issue": "Product wants sales messaging aligned to GA, while GTM requires support runbook readiness, support training, and launch comms approval. Resolved by finishing support readiness before GA and only then publishing launch comms."
+        },
+        {
+          "between": [
+            "Designer",
+            "EngLead"
+          ],
+          "issue": "Designer needs a signed-off UX spec before build, while Eng needs the auth/API contract and identity model locked before client work. Resolved by parallelizing design and backend spec work, then starting implementation after both are approved."
+        },
+        {
+          "between": [
+            "Designer",
+            "QA"
+          ],
+          "issue": "Designer requires design QA sign-off before launch, while QA requires a reviewed test plan and manual staging validation. Resolved by embedding a single design-QA pass within the overall QA staging validation step."
+        },
+        {
+          "between": [
+            "EngLead",
+            "QA"
+          ],
+          "issue": "Eng requires implementation to follow contract sign-off, while QA requires a reviewed test plan before implementation starts. Resolved by front-loading the test plan and API/identity specs before build work begins."
+        },
+        {
+          "between": [
+            "EngLead",
+            "Security"
+          ],
+          "issue": "Eng wants the auth refactor and OIDC integration reviewed by security, while Security requires threat modeling and a security review before implementation or launch. Resolved by placing security review immediately after spec/design completion and before code merge.",
+          "resolution": "Security review gates implementation of sensitive auth changes; non-security backend work proceeds only after the review."
+        }
+      ]
+    },
+    "robust_launch": {
+      "summary": "Ship Google OAuth SSO for SMB with linking, auto-provisioning, and full GA by Sept 22, with staged beta, rollout, and readiness gates.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Finalize product scope and launch criteria for SMB Google SSO, confirming only Google OIDC, account linking, and domain-based auto-provisioning are included.",
+          "owner": "ProductPM",
+          "depends_on": [],
+          "success_criterion": "Scope doc is signed off and excludes Microsoft, Apple, Okta, SAML for SMB, and SCIM.",
+          "definition_of_done": "Product approval recorded; scope checklist explicitly marks in-scope and out-of-scope items; GA-by-Sept-22 requirement captured.",
+          "instrumentation": "Scope approval record in project tracker; launch KPI definitions for signup conversion and SSO adoption are documented.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 2
+        },
+        {
+          "id": "S2",
+          "action": "Write the auth API, identity model, and account-linking migration specifications, including multi-identity-per-user resolution rules and audit/event contracts.",
+          "owner": "EngLead",
+          "depends_on": [
+            "S1"
+          ],
+          "success_criterion": "Approved technical spec exists for OIDC login, callback, link/unlink, workspace provisioning, and identity mapping.",
+          "definition_of_done": "API spec signed off by engineering; identity model design reviewed; migration plan preserves existing password users and free-account workspace state.",
+          "instrumentation": "Schema/event spec includes login_started, login_succeeded, link_started, link_succeeded, provisioning_started, provisioning_succeeded, and audit_log_written.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 4
+        },
+        {
+          "id": "S3",
+          "action": "Complete security threat modeling and data-handling review for Google OAuth, linking, token storage, account takeover, and audit parity.",
+          "owner": "Security",
+          "depends_on": [
+            "S2"
+          ],
+          "success_criterion": "Threat model and security review are approved with mitigations tracked.",
+          "definition_of_done": "Security approval recorded; PII retention/masking/encryption documented; audit-log requirements mapped to SOC2 controls.",
+          "instrumentation": "Threat-model findings tracked to remediation tickets; security review sign-off; audit trail schema includes Google SSO parity fields.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 4
+        },
+        {
+          "id": "S4",
+          "action": "Produce UX specs for SMB Google SSO entry points, explicit linking, error states, auto-provisioning states, and accessible flows.",
+          "owner": "Designer",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "success_criterion": "Signed UX spec covers login, signup, account-linking, recovery, and WCAG AA requirements.",
+          "definition_of_done": "Design QA-ready flows approved; copy for duplicate email, unrecognized domain, OAuth failure, and no-workspace states included.",
+          "instrumentation": "Design annotations include analytics hooks for CTA impressions, OAuth start, link confirmation, error state exposure, and fallback usage.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 5
+        },
+        {
+          "id": "S5",
+          "action": "Define the test plan and automation matrix for Google SSO, linking, auto-provisioning, and password-auth coexistence.",
+          "owner": "QA",
+          "depends_on": [
+            "S2",
+            "S3",
+            "S4"
+          ],
+          "success_criterion": "Reviewed test plan exists before implementation starts.",
+          "definition_of_done": "Test plan approved; automated coverage list includes happy paths, duplicate-email linking, domain recognition, rollback/failure cases, and regression coverage.",
+          "instrumentation": "CI test suite emits pass/fail for auth paths; coverage report for new flows is published.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 3
+        },
+        {
+          "id": "S6",
+          "action": "Implement auth middleware refactor for multi-identity users, preserving email/password auth unchanged and adding audit-safe session issuance.",
+          "owner": "EngLead",
+          "depends_on": [
+            "S2",
+            "S3",
+            "S5"
+          ],
+          "success_criterion": "Backend supports multiple identities per user without breaking existing auth.",
+          "definition_of_done": "Second-engineer review approved; regression tests pass for all password auth paths; audit events emitted for password and Google sessions identically.",
+          "instrumentation": "Structured events for auth success/failure, identity-link events, and audit log entries are present from first deploy.",
+          "launch_strategy": "dark_launch",
+          "estimated_days": 8
+        },
+        {
+          "id": "S7",
+          "action": "Build Google OIDC sign-in, account-linking, unlink safeguards, and workspace auto-provisioning backend flows behind feature flags.",
+          "owner": "EngLead",
+          "depends_on": [
+            "S6",
+            "S3"
+          ],
+          "success_criterion": "Google login, link, and domain-recognition provisioning work in staging behind flags.",
+          "definition_of_done": "API contract implemented and approved; exposure/success/failure logging verified; no changes to existing email/password behavior.",
+          "instrumentation": "Flag exposure events, OAuth callback success/failure, link success/failure, and provisioning success/failure metrics are emitted.",
+          "launch_strategy": "feature_flag",
+          "estimated_days": 8
+        },
+        {
+          "id": "S8",
+          "action": "Implement SMB UX surfaces for Google SSO entry, linking confirmation, error handling, loading states, and accessibility fixes.",
+          "owner": "Designer",
+          "depends_on": [
+            "S4",
+            "S7"
+          ],
+          "success_criterion": "Built UI matches approved SMB design and WCAG AA requirements.",
+          "definition_of_done": "Design QA sign-off completed; keyboard, focus, contrast, labels, and screen-reader behavior verified; no dead-end states remain.",
+          "instrumentation": "Frontend events for button impressions, CTA clicks, redirect start, error rendering, and completion are instrumented.",
+          "launch_strategy": "feature_flag",
+          "estimated_days": 7
+        },
+        {
+          "id": "S9",
+          "action": "Add automated tests and regression coverage for login, linking, workspace creation, and coexistence with password auth.",
+          "owner": "QA",
+          "depends_on": [
+            "S6",
+            "S7",
+            "S8"
+          ],
+          "success_criterion": "Automated tests cover core flows and key failures; regression suite stays green.",
+          "definition_of_done": "CI passes with new tests; manual QA on staging confirms end-to-end journeys; no auth regressions found.",
+          "instrumentation": "Test telemetry records pass/fail by scenario and environment; staging QA results captured.",
+          "launch_strategy": "dark_launch",
+          "estimated_days": 5
+        },
+        {
+          "id": "S10",
+          "action": "Prepare support runbook, support training, and self-serve troubleshooting for linking failures and provisioning issues.",
+          "owner": "GTM",
+          "depends_on": [
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "success_criterion": "Support can resolve common account-linking failures from documented flows in under 10 minutes.",
+          "definition_of_done": "Runbook published; training completed; support readiness sign-off recorded.",
+          "instrumentation": "Support ticket tags, time-to-resolution metrics, and runbook article usage tracked.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 3
+        },
+        {
+          "id": "S11",
+          "action": "Prepare sales enablement and external launch communications, including FAQ, talk track, in-product messaging, and Sept 22 announcement.",
+          "owner": "GTM",
+          "depends_on": [
+            "S10",
+            "S9"
+          ],
+          "success_criterion": "Sales and launch comms are approved and ready for GA.",
+          "definition_of_done": "Sales enablement kit completed; customer-facing comms approved after GA-readiness signoff; messaging references only SMB Google SSO scope.",
+          "instrumentation": "Enablement asset usage and announcement delivery metrics tracked; FAQ/help-page views monitored.",
+          "launch_strategy": "not_applicable",
+          "estimated_days": 4
+        },
+        {
+          "id": "S12",
+          "action": "Run a closed beta program for selected SMB users, with bug-bash and metrics review before any GA decision.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "success_criterion": "Beta users complete key flows, bug-bash defects are triaged, and metrics meet release thresholds.",
+          "definition_of_done": "Beta program approved; bug-bash completed; open launch blockers closed or waived; adoption, failure rates, and supportability reviewed.",
+          "instrumentation": "Beta cohort adoption, OAuth success rate, linking success rate, provisioning success rate, and drop-off funnel metrics are reported.",
+          "launch_strategy": "beta_program",
+          "estimated_days": 7
+        },
+        {
+          "id": "S13",
+          "action": "Roll out Google SSO gradually to the full SMB tier with monitorable gates and rollback criteria, then expand to 100% for GA.",
+          "owner": "EngLead",
+          "depends_on": [
+            "S12",
+            "S11"
+          ],
+          "success_criterion": "Gradual rollout reaches full SMB eligibility with no unresolved critical issues.",
+          "definition_of_done": "Gradual rollout thresholds met; launch readiness signoff recorded; full-release enablement is verified for all eligible SMB users.",
+          "instrumentation": "Rollout percentage, error rate, abandonment rate, support tickets, and audit-log parity monitored continuously.",
+          "launch_strategy": "gradual_rollout",
+          "estimated_days": 5
+        },
+        {
+          "id": "S14",
+          "action": "Declare GA for SMB, publish launch communications, and start the 30-day post-launch KPI measurement window.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S13"
+          ],
+          "success_criterion": "Feature is fully available to eligible SMB users and announced as GA by Sept 22.",
+          "definition_of_done": "100% SMB release confirmed; sales kickoff messaging sent; post-launch KPI dashboard active for 30 days.",
+          "instrumentation": "GA launch event, 30-day adoption/conversion dashboard, and SOC2 audit log parity checks are live.",
+          "launch_strategy": "full_release",
+          "estimated_days": 1
+        }
+      ],
+      "open_questions": [
+        "What exact Google Workspace domain-recognition method will be used without requiring DNS verification?",
+        "What rollout thresholds should gate beta exit and gradual expansion?",
+        "Should account linking require re-authentication or an explicit confirmation step for all merges?",
+        "What is the final compliance sign-off process for SOC2 evidence changes?",
+        "Which SMB cohorts are eligible for the closed beta program?"
+      ],
+      "conflicts": [
+        {
+          "between": [
+            "ProductPM",
+            "QA"
+          ],
+          "issue": "Product requires GA by Sept 22, while QA requires a stakeholder bug-bash before GA; resolved by inserting a closed beta and bug-bash before gradual rollout so GA remains achievable."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "EngLead"
+          ],
+          "issue": "Product wants full SMB GA, but Eng requires feature-flagged rollout from day one; resolved by using flags internally during build, then beta_program -> gradual_rollout -> full_release for launch."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "Security"
+          ],
+          "issue": "Product wants rapid GA, while Security requires threat modeling, audit-log parity, and compliance sign-off first; resolved by sequencing security review before rollout and carrying audit instrumentation through every step."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "GTM"
+          ],
+          "issue": "Product wants launch communication only after GA readiness, while GTM needs support readiness and enablement beforehand; resolved by preparing support/sales assets pre-GA and sending launch comms only after GA signoff."
+        },
+        {
+          "between": [
+            "Designer",
+            "EngLead"
+          ],
+          "issue": "Designer requires approved UX specs before implementation, while Eng needs an API contract and identity model first; resolved by locking backend contracts before UI build, then wiring design to the implemented flows."
+        },
+        {
+          "between": [
+            "QA",
+            "EngLead"
+          ],
+          "issue": "QA wants a reviewed test plan before implementation starts, while Eng needs auth-identity model work first; resolved by producing the test plan during specification and using it as a gate before coding risky auth changes."
+        }
+      ]
+    }
+  },
+  "smt": {
+    "mvp_fast": {
+      "feasible": true,
+      "backend": "z3",
+      "n_steps": 8,
+      "notes": [],
+      "unsat_core": []
+    },
+    "standard": {
+      "feasible": true,
+      "backend": "z3",
+      "n_steps": 10,
+      "notes": [],
+      "unsat_core": []
+    },
+    "robust_launch": {
+      "feasible": true,
+      "backend": "z3",
+      "n_steps": 14,
+      "notes": [],
+      "unsat_core": []
+    }
+  },
+  "winner": "mvp_fast"
+}
