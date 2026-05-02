@@ -1,0 +1,171 @@
+{
+  "args": {
+    "n": 3,
+    "seed": 2026,
+    "prefer": null,
+    "judge": true,
+    "out": "validation/FEATURE_BENCH_n3_smoke.md"
+  },
+  "scores": [
+    {
+      "id": "feature_synthetic/compliance_audit/fintech/enterprise/36241",
+      "feature_kind": "compliance_audit",
+      "context": "fintech",
+      "scale": "enterprise",
+      "winner": "mvp_fast",
+      "elapsed_s": 22.861470699310303,
+      "literal": {
+        "verdict": "partial",
+        "stakeholders_hit": 4,
+        "stakeholders_total": 4,
+        "axes_hit": 4,
+        "axes_total": 4,
+        "days_in_band": true,
+        "launch_strategy_ok": false,
+        "security_step_present": true,
+        "regulated": true
+      },
+      "judge": {
+        "verdict": "partial",
+        "rationale": "Strong compliance/eng coverage, but it omits a blocking stakeholder (GTM not clearly blocking) and uses gradual rollout, not full_release.",
+        "captured": [
+          "immutable audit/event log",
+          "customer-facing audit report",
+          "retention policy",
+          "SOC2 mapping",
+          "v2 surface",
+          "PCI/SOX compliance signoff",
+          "self-serve support docs",
+          "SMB-safe rollout",
+          "security review",
+          "compliance review"
+        ],
+        "missed": [
+          "GTM as a blocking stakeholder",
+          "launch strategy should be full_release",
+          "explicit security/compliance review step tied to regulation is present only in rollout, not a distinct gate"
+        ],
+        "stakeholders_hit": 3,
+        "stakeholders_total": 4,
+        "axes_hit": 4,
+        "axes_total": 4,
+        "days_in_band": true,
+        "launch_strategy_ok": false,
+        "security_step_present": true,
+        "judge_confidence": "high"
+      }
+    },
+    {
+      "id": "feature_synthetic/mobile_parity/b2b_saas/early/39603",
+      "feature_kind": "mobile_parity",
+      "context": "b2b_saas",
+      "scale": "early",
+      "winner": "standard",
+      "elapsed_s": 23.252614498138428,
+      "literal": {
+        "verdict": "caught",
+        "stakeholders_hit": 4,
+        "stakeholders_total": 4,
+        "axes_hit": 4,
+        "axes_total": 4,
+        "days_in_band": true,
+        "launch_strategy_ok": true,
+        "security_step_present": true,
+        "regulated": false
+      },
+      "judge": {
+        "verdict": "caught",
+        "rationale": "All blocking stakeholders are present, all required axes are covered, rollout is gradual, and the plan fits the GT timeline band with security review included.",
+        "captured": [
+          "ProductPM blocking present",
+          "Designer blocking present",
+          "EngLead blocking present",
+          "QA blocking present",
+          "scope axis covered",
+          "ux axis covered",
+          "eng axis covered",
+          "quality axis covered",
+          "gradual_rollout launch strategy",
+          "security/compliance review step present",
+          "SMB compatibility preserved",
+          "offline support included",
+          "push integration included"
+        ],
+        "missed": [],
+        "stakeholders_hit": 4,
+        "stakeholders_total": 4,
+        "axes_hit": 4,
+        "axes_total": 4,
+        "days_in_band": true,
+        "launch_strategy_ok": true,
+        "security_step_present": true,
+        "judge_confidence": "high"
+      }
+    },
+    {
+      "id": "feature_synthetic/integration_native/dev_tools/early/78037",
+      "feature_kind": "integration_native",
+      "context": "dev_tools",
+      "scale": "early",
+      "winner": "mvp_fast",
+      "elapsed_s": 23.500853776931763,
+      "literal": {
+        "verdict": "caught",
+        "stakeholders_hit": 3,
+        "stakeholders_total": 3,
+        "axes_hit": 3,
+        "axes_total": 3,
+        "days_in_band": true,
+        "launch_strategy_ok": true,
+        "security_step_present": true,
+        "regulated": false
+      },
+      "judge": {
+        "verdict": "caught",
+        "rationale": "All 3 blocking stakeholders flagged, all GT axes covered, feature-flag launch matches, 24 days fits band; security review included.",
+        "captured": [
+          "ProductPM blocking constraint",
+          "Designer blocking constraint",
+          "EngLead blocking constraint",
+          "scope axis",
+          "ux axis",
+          "eng axis",
+          "feature_flag launch strategy",
+          "security review step",
+          "24 total days within GT band"
+        ],
+        "missed": [
+          "No clear mention of Pro-tier users continuing unchanged as a blocking constraint",
+          "GTM/support axis is present but not a GT expected axis"
+        ],
+        "stakeholders_hit": 3,
+        "stakeholders_total": 3,
+        "axes_hit": 3,
+        "axes_total": 3,
+        "days_in_band": true,
+        "launch_strategy_ok": true,
+        "security_step_present": true,
+        "judge_confidence": "high"
+      }
+    }
+  ],
+  "literal_verdicts": {
+    "partial": 1,
+    "caught": 2
+  },
+  "judge_verdicts": {
+    "partial": 1,
+    "caught": 2
+  },
+  "by_kind": {
+    "compliance_audit": {
+      "partial": 1
+    },
+    "mobile_parity": {
+      "caught": 1
+    },
+    "integration_native": {
+      "caught": 1
+    }
+  }
+}
