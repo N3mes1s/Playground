@@ -19,9 +19,31 @@ Chaos analysis recasts as timeline-risk: "what if step S3 slips 1 week".
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from mirofish_lab.personas import Persona
+
+
+# --- Runtime prompt extension (GEPA hook) ---------------------------------
+# Identical mechanism to rollout pareto.py: env var wins, file fallback,
+# empty-string default. Keeps feature_planning.py source clean across
+# discovery cycles while still allowing winners to persist.
+
+_FEATURE_EXTRA_FILE = Path(__file__).parent / "feature_pareto_extra.txt"
+
+
+def _load_runtime_tail_extra() -> str:
+    env_val = os.environ.get("MIROFISH_FEATURE_TAIL_EXTRA")
+    if env_val is not None:
+        return env_val
+    if _FEATURE_EXTRA_FILE.exists():
+        try:
+            return _FEATURE_EXTRA_FILE.read_text()
+        except Exception:
+            return ""
+    return ""
 
 
 CONSTRAINT_SCHEMA_HINT = """
@@ -160,7 +182,7 @@ FEATURE_STEP_SCHEMA = (
 )
 
 
-_BASE_TAIL = (
+_BASE_TAIL_CORE = (
     "\n\nCRITICAL conflict-detection instruction:\n"
     "- Walk EVERY pair of stakeholder constraints in the input.\n"
     "- A conflict exists whenever two BLOCKING constraints from different "
@@ -177,6 +199,8 @@ _BASE_TAIL = (
     "- Don't invent constraints not in the input.\n"
     "- 6-15 steps. Wrap the JSON in a ```json fenced block."
 )
+
+_BASE_TAIL = _BASE_TAIL_CORE + _load_runtime_tail_extra()
 
 
 FEATURE_SEQUENCERS: dict[str, Persona] = {

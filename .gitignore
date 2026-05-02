@@ -18,3 +18,4 @@ vulnllm-analyzer/sliver-src/
 *.gepa_bak
 *.autocal_bak
 .bench_runs_feature/
+validation/feature_gepa_runs/
