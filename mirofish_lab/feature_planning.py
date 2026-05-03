@@ -151,12 +151,7 @@ FEATURE_STAKEHOLDER_PERSONAS: list[Persona] = [
 
 # --- per-step output schema ----------------------------------------------
 
-FEATURE_STEP_SCHEMA = (
-    "Your output is a JSON object:\n\n"
-    "{\n"
-    '  "summary": "<= 200 chars, what this plan ships",\n'
-    '  "steps": [\n'
-    "    {\n"
+_STEP_SCHEMA_BASE_FIELDS = (
     '      "id": "S1",\n'
     '      "action": "concrete step description",\n'
     '      "owner": "<persona name>",\n'
@@ -168,18 +163,74 @@ FEATURE_STEP_SCHEMA = (
     "shipped\",\n"
     '      "launch_strategy": "feature_flag | gradual_rollout | dark_launch '
     "| beta_program | full_release | not_applicable\",\n"
-    '      "estimated_days": <integer days; rough order-of-magnitude>\n'
-    "    }\n"
-    "  ],\n"
-    '  "open_questions": ["unresolved decisions a human must make"],\n'
-    '  "conflicts": [\n'
-    "    {\n"
-    '      "between": ["<owner_A>", "<owner_B>"],\n'
-    '      "issue": "describe the disagreement and how you resolved it"\n'
-    "    }\n"
-    "  ]\n"
-    "}\n"
 )
+
+_STEP_SCHEMA_REASONING_FIELD = (
+    '      "strategy_reasoning": "<= 200 chars, WHY this launch_strategy '
+    "given the feature kind and constraints. e.g. \\\"compliance_audit + "
+    "regulated -> full_release because partial rollout would leave audit "
+    "scope ambiguous\\\". REQUIRED.\",\n"
+)
+
+
+def _step_schema(*, with_reasoning: bool) -> str:
+    middle = (
+        _STEP_SCHEMA_BASE_FIELDS
+        + (_STEP_SCHEMA_REASONING_FIELD if with_reasoning else "")
+        + '      "estimated_days": <integer days; rough order-of-magnitude>\n'
+    )
+    return (
+        "Your output is a JSON object:\n\n"
+        "{\n"
+        '  "summary": "<= 200 chars, what this plan ships",\n'
+        '  "steps": [\n'
+        "    {\n"
+        + middle +
+        "    }\n"
+        "  ],\n"
+        '  "open_questions": ["unresolved decisions a human must make"],\n'
+        '  "conflicts": [\n'
+        "    {\n"
+        '      "between": ["<owner_A>", "<owner_B>"],\n'
+        '      "issue": "describe the disagreement and how you resolved it"\n'
+        "    }\n"
+        "  ]\n"
+        "}\n"
+    )
+
+
+_STRATEGY_REASONING_TAIL = (
+    "\n\nLAUNCH STRATEGY DECISION (when strategy_reasoning is required):\n"
+    "- Pick the launch_strategy by EXPLICITLY mapping the feature kind + "
+    "constraints, then writing the mapping as strategy_reasoning.\n"
+    "- Anchor heuristics (use freely):\n"
+    "  * regulated/compliance/audit features whose acceptance requires "
+    "    full coverage → `full_release` (partial rollout leaves scope ambiguous).\n"
+    "  * mobile parity / new UX surfaces / risky cross-stakeholder change "
+    "    → `beta_program` then `gradual_rollout`.\n"
+    "  * additive backend / API features behind an admin toggle → "
+    "    `feature_flag` then `gradual_rollout`.\n"
+    "  * pure backend instrumentation, no user-visible change → "
+    "    `dark_launch` or `not_applicable`.\n"
+    "- If two heuristics conflict, pick the SAFER strategy and say so in "
+    "  strategy_reasoning.\n"
+    "- strategy_reasoning that just restates the strategy name "
+    "  (\"feature_flag because feature flag\") is INVALID. Cite the "
+    "  feature kind, regulated/non-regulated, the failure mode you're "
+    "  guarding against, OR the stakeholder constraint that drove the pick."
+)
+
+
+# Default schema (back-compat): `with_reasoning=False`. The
+# MIROFISH_FEATURE_STRATEGY_REASONING env var (or _load_strategy_reasoning_mode())
+# flips it to True at module import.
+def _strategy_reasoning_enabled() -> bool:
+    val = os.environ.get("MIROFISH_FEATURE_STRATEGY_REASONING", "").lower()
+    return val in ("1", "true", "yes", "on")
+
+
+_REASONING_ON = _strategy_reasoning_enabled()
+FEATURE_STEP_SCHEMA = _step_schema(with_reasoning=_REASONING_ON)
 
 
 _BASE_TAIL_CORE = (
@@ -200,7 +251,11 @@ _BASE_TAIL_CORE = (
     "- 6-15 steps. Wrap the JSON in a ```json fenced block."
 )
 
-_BASE_TAIL = _BASE_TAIL_CORE + _load_runtime_tail_extra()
+_BASE_TAIL = (
+    _BASE_TAIL_CORE
+    + (_STRATEGY_REASONING_TAIL if _REASONING_ON else "")
+    + _load_runtime_tail_extra()
+)
 
 
 FEATURE_SEQUENCERS: dict[str, Persona] = {
