@@ -221,12 +221,18 @@ _STRATEGY_REASONING_TAIL = (
 )
 
 
-# Default schema (back-compat): `with_reasoning=False`. The
-# MIROFISH_FEATURE_STRATEGY_REASONING env var (or _load_strategy_reasoning_mode())
-# flips it to True at module import.
+# Default: strategy_reasoning is ON. Holdout-validated calibration cycle
+# 2026-05-02 (n=12 eval + n=12 disjoint holdout): the additional schema
+# field confirmed +12pp avg launch_strategy_ok across both slices, with
+# the eval-only -25pp judge caught regression rejected by holdout (0pp
+# there). robust_launch wins now appear in both slices (was 0/24 before,
+# 6/24 with reasoning). Set MIROFISH_FEATURE_STRATEGY_REASONING=0 to
+# disable the schema field for back-compat with pre-cycle artifacts.
 def _strategy_reasoning_enabled() -> bool:
     val = os.environ.get("MIROFISH_FEATURE_STRATEGY_REASONING", "").lower()
-    return val in ("1", "true", "yes", "on")
+    if val in ("0", "false", "no", "off"):
+        return False
+    return True  # default ON after the 2026-05-02 calibration
 
 
 _REASONING_ON = _strategy_reasoning_enabled()
