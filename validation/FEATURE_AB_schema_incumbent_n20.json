@@ -1,0 +1,590 @@
+{
+  "args": {
+    "n": 20,
+    "seed": 1337,
+    "prefer": null,
+    "judge": true,
+    "out": "validation/FEATURE_AB_schema_incumbent_n20.md"
+  },
+  "scores": [
+    {
+      "id": "feature_synthetic/realtime_collab/healthtech/enterprise/29768",
+      "feature_kind": "realtime_collab",
+      "context": "healthtech",
+      "scale": "enterprise",
+      "winner": "standard",
+      "elapsed_s": 32.62929153442383,
+      "literal": {
+        "verdict": "partial",
+        "stakeholders_hit": 3,
+        "stakeholders_total": 3,
+        "axes_hit": 3,
+        "axes_total": 3,
+        "days_in_band": false,
+        "launch_strategy_ok": false,
+        "security_step_present": true,
+        "regulated": true
+      },
+      "judge": {
+        "verdict": "partial",
+        "rationale": "Strong fit on stakeholders, HIPAA review, and rollout, but the plan is a standard/phased rollout rather than a beta program.",
+        "captured": [
+          "ProductPM, Designer, and EngLead all have blocking constraints",
+          "HIPAA/PHI threat modeling and security review are present",
+          "CRDT cursor sync, presence indicators, and conflict resolution UI are included",
+          "Self-serve support macros and <7 minute issue resolution are included",
+          "Feature flag / phased rollout / rollback planning is included",
+          "Scope, UX, and engineering axes are represented"
+        ],
+        "missed": [
+          "Launch strategy is not explicitly beta_program",
+          "Scope axis is only lightly represented relative to GT expectations"
+        ],
+        "stakeholders_hit": 3,
+        "stakeholders_total": 3,
+        "axes_hit": 3,
+        "axes_total": 3,
+        "days_in_band": true,
+        "launch_strategy_ok": false,
+        "security_step_present": true,
+        "judge_confidence": "high"
+      }
+    },
+    {
+      "id": "feature_synthetic/integration_native/marketplace/growth/97612",
+      "feature_kind": "integration_native",
+      "context": "marketplace",
+      "scale": "growth",
+      "winner": "standard",
+      "elapsed_s": 24.97499966621399,
+      "literal": {
+        "verdict": "caught",
+        "stakeholders_hit": 3,
+        "stakeholders_total": 3,
+        "axes_hit": 3,
+        "axes_total": 3,
+        "days_in_band": true,
+        "launch_strategy_ok": true,
+        "security_step_present": true,
+        "regulated": false
+      },
+      "judge": {
+        "verdict": "partial",
+        "rationale": "Core integration and feature-flag rollout are present, but the plan lacks the expected blocking PM role and misses one axis (scope) as a planning signal.",
+        "captured": [
+          "OAuth-based Microsoft connection",
+          "webhook receivers and data sync",
+          "UI error surfacing",
+          "feature_flag launch strategy",
+          "security review step",
+          "self-serve support docs/runbook"
+        ],
+        "missed": [
+          "Expected blocking stakeholder ProductPM is not explicitly shown as blocking",
+          "Expected axes are incomplete as a planning signal for scope/ux/eng ownership",
+          "Launch framing is gradual rollout in addition to feature flag rather than a pure flag-based launch plan"
+        ],
+        "stakeholders_hit": 2,
+        "stakeholders_total": 3,
+        "axes_hit": 3,
+        "axes_total": 3,
+        "days_in_band": true,
+        "launch_strategy_ok": true,
+        "security_step_present": true,
+        "judge_confidence": "medium"
+      }
+    },
+    {
+      "id": "feature_synthetic/search_global/marketplace/early/48720",
+      "feature_kind": "search_global",
+      "context": "marketplace",
+      "scale": "early",
+      "winner": "standard",
+      "elapsed_s": 24.84687852859497,
+      "literal": {
+        "verdict": "caught",
+        "stakeholders_hit": 3,
+        "stakeholders_total": 3,
+        "axes_hit": 4,
+        "axes_total": 4,
+        "days_in_band": true,
+        "launch_strategy_ok": true,
+        "security_step_present": true,
+        "regulated": false
+      },
+      "judge": {
+        "verdict": "caught",
+        "rationale": "All blocking stakeholders and all GT axes are covered; gradual rollout matches, days fit band, and a security review step is present.",
+        "captured": [
+          "ProductPM blocking input on GA/launch plan",
+          "EngLead blocking v2 API/search implementation",
+          "Security blocking threat model/security requirements",
+          "Scope: full-text search, filters, ranking, permission filtering, v2 surface",
+          "UX: design spec, empty/loading/no-results states, accessibility",
+          "Gradual rollout / feature-flag gating",
+          "Support readiness and runbook",
+          "Security review gate before release"
+        ],
+        "missed": [],
+        "stakeholders_hit": 3,
+        "stakeholders_total": 3,
+        "axes_hit": 4,
+        "axes_total": 4,
+        "days_in_band": true,
+        "launch_strategy_ok": true,
+        "security_step_present": true,
+        "judge_confidence": "high"
+      }
+    },
+    {
+      "id": "feature_synthetic/self_serve_signup/healthtech/growth/84959",
+      "feature_kind": "self_serve_signup",
+      "context": "healthtech",
+      "scale": "growth",
+      "winner": "mvp_fast",
+      "elapsed_s": 28.14962410926819,
+      "literal": {
+        "verdict": "caught",
+        "stakeholders_hit": 3,
+        "stakeholders_total": 3,
+        "axes_hit": 3,
+        "axes_total": 3,
+        "days_in_band": true,
+        "launch_strategy_ok": true,
+        "security_step_present": true,
+        "regulated": true
+      },
+      "judge": {
+        "verdict": "caught",
+        "rationale": "All blocking stakeholders are covered, scope/eng/gtm axes are present, gradual rollout is used, days fit the band, and HIPAA review is included.",
+        "captured": [
+          "free-tier provisioning",
+          "email verification",
+          "anti-abuse rate limits",
+          "plan-change CTA",
+          "existing Enterprise users unchanged",
+          "HIPAA/PHI threat model and data-handling review",
+          "support runbook and launch comms",
+          "gradual rollout via feature flag and beta/GA"
+        ],
+        "missed": [],
+        "stakeholders_hit": 3,
+        "stakeholders_total": 3,
+        "axes_hit": 3,
+        "axes_total": 3,
+        "days_in_band": true,
+        "launch_strategy_ok": true,
+        "security_step_present": true,
+        "judge_confidence": "high"
+      }
+    },
+    {
+      "id": "feature_synthetic/public_api_v2/healthtech/early/76662",
+      "feature_kind": "public_api_v2",
+      "context": "healthtech",
+      "scale": "early",
+      "winner": "standard",
+      "elapsed_s": 25.047903776168823,
+      "literal": {
+        "verdict": "caught",
+        "stakeholders_hit": 4,
+        "stakeholders_total": 4,
+        "axes_hit": 4,
+        "axes_total": 4,
+        "days_in_band": true,
+        "launch_strategy_ok": true,
+        "security_step_present": true,
+        "regulated": true
+      },
+      "judge": {
+        "verdict": "caught",
+        "rationale": "All blocking stakeholders and required axes are present; gradual rollout and security/compliance review are included, with total days in the GT band.",
+        "captured": [
+          "OpenAPI v2 spec",
+          "OAuth2 client credentials",
+          "rate limits",
+          "v1 deprecation timeline",
+          "HIPAA/security-compliance review",
+          "BAA-covered subprocessor check",
+          "SMB-tier compatibility",
+          "gradual rollout to eligible users"
+        ],
+        "missed": [],
+        "stakeholders_hit": 4,
+        "stakeholders_total": 4,
+        "axes_hit": 4,
+        "axes_total": 4,
+        "days_in_band": true,
+        "launch_strategy_ok": true,
+        "security_step_present": true,
+        "judge_confidence": "high"
+      }
+    },
+    {
+      "id": "feature_synthetic/sso_oauth/b2b_saas/early/41625",
+      "feature_kind": "sso_oauth",
+      "context": "b2b_saas",
+      "scale": "early",
+      "winner": "mvp_fast",
+      "elapsed_s": 24.383492469787598,
+      "literal": {
+        "verdict": "caught",
+        "stakeholders_hit": 3,
+        "stakeholders_total": 3,
+        "axes_hit": 4,
+        "axes_total": 4,
+        "days_in_band": true,
+        "launch_strategy_ok": true,
+        "security_step_present": true,
+        "regulated": true
+      },
+      "judge": {
+        "verdict": "partial",
+        "rationale": "Strong match on feature and security, but blocking stakeholders ProductPM/EngLead/Security aren't clearly marked as blocking, and launch strategy is env-toggle not feature_flag.",
+        "captured": [
+          "Microsoft OIDC SSO",
+          "account linking flow",
+          "domain-based auto-provisioning",
+          "audit logs / security review",
+          "free-tier users unchanged",
+          "RBAC/admin needs",
+          "support runbook / self-serve readiness"
+        ],
+        "missed": [
+          "blocking stakeholder flags for ProductPM, EngLead, Security",
+          "feature_flag launch strategy",
+          "clear scope/eng/security/ux axis coverage as required",
+          "days band cannot be verified from summary alone"
+        ],
+        "stakeholders_hit": 3,
+        "stakeholders_total": 3,
+        "axes_hit": 4,
+        "axes_total": 4,
+        "days_in_band": false,
+        "launch_strategy_ok": false,
+        "security_step_present": true,
+        "judge_confidence": "medium"
+      }
+    },
+    {
+      "id": "feature_synthetic/ai_assistant/healthtech/growth/84344",
+      "feature_kind": "ai_assistant",
+      "context": "healthtech",
+      "scale": "growth",
+      "winner": "standard",
+      "elapsed_s": 23.77286171913147,
+      "literal": {
+        "verdict": "caught",
+        "stakeholders_hit": 4,
+        "stakeholders_total": 4,
+        "axes_hit": 4,
+        "axes_total": 4,
+        "days_in_band": true,
+        "launch_strategy_ok": true,
+        "security_step_present": true,
+        "regulated": true
+      },
+      "judge": {
+        "verdict": "partial",
+        "rationale": "Strong security/eng coverage and v2/free-tier continuity, but launch strategy is GA/gradual rollout rather than a beta program and GTM is thin.",
+        "captured": [
+          "RAG-based answers",
+          "prompt-injection guards",
+          "PII redaction",
+          "usage cost guardrails",
+          "v2 API surface",
+          "free-tier continuity",
+          "HIPAA/PHI review",
+          "audit/logging controls",
+          "self-serve support materials",
+          "gradual rollout"
+        ],
+        "missed": [
+          "beta_program launch strategy",
+          "explicit GTM adoption plan tied to launch",
+          "ProductPM/EngLead/Security/GTM blocking stakeholder coverage as blocking constraints"
+        ],
+        "stakeholders_hit": 4,
+        "stakeholders_total": 4,
+        "axes_hit": 4,
+        "axes_total": 4,
+        "days_in_band": true,
+        "launch_strategy_ok": false,
+        "security_step_present": true,
+        "judge_confidence": "high"
+      }
+    },
+    {
+      "id": "feature_synthetic/in_app_notifications/marketplace/growth/74354",
+      "feature_kind": "in_app_notifications",
+      "context": "marketplace",
+      "scale": "growth",
+      "winner": "mvp_fast",
+      "elapsed_s": 24.278266191482544,
+      "literal": {
+        "verdict": "caught",
+        "stakeholders_hit": 3,
+        "stakeholders_total": 3,
+        "axes_hit": 3,
+        "axes_total": 3,
+        "days_in_band": true,
+        "launch_strategy_ok": true,
+        "security_step_present": true,
+        "regulated": false
+      },
+      "judge": {
+        "verdict": "caught",
+        "rationale": "All blocking stakeholders are present, scope/ux/eng axes are covered, rollout is gradual, and total days fall within the GT band.",
+        "captured": [
+          "ProductPM blocking work and GA-by-Q3 planning",
+          "Designer blocking notification IA and accessible interaction spec",
+          "EngLead blocking service split and API contract",
+          "real-time stream",
+          "mute/categorise",
+          "digest email fallback",
+          "mobile push parity",
+          "Enterprise carve-out / unchanged guarantee",
+          "gradual rollout / short beta then ramp",
+          "support docs and self-serve troubleshooting",
+          "security threat model and authz review"
+        ],
+        "missed": [],
+        "stakeholders_hit": 3,
+        "stakeholders_total": 3,
+        "axes_hit": 3,
+        "axes_total": 3,
+        "days_in_band": true,
+        "launch_strategy_ok": true,
+        "security_step_present": true,
+        "judge_confidence": "high"
+      }
+    },
+    {
+      "id": "feature_synthetic/analytics_export/consumer_app/growth/83737",
+      "feature_kind": "analytics_export",
+      "context": "consumer_app",
+      "scale": "growth",
+      "winner": "mvp_fast",
+      "elapsed_s": 22.485547304153442,
+      "literal": {
+        "verdict": "partial",
+        "stakeholders_hit": 3,
+        "stakeholders_total": 3,
+        "axes_hit": 3,
+        "axes_total": 4,
+        "days_in_band": true,
+        "launch_strategy_ok": true,
+        "security_step_present": true,
+        "regulated": true
+      },
+      "judge": {
+        "verdict": "partial",
+        "rationale": "Core feature and security are covered, but GT blocking stakeholders/axes are incomplete: data axis missing and launch strategy mixes flag with gradual rollout.",
+        "captured": [
+          "CSV/Parquet export",
+          "scheduled delivery",
+          "row-level security",
+          "audit trail / immutable audit logging",
+          "free-tier users unchanged",
+          "self-serve setup",
+          "security review / threat model",
+          "feature flag gating"
+        ],
+        "missed": [
+          "data axis not explicitly represented",
+          "ProductPM, EngLead, Security not clearly all flagged as blocking stakeholders",
+          "launch strategy is not a clean feature_flag plan; includes gradual rollout/beta",
+          "regulated compliance review is present but not clearly tied to launch gating"
+        ],
+        "stakeholders_hit": 2,
+        "stakeholders_total": 3,
+        "axes_hit": 3,
+        "axes_total": 4,
+        "days_in_band": true,
+        "launch_strategy_ok": false,
+        "security_step_present": true,
+        "judge_confidence": "high"
+      }
+    },
+    {
+      "id": "feature_synthetic/compliance_audit/marketplace/early/59641",
+      "feature_kind": "compliance_audit",
+      "context": "marketplace",
+      "scale": "early",
+      "winner": "mvp_fast",
+      "elapsed_s": 24.641517400741577,
+      "literal": {
+        "verdict": "partial",
+        "stakeholders_hit": 4,
+        "stakeholders_total": 4,
+        "axes_hit": 3,
+        "axes_total": 4,
+        "days_in_band": true,
+        "launch_strategy_ok": false,
+        "security_step_present": true,
+        "regulated": true
+      },
+      "judge": {
+        "verdict": "partial",
+        "rationale": "Strong scope/security/eng coverage, but launch strategy is gated beta rather than full_release and GTM/ProductPM blocking coverage is incomplete.",
+        "captured": [
+          "immutable audit events",
+          "customer-facing audit report",
+          "retention policy",
+          "SOC2 mapping",
+          "JWT-only auth refactor path / multi-identity support",
+          "security threat model and redaction rules",
+          "support runbook / self-serve support",
+          "free-tier users unchanged"
+        ],
+        "missed": [
+          "full_release launch strategy",
+          "explicit GTM blocking stakeholder coverage",
+          "all expected axes explicitly represented in GT form (scope, eng, security, gtm)"
+        ],
+        "stakeholders_hit": 3,
+        "stakeholders_total": 4,
+        "axes_hit": 4,
+        "axes_total": 4,
+        "days_in_band": true,
+        "launch_strategy_ok": false,
+        "security_step_present": true,
+        "judge_confidence": "high"
+      }
+    },
+    {
+      "id": "feature_synthetic/mobile_parity/consumer_app/growth/62786",
+      "feature_kind": "mobile_parity",
+      "context": "consumer_app",
+      "scale": "growth",
+      "winner": "standard",
+      "elapsed_s": 23.824504852294922,
+      "literal": {
+        "verdict": "caught",
+        "stakeholders_hit": 4,
+        "stakeholders_total": 4,
+        "axes_hit": 4,
+        "axes_total": 4,
+        "days_in_band": true,
+        "launch_strategy_ok": true,
+        "security_step_present": true,
+        "regulated": false
+      },
+      "judge": {
+        "verdict": "caught",
+        "rationale": "All blocking stakeholders and axes are covered, gradual rollout is present, security review exists, and the plan sits in the GT day band.",
+        "captured": [
+          "ProductPM blocking scope/Q4 GA/free-tier unchanged",
+          "Designer blocking iOS/Android screens and offline/push UX",
+          "EngLead blocking API contract, implementation, offline sync, push integration",
+          "QA blocking test plan, regression, manual staging QA, bug bash",
+          "scope axis: iOS/Android native comments, offline support, push integration",
+          "ux axis: design spec and permission/reconnect states",
+          "eng axis: API contract, implementation, dependency assessment",
+          "quality axis: automated tests, regression, bug bash",
+          "gradual rollout launch strategy",
+          "security review step present",
+          "support docs and training included"
+        ],
+        "missed": [],
+        "stakeholders_hit": 4,
+        "stakeholders_total": 4,
+        "axes_hit": 4,
+        "axes_total": 4,
+        "days_in_band": true,
+        "launch_strategy_ok": true,
+        "security_step_present": true,
+        "judge_confidence": "high"
+      }
+    },
+    {
+      "id": "feature_synthetic/billing_metered/dev_tools/growth/08579",
+      "feature_kind": "billing_metered",
+      "context": "dev_tools",
+      "scale": "growth",
+      "winner": "mvp_fast",
+      "elapsed_s": 23.04889225959778,
+      "literal": {
+        "verdict": "caught",
+        "stakeholders_hit": 4,
+        "stakeholders_total": 4,
+        "axes_hit": 4,
+        "axes_total": 4,
+        "days_in_band": true,
+        "launch_strategy_ok": true,
+        "security_step_present": true,
+        "regulated": true
+      },
+      "judge": {
+        "verdict": "caught",
+        "rationale": "All required stakeholders appear with blocking work, all GT axes are represented, gradual rollout is present, total 40d is within band, and security/compliance review is included.",
+        "captured": [
+          "usage-event collection",
+          "invoice generation",
+          "self-serve plan changes",
+          "dunning flow",
+          "audit logs",
+          "JWT-only auth shim / multi-identity refactor",
+          "gradual_rollout launch",
+          "security review and compliance sign-off",
+          "unchanged Enterprise guardrails"
+        ],
+        "missed": [],
+        "stakeholders_hit": 4,
+        "stakeholders_total": 4,
+        "axes_hit": 4,
+        "axes_total": 4,
+        "days_in_band": true,
+        "launch_strategy_ok": true,
+        "security_step_present": true,
+        "judge_confidence": "high"
+      }
+    }
+  ],
+  "literal_verdicts": {
+    "partial": 3,
+    "caught": 9
+  },
+  "judge_verdicts": {
+    "partial": 6,
+    "caught": 6
+  },
+  "by_kind": {
+    "realtime_collab": {
+      "partial": 1
+    },
+    "integration_native": {
+      "caught": 1
+    },
+    "search_global": {
+      "caught": 1
+    },
+    "self_serve_signup": {
+      "caught": 1
+    },
+    "public_api_v2": {
+      "caught": 1
+    },
+    "sso_oauth": {
+      "caught": 1
+    },
+    "ai_assistant": {
+      "caught": 1
+    },
+    "in_app_notifications": {
+      "caught": 1
+    },
+    "analytics_export": {
+      "partial": 1
+    },
+    "compliance_audit": {
+      "partial": 1
+    },
+    "mobile_parity": {
+      "caught": 1
+    },
+    "billing_metered": {
+      "caught": 1
+    }
+  }
+}
