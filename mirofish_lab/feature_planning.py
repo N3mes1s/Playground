@@ -482,3 +482,50 @@ def utility_score(metrics: dict[str, float], w: FeatureUtilityWeights) -> float:
         - w.slip_risk * metrics["slip_fragility"]
         - w.conflicts * metrics["norm_conflicts"]
     )
+
+
+# --- Plan-shape validation (used by Stage 4 of feature_synthesis) --------
+
+_REQUIRED_TOP_KEYS = ("summary", "steps", "open_questions", "conflicts")
+_REQUIRED_STEP_KEYS = (
+    "id", "action", "owner", "depends_on", "success_criterion",
+    "definition_of_done", "instrumentation", "launch_strategy",
+    "estimated_days",
+)
+
+
+def _validate_final_plan(plan: dict) -> bool:
+    """Strict-but-fair shape check. Returns True iff the plan dict
+    has all required top-level keys and every step has every required
+    step-level key, and the step DAG references only earlier ids
+    (depends_on must be a subset of preceding step ids).
+
+    Used by feature_synthesis Stage 4 to decide whether to use the
+    finalised plan or fall back to the Stage-2 draft.
+    """
+    if not isinstance(plan, dict):
+        return False
+    for k in _REQUIRED_TOP_KEYS:
+        if k not in plan:
+            return False
+    steps = plan.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return False
+    seen_ids: set[str] = set()
+    for s in steps:
+        if not isinstance(s, dict):
+            return False
+        for k in _REQUIRED_STEP_KEYS:
+            if k not in s:
+                return False
+        sid = str(s.get("id", "")).strip()
+        if not sid or sid in seen_ids:
+            return False
+        deps = s.get("depends_on") or []
+        if not isinstance(deps, list):
+            return False
+        for d in deps:
+            if not isinstance(d, str) or d not in seen_ids:
+                return False  # forward / unknown dep -> invalid DAG
+        seen_ids.add(sid)
+    return True

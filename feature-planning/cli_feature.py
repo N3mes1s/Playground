@@ -30,6 +30,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import os
+
 from mirofish_lab import Agent, load_config, parallel_run
 from mirofish_lab.feature_planning import (
     FEATURE_SEQUENCERS,
@@ -39,6 +41,7 @@ from mirofish_lab.feature_planning import (
     score_feature_plan,
     utility_score,
 )
+from mirofish_lab.feature_synthesis import SynthesisResult, synthesize_all
 from mirofish_lab.rollout import extract_json
 from mirofish_lab.timeline_chaos import (
     TimelineChaosResult,
@@ -49,6 +52,20 @@ from mirofish_lab.verify_smt import (
     explain_infeasibility,
     smt_verify_plan,
 )
+
+
+def _synthesis_mode() -> str:
+    """Selects 'multistage' (default) or 'monolith' (back-compat).
+
+    Default flipped to multistage after the A1 architectural change
+    (commit landing the 4-stage pipeline). Set
+    MIROFISH_FEATURE_SYNTHESIS=monolith to compare against pre-A1
+    baselines like FEATURE_BASELINE_N50_safe.json.
+    """
+    val = os.environ.get("MIROFISH_FEATURE_SYNTHESIS", "").strip().lower()
+    if val in ("monolith", "single", "legacy"):
+        return "monolith"
+    return "multistage"
 
 
 def _intent_prompt(intent_text: str) -> str:
@@ -204,7 +221,17 @@ def run(
     weights = weights or FeatureUtilityWeights()
 
     constraints = _gather_constraints(intent, cfg)
-    plans = _generate_plans(intent, constraints, cfg)
+
+    mode = _synthesis_mode()
+    print(f"[synthesis] mode={mode}", file=sys.stderr)
+    if mode == "multistage":
+        synth: SynthesisResult = synthesize_all(intent, constraints, cfg)
+        plans = synth.plans
+        synth_audit = synth.as_audit_dict()
+    else:
+        plans = _generate_plans(intent, constraints, cfg)
+        synth_audit = None
+
     smt = _smt_verify_all(plans, constraints)
     timeline = {label: timeline_chaos_summary(plan, plan_id=label)
                 for label, plan in plans.items()}
@@ -344,7 +371,10 @@ def run(
             "conflicts": weights.conflicts,
         },
         "winner": winner if feasible_scored else None,
+        "synthesis_mode": mode,
     }
+    if synth_audit is not None:
+        sidecar["multistage_audit"] = synth_audit
     out_md.with_suffix(".json").write_text(json.dumps(sidecar, indent=2))
     print(f"\n[done] wrote {out_md}", file=sys.stderr)
     return sidecar
