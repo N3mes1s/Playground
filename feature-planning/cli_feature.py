@@ -55,23 +55,45 @@ from mirofish_lab.verify_smt import (
 
 
 def _synthesis_mode() -> str:
-    """Selects 'monolith' (default) or 'multistage' (opt-in).
+    """Selects 'multistage' (default) or 'monolith' (opt-in via env var).
 
-    Default REVERTED to monolith after the A1.0 N=48 retrospective
-    (validation/SYNTHESIS_AB_N48.md): multistage was -17pp useful,
-    -23pp caught, -46pp strat_ok at N=48 with 7 broken plans. Same
-    shape as cycle-2 strategy_reasoning revert.
+    Calibration history (validation/calibrations.jsonl):
 
-    Multistage code remains importable for follow-up experiments
-    (A1.1 should target the strategy-decision and Stage-3 flag
-    aggregation; both look like the dominant regression sources).
+      2026-05-04 cycle 3 — A1.0 multistage was REVERTED at synthetic N=48
+        (-17pp useful, -23pp caught, -46pp strat_ok, 7 broken plans).
+        Looked like the third architectural attempt to fail at scale.
 
-    Set MIROFISH_FEATURE_SYNTHESIS=multistage to opt in.
+      2026-05-04 user observation — pushed back on the "synthetic
+        saturated, build real dataset" plan with a sharper question:
+        why not test against the existing real datasets (SWE-Bench
+        Verified + danluu post-mortems) which already have
+        semantically-grounded GT (files_touched / root_cause_keywords
+        / outcome)?
+
+      2026-05-04 real-data A/B (validation/REALDATA_AB_DIFF.md) — at
+        matched n=30 stratified across swebench_verified + danluu,
+        scored by the rollout-style LLM judge:
+          judge useful  100% / 100%   (tied at ceiling)
+          judge caught   53% / 60%    (+7pp)
+          plans broken    0  / 0      (no regression)
+          max family    80% / 77%     (-3pp)
+        APPLY-gate met (caught >+5pp AND useful not down >2pp AND
+        no plans break). The synthetic GT's expected_launch_strategy
+        was the bottleneck; the architectural decomposition is
+        actually a directional win on real data.
+
+    Magnitude caveat: +7pp at n=30 is inside the ~25pp detection
+    threshold for proportions. Direction is unambiguous; exact
+    magnitude would need n=60+ to confirm.
+
+    Set MIROFISH_FEATURE_SYNTHESIS=monolith to opt out (e.g. when
+    benchmarking against pre-A1 baselines like
+    FEATURE_BASELINE_N50_safe.json).
     """
     val = os.environ.get("MIROFISH_FEATURE_SYNTHESIS", "").strip().lower()
-    if val == "multistage":
-        return "multistage"
-    return "monolith"
+    if val in ("monolith", "single", "legacy"):
+        return "monolith"
+    return "multistage"
 
 
 def _intent_prompt(intent_text: str) -> str:

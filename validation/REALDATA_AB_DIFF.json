@@ -1,0 +1,58 @@
+{
+  "agg_monolith": {
+    "n": 30,
+    "judge_v": {
+      "caught": 16,
+      "partial": 14
+    },
+    "lit_v": {
+      "missed": 28,
+      "no_ground_truth": 2
+    },
+    "useful_judge": 1.0,
+    "caught_judge": 0.5333333333333333,
+    "missed_judge": 0.0,
+    "smt_rate": 1.0,
+    "winners": {
+      "standard": 24,
+      "robust_launch": 5,
+      "mvp_fast": 1
+    },
+    "max_family": 0.8,
+    "n_with_winner": 30
+  },
+  "agg_multistage": {
+    "n": 30,
+    "judge_v": {
+      "caught": 18,
+      "partial": 12
+    },
+    "lit_v": {
+      "missed": 28,
+      "no_ground_truth": 2
+    },
+    "useful_judge": 1.0,
+    "caught_judge": 0.6,
+    "missed_judge": 0.0,
+    "smt_rate": 1.0,
+    "winners": {
+      "standard": 23,
+      "robust_launch": 7
+    },
+    "max_family": 0.7666666666666667,
+    "n_with_winner": 30
+  },
+  "transitions": {
+    "partial -> partial": 9,
+    "caught -> caught": 13,
+    "caught -> partial": 2,
+    "partial -> caught": 3
+  },
+  "deltas_pp": {
+    "caught_judge": 6.666666666666665,
+    "useful_judge": 0.0,
+    "missed_judge": 0.0,
+    "smt_rate": 0.0
+  },
+  "verdict": "**APPLY ON REAL DATA** \u2014 judge caught +7pp, useful +0pp. The synthetic-N=48 regression did NOT reproduce on real-data GT \u2014 confirms the synthetic dataset's expected_launch_strategy was the bottleneck. Re-instate multistage as default for cli_feature."
+}
