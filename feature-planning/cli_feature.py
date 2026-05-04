@@ -55,45 +55,40 @@ from mirofish_lab.verify_smt import (
 
 
 def _synthesis_mode() -> str:
-    """Selects 'multistage' (default) or 'monolith' (opt-in via env var).
+    """Selects 'monolith' (default) or 'multistage' (opt-in via env var).
 
-    Calibration history (validation/calibrations.jsonl):
+    Final calibration verdict after eval + holdout on real data:
 
-      2026-05-04 cycle 3 — A1.0 multistage was REVERTED at synthetic N=48
-        (-17pp useful, -23pp caught, -46pp strat_ok, 7 broken plans).
-        Looked like the third architectural attempt to fail at scale.
+      synthetic N=48 (cycle 3):       caught -23pp  (REVERT)
+      real-data eval  n=30 seed 1337: caught +7pp   (apply)
+      real-data holdout n=30 seed 9256: caught -23pp (DOWNGRADE)
 
-      2026-05-04 user observation — pushed back on the "synthetic
-        saturated, build real dataset" plan with a sharper question:
-        why not test against the existing real datasets (SWE-Bench
-        Verified + danluu post-mortems) which already have
-        semantically-grounded GT (files_touched / root_cause_keywords
-        / outcome)?
+    The eval-slice +7pp was sample noise that didn't reproduce on a
+    disjoint slice. Combined n=60 averaged delta on real data is
+    -8pp caught. Two of three runs say multistage is worse, one is
+    the lucky draw that didn't generalise.
 
-      2026-05-04 real-data A/B (validation/REALDATA_AB_DIFF.md) — at
-        matched n=30 stratified across swebench_verified + danluu,
-        scored by the rollout-style LLM judge:
-          judge useful  100% / 100%   (tied at ceiling)
-          judge caught   53% / 60%    (+7pp)
-          plans broken    0  / 0      (no regression)
-          max family    80% / 77%     (-3pp)
-        APPLY-gate met (caught >+5pp AND useful not down >2pp AND
-        no plans break). The synthetic GT's expected_launch_strategy
-        was the bottleneck; the architectural decomposition is
-        actually a directional win on real data.
+    Multistage is also 6x more expensive ($0.30/run vs $0.05 monolith).
+    No useful_rate or plan-break regression in any of the 4 runs, so
+    the verdict harness called DOWNGRADE — but the honest engineering
+    call given tied-or-worse caught at 6x cost is REVERT.
 
-    Magnitude caveat: +7pp at n=30 is inside the ~25pp detection
-    threshold for proportions. Direction is unambiguous; exact
-    magnitude would need n=60+ to confirm.
+    The synthetic-saturation hypothesis was real but overstated.
+    Yes the synthetic GT's expected_launch_strategy disagreed with
+    the model, but on real data the multistage architecture isn't
+    actually better at the target metric. The audit-log advantage
+    (per-stage decisions visible) does NOT require the 4-stage
+    decomposition — could be added to monolith with just Stage-1
+    strategy decision (smaller, cheaper).
 
-    Set MIROFISH_FEATURE_SYNTHESIS=monolith to opt out (e.g. when
-    benchmarking against pre-A1 baselines like
-    FEATURE_BASELINE_N50_safe.json).
+    Multistage code (mirofish_lab/feature_synthesis.py) remains
+    importable for follow-up experiments. Set
+    MIROFISH_FEATURE_SYNTHESIS=multistage to opt in.
     """
     val = os.environ.get("MIROFISH_FEATURE_SYNTHESIS", "").strip().lower()
-    if val in ("monolith", "single", "legacy"):
-        return "monolith"
-    return "multistage"
+    if val == "multistage":
+        return "multistage"
+    return "monolith"
 
 
 def _intent_prompt(intent_text: str) -> str:
