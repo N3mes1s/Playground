@@ -55,17 +55,23 @@ from mirofish_lab.verify_smt import (
 
 
 def _synthesis_mode() -> str:
-    """Selects 'multistage' (default) or 'monolith' (back-compat).
+    """Selects 'monolith' (default) or 'multistage' (opt-in).
 
-    Default flipped to multistage after the A1 architectural change
-    (commit landing the 4-stage pipeline). Set
-    MIROFISH_FEATURE_SYNTHESIS=monolith to compare against pre-A1
-    baselines like FEATURE_BASELINE_N50_safe.json.
+    Default REVERTED to monolith after the A1.0 N=48 retrospective
+    (validation/SYNTHESIS_AB_N48.md): multistage was -17pp useful,
+    -23pp caught, -46pp strat_ok at N=48 with 7 broken plans. Same
+    shape as cycle-2 strategy_reasoning revert.
+
+    Multistage code remains importable for follow-up experiments
+    (A1.1 should target the strategy-decision and Stage-3 flag
+    aggregation; both look like the dominant regression sources).
+
+    Set MIROFISH_FEATURE_SYNTHESIS=multistage to opt in.
     """
     val = os.environ.get("MIROFISH_FEATURE_SYNTHESIS", "").strip().lower()
-    if val in ("monolith", "single", "legacy"):
-        return "monolith"
-    return "multistage"
+    if val == "multistage":
+        return "multistage"
+    return "monolith"
 
 
 def _intent_prompt(intent_text: str) -> str:

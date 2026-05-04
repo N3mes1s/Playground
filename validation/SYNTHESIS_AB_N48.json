@@ -1,0 +1,54 @@
+{
+  "agg_monolith": {
+    "n": 48,
+    "useful_judge": 1.0,
+    "caught_judge": 0.3958333333333333,
+    "missed_judge": 0.0,
+    "useful_lit": 1.0,
+    "caught_lit": 0.5625,
+    "strat_ok": 0.7083333333333334,
+    "sec_ok": 1.0,
+    "days_ok": 0.9583333333333334,
+    "max_family": 0.5833333333333334,
+    "winners": {
+      "standard": 28,
+      "mvp_fast": 18,
+      "robust_launch": 2
+    },
+    "n_with_winner": 48
+  },
+  "agg_multistage": {
+    "n": 48,
+    "useful_judge": 0.8333333333333334,
+    "caught_judge": 0.16666666666666666,
+    "missed_judge": 0.020833333333333332,
+    "useful_lit": 0.8541666666666666,
+    "caught_lit": 0.1875,
+    "strat_ok": 0.25,
+    "sec_ok": 0.8541666666666666,
+    "days_ok": 0.8125,
+    "max_family": 0.3958333333333333,
+    "winners": {
+      "mvp_fast": 14,
+      "robust_launch": 8,
+      "standard": 19
+    },
+    "n_with_winner": 41
+  },
+  "transitions": {
+    "partial -> partial": 21,
+    "caught -> partial": 11,
+    "caught -> ?": 4,
+    "partial -> missed": 1,
+    "partial -> ?": 3,
+    "partial -> caught": 4,
+    "caught -> caught": 4
+  },
+  "deltas": {
+    "caught_judge_pp": -22.916666666666664,
+    "useful_judge_pp": -16.666666666666664,
+    "strat_ok_pp": -45.833333333333336,
+    "max_family_pp": -18.750000000000007
+  },
+  "verdict": "**REVERT** \u2014 multistage regresses: useful_rate dropped -17pp (>5pp); 7 more plans broke entirely. Same shape as cycle-2 retrospective. Default reverts to monolith."
+}
