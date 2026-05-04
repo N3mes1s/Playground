@@ -221,18 +221,22 @@ _STRATEGY_REASONING_TAIL = (
 )
 
 
-# Default: strategy_reasoning is ON. Holdout-validated calibration cycle
-# 2026-05-02 (n=12 eval + n=12 disjoint holdout): the additional schema
-# field confirmed +12pp avg launch_strategy_ok across both slices, with
-# the eval-only -25pp judge caught regression rejected by holdout (0pp
-# there). robust_launch wins now appear in both slices (was 0/24 before,
-# 6/24 with reasoning). Set MIROFISH_FEATURE_STRATEGY_REASONING=0 to
-# disable the schema field for back-compat with pre-cycle artifacts.
+# Default: strategy_reasoning is OFF after the N=48 retrospective.
+# Calibration history (validation/calibrations.jsonl):
+#   2026-05-02 cycle 2 — n=12 eval + n=12 holdout APPLIED the field as
+#     default. strat_ok looked +12pp avg, judge caught looked unchanged
+#     on holdout.
+#   2026-05-02 N=48 baseline at the new default REVERTED it: judge useful
+#     100% -> 73% (-27pp), judge caught 40% -> 17% (-23pp), strat_ok
+#     71% -> 62% (-8pp; target REGRESSED), 12/48 plans broke entirely.
+#     The n=24 holdout signal was insufficient sample power; cycle-4
+#     pattern recurred. Discipline lesson: n>=30 floor for any
+#     caught-rate-style change before persisting to defaults.
+# Set MIROFISH_FEATURE_STRATEGY_REASONING=1 to opt back in for
+# experiments; default stays OFF.
 def _strategy_reasoning_enabled() -> bool:
     val = os.environ.get("MIROFISH_FEATURE_STRATEGY_REASONING", "").lower()
-    if val in ("0", "false", "no", "off"):
-        return False
-    return True  # default ON after the 2026-05-02 calibration
+    return val in ("1", "true", "yes", "on")
 
 
 _REASONING_ON = _strategy_reasoning_enabled()
