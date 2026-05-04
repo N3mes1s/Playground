@@ -230,7 +230,8 @@ def timeline_chaos_summary(
     n = len(_by_id(plan))
     if n == 0:
         return TimelineChaosResult(plan_id=plan_id, n_steps=0,
-                                   base_total_days=0, critical_path=())
+                                   base_total_days=0, critical_path=(),
+                                   slack_per_step={})
 
     cp, base_total = critical_path(plan)
     slack = slack_per_step(plan)

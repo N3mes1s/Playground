@@ -133,6 +133,17 @@ def _run_pipeline_for(elem: dict, *, pipeline: str,
             "--search-k", "2",
             "--out", str(out_path),
         ]
+    elif pipeline == "cli_feature":
+        # Run the feature-planning pipeline against the same intent_md.
+        # Real-data GT shape (files_touched / root_cause_keywords) is
+        # judged by llm_judge.py the same way cli_pro output is — both
+        # produce the {plans, winner, constraints} sidecar shape.
+        cmd = [
+            sys.executable,
+            str(ROOT / "feature-planning" / "cli_feature.py"),
+            str(intent_path),
+            "--out", str(out_path),
+        ]
     else:
         return {"_skipped": f"unknown pipeline {pipeline}"}
 
@@ -265,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sources", nargs="+", default=None,
                         help="Subset of sources to sample from")
     parser.add_argument("--pipeline", default="cli_pro",
-                        choices=["cli_pro", "cli_chaos"])
+                        choices=["cli_pro", "cli_chaos", "cli_feature"])
     parser.add_argument("--max-tokens", type=int, default=1500)
     parser.add_argument("--n-plans", type=int, default=4)
     parser.add_argument("--seed", type=int, default=1337)
