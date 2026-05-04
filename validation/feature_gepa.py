@@ -447,13 +447,17 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(
         description="GEPA-style optimizer for feature-planning sequencers"
     )
-    p.add_argument("--n", type=int, default=20,
-                   help="Per-candidate eval slice size (default 20; "
-                        "cycle-4 discipline: don't apply winners from <20).")
+    p.add_argument("--n", type=int, default=30,
+                   help="Per-candidate eval slice size (default 30; "
+                        "cycle-2 retrospective: don't apply winners from <30. "
+                        "n=12+12 holdout was insufficient sample power for "
+                        "caught-rate-style metrics; the schema_reasoning "
+                        "fix that passed n=24 holdout was -27pp useful at N=48.")
     p.add_argument("--seed", type=int, default=4242)
-    p.add_argument("--holdout-n", type=int, default=12,
-                   help="Held-out validation size (0 = skip; cycle-4 "
-                        "lesson: holdout is what catches eval-slice bias).")
+    p.add_argument("--holdout-n", type=int, default=18,
+                   help="Held-out validation size (0 = skip; cycle-4+cycle-2 "
+                        "lesson: holdout is necessary but not sufficient. "
+                        "default 18 = 0.6 * n=30 mirrors rollout GEPA.)")
     p.add_argument("--max-candidates", type=int, default=2)
     p.add_argument("--apply", action="store_true",
                    help="If a winner survives eval+holdout, write it to "
@@ -462,10 +466,12 @@ def main(argv=None) -> int:
                    default=ROOT / "validation" / "FEATURE_GEPA_REPORT.md")
     args = p.parse_args(argv)
 
-    if args.n < 20:
-        print(f"[gepa] WARNING: --n={args.n} is below the n=20 floor learned "
-              "from the rollout cycle-4 retrospective. Cycles below n=20 are "
-              "exploratory; their winners are NOT-FOR-APPLY.", file=sys.stderr)
+    if args.n < 30:
+        print(f"[gepa] WARNING: --n={args.n} is below the n=30 floor learned "
+              "from the cycle-2 retrospective (n=24 winner showed -27pp "
+              "useful_rate at N=48). Cycles below n=30 are exploratory; "
+              "their winners MUST NOT be applied to defaults — only as "
+              "opt-in env-var experiments.", file=sys.stderr)
 
     result = run_cycle(
         n=args.n, seed=args.seed,
