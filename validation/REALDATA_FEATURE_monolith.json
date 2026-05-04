@@ -1,0 +1,909 @@
+{
+  "timestamp": "20260504T073810Z",
+  "args": {
+    "n": 30,
+    "sources": [
+      "swebench_verified",
+      "danluu_postmortems"
+    ],
+    "pipeline": "cli_feature",
+    "max_tokens": 1500,
+    "n_plans": 4,
+    "seed": 1337,
+    "judge": true,
+    "utility": null,
+    "run_label": "realdata_monolith",
+    "ids_file": null,
+    "out": "validation/REALDATA_FEATURE_monolith.md"
+  },
+  "scores": [
+    {
+      "id": "danluu_postmortems/pagerduty",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 2,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 17.080114603042603,
+      "verdict_judge": "caught",
+      "judge_rationale": "It directly captures the key constraint: cross-DC independence and quorum safety before rollout, which matches the outage caused by shared peering and quorum failure.",
+      "judge_captured": [
+        "Require cross-DC independence before rollout",
+        "Do not launch if quorum can fail under one-deployment loss",
+        "Quorum-based failure prevention for notification service rollout",
+        "Stakeholder framing from ProductPM around launch safety"
+      ],
+      "judge_missed": [
+        "Specific pagerduty incident detail that two of three cloud deployments shared a common peering point",
+        "The connectivity issues and high network latency as the trigger",
+        "The third deployment remaining operational while quorum still failed",
+        "The notification-sending outage outcome"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/cloudflare",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 3,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 17.13475012779236,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures config-safe rollout controls and single-DC canarying, but misses the specific private backbone/Atlanta routing typo and the America/Europe traffic concentration root cause.",
+      "judge_captured": [
+        "Single non-critical datacenter pilot before wider expansion",
+        "Explicit canary hold before rollout expansion",
+        "Traffic-routing impact verification",
+        "Second-engineer review for the routing diff",
+        "CI validation of network config against safe rules"
+      ],
+      "judge_missed": [
+        "Atlanta datacenter as the failing site",
+        "Private backbone network maintenance context",
+        "Typo in network configuration as the direct cause",
+        "American and European traffic being routed to one datacenter"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/django__django-14140",
+      "source": "swebench_verified",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 6,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 16.946043014526367,
+      "verdict_judge": "partial",
+      "judge_rationale": "It correctly points to Q.deconstruct() and single-child non-tuple handling, but lacks the specific query_utils.py child-tuple logic/root-cause detail.",
+      "judge_captured": [
+        "Fixes Q.deconstruct() for non-tuple single-child Q expressions",
+        "Preserves existing multi-child Q deconstruct behavior",
+        "Single-child deconstruct output shape is the key API change"
+      ],
+      "judge_missed": [
+        "Canonical file django/db/models/query_utils.py is not identified",
+        "Root cause details about connector/children/child tuple isinstance else logic are absent",
+        "No explicit diff sketch for checking child length-2 tuple before unpacking"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/scikit-learn__scikit-learn-14894",
+      "source": "swebench_verified",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 10,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 17.693557500839233,
+      "verdict_judge": "partial",
+      "judge_rationale": "It identifies the sparse SVM empty-support_vectors_ bug, but gives no file-level or code-level fix matching the zero-division in sklearn/svm/base.py.",
+      "judge_captured": [
+        "Sparse SVM fit when support_vectors_ is empty",
+        "Need to preserve dense-fit behavior",
+        "Empty dual_coef_ should be a supported outcome",
+        "Regression test for dense vs sparse parity"
+      ],
+      "judge_missed": [
+        "Canonical file sklearn/svm/base.py",
+        "The specific zero-division path in _sparse_fit using dual_coef_indices size / n_class",
+        "Concrete fix around dual_coef_indptr / dual_coef_data / n_sv / arange",
+        "Explicit handling of n_class == 0 or empty sparse support vectors in code"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/scikit-learn__scikit-learn-10908",
+      "source": "swebench_verified",
+      "winner": "robust_launch",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 3,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 16.725846529006958,
+      "verdict_judge": "caught",
+      "judge_rationale": "It targets sklearn/feature_extraction/text.py and explicitly fixes get_feature_names for CountVectorizer with preloaded vocabulary while preserving NotFittedError otherwise.",
+      "judge_captured": [
+        "Touches sklearn/feature_extraction/text.py",
+        "Fixes get_feature_names for preloaded vocabulary",
+        "Preserves NotFittedError when no vocabulary is supplied",
+        "Aligns get_feature_names behavior with transform/validate_vocabulary semantics",
+        "Includes a regression test"
+      ],
+      "judge_missed": [],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/sphinx-doc__sphinx-10323",
+      "source": "swebench_verified",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 2,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 19.238122940063477,
+      "verdict_judge": "caught",
+      "judge_rationale": "It directly targets literalinclude prepend/append indentation preservation, matching the bug and the fix area in sphinx/directives/code.py.",
+      "judge_captured": [
+        "literalinclude prepend/append indentation preservation",
+        "fix scoped to include-line assembly rather than global dedent semantics",
+        "rendered indented XML snippet examples"
+      ],
+      "judge_missed": [
+        "explicit mention of dedent_filter / append_filter in the code path",
+        "canonical touched file sphinx/directives/code.py"
+      ],
+      "judge_confidence": "medium"
+    },
+    {
+      "id": "danluu_postmortems/salesforce",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 0,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "no_ground_truth",
+      "elapsed_s": 17.01011562347412,
+      "verdict_judge": "caught",
+      "judge_rationale": "It explicitly guards cross-DC failover on file parity and limits rollout to one datacenter, matching the Salesforce outage's file discrepancies and cascading failover failure.",
+      "judge_captured": [
+        "cross data center failover gated on file parity",
+        "single-datacenter staged rollout before expansion",
+        "cascading expansion prevented until validation"
+      ],
+      "judge_missed": [
+        "power failure in one datacenter as the initiating event",
+        "database cluster involvement in the cascade",
+        "specific Salesforce NA14 incident context",
+        "stakeholder detail beyond generic ProductPM/Designer controls"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/skyliner",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 1,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 17.25279450416565,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures a safe rollout for a library upgrade, but misses the actual outage cause: a third-party library memory leak and the need to monitor/rollback on repeated failures.",
+      "judge_captured": [
+        "treats the change as a library upgrade",
+        "limits rollout to a small canary before broad release",
+        "gates expansion on stability under real load"
+      ],
+      "judge_missed": [
+        "third-party library memory leak as root cause",
+        "two separate outages / recurrence after rollout",
+        "rollback or guardrails specifically for memory growth",
+        "real incident outcome was unavailability/outage"
+      ],
+      "judge_confidence": "medium"
+    },
+    {
+      "id": "danluu_postmortems/google",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 2,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 17.239972591400146,
+      "verdict_judge": "caught",
+      "judge_rationale": "Plan explicitly stages a controlled livestream-viewer subset and gates GA on QoE/observation windows, matching the incident's degraded Meet Livestream viewer experience.",
+      "judge_captured": [
+        "Google Meet Livestream / livestream viewer QoE context",
+        "Controlled subset rollout before full launch",
+        "Launch only after QoE is stable",
+        "Concrete incident-free observation window before GA",
+        "Rollback-ready rollout"
+      ],
+      "judge_missed": [
+        "No explicit reference to the specific 25-26 Oct 2021 degraded playback/rebuffer/latency incident",
+        "No stakeholder constraint tied to the exact root-cause constraint from the post-mortem"
+      ],
+      "judge_confidence": "medium"
+    },
+    {
+      "id": "danluu_postmortems/valve",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 3,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 17.57638168334961,
+      "verdict_judge": "caught",
+      "judge_rationale": "Plan directly targets BGP rollout risk, major transit reachability, and rollback before global outage\u2014matching the Valve postmortem\u2019s bad BGP config root cause.",
+      "judge_captured": [
+        "BGP-specific rollout constraint: 'Limit rollout to non-critical BGP sessions first'",
+        "Constraint against loss of major transit reachability, matching severed transit links",
+        "Rollback-ready validation before expanding the change",
+        "Stop condition tied to global Steam impact/outage",
+        "Network path diagram review, consistent with routing-impact analysis"
+      ],
+      "judge_missed": [
+        "No explicit mention of the affected upstreams Level 3, Telia, or Abovenet/Zayo",
+        "No explicit BGP config error/fault mechanism beyond generic routing rollout controls",
+        "No explicit stakeholder focus on network operations/peering owners"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/django__django-11880",
+      "source": "swebench_verified",
+      "winner": "robust_launch",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 3,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 17.302454948425293,
+      "verdict_judge": "caught",
+      "judge_rationale": "Plan targets django/forms/fields.py and explicitly deep-copies shared error_messages during field deepcopy, matching the root cause.",
+      "judge_captured": [
+        "Touches django/forms/fields.py",
+        "Deep-copies field error_messages when cloning form fields",
+        "Addresses shared error_messages across Forms/ModelForms",
+        "Regression coverage for per-form error message isolation"
+      ],
+      "judge_missed": [
+        "No concrete diff sketch shown",
+        "No explicit mention of the exact copy/result mechanics in __deepcopy__"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/metrist",
+      "source": "danluu_postmortems",
+      "winner": "mvp_fast",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 1,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 16.75802731513977,
+      "verdict_judge": "caught",
+      "judge_rationale": "The plan directly reflects the Azure-specific root cause by blocking unannounced breaking changes until customer-impact notice/comms approval.",
+      "judge_captured": [
+        "Azure-tagged breaking change context",
+        "Unannounced breaking change treated as blocked",
+        "Customer-impact notice required before rollout",
+        "Safe for impacted customers, not just deployment",
+        "Migration or rollback path required"
+      ],
+      "judge_missed": [
+        "No explicit mention of Azure service/API behavior changing downstream",
+        "No reference to Metrist's detection/recovery process from the post-mortem",
+        "No stakeholder constraint tied to Azure or upstream provider sign-off"
+      ],
+      "judge_confidence": "medium"
+    },
+    {
+      "id": "swebench_verified/sympy__sympy-12419",
+      "source": "swebench_verified",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 13,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 17.81962490081787,
+      "verdict_judge": "partial",
+      "judge_rationale": "It matches the nested-sum identity-matrix bug and regression focus, but is too generic and does not reflect the actual matrix-expression file or KroneckerDelta/core symbolic fix.",
+      "judge_captured": [
+        "Nested sum of an identity matrix should return n",
+        "Regression coverage for the double-sum identity-matrix result",
+        "Preserve diagonal and elementwise query behavior"
+      ],
+      "judge_missed": [
+        "Specific file sympy/matrices/expressions/matexpr.py",
+        "Root cause in matrix expression summation/KroneckerDelta handling",
+        "Core symbolic logic edit involving symbol/tuple/basic/expr/functions/special/tensor_functions branches"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/django__django-14855",
+      "source": "swebench_verified",
+      "winner": "robust_launch",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 8,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 16.03176236152649,
+      "verdict_judge": "caught",
+      "judge_rationale": "It targets readonly FK admin links in custom AdminSite and says to change admin URL generation only, matching the get_admin_url/current_app bug.",
+      "judge_captured": [
+        "Readonly FK links in custom AdminSite must use current site URL",
+        "Change limited to admin URL generation in admin helpers",
+        "Regression test for custom AdminSite readonly FK links"
+      ],
+      "judge_missed": [
+        "Specific file django/contrib/admin/helpers.py",
+        "Exact root cause: reverse(url_name, args=[quote(remote_obj.pk)]) missing current_app=self.model_admin.admin_site.name",
+        "Explicit mention of model_admin/admin_site.name wiring in the fix sketch"
+      ],
+      "judge_confidence": "medium"
+    },
+    {
+      "id": "danluu_postmortems/heroku",
+      "source": "danluu_postmortems",
+      "winner": "robust_launch",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 16.30616021156311,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures the DB type-compatibility/overflow constraint and impact on auth/deploy, but misses the specific foreign-key smaller-than-PK root cause and outage trigger details.",
+      "judge_captured": [
+        "foreign-key type compatibility gate",
+        "ID overflow risk / numeric headroom",
+        "auth and deployment paths affected",
+        "customer-impacting outage prevention"
+      ],
+      "judge_missed": [
+        "the specific mismatch where the foreign key used a smaller data type than the primary key",
+        "the overflow when the primary key exceeded the allowable value",
+        "the oncall operations trigger leading to the Heroku API full outage"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/cloudflare",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 16.671682357788086,
+      "verdict_judge": "partial",
+      "judge_rationale": "It matches the DNS/SERVFAIL outage theme and phased rollout constraint, but misses the specific Cloudflare config-error/root-cause details and affected products.",
+      "judge_captured": [
+        "DNS resolution failure with SERVFAIL for valid queries",
+        "Need to limit initial rollout to internal DNS resolution traffic only",
+        "Require a rollbackable phased rollout before full global enablement"
+      ],
+      "judge_missed": [
+        "Cloudflare-specific internal software/config error as the root cause",
+        "Impact to 1.1.1.1, WARP, Zero Trust, and third-party resolvers using 1.1.1.1",
+        "The exact violated constraint was a bad config/change propagation path, not just generic rollout safety"
+      ],
+      "judge_confidence": "medium"
+    },
+    {
+      "id": "danluu_postmortems/knight-capital",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 2,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 16.834787607192993,
+      "verdict_judge": "caught",
+      "judge_rationale": "It directly captures the Knight Capital failure mode: mixed old/new deployed versions and reusing a retired feature flag/bit.",
+      "judge_captured": [
+        "mixed old/new code paths in prod",
+        "reusing retired feature flags/bits",
+        "all impacted nodes must be updated before launch"
+      ],
+      "judge_missed": [
+        "specific Knight Capital deploy control/process failure details",
+        "explicit mention of the failed rollout medium (e.g. dormant server/version mismatch)"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/yeller",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 0,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "no_ground_truth",
+      "elapsed_s": 16.836358547210693,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures delayed-message SLA and partition symptom rollback, but misses the likely root cause clue: clustered network partition healed by rolling restart/cached routes.",
+      "judge_captured": [
+        "delayed messages beyond an SLA",
+        "rollback or pause trigger for partition symptoms",
+        "limited canary before broad traffic",
+        "explicit warning when messages are delayed hours"
+      ],
+      "judge_missed": [
+        "network partition in a cluster as the core failure mode",
+        "rolling restart of the cluster as the observed healing action",
+        "suspicion about cached routes and insufficient logging to confirm root cause",
+        "stakeholder focus on cluster/network operations rather than UI/status design"
+      ],
+      "judge_confidence": "medium"
+    },
+    {
+      "id": "swebench_verified/django__django-11848",
+      "source": "swebench_verified",
+      "winner": "robust_launch",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 13,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 16.72325325012207,
+      "verdict_judge": "caught",
+      "judge_rationale": "It targets the exact HTTP date two-digit year bug, limited to django/utils/http.py, with boundary tests matching the RFC 7231 50-year interpretation.",
+      "judge_captured": [
+        "Fix two-digit year parsing in HTTP date logic",
+        "Scope limited to django/utils/http.py / HTTP date parsing",
+        "Regression tests for boundary-year behavior",
+        "RFC 7231 50-year rule / future-vs-past interpretation"
+      ],
+      "judge_missed": [
+        "No explicit mention of computing current_year/current_century with datetime.utcnow()",
+        "No explicit diff sketch for the year adjustment branch in parse_http_date"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/django__django-13109",
+      "source": "swebench_verified",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 6,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 22.271207094192505,
+      "verdict_judge": "caught",
+      "judge_rationale": "Matches the core bug: FK existence validation should switch from default to base manager, with form/archived-article regression coverage in related.py.",
+      "judge_captured": [
+        "Switch FK existence validation to use the base manager",
+        "Keep default-manager behavior for non-FK validation flows",
+        "Validate the change against the archived-article selection flow",
+        "Targeted bugfix in django/db/models/fields/related.py"
+      ],
+      "judge_missed": [
+        "No explicit mention of _base_manager vs _default_manager in the diff sketch",
+        "Does not cite remote_field/model/filter/using callsite details",
+        "No concrete file-level code change described beyond the file target"
+      ],
+      "judge_confidence": "medium"
+    },
+    {
+      "id": "swebench_verified/django__django-12050",
+      "source": "swebench_verified",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 14,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 18.935753345489502,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures the exact regression and regression tests, but not the concrete django/db/models/sql/query.py edit or the resolve_lookup_value/sub_value logic from the ground truth patch.",
+      "judge_captured": [
+        "Preserve iterable input type for exact value lookup",
+        "Limit fix to lookup value coercion regression",
+        "Include a regression test for list exact queries",
+        "Regression cases for list, tuple, and empty iterable paths"
+      ],
+      "judge_missed": [
+        "Specific file django/db/models/sql/query.py",
+        "resolve_lookup_value implementation details",
+        "sub_value/resolved_values branching with append vs tuple coercion",
+        "allow_joins/resolve_expression/simple_col/reuse logic"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/django__django-13023",
+      "source": "swebench_verified",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 5,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 16.658162593841553,
+      "verdict_judge": "caught",
+      "judge_rationale": "It names DecimalField.to_python dict inputs and the need to raise ValidationError, matching the core bug and fix path in django/db/models/fields/__init__.py.",
+      "judge_captured": [
+        "DecimalField.to_python() dict inputs",
+        "raise ValidationError instead of TypeError",
+        "narrow change to DecimalField conversion path",
+        "regression coverage for dict-valued field assignment"
+      ],
+      "judge_missed": [
+        "No explicit reference to the decimal conversion exception handling details (InvalidOperation/ValueError/except block)",
+        "No file-level mention of django/db/models/fields/__init__.py"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/etsy",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 2,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 17.29112434387207,
+      "verdict_judge": "caught",
+      "judge_rationale": "It explicitly constrains rollout to switch-configured segments and staged enablement, matching the multicast-on-misconfigured-switches outage root cause.",
+      "judge_captured": [
+        "Limit rollout to switch-configured segments only",
+        "Require a staged rollout, not global enablement",
+        "Freeze multicast/SOLR replication contract before rollout"
+      ],
+      "judge_missed": [
+        "No explicit mention of configuring network switches correctly before sending multicast traffic",
+        "No direct reflection of the global outage caused by multicast leakage",
+        "No stakeholder constraint tied to network/ops ownership of switch configuration"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/django__django-12965",
+      "source": "swebench_verified",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 6,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 17.807218313217163,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures the fast bulk-delete regression and preserving fallback semantics, but misses the core compiler fix in compiler.py around base table aliases/get_initial_alias.",
+      "judge_captured": [
+        "restoring fast bulk delete SQL for non-self-referential deletes",
+        "preserving subquery delete path only where required by semantics",
+        "compatibility and performance regression fix"
+      ],
+      "judge_missed": [
+        "django/db/models/sql/compiler.py as the touched file",
+        "the root cause: ensuring the base table alias/query generation avoids the self-subquery",
+        "the specific aliasing/get_initial_alias-based compiler change"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/google",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 17.032776355743408,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures a config rollout with canarying and blast-radius checks, but misses the specific metadata/blob-storage constraint and the overloaded blob lookup failure path.",
+      "judge_captured": [
+        "staged canary rollout before broad expansion",
+        "hard stop on abnormal blob lookup load",
+        "impact checks for Gmail, Photos, Drive, and other GCP services",
+        "rollback/abort awareness for the rollout"
+      ],
+      "judge_missed": [
+        "the root cause was a config change for metadata storage demand",
+        "the violated constraint around blob lookup capacity/overload",
+        "the cascading failure mechanism from blob lookup to user-visible outage"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/stackdriver",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 1,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 17.117878198623657,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures the blocking-ingestion rollout constraint and canary gating, but misses the specific Cassandra/message-bus failure chain and the app-wide outage propagation.",
+      "judge_captured": [
+        "limits launch to non-critical ingestion paths first",
+        "defines a hard stop before enabling producer blocking behavior",
+        "uses staged rollout/canary threshold before production exposure"
+      ],
+      "judge_missed": [
+        "Cassandra cluster crash as the central failure",
+        "data published via a message bus being ingested into Cassandra",
+        "failure percolating back to producers through queue insert blocking",
+        "entire application failure from blocked producers"
+      ],
+      "judge_confidence": "medium"
+    },
+    {
+      "id": "swebench_verified/sympy__sympy-14248",
+      "source": "swebench_verified",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 3,
+      "keyword_hits": 0,
+      "keyword_total": 29,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 16.361754179000854,
+      "verdict_judge": "caught",
+      "judge_rationale": "It explicitly targets MatrixSymbol subtraction rendering and names the exact printer areas: str, pretty, and latex.",
+      "judge_captured": [
+        "Fix MatrixSymbol subtraction rendering",
+        "Touches str/pretty/latex printers",
+        "Keep change limited to printing behavior, not algebraic rewrite"
+      ],
+      "judge_missed": [
+        "No mention of the concrete printer internals likely changed in GT: join/sign handling in latex.py, pretty.py, and str.py",
+        "No specific reference to handling terms like parenthesize/precedence for matrix-mul subtraction formatting"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/sympy__sympy-20154",
+      "source": "swebench_verified",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 29,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 17.875703811645508,
+      "verdict_judge": "partial",
+      "judge_rationale": "It correctly targets partitions() and stopping reuse of yielded dicts, but lacks the concrete file/edit sketch for copying before yield and test/doc changes.",
+      "judge_captured": [
+        "partitions() output dicts should stop being reused",
+        "scope limited to the partitions() iterator and its docs/tests"
+      ],
+      "judge_missed": [
+        "specific touchpoint sympy/utilities/iterables.py",
+        "key implementation change to copy the dictionary before each yield",
+        "docstring/doctest update removing the reuse caveat"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/scikit-learn__scikit-learn-11310",
+      "source": "swebench_verified",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 15,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 16.029370069503784,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures the new refit_time_ API on search CV estimators, but lacks the concrete timing implementation details and file-level patch specifics in _search.py.",
+      "judge_captured": [
+        "Add refit_time_ only when refit=True",
+        "Document the new refit_time_ attribute and its semantics",
+        "Mention no-refit behavior"
+      ],
+      "judge_missed": [
+        "Touch sklearn/model_selection/_search.py",
+        "Measure refit start/end times around the final refit of the best model",
+        "Store the elapsed refit time as a float in seconds",
+        "Implement timing only for the refitting step on the full dataset"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/heroku",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 2,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 16.529196977615356,
+      "verdict_judge": "caught",
+      "judge_rationale": "It directly targets the Heroku failure mode: remote config rollout, incomplete propagation, and web dyno start blocked until full propagation.",
+      "judge_captured": [
+        "automated remote configuration change",
+        "staged canary / staged rollout before full deploy",
+        "block launch unless config propagation reaches all targeted regions",
+        "rollback if propagation is incomplete",
+        "web dyno start functionality as the launch criterion"
+      ],
+      "judge_missed": [
+        "no explicit reference to Heroku incident 1091 or web dynos could not be started",
+        "no stakeholder constraint tied to the specific operational owner beyond generic PM/designer roles"
+      ],
+      "judge_confidence": "high"
+    }
+  ]
+}

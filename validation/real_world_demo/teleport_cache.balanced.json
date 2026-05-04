@@ -1,0 +1,1507 @@
+{
+  "intent_path": "validation/real_world_demo/intent_teleport_sqlite_cache.md",
+  "repo_path": "/home/user/Playground/.clones/claude-teleport-analyzer",
+  "search_plan": {
+    "intent_excerpt": "# Add local SQLite cache layer with TTL invalidation to `n3mes1s/claude-teleport-analyzer`\n\n## What\n\n`claude-teleport-analyzer` is a Rust CLI that reads Claude Code\nremote-session data from the Anthropic API. Today every invocation\nhits the API live: `list_sessions()`, `get_session(id)`,\n`get_events(id, max)` (which can paginate 10k+ events at 1000/page),\nand `get_loglines(id)`. Repeated invocations against the same\nsession re-fetch the same data, bouncing off the same OAuth flow.\n\nWe are adding",
+    "patterns": [
+      {
+        "description": "Rust client methods that wrap Anthropic API calls",
+        "regex": null,
+        "ast_kind": "FunctionDef",
+        "ast_name_regex": "^(list_sessions|get_session|get_events|get_loglines|fetch_org_uuid)$",
+        "file_globs": [
+          "**/*.rs"
+        ]
+      },
+      {
+        "description": "Rust imports of HTTP client or auth flow used before cache",
+        "regex": null,
+        "ast_kind": "ImportFrom",
+        "ast_name_regex": "^(reqwest|oauth|auth|anthropic|client)$",
+        "file_globs": [
+          "**/*.rs"
+        ]
+      },
+      {
+        "description": "Rust struct or enum types that need Serialize/Deserialize/Clone",
+        "regex": null,
+        "ast_kind": "ClassDef",
+        "ast_name_regex": "^(Session|Sessions|Event|Events|Logline|Loglines|Profile|OrgUuid|.*Session.*|.*Event.*|.*Logline.*|.*Profile.*)$",
+        "file_globs": [
+          "**/*.rs"
+        ]
+      },
+      {
+        "description": "Rust derive attributes for cacheable data types",
+        "regex": "@derive\\([^\\)]*(Serialize|Deserialize|Clone)[^\\)]*\\)",
+        "ast_kind": "Decorator",
+        "ast_name_regex": "^(derive)$",
+        "file_globs": [
+          "**/*.rs"
+        ]
+      },
+      {
+        "description": "Main CLI arg parsing where new flags/subcommand are wired",
+        "regex": null,
+        "ast_kind": "FunctionDef",
+        "ast_name_regex": "^main$",
+        "file_globs": [
+          "**/main.rs"
+        ]
+      },
+      {
+        "description": "CLI flag definitions for no-cache or clear-cache",
+        "regex": "--no-cache|--clear-cache",
+        "ast_kind": null,
+        "ast_name_regex": null,
+        "file_globs": [
+          "**/*.rs",
+          "**/*.md"
+        ]
+      },
+      {
+        "description": "Config or path resolution for cache file location and permissions",
+        "regex": "CLAUDE_TELEPORT_ANALYZER_CACHE|cache\\.db|0600|set_permissions|permissions|dirs::",
+        "ast_kind": null,
+        "ast_name_regex": null,
+        "file_globs": [
+          "**/*.rs",
+          "**/*.md"
+        ]
+      },
+      {
+        "description": "SQLite schema or user_version migration logic",
+        "regex": "user_version|WAL|PRAGMA\\s+journal_mode|CREATE TABLE|DROP TABLE|schema",
+        "ast_kind": null,
+        "ast_name_regex": null,
+        "file_globs": [
+          "**/*.rs"
+        ]
+      },
+      {
+        "description": "Cache-related docs sections and security guidance",
+        "regex": "Command Data Flow|Caching|clear-cache|no-cache|cache\\.db|WAL|0600",
+        "ast_kind": null,
+        "ast_name_regex": null,
+        "file_globs": [
+          "**/*.md"
+        ]
+      }
+    ]
+  },
+  "findings": {
+    "repo_path": "/home/user/Playground/.clones/claude-teleport-analyzer",
+    "n_files_scanned": 6,
+    "n_matches": 2,
+    "matches_by_pattern": {
+      "Config or path resolution for cache file location and permissions": [
+        {
+          "pattern": "Config or path resolution for cache file location and permissions",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 225,
+          "context": "dirs::home_dir()"
+        }
+      ],
+      "Cache-related docs sections and security guidance": [
+        {
+          "pattern": "Cache-related docs sections and security guidance",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+          "line": 44,
+          "context": "## Command Data Flow"
+        }
+      ]
+    },
+    "hot_files": [
+      [
+        "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+        1
+      ],
+      [
+        "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+        1
+      ]
+    ]
+  },
+  "constraints": [
+    {
+      "axis": "api",
+      "summary": "Keep stdout identical with --no-cache",
+      "scope": "src/main.rs flag wiring and src/client.rs cache bypass path",
+      "gate": "none",
+      "rollback": "Disable cache lookup/write paths behind --no-cache and redeploy previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "api",
+      "summary": "Preserve method+params cache keys; ignore token identity",
+      "scope": "src/cache.rs lookup/write logic for list_sessions/get_session/get_events/get_loglines/fetch_org_uuid",
+      "gate": "none",
+      "rollback": "Remove token-derived cache key inputs and redeploy previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Add cache schema/type support before enabling reads",
+      "scope": "Cargo.toml, src/types.rs, src/cache.rs, src/client.rs deployment order",
+      "gate": "wait_for:release with cache schema and serialization support merged",
+      "rollback": "Redeploy code without cache reads, then drop the new cache DB if needed",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Ship CLI flags before defaulting any cached behavior",
+      "scope": "src/main.rs CLI parsing and command dispatch",
+      "gate": "wait_for:CLI flag release available in the deployed binary",
+      "rollback": "Redeploy previous binary or pass --no-cache to force live API behavior",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "data",
+      "summary": "Initialize SQLite cache with WAL and user_version migration checks",
+      "scope": "src/cache.rs cache.db open/create path and schema bootstrap",
+      "gate": "none",
+      "rollback": "Drop cache.db and recreate from scratch",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Use TTL/backfill-safe writes; avoid large event writes that spike IOPS",
+      "scope": "session_events and loglines cache insert path for 10k+ event sessions",
+      "gate": "monitor:replication lag 0s",
+      "rollback": "Disable cache write-back for large paginated fetches and fall back to live API",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Keep terminated-session event caches until manual clear",
+      "scope": "TTL policy for session_events where status != running",
+      "gate": "none",
+      "rollback": "Invalidate and refetch terminated-session rows on next access",
+      "blocking": false,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Do not drop or compact old cache tables during business hours",
+      "scope": "schema migration and any destructive cleanup in cache.db",
+      "gate": "window:maintenance",
+      "rollback": "Restore previous schema version and leave old tables intact",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Gate cutover on cache debug logs and hit/miss visibility",
+      "scope": "src/client.rs cache wrapper around list_sessions/get_session/get_events/get_loglines/fetch_org_uuid",
+      "gate": "wait_for:RUST_LOG=debug shows cache hit/miss for all API methods in canary",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Ship cache behavior behind --no-cache safe fallback path",
+      "scope": "src/main.rs flag wiring and src/client.rs cache consult/writeback path",
+      "gate": "none",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Require a 24h stable error budget before enabling cache by default",
+      "scope": "global rollout from opt-in to default-on cache behavior",
+      "gate": "monitor:error_rate<0.1% for 24h",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Avoid rollout during incidents or Friday afternoon maintenance windows",
+      "scope": "production deployment of cache.db-backed CLI changes",
+      "gate": "window:weekday_mornings_only; block during incident_window_and_Fri_12:00_local_to_close",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "security",
+      "summary": "Cache.db must be created with 0600 permissions",
+      "scope": "src/cache.rs path creation for ~/.claude-teleport-analyzer/cache.db and $CLAUDE_TELEPORT_ANALYZER_CACHE",
+      "gate": "approval:Security",
+      "rollback": "Remove the cache file and disable cache writes until perms are enforced",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Preserve audit trail: log cache hit/miss and age at debug",
+      "scope": "src/client.rs cache lookup/write paths for list_sessions, get_session, get_events, get_loglines, fetch_org_uuid",
+      "gate": "monitor:RUST_LOG=debug cache_hit_miss_logged=100%",
+      "rollback": "Revert to the prior client flow that logs only live API calls",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Document clear-cache and privacy guidance before release",
+      "scope": "README and ARCHITECTURE.md caching/security sections",
+      "gate": "approval:Security",
+      "rollback": "Remove the added documentation sections and release notes until updated",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify users of externally visible cache footer behavior",
+      "scope": "CLI output for served-from-cache footer on auth-required surfaces",
+      "gate": "window:release-notes-before-public-release",
+      "rollback": "Suppress the footer and fall back to the previous non-cached output",
+      "blocking": false,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Announce cache behavior and opt-out before users see changed UX",
+      "scope": "README, ARCHITECTURE.md, and release notes for CLI cache feature",
+      "gate": "approval:ProductPM",
+      "rollback": "remove release-note mention and revert docs to pre-cache wording",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Document --no-cache for automation before default cache use ships",
+      "scope": "CLI docs and any examples for scripted/cron usage of claude-teleport-analyzer",
+      "gate": "wait_for:docs-reviewed",
+      "rollback": "delete --no-cache guidance from docs and restore prior examples",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Show served-from-cache age footer in user-facing output",
+      "scope": "Command output paths affected by cache hits in src/client.rs and CLI surfaces",
+      "gate": "approval:ProductPM",
+      "rollback": "disable footer emission and revert to prior output formatting",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Coordinate support readiness for cache-related user questions",
+      "scope": "Launch readiness for cache hit/miss, TTL expiry, and --clear-cache behavior",
+      "gate": "wait_for:support_briefed",
+      "rollback": "pause rollout and notify support to use pre-cache troubleshooting flow",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep old CLI/API behavior until no-cache cutover proves parity",
+      "scope": "src/client.rs wrappers for list_sessions/get_session/get_events/get_loglines/fetch_org_uuid and src/main.rs flag wiring",
+      "gate": "wait_for:byte-for-byte stdout parity on --no-cache against current release",
+      "rollback": "disable cache lookup/write paths and redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Dual-support cache and live fetch until cache hit path is validated",
+      "scope": "Cache-first lookup before OAuth flow in src/client.rs, including auth-required surfaces",
+      "gate": "monitor:debug_cache_hit_miss_logs>=1 per API method",
+      "rollback": "force live HTTP path for all methods and keep --no-cache as fallback",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Ship a compatibility shim for wrappers during migration",
+      "scope": "Top-level --no-cache and --clear-cache behavior in src/main.rs plus cache bypass in src/client.rs",
+      "gate": "window:dual-support for at least one full release after cache launch",
+      "rollback": "remove cache shim paths and redeploy_previous",
+      "blocking": false,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Add pre-cutover tests for cache off and cache clear flows",
+      "scope": "Integration coverage for --no-cache stdout parity and --clear-cache exit 0",
+      "gate": "approval:maintainer",
+      "rollback": "revert the CLI flags and cache DB creation code",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Fallback must remain live API if cache rollout slips",
+      "scope": "Release plan for src/cache.rs and src/client.rs changes",
+      "gate": "none",
+      "rollback": "ship previous release without cache features enabled",
+      "blocking": false,
+      "owner": "ConsumerSubsystem"
+    }
+  ],
+  "plans": {
+    "00-cost-leaning": {
+      "summary": "Add SQLite caching with WAL, TTLs, 0600 perms, CLI flags, docs, and pre-cutover parity/tests while preserving --no-cache behavior.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Add rusqlite bundled dependency in Cargo.toml and derive Serialize + Deserialize + Clone on cacheable types in src/types.rs.",
+          "owner": "BackendOwner",
+          "depends_on": [],
+          "gate": "none",
+          "rollback": "Remove the rusqlite dependency and revert the new derives in src/types.rs.",
+          "observability": "cargo test/build succeeds; serialization compile errors disappear.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()"
+        },
+        {
+          "id": "S2",
+          "action": "Create src/cache.rs with cache.db path resolution via dirs, SQLite WAL open/bootstrap, user_version migration checks, 0600 file creation, and typed CacheEntry<T> read/write helpers for sessions, session_events, loglines, and oauth_profile.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "approval:Security",
+          "rollback": "Drop cache.db and remove src/cache.rs bootstrap/write paths.",
+          "observability": "Debug logs show DB open, WAL enabled, user_version checked, and file mode 0600 applied.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S3",
+          "action": "Implement cache-first lookup/writeback in src/client.rs for list_sessions, get_session, get_events, get_loglines, and fetch_org_uuid using method+params keys, with TTLs and infinite caching for terminated sessions.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "monitor:RUST_LOG=debug cache_hit_miss_logged=100%",
+          "rollback": "Disable cache reads/writes in src/client.rs and fall back to live HTTP calls.",
+          "observability": "stderr debug lines for hit/miss/age on every API method; no token-based cache keying.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S4",
+          "action": "Wire top-level --no-cache and --clear-cache in src/main.rs, including bypass for one invocation and DB deletion exit-0 behavior.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S3"
+          ],
+          "gate": "wait_for:CLI flag release available in the deployed binary",
+          "rollback": "Redeploy previous binary or force live API behavior with --no-cache.",
+          "observability": "--no-cache produces identical stdout to current release; --clear-cache removes cache.db and exits 0.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S5",
+          "action": "Add the served-from-cache age footer on user-facing cached paths in src/client.rs and CLI surfaces, including auth-required surfaces that still validate auth when needed.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S3",
+            "S4"
+          ],
+          "gate": "approval:ProductPM",
+          "rollback": "Disable footer emission and restore prior output formatting.",
+          "observability": "Cached responses include 'served from cache, age Xs'; auth-required flows still validate when uncached.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S6",
+          "action": "Update ARCHITECTURE.md with the Command Data Flow diagram and a Caching section describing WAL, TTLs, user_version migration, privacy, and --clear-cache/--no-cache behavior.",
+          "owner": "Security",
+          "depends_on": [
+            "S2",
+            "S3",
+            "S4"
+          ],
+          "gate": "approval:Security",
+          "rollback": "Remove the new caching/security documentation sections.",
+          "observability": "Docs mention 0600 perms, local-only cache, WAL concurrency, and manual clear guidance.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()"
+        },
+        {
+          "id": "S7",
+          "action": "Update README with privacy guidance, cache file permissions, and security instructions for --clear-cache and --no-cache usage.",
+          "owner": "Security",
+          "depends_on": [
+            "S2",
+            "S4"
+          ],
+          "gate": "approval:Security",
+          "rollback": "Remove the added README cache/security guidance.",
+          "observability": "README explains transcript sensitivity, 0600 permissions, and how to clear the cache.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S8",
+          "action": "Add integration tests covering TTL expiry, terminated-session infinite cache, schema migration drop-and-recreate, WAL concurrent access, --no-cache stdout parity, and --clear-cache exit 0.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S2",
+            "S3",
+            "S4"
+          ],
+          "gate": "approval:maintainer",
+          "rollback": "Remove the new tests and revert CLI/cache harness code.",
+          "observability": "Test suite validates cache behavior, concurrent processes, and byte-for-byte --no-cache parity.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S9",
+          "action": "Run debug canary validation with RUST_LOG=debug against src/client.rs cache paths and confirm hit/miss logs for all API methods plus age footer output.",
+          "owner": "SRE",
+          "depends_on": [
+            "S3",
+            "S5"
+          ],
+          "gate": "wait_for:RUST_LOG=debug shows cache hit/miss for all API methods in canary",
+          "rollback": "Redeploy previous build and keep cache disabled.",
+          "observability": "Canary stderr shows hit/miss for list_sessions/get_session/get_events/get_loglines/fetch_org_uuid.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S10",
+          "action": "Publish release notes and support brief covering cache behavior, opt-out usage, footer wording, and clear-cache troubleshooting.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S6",
+            "S7",
+            "S8"
+          ],
+          "gate": "wait_for:support_briefed",
+          "rollback": "Pause rollout and remove release-note mention until support is ready.",
+          "observability": "Support has the cache FAQ; release notes mention --no-cache and --clear-cache.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()"
+        },
+        {
+          "id": "S11",
+          "action": "Enable default cache-on rollout only after parity and debug logging are proven, while keeping --no-cache as a fallback path in src/client.rs and src/main.rs.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S4",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "gate": "monitor:error_rate<0.1% for 24h",
+          "rollback": "Redeploy previous release or force --no-cache to restore live-only behavior.",
+          "observability": "Error rate stays below threshold, cache hit rate rises, and live API traffic drops without stdout regressions.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        }
+      ],
+      "open_questions": [
+        "Should list-sessions cache hits still require auth validation on every invocation, or only on uncached paths?",
+        "What exact footer text and placement should be used for 'served from cache, age Xs'?",
+        "Should expired running-session event rows be refreshed lazily per page or all-at-once?",
+        "What is the desired behavior when cache.db exists but is unreadable or has wrong permissions?"
+      ],
+      "conflicts": [
+        {
+          "owners": [
+            "DataPlatform",
+            "SRE"
+          ],
+          "blocking_constraints": [
+            "Do not drop or compact old cache tables during business hours",
+            "Avoid rollout during incidents or Friday afternoon maintenance windows"
+          ],
+          "conflict": "Both impose blocking windows that can delay destructive schema work and production deployment, with no shared allowed window in the input."
+        },
+        {
+          "owners": [
+            "SRE",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Require a 24h stable error budget before enabling cache by default",
+            "Announce cache behavior and opt-out before users see changed UX"
+          ],
+          "conflict": "Product wants user-facing announcement before UX changes, while SRE blocks default-on rollout until a 24h stability window passes."
+        },
+        {
+          "owners": [
+            "SRE",
+            "BackendOwner"
+          ],
+          "blocking_constraints": [
+            "Ship cache behavior behind --no-cache safe fallback path",
+            "Ship CLI flags before defaulting any cached behavior"
+          ],
+          "conflict": "Default cache behavior cannot turn on before the flag-based fallback release is available, so the deployment must be staged."
+        },
+        {
+          "owners": [
+            "Security",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Preserve audit trail: log cache hit/miss and age at debug",
+            "Show served-from-cache age footer in user-facing output"
+          ],
+          "conflict": "Security wants debug audit visibility and Product wants user-visible cache age; both are blocking on the same output paths and need coordinated formatting."
+        },
+        {
+          "owners": [
+            "ConsumerSubsystem",
+            "BackendOwner"
+          ],
+          "blocking_constraints": [
+            "Keep old CLI/API behavior until no-cache cutover proves parity",
+            "Keep stdout identical with --no-cache"
+          ],
+          "conflict": "Consumer parity testing must complete before allowing cached paths to alter normal behavior, while Backend requires no-cache byte-for-byte equivalence first."
+        },
+        {
+          "owners": [
+            "ConsumerSubsystem",
+            "SRE"
+          ],
+          "blocking_constraints": [
+            "Dual-support cache and live fetch until cache hit path is validated",
+            "Require a 24h stable error budget before enabling cache by default"
+          ],
+          "conflict": "Consumer wants immediate dual-path support; SRE blocks default enablement until a long stability period, forcing extended coexistence."
+        },
+        {
+          "owners": [
+            "Security",
+            "DataPlatform"
+          ],
+          "blocking_constraints": [
+            "Cache.db must be created with 0600 permissions",
+            "Initialize SQLite cache with WAL and user_version migration checks"
+          ],
+          "conflict": "Cache initialization must satisfy both permissions hardening and migration bootstrap semantics before any writes."
+        }
+      ]
+    },
+    "01-safety-leaning": {
+      "summary": "Add SQLite cache behind opt-in flags, validate parity and safety first, then enable with WAL, TTLs, permissions, and docs after canary proof.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Implement cache plumbing in src/cache.rs and add rusqlite to Cargo.toml: open ~/.claude-teleport-analyzer/cache.db or $CLAUDE_TELEPORT_ANALYZER_CACHE, create schema, set PRAGMA journal_mode=WAL, enforce SQLite user_version, and create 0600 file permissions on first write.",
+          "owner": "DataPlatform",
+          "depends_on": [],
+          "gate": "approval:Security",
+          "rollback": "Delete cache.db and disable cache initialization paths until permissions and WAL setup are fixed.",
+          "observability": "Log cache DB open/create, WAL mode enabled, user_version, and file mode at debug.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S2",
+          "action": "Update src/types.rs to derive Serialize, Deserialize, and Clone on cached response types used by list_sessions, get_session, get_events, get_loglines, and fetch_org_uuid; add typed CacheEntry<T> support in src/cache.rs.",
+          "owner": "Backend",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "none",
+          "rollback": "Remove the new derives and typed cache wrapper, then rebuild without cache serialization support.",
+          "observability": "Compile success and cache serialize/deserialize round-trip test results.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()"
+        },
+        {
+          "id": "S3",
+          "action": "Wire cache bypass and clear controls in src/main.rs: add --no-cache and --clear-cache, ensure --clear-cache drops the DB and exits 0, and keep old CLI behavior when --no-cache is present.",
+          "owner": "Backend",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "approval:maintainer",
+          "rollback": "Revert the new flags and restore the previous CLI dispatch.",
+          "observability": "CLI parsing success, exit codes, and stdout parity for --no-cache.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S4",
+          "action": "Add cache lookup/write paths in src/client.rs for list_sessions, get_session, get_events, get_loglines, and fetch_org_uuid, with cache-keying by method+params only and TTL handling for sessions, events, loglines, and oauth_profile.",
+          "owner": "Backend",
+          "depends_on": [
+            "S2",
+            "S3"
+          ],
+          "gate": "wait_for:release with cache schema and serialization support merged",
+          "rollback": "Disable cache read/write branches and fall back to the pre-cache HTTP flow.",
+          "observability": "Debug logs for hit/miss, age, TTL expiry, and fallback-to-HTTP per method.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S5",
+          "action": "Implement TTL policy in src/cache.rs: 60s for sessions, 5m for running session_events and loglines, infinite retention for terminated session_events, and 1h for oauth_profile; ensure lookup happens before OAuth flow where safe.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "monitor:error_rate<0.1% for 24h",
+          "rollback": "Revert TTL logic to always-fetch behavior and keep only live API responses.",
+          "observability": "Cache age on hits, expired-entry misses, and terminated-session infinite-cache hit rate.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S6",
+          "action": "Add debug logging in src/client.rs for every cache hit, miss, and served-from-cache age Xs footer on auth-required surfaces; keep stdout unchanged under --no-cache.",
+          "owner": "SRE",
+          "depends_on": [
+            "S4",
+            "S5"
+          ],
+          "gate": "wait_for:RUST_LOG=debug shows cache hit/miss for all API methods in canary",
+          "rollback": "Turn off cache footer and debug cache logs, then revert to live-call-only logging.",
+          "observability": "RUST_LOG=debug output coverage for each API method and footer rendering on cache hits.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S7",
+          "action": "Add integration tests for --no-cache byte-for-byte stdout parity, --clear-cache exit 0, TTL expiry, terminated-session infinite cache, schema migration drop-and-recreate, and concurrent access with WAL.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S3",
+            "S4",
+            "S5"
+          ],
+          "gate": "approval:maintainer",
+          "rollback": "Remove the new tests and revert to the prior test suite.",
+          "observability": "Test pass/fail for parity, migration reset, TTL behavior, and concurrent process access.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S8",
+          "action": "Update ARCHITECTURE.md with the Command Data Flow diagram and a Caching section describing WAL, user_version migrations, TTLs, 0600 permissions, and --no-cache / --clear-cache usage.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S3",
+            "S5"
+          ],
+          "gate": "approval:ProductPM",
+          "rollback": "Remove the caching documentation additions and restore the previous architecture text.",
+          "observability": "Docs review completion and presence of security/privacy guidance.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()"
+        },
+        {
+          "id": "S9",
+          "action": "Update README security guidance to document cache.db privacy, 0600 permissions, and clear-cache instructions; mention cron/automation should use --no-cache.",
+          "owner": "Security",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "approval:Security",
+          "rollback": "Remove the cache privacy/clear-cache guidance from README.",
+          "observability": "Documentation review and security sign-off on privacy wording.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()"
+        },
+        {
+          "id": "S10",
+          "action": "Run a canary release with cache enabled but not default-on, validating RUST_LOG=debug hit/miss visibility, served-from-cache age footers, and auth-required surfaces still validate auth when needed.",
+          "owner": "SRE",
+          "depends_on": [
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "gate": "monitor:debug_cache_hit_miss_logs>=1 per API method",
+          "rollback": "Redeploy the previous binary and keep --no-cache as the only cache-related escape hatch.",
+          "observability": "Method-level hit/miss logs, auth validation behavior, and canary error rates.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()"
+        },
+        {
+          "id": "S11",
+          "action": "After 24h canary stability, flip the release to the default cache path while preserving --no-cache and --clear-cache, and keep WAL/user_version migration behavior unchanged.",
+          "owner": "SRE",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "monitor:error_rate<0.1% for 24h",
+          "rollback": "Redeploy the previous release with cache defaulting off.",
+          "observability": "24h error budget, cache hit ratio, and any auth or concurrency regressions.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        }
+      ],
+      "open_questions": [
+        "Should cache hits still require auth validation for every auth-required command, or only for the specific surfaces named in the intent?",
+        "What exact footer format should be used for 'served from cache, age Xs' to preserve CLI UX consistency?",
+        "Should cache.db be created eagerly on startup or only on first cacheable response?",
+        "How should schema version bumps trigger drop-and-recreate in the presence of concurrent processes?"
+      ],
+      "conflicts": [
+        {
+          "between": [
+            "BackendOwner: preserve method+params cache keys; ignore token identity",
+            "Security: Cache.db must be created with 0600 permissions"
+          ],
+          "why": "These do not conflict; token-agnostic keys are compatible with secure file permissions."
+        },
+        {
+          "between": [
+            "BackendOwner: keep stdout identical with --no-cache",
+            "ProductPM: show served-from-cache age footer in user-facing output"
+          ],
+          "why": "The footer applies on cache hits, while --no-cache must preserve current stdout; these can coexist if the footer is suppressed under --no-cache."
+        },
+        {
+          "between": [
+            "DataPlatform: do not drop or compact old cache tables during business hours",
+            "DataPlatform: initialize SQLite cache with WAL and user_version migration checks"
+          ],
+          "why": "A schema migration may require destructive recreation, which conflicts with avoiding drops during business hours."
+        },
+        {
+          "between": [
+            "SRE: require a 24h stable error budget before enabling cache by default",
+            "ProductPM: announce cache behavior and opt-out before users see changed UX"
+          ],
+          "why": "Default-on rollout must wait for stability, but users also need communication before any UX change becomes visible."
+        },
+        {
+          "between": [
+            "ConsumerSubsystem: keep old CLI/API behavior until no-cache cutover proves parity",
+            "BackendOwner: ship CLI flags before defaulting any cached behavior"
+          ],
+          "why": "Parity validation depends on the new flags existing first, while old behavior must remain until parity is proven."
+        },
+        {
+          "between": [
+            "Security: log cache hit/miss and age at debug",
+            "BackendOwner: no behavioural change without --no-cache"
+          ],
+          "why": "Debug logging adds observability but must not alter stdout; this is only a conflict if logs are emitted to stdout instead of stderr/debug."
+        }
+      ]
+    },
+    "02-speed-leaning": {
+      "summary": "Add SQLite cache behind opt-in flags, preserve no-cache parity, then roll out cache-first reads with WAL, TTLs, docs, and debug visibility.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Update Cargo.toml to add rusqlite bundled; derive Serialize, Deserialize, and Clone for cacheable types in src/types.rs; add a new src/cache.rs module with schema bootstrap, WAL mode, user_version checks, TTL helpers, and 0600 file creation for ~/.claude-teleport-analyzer/cache.db or $CLAUDE_TELEPORT_ANALYZER_CACHE",
+          "owner": "BackendOwner",
+          "depends_on": [],
+          "gate": "none",
+          "rollback": "Remove rusqlite and cache derives, delete src/cache.rs, and redeploy_previous",
+          "observability": "Build succeeds, cache.db opens on macOS/Linux/Windows, WAL is enabled, user_version is set/read, and file mode is 0600",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S2",
+          "action": "Implement cache lookup/write plumbing in src/client.rs for list_sessions, get_session, get_events, get_loglines, and fetch_org_uuid using method+params keys only, with TTLs for sessions/org UUID/events/loglines and infinite retention for terminated session_events",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "monitor:RUST_LOG=debug cache_hit_miss_logged=100%",
+          "rollback": "Disable cache lookup/write paths in src/client.rs and redeploy_previous",
+          "observability": "Debug logs show hit/miss and age per API method; cache hits do not depend on token identity; terminated-session rows never expire",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S3",
+          "action": "Wire --no-cache and --clear-cache in src/main.rs, ensuring --no-cache bypasses both cache reads and writes while preserving current stdout byte-for-byte, and --clear-cache drops cache.db and exits 0",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "wait_for:CLI flag release available in the deployed binary",
+          "rollback": "Redeploy previous binary or force live API behavior with --no-cache",
+          "observability": "CLI parses both flags, --no-cache matches current output exactly, and --clear-cache removes the DB file",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S4",
+          "action": "Add integration and unit tests for TTL expiry, terminated-session infinite cache, schema migration drop-and-recreate via user_version, concurrent WAL access, --no-cache parity, and --clear-cache behavior",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2",
+            "S3"
+          ],
+          "gate": "approval:maintainer",
+          "rollback": "Revert the new tests and cache code paths, then redeploy_previous",
+          "observability": "Tests cover cache-off parity, cache-hit speedup, migration reset, and concurrent readers/writers without corruption",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S5",
+          "action": "Update ARCHITECTURE.md Command Data Flow and add a Caching section covering WAL, TTL policy, user_version migrations, privacy, and served-from-cache age footer behavior",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S2",
+            "S3"
+          ],
+          "gate": "approval:ProductPM",
+          "rollback": "Remove the caching docs sections and revert ARCHITECTURE.md to pre-cache wording",
+          "observability": "Docs mention cache path, --no-cache, --clear-cache, WAL concurrency, and security guidance",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()"
+        },
+        {
+          "id": "S6",
+          "action": "Update README security guidance to document cache.db 0600 permissions, transcript-content sensitivity, and --clear-cache usage for cleanup",
+          "owner": "Security",
+          "depends_on": [
+            "S1",
+            "S3"
+          ],
+          "gate": "approval:Security",
+          "rollback": "Remove the added security guidance and restore the prior README text",
+          "observability": "README explicitly calls out local-only storage, permissions, and cache clearing",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()"
+        },
+        {
+          "id": "S7",
+          "action": "Add user-facing served-from-cache age footer on cache hits in src/client.rs and any CLI output surfaces that already print method results, but only for auth-required surfaces when cache serves the response",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S2",
+            "S3"
+          ],
+          "gate": "approval:ProductPM",
+          "rollback": "Disable footer emission and revert output formatting to the pre-cache behavior",
+          "observability": "Cache-hit responses include a clear age footer and live-path output remains unchanged",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S8",
+          "action": "Emit cache hit/miss and age details at debug level from src/client.rs for all wrapped API methods, including offline cache hits before OAuth flow and auth-required lookup paths",
+          "owner": "SRE",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "monitor:RUST_LOG=debug cache_hit_miss_logged=100%",
+          "rollback": "Revert to prior live-only logging and redeploy_previous",
+          "observability": "RUST_LOG=debug shows hit/miss for list_sessions, get_session, get_events, get_loglines, and fetch_org_uuid",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S9",
+          "action": "Run canary rollout with cache enabled but gated by --no-cache fallback, verify stdout parity on --no-cache and cache-hit latency on repeated read/show/summary/loglines invocations, and keep default behavior unchanged until stable",
+          "owner": "SRE",
+          "depends_on": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8"
+          ],
+          "gate": "wait_for:byte-for-byte stdout parity on --no-cache against current release",
+          "rollback": "Force live HTTP path for all methods and redeploy_previous",
+          "observability": "Canary shows 1+ debug hit/miss per method, second read is sub-100ms, and no stdout drift with --no-cache",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S10",
+          "action": "Roll out cache behavior as default only after cache-off parity and support readiness are complete, keeping --no-cache and --clear-cache as compatibility shims",
+          "owner": "SRE",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "monitor:error_rate<0.1% for 24h",
+          "rollback": "redeploy_previous and keep cache disabled by default",
+          "observability": "24h error budget remains below threshold while default cache paths are used",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()"
+        },
+        {
+          "id": "S11",
+          "action": "Prepare release notes and support brief for cache behavior, opt-out, privacy, TTLs, and debug logging so users and wrappers know about --no-cache and --clear-cache before broad rollout",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S5",
+            "S6",
+            "S9"
+          ],
+          "gate": "wait_for:support_briefed",
+          "rollback": "Pause rollout and remove release-note mention until support is ready",
+          "observability": "Support has the briefing, release notes mention cache behavior and opt-out, and wrapper users are informed",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S12",
+          "action": "Finalize public release with cache-on-by-default once stability, docs, and support gates are satisfied, leaving the cache DB schema versioned and WAL-backed",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S10",
+            "S11"
+          ],
+          "gate": "window:weekday_mornings_only; block during incident_window_and_Fri_12:00_local_to_close",
+          "rollback": "redeploy_previous",
+          "observability": "Production traffic uses cache by default, cache hit rate rises, and no incident-window deployment occurs",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()"
+        }
+      ],
+      "open_questions": [
+        "Should served-from-cache age footer appear on every cache-hit command or only on auth-required surfaces?",
+        "What exact SQLite schema version number should be assigned for the first release?",
+        "Should cache writes happen per page for get_events/get_loglines or only after a full fetch completes?",
+        "Do we want to expose a future --cache-stats flag now or leave it for a later release?",
+        "What release-note wording should ProductPM approve for the privacy and opt-out guidance?"
+      ],
+      "conflicts": [
+        {
+          "owners": [
+            "DataPlatform",
+            "SRE"
+          ],
+          "constraints": [
+            "Do not drop or compact old cache tables during business hours",
+            "Avoid rollout during incidents or Friday afternoon maintenance windows"
+          ],
+          "resolution": "Schedule schema-destructive or migration-risk steps only in weekday mornings and outside incident/Fri afternoon windows."
+        },
+        {
+          "owners": [
+            "Security",
+            "ProductPM"
+          ],
+          "constraints": [
+            "Cache.db must be created with 0600 permissions",
+            "Show served-from-cache age footer in user-facing output"
+          ],
+          "resolution": "Keep 0600 as a hard requirement; add the footer only after approval and preserve it only on cache hits."
+        },
+        {
+          "owners": [
+            "SRE",
+            "ProductPM"
+          ],
+          "constraints": [
+            "Require a 24h stable error budget before enabling cache by default",
+            "Announce cache behavior and opt-out before users see changed UX"
+          ],
+          "resolution": "Publish docs and release notes before rollout, but delay default-on until the 24h stability window passes."
+        },
+        {
+          "owners": [
+            "ConsumerSubsystem",
+            "BackendOwner"
+          ],
+          "constraints": [
+            "Keep old CLI/API behavior until no-cache cutover proves parity",
+            "Ship CLI flags before defaulting any cached behavior"
+          ],
+          "resolution": "Land flags and cache plumbing first, then validate --no-cache parity before enabling cache by default."
+        },
+        {
+          "owners": [
+            "DataPlatform",
+            "SRE"
+          ],
+          "constraints": [
+            "Use TTL/backfill-safe writes; avoid large event writes that spike IOPS",
+            "Gate cutover on cache debug logs and hit/miss visibility"
+          ],
+          "resolution": "Canary cache writes with debug observability enabled and throttle/validate large paginated writes during rollout."
+        }
+      ]
+    },
+    "03-safety-tilted": {
+      "summary": "Add SQLite cache, keep it opt-in-safe via --no-cache, then validate parity, permissions, logs, and docs before default use.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Add rusqlite bundled dependency in Cargo.toml and derive Serialize/Deserialize/Clone on cacheable types in src/types.rs so cached payloads can round-trip.",
+          "owner": "BackendOwner",
+          "depends_on": [],
+          "gate": "none",
+          "rollback": "Remove the rusqlite dependency and the added derive traits, then rebuild from the previous commit.",
+          "observability": "Cargo build succeeds; cacheable structs compile with serde bounds and Clone.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()"
+        },
+        {
+          "id": "S2",
+          "action": "Implement src/cache.rs with SQLite open/create, WAL mode, user_version migration check, 0600 file permissions, TTL helpers, and typed CacheEntry<T> read/write API keyed by method+params.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "approval:Security",
+          "rollback": "Delete cache.db, remove cache.rs initialization paths, and disable cache writes until permissions and migration checks are fixed.",
+          "observability": "Debug logs show cache DB creation, WAL enabled, user_version read/write, and permission mode 0600.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S3",
+          "action": "Wire cache path resolution in src/cache.rs using dirs for ~/.claude-teleport-analyzer/cache.db or $CLAUDE_TELEPORT_ANALYZER_CACHE, and add drop-and-recreate behavior on schema mismatch.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "none",
+          "rollback": "Revert to the previous path resolver and drop the new cache.db if schema versioning behaves incorrectly.",
+          "observability": "Resolved cache path is stable across macOS, Linux, and Windows; user_version mismatch triggers recreate.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S4",
+          "action": "Implement cache-first wrappers in src/client.rs for list_sessions, get_session, get_events, get_loglines, and fetch_org_uuid, with lookup before OAuth flow and write-back after live fetch.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S2",
+            "S3"
+          ],
+          "gate": "wait_for:release with cache schema and serialization support merged",
+          "rollback": "Disable cache lookup/write paths in src/client.rs and fall back to the prior live HTTP flow.",
+          "observability": "Debug logs emit hit/miss and age for each API method; live calls still succeed when cache misses.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S5",
+          "action": "Add top-level CLI flags in src/main.rs for --no-cache and --clear-cache, including a clear-cache subcommand that removes the DB file and exits 0.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "wait_for:CLI flag release available in the deployed binary",
+          "rollback": "Redeploy the previous binary or pass --no-cache to restore live-only behavior.",
+          "observability": "CLI parsing accepts both flags; --clear-cache deletes the cache file; --no-cache bypasses cache reads and writes.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S6",
+          "action": "Add TTL policy in src/cache.rs for sessions (60s), events/loglines (5m, infinite for terminated sessions), and oauth_profile (1h), preserving method+params keys and ignoring token identity.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "none",
+          "rollback": "Remove TTL enforcement and revert to live fetch-only behavior for affected methods.",
+          "observability": "Cache age is computed per entry; terminated-session event rows never expire unless manually cleared.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S7",
+          "action": "Add integration coverage for --no-cache stdout parity, --clear-cache exit 0, TTL expiry, terminated-session infinite cache, schema migration recreate, and concurrent WAL access.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S5",
+            "S6"
+          ],
+          "gate": "approval:maintainer",
+          "rollback": "Revert the new integration tests and cache-related CLI wiring if a test exposes an incompatible behavior.",
+          "observability": "Tests prove byte-for-byte stdout parity under --no-cache and cache persistence across concurrent processes.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()"
+        },
+        {
+          "id": "S8",
+          "action": "Update ARCHITECTURE.md with the Command Data Flow diagram and a Caching section describing WAL, TTLs, user_version, no-cache, clear-cache, and privacy notes.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S4",
+            "S5",
+            "S6"
+          ],
+          "gate": "approval:Security",
+          "rollback": "Remove the new caching documentation sections and restore the previous architecture text.",
+          "observability": "Docs explicitly mention cache locations, permissions, TTL behavior, and the --clear-cache workflow.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()"
+        },
+        {
+          "id": "S9",
+          "action": "Update README security guidance to document cache.db privacy, 0600 permissions, and --clear-cache; add automation guidance for --no-cache and cron-driven use.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "approval:ProductPM",
+          "rollback": "Delete the added README guidance and revert examples to pre-cache wording.",
+          "observability": "README includes sensitive-content warning, cache clearing instructions, and automation opt-out guidance.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()"
+        },
+        {
+          "id": "S10",
+          "action": "Add debug logging in src/client.rs for every cache hit/miss and cache age, and emit the served-from-cache footer on auth-required surfaces when relevant.",
+          "owner": "SRE",
+          "depends_on": [
+            "S4",
+            "S5"
+          ],
+          "gate": "monitor:RUST_LOG=debug cache_hit_miss_logged=100%",
+          "rollback": "Disable footer emission and revert client logging to the prior live-only path.",
+          "observability": "RUST_LOG=debug shows hit/miss for list_sessions, get_session, get_events, get_loglines, and fetch_org_uuid.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S11",
+          "action": "Run a canary release with cache enabled but not default, verify weekday-morning rollout window, and keep --no-cache as the single-step rollback path.",
+          "owner": "SRE",
+          "depends_on": [
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "gate": "monitor:error_rate<0.1% for 24h",
+          "rollback": "Redeploy the previous binary or force --no-cache to restore live API behavior.",
+          "observability": "Canary shows stable error rate, debug cache logs, and no stdout regressions on real sessions.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow"
+        },
+        {
+          "id": "S12",
+          "action": "Flip cache to default-on only after the 24h error-rate soak passes, keeping --no-cache and --clear-cache as explicit escape hatches.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S11"
+          ],
+          "gate": "wait_for:error_rate<0.1% for 24h",
+          "rollback": "Redeploy the previous release and restore cache-off default behavior.",
+          "observability": "Default invocations use cache, while no-cache parity and cache hit logging remain intact.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md, /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/ARCHITECTURE.md:44` (Cache-related docs sections and security guidance): ## Command Data Flow\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Config or path resolution for cache file location and permissions): dirs::home_dir()"
+        }
+      ],
+      "open_questions": [
+        "Should auth-required commands always force an OAuth validation even on cache hits, or only when the surface explicitly needs org/session auth context?",
+        "Should the served-from-cache footer appear on all cached commands or only on user-facing auth-required surfaces?",
+        "What exact cache-stats flag or env var, if any, should be added for SRE visibility?"
+      ],
+      "conflicts": [
+        {
+          "owners": [
+            "DataPlatform",
+            "SRE"
+          ],
+          "blocking_constraints": [
+            "Do not drop or compact old cache tables during business hours",
+            "Require a 24h stable error budget before enabling cache by default"
+          ],
+          "why": "One blocks destructive migration cleanup during a maintenance window, the other blocks default-on rollout until a 24h soak completes; these constrain rollout timing in opposite directions.",
+          "chosen_path": "Do schema work and canary earlier, but delay default-on until after the 24h soak and a weekday-morning window."
+        },
+        {
+          "owners": [
+            "Security",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Show served-from-cache age footer in user-facing output",
+            "Notify users of externally visible cache footer behavior"
+          ],
+          "why": "Footer display is a user-facing UX change that must be approved and documented before release; the security and PM controls both block until comms are ready.",
+          "chosen_path": "Implement footer only after docs and release notes are approved, then canary it with debug logs."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ConsumerSubsystem"
+          ],
+          "blocking_constraints": [
+            "Keep old CLI/API behavior until no-cache cutover proves parity",
+            "Add pre-cutover tests for cache off and cache clear flows"
+          ],
+          "why": "Parity validation must happen before any default behavior changes, while the tests themselves are a prerequisite gate for migration confidence.",
+          "chosen_path": "Ship --no-cache and --clear-cache first, then prove parity with tests before enabling cache paths."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "SRE"
+          ],
+          "blocking_constraints": [
+            "Ship cache behavior behind --no-cache safe fallback path",
+            "Gate cutover on cache debug logs and hit/miss visibility"
+          ],
+          "why": "The safe fallback path allows deployment, but SRE blocks cutover until debug hit/miss visibility is verified in canary.",
+          "chosen_path": "Keep cache opt-in and collect debug logs until all methods show hits/misses."
+        },
+        {
+          "owners": [
+            "DataPlatform",
+            "Security"
+          ],
+          "blocking_constraints": [
+            "Initialize SQLite cache with WAL and user_version migration checks",
+            "Cache.db must be created with 0600 permissions"
+          ],
+          "why": "Both are required at creation time; permission enforcement and schema bootstrap must be implemented together before writes are allowed.",
+          "chosen_path": "Implement path creation, permissions, WAL, and user_version checks in the same cache bootstrap step."
+        }
+      ]
+    }
+  },
+  "smt": {
+    "00-cost-leaning": {
+      "feasible": true,
+      "unsat_core_size": 0,
+      "unsat_core_explanations": []
+    },
+    "01-safety-leaning": {
+      "feasible": true,
+      "unsat_core_size": 0,
+      "unsat_core_explanations": []
+    },
+    "02-speed-leaning": {
+      "feasible": true,
+      "unsat_core_size": 0,
+      "unsat_core_explanations": []
+    },
+    "03-safety-tilted": {
+      "feasible": true,
+      "unsat_core_size": 0,
+      "unsat_core_explanations": []
+    }
+  },
+  "chaos": {
+    "00-cost-leaning": {
+      "fragility": 0.4,
+      "fragility_curve": {
+        "1": 0.4,
+        "2": 0.59
+      },
+      "achilles_top_k1": [
+        [
+          "S1"
+        ],
+        [
+          "S2"
+        ],
+        [
+          "S3"
+        ]
+      ]
+    },
+    "01-safety-leaning": {
+      "fragility": 0.455,
+      "fragility_curve": {
+        "1": 0.455,
+        "2": 0.634
+      },
+      "achilles_top_k1": [
+        [
+          "S1"
+        ],
+        [
+          "S2"
+        ],
+        [
+          "S3"
+        ]
+      ]
+    },
+    "02-speed-leaning": {
+      "fragility": 0.409,
+      "fragility_curve": {
+        "1": 0.409,
+        "2": 0.562
+      },
+      "achilles_top_k1": [
+        [
+          "S1"
+        ],
+        [
+          "S2"
+        ],
+        [
+          "S3"
+        ]
+      ]
+    },
+    "03-safety-tilted": {
+      "fragility": 0.447,
+      "fragility_curve": {
+        "1": 0.447,
+        "2": 0.626
+      },
+      "achilles_top_k1": [
+        [
+          "S1"
+        ],
+        [
+          "S2"
+        ],
+        [
+          "S3"
+        ]
+      ]
+    }
+  },
+  "winner": "00-cost-leaning"
+}

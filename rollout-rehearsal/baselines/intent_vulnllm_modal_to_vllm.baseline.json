@@ -1,0 +1,143 @@
+{
+  "intent": "fixtures/intent_vulnllm_modal_to_vllm.md",
+  "model": "gpt-5.4-mini",
+  "tokens_in": 787,
+  "tokens_out": 1737,
+  "plan": {
+    "summary": "Move vulnllm-analyzer to a Modal-hosted vLLM OpenAI-compatible server on A10G, updating analyzer and scripts while preserving verdict fidelity and surfacing API errors.",
+    "steps": [
+      {
+        "id": "S1",
+        "action": "Implement `vulnllm-analyzer/modal_vllm_service.py` to launch vLLM's OpenAI-compatible server for VulnLLM-R-7B on Modal A10G, exposing the standard chat/completions endpoint expected by the OpenAI Python client.",
+        "owner": "backend",
+        "depends_on": [],
+        "gate": "none",
+        "rollback": "Disable the new Modal app and restore traffic to the existing `modal_service.py` endpoints.",
+        "observability": "Log server startup, model name, GPU type, and request/response status codes; export vLLM queueing and generation latency."
+      },
+      {
+        "id": "S2",
+        "action": "Tune Modal container idle timeout and warmup behavior to keep common `scan_sliver_latest.py` and `scan_bottle.py` runs warm enough to avoid repeated ~30 s cold starts.",
+        "owner": "sre",
+        "depends_on": [
+          "S1"
+        ],
+        "gate": "monitor:GPU cold-start rate and p95 startup latency",
+        "rollback": "Reduce idle timeout to previous value or route periodic warmup traffic back to the old service.",
+        "observability": "Track cold-start count, time-to-first-token, and p95 end-to-end scan duration per script."
+      },
+      {
+        "id": "S3",
+        "action": "Refactor `vulnllm-analyzer/analyzer.py` to use `openai.OpenAI(base_url=..., api_key=...)` against the Modal-backed URL, replacing direct HTTP calls to `/health`, `/analyze`, and `/analyze/batch`.",
+        "owner": "backend",
+        "depends_on": [
+          "S1"
+        ],
+        "gate": "approval:API contract review with analyzer owners",
+        "rollback": "Revert analyzer client construction to the bespoke Modal HTTP client and old endpoints.",
+        "observability": "Add structured logs for request payload shape, model name from `LLM_MODEL_NAME`, OpenAI response status, and raw error bodies."
+      },
+      {
+        "id": "S4",
+        "action": "Preserve verdict fidelity by validating that analyzer prompt formatting, tokenization, and response parsing produce JSON verdicts equivalent to the current flow for representative samples, including `scan_sliver_latest.py` and `scan_bottle.py` inputs.",
+        "owner": "data",
+        "depends_on": [
+          "S3"
+        ],
+        "gate": "wait_for:golden-output comparison passing",
+        "rollback": "Freeze rollout and keep the previous analyzer implementation for production scans.",
+        "observability": "Compare byte-level verdict output where possible, otherwise diff structured JSON fields and log tokenizer-induced deltas."
+      },
+      {
+        "id": "S5",
+        "action": "Remove manual batching in favor of vLLM continuous batching by updating `benchmark_advisories.py` and the `scan_*.py` callers to use the new client shape without relying on `/analyze/batch`.",
+        "owner": "backend",
+        "depends_on": [
+          "S3"
+        ],
+        "gate": "monitor:throughput and latency regression vs current batch path",
+        "rollback": "Restore the old batch endpoint usage in benchmark and scan scripts.",
+        "observability": "Measure QPS, queue depth, p50/p95 latency, and per-file cost estimates under representative loads."
+      },
+      {
+        "id": "S6",
+        "action": "Keep `vulnllm-analyzer/proxy_patch.py` and `repo_fetcher.py` unchanged, but verify the new OpenAI client path still works with their existing repository fetching and proxying behavior.",
+        "owner": "backend",
+        "depends_on": [
+          "S3"
+        ],
+        "gate": "none",
+        "rollback": "No code rollback needed; if integration breaks, revert only analyzer client wiring.",
+        "observability": "Log repository fetch success rate and proxy patch application success rate during scans."
+      },
+      {
+        "id": "S7",
+        "action": "Validate cost against the documented ~$0.10\u2013$0.50 per 100-file repo envelope by running benchmark advisories on Modal A10G and comparing GPU minutes plus cold-start overhead.",
+        "owner": "product",
+        "depends_on": [
+          "S1",
+          "S2",
+          "S5"
+        ],
+        "gate": "monitor:cost per 100 files within target envelope",
+        "rollback": "Reduce idle timeout, lower concurrency, or pause rollout if costs exceed the documented range.",
+        "observability": "Track Modal billing, GPU utilization, and cost per file/repo across benchmark runs."
+      },
+      {
+        "id": "S8",
+        "action": "Run a canary rollout for production `scan_sliver_latest.py` and `scan_bottle.py` workloads, comparing outputs and runtime against the existing service before switching all traffic.",
+        "owner": "sre",
+        "depends_on": [
+          "S2",
+          "S4",
+          "S5",
+          "S7"
+        ],
+        "gate": "window:low-traffic maintenance window",
+        "rollback": "Route scans back to the existing `modal_service.py` endpoint immediately if output drift, latency spikes, or errors appear.",
+        "observability": "Alert on malformed OpenAI responses, non-2xx response rates, output drift, and user-visible scan failures."
+      },
+      {
+        "id": "S9",
+        "action": "After successful canary, deprecate the old bespoke web endpoint implementation and update internal runbooks to document `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `MODEL`, and `LLM_MODEL_NAME` usage for the Modal-backed service.",
+        "owner": "security",
+        "depends_on": [
+          "S8"
+        ],
+        "gate": "approval:security and operations sign-off",
+        "rollback": "Retain the old endpoint code path and restore previous runbook instructions if hidden dependencies are found.",
+        "observability": "Confirm auth/config settings are logged without secrets and monitor for unauthorized access attempts or config drift."
+      }
+    ],
+    "open_questions": [
+      "What exact OpenAI-compatible path will Modal expose for vLLM, and do any analyzer call sites assume `/analyze` or `/analyze/batch` semantics that must be mapped to completions/chat-completions?",
+      "Should `api_key` be a dummy placeholder or a real secret, given the new client uses the OpenAI SDK but the backend is Modal-hosted?",
+      "What idle timeout value is needed to balance the 30 s A10G cold start against the stated cost envelope for regular `scan_sliver_latest.py` and `scan_bottle.py` runs?",
+      "Which model identifier should be the canonical `LLM_MODEL_NAME` for VulnLLM-R-7B and any quantized variants, and how will analyzer pick among them without redeploy?",
+      "What tolerance defines 'byte-identical (or as close as the new tokenizer allows)' for JSON verdict outputs, and who signs off on acceptable drift?"
+    ],
+    "conflicts": [
+      {
+        "between": [
+          "GPU cold-start budget",
+          "Cost"
+        ],
+        "issue": "Keeping the Modal service warm to avoid ~30 s cold starts increases idle GPU spend and may push the per-100-file cost above the documented $0.10\u2013$0.50 envelope."
+      },
+      {
+        "between": [
+          "Byte-identical output requirement",
+          "vLLM tokenizer / OpenAI wire format"
+        ],
+        "issue": "Changing tokenization and response formatting may alter borderline verdicts or JSON serialization details, making strict output equivalence difficult."
+      },
+      {
+        "between": [
+          "No silent fallbacks",
+          "Production reliability"
+        ],
+        "issue": "Surfacing malformed vLLM responses as hard errors improves correctness but can increase scan failures versus the current bespoke endpoint if the new server emits transient malformed payloads."
+      }
+    ]
+  }
+}

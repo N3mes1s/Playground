@@ -1,0 +1,429 @@
+{
+  "intent_path": "fixtures/intent_blastradius_javascript_support.md",
+  "constraints": [
+    {
+      "axis": "deploy",
+      "summary": "Add tree-sitter deps before code that imports them",
+      "scope": "requirements.txt and any import sites in mirofish_lab/repo.py",
+      "gate": "none",
+      "rollback": "revert the code change that imports tree-sitter or redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Ship Python-path-preserving code before enabling JS/TS use",
+      "scope": "extract_symbols() dispatch and source_files() default behavior",
+      "gate": "wait_for:existing sample.md diff remains byte-identical for .py",
+      "rollback": "revert to the previous Python-only extraction implementation",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Keep JS/TS parsing behind graceful fallback, not hard failure",
+      "scope": "tree-sitter import and parser initialization for .js/.ts/.tsx/.jsx",
+      "gate": "monitor:JS/TS parse failures logged with warning-only behavior",
+      "rollback": "disable JS/TS dispatch and return no symbols for those suffixes",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Do not change CLI contract while helpers stay signature-compatible",
+      "scope": "blast-radius-prediction/cli.py and helper call sites",
+      "gate": "none",
+      "rollback": "redeploy_previous",
+      "blocking": false,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "data",
+      "summary": "Keep existing .py symbol extraction byte-identical",
+      "scope": "mirofish_lab/repo.py Python AST extraction and report inputs",
+      "gate": "wait_for:sample_report_reproducibility_verified",
+      "rollback": "Revert to previous Python AST extraction path for .py files",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Backfill/scan JS-TS symbols in small batches to avoid IOPS spikes",
+      "scope": "New source_files() traversal and tree-sitter symbol extraction over repo trees",
+      "gate": "monitor:storage_iops<baseline+20%",
+      "rollback": "Reduce batch size and rerun extraction in smaller chunks",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "No schema or file-store layout changes during business hours",
+      "scope": "requirements/dependency rollout and any storage-backed outputs used by blast-radius-prediction",
+      "gate": "window:outside_business_hours",
+      "rollback": "Delay rollout and keep current storage layout unchanged",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Drop old symbol artifacts only after quiet period with no reads",
+      "scope": "Removal of any deprecated symbol caches, reports, or derived tables/files",
+      "gate": "wait_for:7d_no_reads_on_deprecated_artifacts",
+      "rollback": "Restore deprecated artifacts from backup or prior versioned store",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Ship behind a runtime flag for JS/TS enablement",
+      "scope": "mirofish_lab/repo.py symbol extraction and diff-to-symbol mapping for .js/.ts/.tsx/.jsx",
+      "gate": "none",
+      "rollback": "Disable the JS/TS path via the feature flag and continue using Python-only extraction",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Hold release outside incident windows and Friday afternoon",
+      "scope": "Publishing the updated blast-radius-prediction package and any rollout to users",
+      "gate": "window:Mon-Thu 09:00-15:00 local time, not during incident windows",
+      "rollback": "Abort the release and revert to the previous published version",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Verify no regression in .py extraction before expanding",
+      "scope": "Existing Python symbol extraction and sample report reproducibility",
+      "gate": "monitor:sample.md diff == 0 and python extraction parity == 100%",
+      "rollback": "Revert to the previous repo helper implementation if Python output changes",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Gate JS/TS rollout on stable error rate and warning count",
+      "scope": "JS/TS parsing fallback and symbol extraction in production runs",
+      "gate": "monitor:error_rate<0.1% for 24h",
+      "rollback": "Disable JS/TS parsing and fall back to no-symbols mode for non-Python files",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Treat tree-sitter import failures as non-blocking with telemetry",
+      "scope": "Runtime handling when tree-sitter or language wheels are unavailable",
+      "gate": "none",
+      "rollback": "Revert to Python-only extraction and suppress JS/TS parsing attempts",
+      "blocking": false,
+      "owner": "SRE"
+    },
+    {
+      "axis": "security",
+      "summary": "Preserve Python symbol extraction byte-for-byte",
+      "scope": "mirofish_lab/repo.py .py extraction path and sample report reproducibility",
+      "gate": "monitor:report_diff=0",
+      "rollback": "revert repo.py changes touching the Python AST path",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Import failure must degrade to no-symbols with warning only",
+      "scope": "tree-sitter import/init for JS/TS helpers and parser registry",
+      "gate": "wait_for:graceful_fallback_verified",
+      "rollback": "disable tree-sitter dispatch and redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify users of externally visible JS/TS support change",
+      "scope": "blast-radius-prediction behavior for JS/TS repos and CLI output expectations",
+      "gate": "window:post-approval_release_note_before_deploy",
+      "rollback": "withdraw announcement and redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Complete security review before dependency rollout",
+      "scope": "requirements.txt additions for tree-sitter and language grammars",
+      "gate": "approval:security_review",
+      "rollback": "remove new tree-sitter dependencies and redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Announce JS/TS support and fallback behavior before release",
+      "scope": "blast-radius-prediction users running against JS/TS repos",
+      "gate": "wait_for:customer_notice_sent",
+      "rollback": "revert release announcement and halt rollout",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Provide support team with rollout notes and known limitations",
+      "scope": "support readiness for symbol extraction on .js/.ts/.jsx/.tsx files",
+      "gate": "approval:support_lead",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "business",
+      "summary": "Do not roll out during launch windows or major customer events",
+      "scope": "production rollout of blast-radius-prediction JS/TS support",
+      "gate": "window:outside_launch_windows_and_major_events",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "ops",
+      "summary": "Assign explicit escalation owner for JS/TS extraction issues",
+      "scope": "post-release customer escalations for tree-sitter fallback or no-symbol cases",
+      "gate": "approval:oncall_owner_assigned",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep .py extraction output byte-identical during rollout",
+      "scope": "mirofish_lab/repo.py extract_symbols() and any callers that consume Python symbols",
+      "gate": "wait_for:golden_diff.py_sample_matches_existing",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Maintain source_files() default behavior for Python-only runs",
+      "scope": "python_files() rename to source_files(langs=...) and CLI paths that enumerate repo files",
+      "gate": "wait_for:unit_tests_cover_python_default_unchanged",
+      "rollback": "restore python_files() behavior and redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Provide dual-support window for Python and JS/TS consumers",
+      "scope": "Release that introduces tree-sitter-backed JS/TS extraction alongside existing Python path",
+      "gate": "window:2_release_cycles",
+      "rollback": "redeploy_previous",
+      "blocking": false,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Fallback JS/TS path must warn and return no symbols on import failure",
+      "scope": "tree-sitter optional dependency loading and js_symbols()/ts_symbols() helpers",
+      "gate": "wait_for:integration_test_missing_treesitter_logs_warning_no_crash",
+      "rollback": "disable_js_ts_dispatch and redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Do not cut over until JS/TS repo extraction is validated end-to-end",
+      "scope": "Blast-radius prediction run against a representative TypeScript repository",
+      "gate": "wait_for:e2e_run_on_ts_repo_produces_nonzero_symbols_and_diff_mappings",
+      "rollback": "switch rollout back to Python-only path and redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    }
+  ],
+  "plan": {
+    "summary": "Add optional tree-sitter-based JS/TS extraction while preserving byte-identical Python behavior and safe fallback on import failure.",
+    "steps": [
+      {
+        "id": "S1",
+        "action": "Run security review and approve adding tree-sitter and language grammar dependencies to requirements.txt.",
+        "owner": "Security",
+        "depends_on": [],
+        "gate": "approval:security_review",
+        "rollback": "remove new tree-sitter dependencies and redeploy_previous",
+        "observability": "Security approval record and dependency diff review"
+      },
+      {
+        "id": "S2",
+        "action": "Add tree-sitter packages to requirements.txt, keeping Python code paths untouched.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S1"
+        ],
+        "gate": "none",
+        "rollback": "revert requirements.txt to the prior dependency set",
+        "observability": "Dependency install succeeds with pip install -r requirements.txt"
+      },
+      {
+        "id": "S3",
+        "action": "Implement optional tree-sitter import/init scaffolding and parser registry in mirofish_lab/repo.py, with fallback to Python-only behavior if imports fail.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S2"
+        ],
+        "gate": "none",
+        "rollback": "disable JS/TS dispatch and return no symbols for those suffixes",
+        "observability": "Import failures emit warnings and do not crash Python-only runs"
+      },
+      {
+        "id": "S4",
+        "action": "Refactor source file enumeration from python_files() to source_files(langs=...), preserving the default .py-only behavior.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S3"
+        ],
+        "gate": "wait_for:unit_tests_cover_python_default_unchanged",
+        "rollback": "restore python_files() behavior and redeploy_previous",
+        "observability": "Unit tests confirm default file traversal remains Python-only"
+      },
+      {
+        "id": "S5",
+        "action": "Keep the existing Python AST extraction path byte-identical while wiring extract_symbols() dispatch to preserve .py behavior.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S4"
+        ],
+        "gate": "wait_for:existing sample.md diff remains byte-identical for .py",
+        "rollback": "revert to the previous Python-only extraction implementation",
+        "observability": "sample.md diff is zero and Python symbol output matches prior results"
+      },
+      {
+        "id": "S6",
+        "action": "Add js_symbols(file) and ts_symbols(file) helpers plus .js/.ts/.tsx/.jsx dispatch and diff-to-symbol mapping based on tree-sitter keywords.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S5"
+        ],
+        "gate": "none",
+        "rollback": "disable JS/TS dispatch and return no symbols for those suffixes",
+        "observability": "JS/TS files produce symbols where parsers are available"
+      },
+      {
+        "id": "S7",
+        "action": "Implement warning-only graceful fallback for missing tree-sitter or language wheels, returning no symbols for JS/TS rather than failing.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S6"
+        ],
+        "gate": "monitor:JS/TS parse failures logged with warning-only behavior",
+        "rollback": "disable JS/TS dispatch and return no symbols for those suffixes",
+        "observability": "Warnings are logged; Python runs continue; JS/TS missing-dependency cases do not crash"
+      },
+      {
+        "id": "S8",
+        "action": "Run integration validation on a representative TypeScript repository to confirm nonzero symbols and working diff mappings.",
+        "owner": "ConsumerSubsystem",
+        "depends_on": [
+          "S7"
+        ],
+        "gate": "wait_for:e2e_run_on_ts_repo_produces_nonzero_symbols_and_diff_mappings",
+        "rollback": "switch rollout back to Python-only path and redeploy_previous",
+        "observability": "E2E TS run yields symbols and symbol mapping coverage"
+      },
+      {
+        "id": "S9",
+        "action": "Validate production-style JS/TS fallback stability and keep rollout behind runtime flag until error rate is stable.",
+        "owner": "SRE",
+        "depends_on": [
+          "S8"
+        ],
+        "gate": "monitor:error_rate<0.1% for 24h",
+        "rollback": "Disable the JS/TS path via the feature flag and continue using Python-only extraction",
+        "observability": "Error rate, warning count, and no-crash behavior for JS/TS inputs"
+      },
+      {
+        "id": "S10",
+        "action": "Prepare and send customer notice plus support rollout notes, including JS/TS support and fallback behavior.",
+        "owner": "ProductPM",
+        "depends_on": [
+          "S8"
+        ],
+        "gate": "wait_for:customer_notice_sent",
+        "rollback": "revert release announcement and halt rollout",
+        "observability": "Notice delivery confirmation and support readiness sign-off"
+      },
+      {
+        "id": "S11",
+        "action": "Release the updated package and enable JS/TS support only during approved rollout windows, after support and notification are complete.",
+        "owner": "SRE",
+        "depends_on": [
+          "S9",
+          "S10"
+        ],
+        "gate": "window:Mon-Thu 09:00-15:00 local time, not during incident windows",
+        "rollback": "Abort the release and revert to the previous published version",
+        "observability": "Release window compliance, incident status, and post-release error/warning metrics"
+      }
+    ],
+    "open_questions": [
+      "Should JS/TS enablement remain behind a runtime feature flag after rollout, or be permanently on once stable?",
+      "Which exact log level/message format should be used for tree-sitter import and parse fallback warnings?",
+      "What representative TypeScript repository should be used for the e2e validation step?",
+      "Who is the explicit on-call escalation owner for JS/TS extraction issues?",
+      "Should deprecated symbol artifacts be removed in this rollout, or deferred until the 7-day no-reads condition is met?"
+    ],
+    "conflicts": [
+      {
+        "between": [
+          "BackendOwner",
+          "ProductPM"
+        ],
+        "issue": "ProductPM requires customer notice before release and support approval/on-call readiness, while BackendOwner only requires preserving code behavior. Resolved by placing customer notice and support prep before rollout."
+      },
+      {
+        "between": [
+          "BackendOwner",
+          "SRE"
+        ],
+        "issue": "SRE requires the JS/TS path to remain behind a runtime flag and stable for 24h before release, while BackendOwner wants code changes shipped without changing CLI. Resolved by implementing the runtime-flagged path and validating stability before release."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "SRE"
+        ],
+        "issue": "DataPlatform requires small-batch JS/TS scanning to avoid IOPS spikes, while SRE requires a 24h stability gate. Resolved by validating in controlled runs before broader rollout."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "ProductPM"
+        ],
+        "issue": "DataPlatform prohibits storage/layout changes during business hours, while ProductPM wants rollout within customer-notification and support windows. Resolved by scheduling rollout outside business hours and approved release windows."
+      },
+      {
+        "between": [
+          "Security",
+          "ProductPM"
+        ],
+        "issue": "ProductPM wants announcement before release, while Security requires dependency rollout to complete security review first. Resolved by performing security review before any external announcement."
+      },
+      {
+        "between": [
+          "ConsumerSubsystem",
+          "ProductPM"
+        ],
+        "issue": "ConsumerSubsystem requires end-to-end TS validation before cutover, while ProductPM wants support and customer notice prepared before release. Resolved by doing validation first, then communications, then release."
+      },
+      {
+        "between": [
+          "ConsumerSubsystem",
+          "SRE"
+        ],
+        "issue": "ConsumerSubsystem allows a 2-release-cycle dual-support window, while SRE requires a 24h error-rate gate before release. Resolved by keeping the rollout gradual and gated by SRE monitoring."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "Security"
+        ],
+        "issue": "DataPlatform wants deprecated artifact removal only after 7 days of no reads, while Security is focused on safe fallback and dependency rollout. No direct ordering conflict on the main rollout; artifact deletion is deferred and excluded from this plan."
+      }
+    ]
+  }
+}

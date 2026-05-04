@@ -1,0 +1,240 @@
+diff --git a/llm/models.py b/llm/models.py
+index 13ca5c3..95aad16 100644
+--- a/llm/models.py
++++ b/llm/models.py
+@@ -2741,26 +2741,38 @@ class _Model(_BaseModel):
+         tool_results: Optional[List[ToolResult]] = None,
+         **options,
+     ) -> Response:
+-        key_value = options.pop("key", None)
+-        self._validate_attachments(attachments)
+-        return Response(
+-            Prompt(
+-                prompt,
+-                fragments=fragments,
+-                attachments=attachments,
+-                system=system,
+-                schema=schema,
+-                tools=tools,
+-                tool_results=tool_results,
+-                system_fragments=system_fragments,
+-                messages=messages,
+-                model=self,
+-                options=self.Options(**options),
+-            ),
+-            self,
+-            stream,
+-            key=key_value,
+-        )
++        # Tracing: opt-in only; zero overhead when LLM_OTEL is unset.
++        # See llm/tracing.py (added in OTel rollout, task S1).
++        from llm import tracing as _tracing
++        with _tracing.span(
++            "llm.model.prompt",
++            **{
++                "llm.model": getattr(self, "model_id", None),
++                "llm.streaming": bool(stream),
++                "llm.has_schema": schema is not None,
++                "llm.tool_count": len(tools) if tools else 0,
++            },
++        ):
++            key_value = options.pop("key", None)
++            self._validate_attachments(attachments)
++            return Response(
++                Prompt(
++                    prompt,
++                    fragments=fragments,
++                    attachments=attachments,
++                    system=system,
++                    schema=schema,
++                    tools=tools,
++                    tool_results=tool_results,
++                    system_fragments=system_fragments,
++                    messages=messages,
++                    model=self,
++                    options=self.Options(**options),
++                ),
++                self,
++                stream,
++                key=key_value,
++            )
+ 
+     def chain(
+         self,
+diff --git a/llm/tracing.py b/llm/tracing.py
+new file mode 100644
+index 0000000..943b259
+--- /dev/null
++++ b/llm/tracing.py
+@@ -0,0 +1,171 @@
++"""OpenTelemetry-compatible tracing for llm.
++
++Implemented per task S1 of the rollout-rehearsal verified-rollout
++pipeline output. Properties enforced here:
++
++- **Default off**: `import llm` does NOT import OpenTelemetry. This
++  module is safe to import unconditionally; OTel itself is only
++  loaded inside ``enable_tracing()`` and ``_get_tracer()``.
++- **Opt-in**: ``LLM_OTEL=1`` env var or programmatic
++  ``enable_tracing()`` activates real spans. Otherwise ``span()`` is
++  a no-op context manager.
++- **Metadata only by default**: span attributes are model name,
++  provider, latency, token counts. Prompt / response **content** is
++  excluded unless ``LLM_OTEL_INCLUDE_CONTENT=1`` is set.
++- **Plugin helper**: ``llm.tracing.span(name, **attrs)`` is the public
++  surface. Plugins use it without importing ``opentelemetry``.
++- **OTLP/HTTP default**: when enabled, exports to
++  ``http://localhost:4318/v1/traces`` (the standard Jaeger / Tempo /
++  OTel collector default). Override with
++  ``OTEL_EXPORTER_OTLP_ENDPOINT``.
++"""
++
++from __future__ import annotations
++
++import contextlib
++import os
++import time
++from typing import Any, Iterator, Optional
++
++
++# --- module-level state --------------------------------------------------
++
++_TRACER = None          # opentelemetry.trace.Tracer once enabled
++_PROVIDER = None        # TracerProvider we installed (so we can shutdown)
++_ENABLED = False        # set True after enable_tracing() succeeds
++_INCLUDE_CONTENT = False  # whether to put prompt/response text in spans
++
++
++# --- public API ----------------------------------------------------------
++
++
++def is_enabled() -> bool:
++    """True iff tracing has been enabled in this process."""
++    return _ENABLED
++
++
++def include_content() -> bool:
++    """True iff span attributes may include prompt/response content."""
++    return _INCLUDE_CONTENT
++
++
++def enable_tracing(
++    *,
++    otlp_endpoint: Optional[str] = None,
++    service_name: str = "llm",
++    include_content: Optional[bool] = None,
++) -> bool:
++    """Activate OTel tracing for this process. Returns True on success.
++
++    No-op if already enabled. Returns False if the OpenTelemetry SDK
++    is not installed; callers should treat that as "tracing
++    requested but unavailable" and proceed without it.
++    """
++    global _TRACER, _PROVIDER, _ENABLED, _INCLUDE_CONTENT
++
++    if _ENABLED:
++        return True
++
++    try:
++        # Lazy: only at this call do we touch opentelemetry.
++        from opentelemetry import trace
++        from opentelemetry.sdk.resources import Resource
++        from opentelemetry.sdk.trace import TracerProvider
++        from opentelemetry.sdk.trace.export import BatchSpanProcessor
++        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
++            OTLPSpanExporter,
++        )
++    except Exception:
++        return False
++
++    endpoint = (
++        otlp_endpoint
++        or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
++        or "http://localhost:4318/v1/traces"
++    )
++
++    resource = Resource.create({"service.name": service_name})
++    provider = TracerProvider(resource=resource)
++    provider.add_span_processor(
++        BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint))
++    )
++    trace.set_tracer_provider(provider)
++
++    _PROVIDER = provider
++    _TRACER = trace.get_tracer("llm")
++    _ENABLED = True
++
++    if include_content is None:
++        _INCLUDE_CONTENT = (
++            os.environ.get("LLM_OTEL_INCLUDE_CONTENT", "").strip().lower()
++            in ("1", "true", "yes")
++        )
++    else:
++        _INCLUDE_CONTENT = bool(include_content)
++    return True
++
++
++def shutdown() -> None:
++    """Flush + shutdown the tracer provider. Safe to call multiple times."""
++    global _ENABLED, _TRACER, _PROVIDER
++    if _PROVIDER is not None:
++        try:
++            _PROVIDER.shutdown()
++        except Exception:
++            pass
++    _PROVIDER = None
++    _TRACER = None
++    _ENABLED = False
++
++
++@contextlib.contextmanager
++def span(name: str, **attributes: Any) -> Iterator[Any]:
++    """Context manager that records a span when tracing is enabled,
++    and is a zero-cost no-op when it isn't.
++
++    Plugin authors use this directly; they never need to import
++    `opentelemetry`::
++
++        from llm.tracing import span
++        with span("my-plugin.fetch", model="..."):
++            ...
++    """
++    if not _ENABLED or _TRACER is None:
++        # Fast path: no OTel, no allocation beyond the generator frame.
++        yield None
++        return
++
++    started = time.monotonic()
++    with _TRACER.start_as_current_span(name) as s:
++        try:
++            for k, v in attributes.items():
++                if v is not None:
++                    s.set_attribute(k, v)
++            yield s
++        except BaseException as exc:
++            try:
++                s.record_exception(exc)
++                from opentelemetry.trace import Status, StatusCode
++                s.set_status(Status(StatusCode.ERROR, str(exc)))
++            except Exception:
++                pass
++            raise
++        finally:
++            elapsed_ms = (time.monotonic() - started) * 1000
++            try:
++                s.set_attribute("llm.latency_ms", round(elapsed_ms, 3))
++            except Exception:
++                pass
++
++
++# Auto-enable from env at first import attempt? NO -- per task S1 spec,
++# `import llm` must not load OTel. Enabling is explicit (env-checked at
++# CLI startup or via direct call to enable_tracing()).
++
++
++def maybe_enable_from_env() -> bool:
++    """Enable tracing if LLM_OTEL is set in the environment. Called by
++    CLI entrypoints that want env-driven activation."""
++    if os.environ.get("LLM_OTEL", "").strip().lower() in ("1", "true", "yes"):
++        return enable_tracing()
++    return False

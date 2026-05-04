@@ -1,0 +1,93 @@
+{
+  "intent": "intent_adversarial_findings_history",
+  "model": "gpt-5.4-mini",
+  "A_original": {
+    "steps": 10,
+    "conflicts": 3,
+    "raw_conflicts": [
+      {
+        "between": [
+          "BackendOwner: Keep CLI output unchanged unless --show-drift is set",
+          "Security: Notify downstream consumers before drift output becomes visible"
+        ],
+        "issue": "Drift output must remain behind the flag while also requiring advance notification before it becomes visible."
+      },
+      {
+        "between": [
+          "BackendOwner: Do not require history log for normal verdict generation",
+          "S1 append-only JSONL write path"
+        ],
+        "issue": "Writes must be optional for normal verdict flow, so logging cannot block debate/report generation."
+      },
+      {
+        "between": [
+          "DataPlatform: Avoid schema or storage-layout changes during business hours",
+          "S6 operational rollout timing"
+        ],
+        "issue": "Storage creation/migration must be scheduled outside business hours and within approved rollout windows."
+      }
+    ]
+  },
+  "B_strict": {
+    "steps": 10,
+    "conflicts": 8,
+    "raw_conflicts": [
+      {
+        "between": [
+          "BackendOwner",
+          "ConsumerSubsystem"
+        ],
+        "issue": "BackendOwner requires the history reader before any drift-dependent code, while ConsumerSubsystem wants drift helper and CLI integration only after append-and-read tests pass; sequencing is compatible, but release gating may need explicit ordering to avoid blocking the CLI flag."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "SRE"
+        ],
+        "issue": "DataPlatform wants storage-layout changes outside business hours and replication lag under 30s, while SRE also gates rollout on clean write/read error rates; these are aligned operationally, but the rollout must satisfy multiple live traffic gates at once."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "ProductPM"
+        ],
+        "issue": "DataPlatform wants storage creation/migration outside business hours, but ProductPM also wants rollout outside launch windows and major events; if these approved windows do not overlap, deployment timing becomes conflicting."
+      },
+      {
+        "between": [
+          "SRE",
+          "ProductPM"
+        ],
+        "issue": "SRE requires business-hours-only rollout and incident-safe timing, while ProductPM requires rollout outside launch windows/major events; both constrain scheduling and can clash if customer comms/support readiness lands outside the permitted window."
+      },
+      {
+        "between": [
+          "Security",
+          "ProductPM"
+        ],
+        "issue": "Security requires notify downstream consumers before drift output becomes visible, while ProductPM requires user notification before enabling drift logging or --show-drift; both are notification gates, but they may impose different notice audiences and timing."
+      },
+      {
+        "between": [
+          "Security",
+          "ConsumerSubsystem"
+        ],
+        "issue": "Security requires migration review before moving the log to SQLite, while ConsumerSubsystem wants fallback/no-drift mode if migration slips; these differ on whether drift should remain enabled during backend migration uncertainty."
+      },
+      {
+        "between": [
+          "BackendOwner",
+          "Security"
+        ],
+        "issue": "BackendOwner wants dual-write JSONL during future SQLite cutover, while Security wants migration review before moving the log to SQLite; dual-write cutover depends on a migration path that Security must approve first."
+      },
+      {
+        "between": [
+          "BackendOwner",
+          "DataPlatform"
+        ],
+        "issue": "BackendOwner requires dual-write during backend cutover, while DataPlatform requires append-only JSONL and batch backfills with IOPS protection; dual-write plus any backfill/migration activity can increase write load and complicate the append-only rollout."
+      }
+    ]
+  }
+}

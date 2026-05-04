@@ -1,0 +1,98 @@
+{
+  "timestamp": "20260502T100018Z",
+  "trace_source": "validation/FEATURE_BASELINE_N50_safe.json",
+  "n_traces": 14,
+  "diagnosis": "The Sequencer confuses GT rollout styles: it overuses feature_flag/gradual_rollout for regulated or compliance-heavy launches that should be full_release or beta_program, and misses explicit blocker-based criteria for choosing beta vs GA.",
+  "incumbent": {
+    "agg": {
+      "n": 12,
+      "literal_caught_rate": 0.6666666666666666,
+      "literal_useful_rate": 1.0,
+      "judge_caught_rate": 0.3333333333333333,
+      "judge_useful_rate": 1.0,
+      "max_family_share": 0.75,
+      "launch_strategy_ok_rate": 0.75
+    },
+    "score": 1.0
+  },
+  "candidates": [
+    {
+      "name": "compliance-fullrelease-rules",
+      "theory": "Fixes the repeated feature_flag/rollout bias on compliance_audit and security-signoff traces by making full_release the default once blockers are met and beta gating is only for pre-signoff validation.",
+      "extension_text": "\nLAUNCH STRATEGY DECISION:\n- For compliance_audit, choose full_release when the change is to satisfy audit, policy, billing, PCI, SOX, or regulator requirements.\n- Use full_release when ProductPM, EngLead, Security, and GTM are all explicit blockers and sign-off is complete.\n- Do NOT choose beta_program for compliance_audit unless the trace says validation is still needed before compliance sign-off.\n- Use feature_flag for new functionality that is safe to hide until enabled, especially integration_native or sso_oauth.\n- Use gradual_rollout for low-risk public launches that only need staged exposure, not approval gating.\n- Use dark_launch for behind-the-scenes prep with zero customer access.\n- Use beta_program for controlled external testing of ai_assistant or consumer launches that need feedback before GA.\n- Use not_applicable for internal workflow steps and non-launch tasks.\n- If the source says broader rollout without beta-only gating, write full_release explicitly.\n- When compliance/security review is the gating item, do not downgrade to phased rollout or feature_flag.",
+      "agg": {
+        "n": 12,
+        "literal_caught_rate": 0.6666666666666666,
+        "literal_useful_rate": 1.0,
+        "judge_caught_rate": 0.25,
+        "judge_useful_rate": 1.0,
+        "max_family_share": 0.5,
+        "launch_strategy_ok_rate": 0.75
+      },
+      "score": 1.125,
+      "out_md": "/home/user/Playground/validation/feature_gepa_runs/20260502T100018Z_candidate_2_compliance-fullrelease-rules.md"
+    },
+    {
+      "name": "regulated-vs-beta-rules",
+      "theory": "Fixes cases where regulated AI/compliance work was planned as GA/rollout instead of beta_program or full_release by making launch choice depend on regulated + feature_kind + explicit sign-off.",
+      "extension_text": "\nLAUNCH STRATEGY DECISION:\n- If regulated=true and feature_kind is ai_assistant or compliance_audit, do NOT default to GA wording.\n- Use beta_program for regulated AI/user-facing launches that still need controlled validation and named blocking owners.\n- Use full_release when compliance_audit is the primary change and required sign-offs are complete.\n- Use feature_flag for internal-only enablement of a new user-facing capability before public exposure.\n- Use gradual_rollout when the feature is ready for public release but needs risk-managed ramp-up.\n- Use dark_launch only when shipping behind the scenes with no user-visible access yet.\n- Use not_applicable for internal-only process/ops steps with no launch to users.\n- If the trace implies beta-only gating, explicitly label the launch strategy beta_program, not generic rollout/GA.\n- If a regulated case has explicit audit/security parity and all blockers are present, prefer full_release over phased rollout.\n- Do not use feature_flag as a substitute for beta_program or full_release.",
+      "agg": {
+        "n": 12,
+        "literal_caught_rate": 0.25,
+        "literal_useful_rate": 1.0,
+        "judge_caught_rate": 0.25,
+        "judge_useful_rate": 1.0,
+        "max_family_share": 0.5,
+        "launch_strategy_ok_rate": 0.5
+      },
+      "score": 1.0,
+      "out_md": "/home/user/Playground/validation/feature_gepa_runs/20260502T100018Z_candidate_1_regulated-vs-beta-rules.md"
+    }
+  ],
+  "eval_winner": {
+    "name": "compliance-fullrelease-rules",
+    "theory": "Fixes the repeated feature_flag/rollout bias on compliance_audit and security-signoff traces by making full_release the default once blockers are met and beta gating is only for pre-signoff validation.",
+    "extension_text": "\nLAUNCH STRATEGY DECISION:\n- For compliance_audit, choose full_release when the change is to satisfy audit, policy, billing, PCI, SOX, or regulator requirements.\n- Use full_release when ProductPM, EngLead, Security, and GTM are all explicit blockers and sign-off is complete.\n- Do NOT choose beta_program for compliance_audit unless the trace says validation is still needed before compliance sign-off.\n- Use feature_flag for new functionality that is safe to hide until enabled, especially integration_native or sso_oauth.\n- Use gradual_rollout for low-risk public launches that only need staged exposure, not approval gating.\n- Use dark_launch for behind-the-scenes prep with zero customer access.\n- Use beta_program for controlled external testing of ai_assistant or consumer launches that need feedback before GA.\n- Use not_applicable for internal workflow steps and non-launch tasks.\n- If the source says broader rollout without beta-only gating, write full_release explicitly.\n- When compliance/security review is the gating item, do not downgrade to phased rollout or feature_flag.",
+    "agg": {
+      "n": 12,
+      "literal_caught_rate": 0.6666666666666666,
+      "literal_useful_rate": 1.0,
+      "judge_caught_rate": 0.25,
+      "judge_useful_rate": 1.0,
+      "max_family_share": 0.5,
+      "launch_strategy_ok_rate": 0.75
+    },
+    "score": 1.125,
+    "out_md": "/home/user/Playground/validation/feature_gepa_runs/20260502T100018Z_candidate_2_compliance-fullrelease-rules.md"
+  },
+  "holdout": {
+    "n": 12,
+    "seed": 12161,
+    "incumbent": {
+      "agg": {
+        "n": 12,
+        "literal_caught_rate": 0.5833333333333334,
+        "literal_useful_rate": 1.0,
+        "judge_caught_rate": 0.4166666666666667,
+        "judge_useful_rate": 1.0,
+        "max_family_share": 0.6666666666666666,
+        "launch_strategy_ok_rate": 0.75
+      },
+      "score": 1.0416666666666667
+    },
+    "candidate": {
+      "agg": {
+        "n": 12,
+        "literal_caught_rate": 0.3333333333333333,
+        "literal_useful_rate": 1.0,
+        "judge_caught_rate": 0.16666666666666666,
+        "judge_useful_rate": 1.0,
+        "max_family_share": 0.5833333333333334,
+        "launch_strategy_ok_rate": 0.4166666666666667
+      },
+      "score": 0.9166666666666665
+    },
+    "candidate_beats": false
+  },
+  "applied_winner": null
+}

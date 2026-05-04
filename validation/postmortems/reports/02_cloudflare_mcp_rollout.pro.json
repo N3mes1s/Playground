@@ -1,0 +1,2388 @@
+{
+  "intent_path": "/home/user/Playground/validation/postmortems/intents/02_cloudflare_mcp_rollout.md",
+  "constraints": [
+    {
+      "axis": "deploy",
+      "summary": "Keep rollout in small batches; do not expand on first-sign issues",
+      "scope": "routing-deploy step across the 19 spine locations",
+      "gate": "monitor:batch_health=healthy",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Wait for each batch to stabilize before the next expansion",
+      "scope": "per-batch rollout timing with --wait seconds",
+      "gate": "wait_for:batch_stability_window",
+      "rollback": "pause rollout and redeploy_previous on the affected batch",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Do not complete full rollout until canary behavior matches baseline",
+      "scope": "transition from initial canary/small batch to remaining spines",
+      "gate": "monitor:traffic_asymmetry=normalized",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Require operator approval before proceeding past staged rollout",
+      "scope": "promotion from initial batch to all remaining spine locations",
+      "gate": "approval:network_engineer",
+      "rollback": "halt rollout and redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "data",
+      "summary": "Use a very small initial spine batch to limit blast radius",
+      "scope": "Initial MCP/BGP routing config rollout to spine locations",
+      "gate": "approval:network-ops",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Pause expansion if replication-lag-equivalent propagation slips",
+      "scope": "Between rollout batches across the 19 spine locations",
+      "gate": "monitor:propagation lag<2m",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Expand only after the canary batch remains healthy for the wait window",
+      "scope": "Promotion from canary batch to remaining spine locations",
+      "gate": "wait_for:canary_stability_window",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Do not remove old routing entries until a quiet period passes",
+      "scope": "Cleanup of prior routing config after full rollout",
+      "gate": "wait_for:quiet_period_complete",
+      "rollback": "restore_old_routing_entries",
+      "blocking": false,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Use a small canary batch first; halt if any spine shows errors",
+      "scope": "Initial routing-deploy batch to the first MCP-enabled spine locations",
+      "gate": "monitor:customer-visible packet loss<0.1%",
+      "rollback": "revert the initial batch to the previous routing config before expanding",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Require a healthy soak before expanding beyond canary",
+      "scope": "Progression from canary batch to the remaining 18 spine locations",
+      "gate": "wait_for:24h of stable routing with no blackhole or reachability alerts",
+      "rollback": "pause rollout and revert any newly changed spine locations to prior config",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Run rollout only in an approved maintenance window",
+      "scope": "All routing-deploy actions across the 19 spine locations",
+      "gate": "window:approved change window, excluding incident windows and Friday afternoon",
+      "rollback": "stop deployment and restore the last known-good routing state",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Pause expansion on any upstream instability or customer impact",
+      "scope": "Between batches during stepped rollout",
+      "gate": "monitor:upstream route flap rate<0.01%",
+      "rollback": "roll back the most recent batch and keep remaining spines unchanged",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "security",
+      "summary": "Stage rollout only after canary confirms no prefix leakage",
+      "scope": "Initial batch on MCP-enabled spines before expanding to remaining locations",
+      "gate": "wait_for:canary_72h_no_prefix_leakage",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Preserve audit trail for each spine config change during migration",
+      "scope": "All 19 spine locations while routing-deploy applies new config",
+      "gate": "none",
+      "rollback": "restore_last_known_good_config_with_full_audit_log",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify affected customers and partners before visible routing changes",
+      "scope": "Any rollout step that may alter customer-facing pathing or region behavior",
+      "gate": "window:advance_notice_before_customer_visible_change",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Require compliance sign-off for any config impacting global reachability",
+      "scope": "Approval to proceed from canary to broader batch expansion",
+      "gate": "approval:compliance",
+      "rollback": "halt_rollout_and_revert_to_previous_config",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify customers before any customer-visible routing change",
+      "scope": "Rollout to all 19 MCP-enabled spine locations affecting anycast traffic",
+      "gate": "wait_for:customer notice sent",
+      "rollback": "Send immediate incident update and hold further batches until notice is corrected",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Give support a rollout brief and escalation playbook first",
+      "scope": "Support readiness for customer reports during stepped rollout",
+      "gate": "approval:support lead",
+      "rollback": "Pause rollout and re-brief support on known symptoms, customer messaging, and escalation path",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Assign a named escalation owner for rollout issues",
+      "scope": "Customer-facing escalations if traffic regressions or regional impact appear",
+      "gate": "approval:incident commander",
+      "rollback": "Transfer escalation handling to the designated backup owner and stop expansion",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "business",
+      "summary": "Do not roll out during launch windows or major customer events",
+      "scope": "Timing of batch deployment across the 19 spine locations",
+      "gate": "window:outside launch windows and major events",
+      "rollback": "Defer remaining batches to the next approved window",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep legacy routing config support during staged rollout",
+      "scope": "routing-deploy inputs for all 19 spine locations and any config schema changes",
+      "gate": "window:until_all_19_locations_confirmed_healthy",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Add canary validation for prefix reachability before each batch",
+      "scope": "batch expansion from the canary to the remaining spine locations",
+      "gate": "monitor:prefix_reachability_errors0",
+      "rollback": "halt rollout and redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Use smaller batch size than one region-wide blast radius",
+      "scope": "routing-deploy --batch-size and --wait settings",
+      "gate": "approval:network-ops-on-call",
+      "rollback": "reduce batch size and redeploy_previous to last healthy batch",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Require a full rollback path if rollout misses this week's window",
+      "scope": "cutover timing and go/no-go for the 19-location expansion",
+      "gate": "window:this_week_only",
+      "rollback": "defer rollout and keep existing routing config",
+      "blocking": false,
+      "owner": "ConsumerSubsystem"
+    }
+  ],
+  "plans": {
+    "00-cost-leaning": {
+      "summary": "Smallest safe canary first, then pause on health/comms gates before any expansion to all 19 spines.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Confirm approved change window and outside launch/major-event timing; if not true, defer rollout.",
+          "owner": "SRE",
+          "depends_on": [],
+          "gate": "window:approved change window, excluding incident windows and Friday afternoon",
+          "rollback": "stop deployment and restore the last known-good routing state",
+          "observability": "Change-window status, calendar conflicts, incident-window status"
+        },
+        {
+          "id": "S2",
+          "action": "Send customer/partner notice, support rollout brief, and assign incident commander escalation owner.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "window:advance_notice_before_customer_visible_change",
+          "rollback": "Send immediate incident update and hold further batches until notice is corrected",
+          "observability": "Notice delivery confirmation, support acknowledgment, named escalation owner"
+        },
+        {
+          "id": "S3",
+          "action": "Obtain network-ops approval for a very small initial batch and batch sizing plan.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "approval:network-ops",
+          "rollback": "redeploy_previous",
+          "observability": "Approval record, planned batch size, approved operator"
+        },
+        {
+          "id": "S4",
+          "action": "Obtain network engineer, compliance, and network-ops-on-call approvals for staged promotion.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2",
+            "S3"
+          ],
+          "gate": "approval:network_engineer",
+          "rollback": "halt rollout and redeploy_previous",
+          "observability": "Approval records for network engineer, compliance, and on-call reviewer"
+        },
+        {
+          "id": "S5",
+          "action": "Deploy the updated routing config to a minimal canary batch of spine locations using the smallest practical batch size.",
+          "owner": "SRE",
+          "depends_on": [
+            "S2",
+            "S3",
+            "S4"
+          ],
+          "gate": "monitor:customer-visible packet loss<0.1%",
+          "rollback": "revert the initial batch to the previous routing config before expanding",
+          "observability": "Packet loss, prefix reachability, upstream route flap rate, customer-visible errors"
+        },
+        {
+          "id": "S6",
+          "action": "Hold the canary steady and watch for propagation lag, prefix leakage, traffic asymmetry normalization, and no blackhole/reachability alerts.",
+          "owner": "SRE",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "wait_for:canary_72h_no_prefix_leakage",
+          "rollback": "pause rollout and redeploy_previous on the affected batch",
+          "observability": "72h prefix leakage status, traffic asymmetry, propagation lag<2m, blackhole alerts"
+        },
+        {
+          "id": "S7",
+          "action": "Verify canary stability window and present results for promotion decision.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "wait_for:canary_stability_window",
+          "rollback": "pause rollout and redeploy_previous on the affected batch",
+          "observability": "Canary stability trend, error budget, batch health summary"
+        },
+        {
+          "id": "S8",
+          "action": "Check that customer/partner notice remains valid before any customer-visible expansion.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S7"
+          ],
+          "gate": "wait_for:customer notice sent",
+          "rollback": "redeploy_previous",
+          "observability": "Notice status, support readiness, customer comms timestamp"
+        },
+        {
+          "id": "S9",
+          "action": "Expand to the next small batch only if canary is healthy and route behavior remains stable.",
+          "owner": "SRE",
+          "depends_on": [
+            "S7",
+            "S8"
+          ],
+          "gate": "monitor:batch_health=healthy",
+          "rollback": "roll back the most recent batch and keep remaining spines unchanged",
+          "observability": "Batch health, upstream route flap rate<0.01%, propagation lag<2m, customer-visible packet loss"
+        },
+        {
+          "id": "S10",
+          "action": "Pause expansion for a stabilization window after each batch before any further promotion.",
+          "owner": "SRE",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "wait_for:batch_stability_window",
+          "rollback": "pause rollout and redeploy_previous on the affected batch",
+          "observability": "Batch stability window, route consistency, any new reachability alerts"
+        },
+        {
+          "id": "S11",
+          "action": "Repeat monitored small-batch expansion until all 19 spine locations are on the new config.",
+          "owner": "SRE",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "monitor:traffic_asymmetry=normalized",
+          "rollback": "pause rollout and revert any newly changed spine locations to prior config",
+          "observability": "Traffic asymmetry, prefix reachability errors0, route flaps, customer-visible regressions"
+        },
+        {
+          "id": "S12",
+          "action": "After all 19 locations are healthy, preserve audit trail and retain legacy config support until the full healthy state is confirmed.",
+          "owner": "Security",
+          "depends_on": [
+            "S11"
+          ],
+          "gate": "window:until_all_19_locations_confirmed_healthy",
+          "rollback": "restore_last_known_good_config_with_full_audit_log",
+          "observability": "Audit log completeness, all-19 health confirmation, legacy-config compatibility"
+        }
+      ],
+      "open_questions": [
+        "What exact batch size is approved for the initial canary?",
+        "Which specific maintenance window should be used this week?",
+        "Who is the named incident commander and backup owner?",
+        "Have customer/partner notices been sent, and to which audience tiers?",
+        "Do compliance and network engineer approvals already exist in the ticket, or must they be re-confirmed for this execution?"
+      ],
+      "conflicts": [
+        {
+          "between": [
+            {
+              "owner": "BackendOwner",
+              "summary": "Wait for each batch to stabilize before the next expansion",
+              "gate": "wait_for:batch_stability_window"
+            },
+            {
+              "owner": "SRE",
+              "summary": "Require a healthy soak before expanding beyond canary",
+              "gate": "wait_for:24h of stable routing with no blackhole or reachability alerts"
+            }
+          ],
+          "type": "blocking wait-time conflict",
+          "resolution": "Use the stricter canary soak as the expansion gate and collapse stabilization into that wait."
+        },
+        {
+          "between": [
+            {
+              "owner": "BackendOwner",
+              "summary": "Require operator approval before proceeding past staged rollout",
+              "gate": "approval:network_engineer"
+            },
+            {
+              "owner": "Security",
+              "summary": "Require compliance sign-off for any config impacting global reachability",
+              "gate": "approval:compliance"
+            }
+          ],
+          "type": "blocking approval conflict",
+          "resolution": "Bundle both approvals before any expansion beyond canary."
+        },
+        {
+          "between": [
+            {
+              "owner": "SRE",
+              "summary": "Run rollout only in an approved maintenance window",
+              "gate": "window:approved change window, excluding incident windows and Friday afternoon"
+            },
+            {
+              "owner": "ProductPM",
+              "summary": "Do not roll out during launch windows or major customer events",
+              "gate": "window:outside launch windows and major events"
+            }
+          ],
+          "type": "blocking window conflict",
+          "resolution": "Require both windows to be satisfied before starting deployment."
+        },
+        {
+          "between": [
+            {
+              "owner": "Security",
+              "summary": "Stage rollout only after canary confirms no prefix leakage",
+              "gate": "wait_for:canary_72h_no_prefix_leakage"
+            },
+            {
+              "owner": "SRE",
+              "summary": "Require a healthy soak before expanding beyond canary",
+              "gate": "wait_for:24h of stable routing with no blackhole or reachability alerts"
+            }
+          ],
+          "type": "blocking soak-duration conflict",
+          "resolution": "Use the longer 72h no-prefix-leakage soak before any broad expansion."
+        },
+        {
+          "between": [
+            {
+              "owner": "ProductPM",
+              "summary": "Notify customers before any customer-visible routing change",
+              "gate": "wait_for:customer notice sent"
+            },
+            {
+              "owner": "SRE",
+              "summary": "Use a small canary batch first; halt if any spine shows errors",
+              "gate": "monitor:customer-visible packet loss<0.1%"
+            }
+          ],
+          "type": "blocking sequencing conflict",
+          "resolution": "Send notice before the first customer-visible canary batch."
+        }
+      ]
+    },
+    "01-safety-leaning": {
+      "summary": "Use a tiny canary-first, approval-gated, maintenance-window rollout with 24h soak before any expansion; stop on any instability.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Confirm an approved maintenance window that is not Friday afternoon, not during incident windows, and not overlapping launch windows or major customer events.",
+          "owner": "SRE",
+          "depends_on": [],
+          "gate": "window:approved change window, excluding incident windows and Friday afternoon",
+          "rollback": "stop deployment and restore the last known-good routing state",
+          "observability": "Change window status, incident schedule, customer-event calendar conflicts"
+        },
+        {
+          "id": "S2",
+          "action": "Send customer and partner advance notice, and brief support with the rollout playbook, expected symptoms, and escalation path; assign the named incident escalation owner.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "window:advance_notice_before_customer_visible_change",
+          "rollback": "Send immediate incident update and hold further batches until notice is corrected",
+          "observability": "Notice delivery confirmation, support acknowledgment, escalation owner assignment"
+        },
+        {
+          "id": "S3",
+          "action": "Obtain required approvals for staged rollout beyond the first batch: network engineer, network ops, network ops on-call, compliance, and support lead.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "approval:network_engineer",
+          "rollback": "halt rollout and redeploy_previous",
+          "observability": "Approval records, ticket comments, sign-off timestamps"
+        },
+        {
+          "id": "S4",
+          "action": "Reconfirm dry-run output and audit logging are attached to the change ticket, and verify legacy routing config support remains available for all 19 locations during the staged rollout.",
+          "owner": "Security",
+          "depends_on": [
+            "S3"
+          ],
+          "gate": "none",
+          "rollback": "restore_last_known_good_config_with_full_audit_log",
+          "observability": "Ticket completeness, audit log presence, rollback artifact availability"
+        },
+        {
+          "id": "S5",
+          "action": "Deploy the new routing config to a very small initial canary batch of 1 spine location using routing-deploy with a conservative batch size and wait interval.",
+          "owner": "SRE",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "monitor:customer-visible packet loss<0.1%",
+          "rollback": "revert the initial batch to the previous routing config before expanding",
+          "observability": "Customer-visible packet loss, prefix reachability errors, upstream route flap rate, traffic asymmetry, blackhole/reachability alerts"
+        },
+        {
+          "id": "S6",
+          "action": "Hold the canary on the new config for the full soak period and only continue if routing remains stable with no blackhole or reachability alerts, no prefix leakage, and propagation lag stays within threshold.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "wait_for:24h of stable routing with no blackhole or reachability alerts",
+          "rollback": "pause rollout and revert any newly changed spine locations to prior config",
+          "observability": "24h stability, prefix leakage checks, propagation lag<2m, route flap rate, support/customer reports"
+        },
+        {
+          "id": "S7",
+          "action": "Review canary behavior against baseline and secure explicit promotion approvals before any expansion beyond the canary batch.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "approval:network_engineer",
+          "rollback": "halt rollout and redeploy_previous",
+          "observability": "Baseline comparison, approval status, canary health summary"
+        },
+        {
+          "id": "S8",
+          "action": "Expand to the next small batch only if canary metrics remain healthy and propagation lag is under 2 minutes; keep batch size smaller than region-wide blast radius.",
+          "owner": "SRE",
+          "depends_on": [
+            "S7"
+          ],
+          "gate": "monitor:propagation lag<2m",
+          "rollback": "roll back the most recent batch and keep remaining spines unchanged",
+          "observability": "Propagation lag, customer-visible packet loss, upstream route flap rate, any regional reachability anomalies"
+        },
+        {
+          "id": "S9",
+          "action": "After each batch, wait for stabilization before the next expansion and halt immediately on any instability, customer impact, or propagation slip.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "wait_for:batch_stability_window",
+          "rollback": "pause rollout and redeploy_previous on the affected batch",
+          "observability": "Batch stability window, customer-visible errors, route flap rate, downstream alerts"
+        },
+        {
+          "id": "S10",
+          "action": "Continue stepped rollout through the remaining spines in small batches, rechecking prefix reachability before each batch and stopping if any spine shows errors.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "monitor:prefix_reachability_errors0",
+          "rollback": "halt rollout and redeploy_previous",
+          "observability": "Prefix reachability errors, customer-facing pathing changes, batch-by-batch health"
+        },
+        {
+          "id": "S11",
+          "action": "Before each further promotion, confirm canary/batch behavior matches baseline, compliance remains signed off, and all required operator approvals are still valid.",
+          "owner": "Security",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "approval:compliance",
+          "rollback": "halt_rollout_and_revert_to_previous_config",
+          "observability": "Compliance approval validity, baseline drift, traffic asymmetry, reachability alerts"
+        },
+        {
+          "id": "S12",
+          "action": "Complete rollout to all 19 spine locations only after the final batch remains healthy and all customer-visible routing changes have been communicated and validated.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S11"
+          ],
+          "gate": "monitor:traffic_asymmetry=normalized",
+          "rollback": "redeploy_previous",
+          "observability": "Traffic asymmetry normalization, customer reports, regional reachability, final batch health"
+        },
+        {
+          "id": "S13",
+          "action": "After all 19 locations are confirmed healthy, wait through the quiet period before removing old routing entries.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S12"
+          ],
+          "gate": "wait_for:quiet_period_complete",
+          "rollback": "restore_old_routing_entries",
+          "observability": "Quiet-period completion, residual alerts, fallback config readiness"
+        }
+      ],
+      "open_questions": [
+        "What exact batch size should be used for the initial canary and subsequent batches?",
+        "What is the approved maintenance window for this week?",
+        "Have all required approvals already been recorded, or do any remain pending?",
+        "Who is the named incident commander / escalation owner for this rollout?",
+        "What communication template should be sent to customers and partners?"
+      ],
+      "conflicts": [
+        {
+          "owners": [
+            "SRE",
+            "ProductPM"
+          ],
+          "constraints": [
+            "Run rollout only in an approved maintenance window, excluding incident windows and Friday afternoon",
+            "Do not roll out during launch windows or major customer events"
+          ],
+          "reason": "Both are blocking timing constraints and may exclude different windows; rollout can be delayed if there is no overlap."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "DataPlatform"
+          ],
+          "constraints": [
+            "Do not complete full rollout until canary behavior matches baseline",
+            "Expand only after the canary batch remains healthy for the wait window"
+          ],
+          "reason": "Both block expansion until different stability criteria are met; they are compatible but jointly extend the hold period."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "SRE"
+          ],
+          "constraints": [
+            "Keep rollout in small batches; do not expand on first-sign issues",
+            "Use a small canary batch first; halt if any spine shows errors"
+          ],
+          "reason": "Both require conservative sequencing; no direct opposition, but together force a very small canary-first path."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "Security"
+          ],
+          "constraints": [
+            "Require operator approval before proceeding past staged rollout",
+            "Require compliance sign-off for any config impacting global reachability"
+          ],
+          "reason": "Both are blocking approvals from different owners before expansion; rollout cannot proceed until both are satisfied."
+        },
+        {
+          "owners": [
+            "Security",
+            "ProductPM"
+          ],
+          "constraints": [
+            "Notify affected customers and partners before visible routing changes",
+            "Notify customers before any customer-visible routing change"
+          ],
+          "reason": "These are overlapping notification blockers that both must be satisfied prior to visible changes."
+        },
+        {
+          "owners": [
+            "ConsumerSubsystem",
+            "SRE"
+          ],
+          "constraints": [
+            "Add canary validation for prefix reachability before each batch",
+            "Pause expansion on any upstream instability or customer impact"
+          ],
+          "reason": "Both are blocking health gates before proceeding; they may halt rollout on different failure signals."
+        }
+      ]
+    },
+    "02-speed-leaning": {
+      "summary": "Use a minimal canary, then gated batch expansion with monitoring; keep batches tiny to reduce blast radius while finishing this week.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Confirm approved change window is open, notify customers/partners, and brief support with the rollout playbook and escalation owner.",
+          "owner": "ReleaseManager",
+          "depends_on": [],
+          "gate": "window:approved change window, excluding incident windows and Friday afternoon",
+          "rollback": "stop rollout and send immediate status update; resume only in a later approved window",
+          "observability": "Change-window status, notice delivery confirmations, support acknowledgment, escalation ownership recorded"
+        },
+        {
+          "id": "S2",
+          "action": "Run the routing-deploy tool for a single-spine canary batch with the smallest feasible batch size and preserve full audit logs.",
+          "owner": "NetworkOps",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "none",
+          "rollback": "redeploy_previous for the initial batch and halt expansion",
+          "observability": "Deployment success per spine, audit-log completeness, config parity on the canary"
+        },
+        {
+          "id": "S3",
+          "action": "Monitor the canary for customer-visible packet loss, upstream flap rate, propagation lag, prefix reachability errors, and traffic asymmetry until stable.",
+          "owner": "SRE",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "monitor:batch_health=healthy",
+          "rollback": "revert the initial batch to the previous routing config before any expansion",
+          "observability": "Packet loss <0.1%, route flap rate <0.01%, propagation lag <2m, prefix reachability errors=0, asymmetry trend"
+        },
+        {
+          "id": "S4",
+          "action": "Obtain required expansion approvals for broader rollout after canary health is confirmed.",
+          "owner": "ReleaseManager",
+          "depends_on": [
+            "S3"
+          ],
+          "gate": "approval:network_engineer",
+          "rollback": "halt rollout and redeploy_previous",
+          "observability": "Approval recorded for network engineer/compliance/network-ops-on-call path"
+        },
+        {
+          "id": "S5",
+          "action": "Expand to the next small batch of spines, keeping the batch size well below a region-wide blast radius.",
+          "owner": "NetworkOps",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "none",
+          "rollback": "pause rollout and redeploy_previous on the affected batch",
+          "observability": "Per-spine config convergence, error rates, upstream stability, propagation lag"
+        },
+        {
+          "id": "S6",
+          "action": "Wait for the batch stability window and verify traffic asymmetry is normalizing before any further expansion.",
+          "owner": "SRE",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "wait_for:batch_stability_window",
+          "rollback": "roll back the most recent batch and keep remaining spines unchanged",
+          "observability": "No blackhole or reachability alerts, asymmetry normalized, upstream flap rate stable"
+        },
+        {
+          "id": "S7",
+          "action": "Continue stepped rollout in additional small batches, repeating deploy then stabilize until all 19 spine locations are updated.",
+          "owner": "NetworkOps",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "monitor:traffic_asymmetry=normalized",
+          "rollback": "stop deployment and restore the last known-good routing state",
+          "observability": "Asymmetry, reachability, packet loss, flap rate, propagation lag after each batch"
+        },
+        {
+          "id": "S8",
+          "action": "Perform the final validation pass that all 19 locations are on the new config and no customer regressions are present.",
+          "owner": "SRE",
+          "depends_on": [
+            "S7"
+          ],
+          "gate": "monitor:customer-visible packet loss<0.1%",
+          "rollback": "restore last known-good routing state with full audit log and freeze further changes",
+          "observability": "All locations converged, no customer reports, no blackhole or reachability alerts"
+        },
+        {
+          "id": "S9",
+          "action": "Complete cleanup of prior routing entries after the network has remained quiet.",
+          "owner": "NetworkOps",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "wait_for:quiet_period_complete",
+          "rollback": "restore_old_routing_entries",
+          "observability": "Quiet period elapsed, no late anomalies, old entries removed cleanly"
+        }
+      ],
+      "open_questions": [
+        "What exact batch size should be used for the canary and subsequent expansions?",
+        "Who is the named incident commander and who is the backup escalation owner?",
+        "Has customer/partner notice already been sent, or must it be sent before S1 proceeds?",
+        "Is the approved maintenance window long enough to finish all batches this week?"
+      ],
+      "conflicts": [
+        {
+          "between": [
+            "BackendOwner: require operator approval before proceeding past staged rollout",
+            "DataPlatform: use a very small initial spine batch to limit blast radius"
+          ],
+          "why": "Both are blocking, but one demands approval gating while the other is about batch sizing/approval for the initial batch; they can be aligned, not a hard opposite-direction conflict."
+        },
+        {
+          "between": [
+            "BackendOwner: do not complete full rollout until canary behavior matches baseline",
+            "ProductPM: notify customers before any customer-visible routing change"
+          ],
+          "why": "Both block progression and both require pre-change readiness, not opposing directions."
+        },
+        {
+          "between": [
+            "SRE: require a healthy soak before expanding beyond canary",
+            "ConsumerSubsystem: use smaller batch size than one region-wide blast radius"
+          ],
+          "why": "Both push toward slower, safer rollout and are compatible."
+        }
+      ]
+    },
+    "03-safety-tilted": {
+      "summary": "Small canary, 24h+ soak, then gated expansion in tiny batches with pause-on-any-signal and full rollback paths.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Send customer, partner, and support rollout notices; assign named incident escalation owner and get support briefing completed.",
+          "owner": "ProductPM",
+          "depends_on": [],
+          "gate": "approval:support lead",
+          "rollback": "Pause rollout and re-brief support on known symptoms, customer messaging, and escalation path",
+          "observability": "Notice sent confirmation, support readiness ack, escalation owner recorded"
+        },
+        {
+          "id": "S2",
+          "action": "Obtain required approvals to begin staged routing rollout, including network-ops, network engineer, compliance, and network-ops-on-call signoff.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "approval:network_engineer",
+          "rollback": "halt rollout and redeploy_previous",
+          "observability": "Approval trail complete in change-request ticket"
+        },
+        {
+          "id": "S3",
+          "action": "Start approved maintenance window and deploy the new MCP/BGP config to a very small initial canary batch of spine locations.",
+          "owner": "SRE",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "window:approved change window, excluding incident windows and Friday afternoon",
+          "rollback": "revert the initial batch to the previous routing config before expanding",
+          "observability": "Customer-visible packet loss, prefix reachability, upstream route flap rate, any blackhole or reachability alerts"
+        },
+        {
+          "id": "S4",
+          "action": "Hold the canary batch and verify it remains stable with no prefix leakage, no propagation lag, and no customer-visible errors.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S3"
+          ],
+          "gate": "wait_for:canary_72h_no_prefix_leakage",
+          "rollback": "redeploy_previous",
+          "observability": "Canary health, propagation lag <2m, prefix reachability errors = 0, traffic asymmetry trend"
+        },
+        {
+          "id": "S5",
+          "action": "If canary remains healthy, expand to the next smallest batch, keeping the rollout paused on any instability or propagation lag.",
+          "owner": "SRE",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "monitor:batch_health=healthy",
+          "rollback": "roll back the most recent batch and keep remaining spines unchanged",
+          "observability": "Batch health, upstream route flap rate <0.01%, customer-visible packet loss <0.1%, propagation lag <2m"
+        },
+        {
+          "id": "S6",
+          "action": "Soak the newly expanded batch until routing behavior is stable and traffic asymmetry is normalized.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "wait_for:24h of stable routing with no blackhole or reachability alerts",
+          "rollback": "pause rollout and redeploy_previous on the affected batch",
+          "observability": "Traffic asymmetry, blackhole alerts, reachability alerts, batch stability window"
+        },
+        {
+          "id": "S7",
+          "action": "Obtain explicit operator and compliance approval to proceed beyond the staged batch.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "approval:compliance",
+          "rollback": "halt rollout and revert to previous config",
+          "observability": "Approval recorded, no outstanding incident concerns"
+        },
+        {
+          "id": "S8",
+          "action": "Expand rollout to the next small batch of remaining spine locations using the standard routing-deploy tool.",
+          "owner": "SRE",
+          "depends_on": [
+            "S7"
+          ],
+          "gate": "monitor:upstream route flap rate<0.01%",
+          "rollback": "stop deployment and restore the last known-good routing state",
+          "observability": "Route flap rate, customer-visible packet loss, prefix reachability errors, regional pathing changes"
+        },
+        {
+          "id": "S9",
+          "action": "After each batch, wait for stabilization before any further expansion.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "wait_for:batch_stability_window",
+          "rollback": "pause rollout and redeploy_previous on the affected batch",
+          "observability": "Batch stability window, propagation lag <2m, upstream instability, customer impact"
+        },
+        {
+          "id": "S10",
+          "action": "Repeat the small-batch rollout/soak cycle until all 19 spine locations are on the new config.",
+          "owner": "SRE",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "monitor:batch_health=healthy",
+          "rollback": "redeploy_previous",
+          "observability": "Per-batch health, cumulative rollout progress, traffic asymmetry, blackhole/reachability alerts"
+        },
+        {
+          "id": "S11",
+          "action": "Confirm all 19 spine locations are healthy on the new config, with support and customer notifications closed out.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "window:until_all_19_locations_confirmed_healthy",
+          "rollback": "restore_last_known_good_config_with_full_audit_log",
+          "observability": "All-location health, customer-reported regressions, support escalations, audit trail completeness"
+        }
+      ],
+      "open_questions": [
+        "Which exact initial canary size is approved as 'very small' for the first batch?",
+        "Is there a preferred order for the required approvals in the change ticket?",
+        "What is the exact approved change window for this week's rollout?"
+      ],
+      "conflicts": [
+        {
+          "between": [
+            "SRE",
+            "ConsumerSubsystem"
+          ],
+          "conflict": "SRE requires a 24h soak before expanding beyond canary, while ConsumerSubsystem requires keeping legacy routing config support until all 19 locations are confirmed healthy; this favors delaying any schema- or behavior-dependent cleanup until the end."
+        },
+        {
+          "between": [
+            "SRE",
+            "ProductPM"
+          ],
+          "conflict": "SRE requires an approved maintenance window excluding Friday afternoon, while ProductPM requires rollout outside launch windows and major customer events; these timing windows may not overlap."
+        },
+        {
+          "between": [
+            "BackendOwner",
+            "Security"
+          ],
+          "conflict": "BackendOwner wants to proceed from staged rollout only after traffic asymmetry normalizes, while Security requires explicit compliance sign-off for global reachability impact; both block expansion and must be satisfied before broader rollout."
+        },
+        {
+          "between": [
+            "Security",
+            "ProductPM"
+          ],
+          "conflict": "Security requires customer/partner notification before visible routing changes, while ProductPM also requires customer notice before any customer-visible routing change; both are blocking and need sequencing before rollout."
+        },
+        {
+          "between": [
+            "DataPlatform",
+            "SRE"
+          ],
+          "conflict": "DataPlatform pauses expansion if propagation lag slips below threshold and SRE pauses on upstream instability/customer impact; these are parallel blocking gates that can halt the same batch for different reasons."
+        },
+        {
+          "between": [
+            "BackendOwner",
+            "DataPlatform"
+          ],
+          "conflict": "BackendOwner wants small batches that only expand when healthy, while DataPlatform requires a small initial batch and no expansion until propagation lag is acceptable; the rollout granularity must satisfy both or remain paused."
+        },
+        {
+          "between": [
+            "ProductPM",
+            "ConsumerSubsystem"
+          ],
+          "conflict": "ProductPM requires support briefing and named escalation before customer-visible changes, while ConsumerSubsystem requires legacy routing config support during the staged rollout; both constrain the rollout process and support path."
+        }
+      ]
+    }
+  },
+  "weights_for": {
+    "00-cost-leaning": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "01-safety-leaning": [
+      0.0,
+      1.0,
+      0.0
+    ],
+    "02-speed-leaning": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "03-safety-tilted": [
+      0.0,
+      0.5,
+      0.5
+    ]
+  },
+  "scores": {
+    "00-cost-leaning": {
+      "steps": 12,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 2,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.852,
+      "fragility_at_budget_1": 0.841,
+      "fragility_at_budget_2": 1.0,
+      "avg_severity": 2.87,
+      "rollback_failure_rate": 0.4,
+      "approval_gates": 2,
+      "window_gates": 3,
+      "monitor_gates": 3,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 9,
+        "manual_ops": 5,
+        "unrecoverable": 1
+      }
+    },
+    "01-safety-leaning": {
+      "steps": 13,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 2,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.882,
+      "fragility_at_budget_1": 0.938,
+      "fragility_at_budget_2": 0.0,
+      "avg_severity": 2.71,
+      "rollback_failure_rate": 0.294,
+      "approval_gates": 3,
+      "window_gates": 2,
+      "monitor_gates": 4,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S2",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S8",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 12,
+        "manual_ops": 5
+      }
+    },
+    "02-speed-leaning": {
+      "steps": 9,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 2,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.091,
+      "fragility_at_budget_1": 0.1,
+      "fragility_at_budget_2": 0.0,
+      "avg_severity": 2.0,
+      "rollback_failure_rate": 0.909,
+      "approval_gates": 1,
+      "window_gates": 1,
+      "monitor_gates": 3,
+      "achilles_heel": [
+        [
+          "S1",
+          0.5
+        ],
+        [
+          "S2",
+          0.0
+        ],
+        [
+          "S3",
+          0.0
+        ],
+        [
+          "S4",
+          0.0
+        ],
+        [
+          "S5",
+          0.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 1,
+        "manual_ops": 10
+      }
+    },
+    "03-safety-tilted": {
+      "steps": 11,
+      "structural_pass": true,
+      "smt_feasible": true,
+      "smt_unsat_core_size": 0,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.929,
+      "fragility_at_budget_1": 1.0,
+      "fragility_at_budget_2": 0.0,
+      "avg_severity": 2.71,
+      "rollback_failure_rate": 0.286,
+      "approval_gates": 3,
+      "window_gates": 2,
+      "monitor_gates": 3,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S2",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 4,
+        "manual_ops": 10
+      }
+    }
+  },
+  "smt": {
+    "00-cost-leaning": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 16,
+      "n_constraint_edges": 3,
+      "witness_ordering": [],
+      "unsat_core": [
+        "dep__S7__before__S9",
+        "con__DataPlatform__S9__before__S7"
+      ],
+      "unsat_core_explanations": [
+        "step `S9` depends_on `S7` (so `S7` must be earlier)",
+        "DataPlatform's blocking constraint requires `S9` before `S7` (gate `wait_for:canary_stability_window`)"
+      ],
+      "notes": []
+    },
+    "01-safety-leaning": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 13,
+      "n_constraint_edges": 3,
+      "witness_ordering": [],
+      "unsat_core": [
+        "dep__S9__before__S10",
+        "con__Security__S10__before__S9"
+      ],
+      "unsat_core_explanations": [
+        "step `S10` depends_on `S9` (so `S9` must be earlier)",
+        "Security's blocking constraint requires `S10` before `S9` (gate `wait_for:canary_72h_no_prefix_leakage`)"
+      ],
+      "notes": []
+    },
+    "02-speed-leaning": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 8,
+      "n_constraint_edges": 2,
+      "witness_ordering": [],
+      "unsat_core": [
+        "con__Security__S7__before__S6",
+        "dep__S6__before__S7"
+      ],
+      "unsat_core_explanations": [
+        "Security's blocking constraint requires `S7` before `S6` (gate `wait_for:canary_72h_no_prefix_leakage`)",
+        "step `S7` depends_on `S6` (so `S6` must be earlier)"
+      ],
+      "notes": []
+    },
+    "03-safety-tilted": {
+      "feasible": true,
+      "backend": "z3",
+      "n_dependency_edges": 10,
+      "n_constraint_edges": 3,
+      "witness_ordering": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5",
+        "S6",
+        "S7",
+        "S8",
+        "S9",
+        "S10",
+        "S11"
+      ],
+      "unsat_core": [],
+      "unsat_core_explanations": [],
+      "notes": []
+    }
+  },
+  "chaos": {
+    "00-cost-leaning": {
+      "fragility": 0.852,
+      "fragility_curve": {
+        "1": 0.841,
+        "2": 1.0
+      },
+      "avg_severity": 2.87,
+      "rollback_failure_rate": 0.4,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 9,
+        "manual_ops": 5,
+        "unrecoverable": 1
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S10"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S11"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "unrecoverable",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S7",
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        }
+      ]
+    },
+    "01-safety-leaning": {
+      "fragility": 0.882,
+      "fragility_curve": {
+        "1": 0.938,
+        "2": 0.0
+      },
+      "avg_severity": 2.71,
+      "rollback_failure_rate": 0.294,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S2",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S8",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 12,
+        "manual_ops": 5
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12",
+            "S13"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12",
+            "S13"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12",
+            "S13"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12",
+            "S13"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12",
+            "S13"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12",
+            "S13"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12",
+            "S13"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9",
+            "S10",
+            "S11",
+            "S12",
+            "S13"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S10",
+            "S11",
+            "S12",
+            "S13"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S10"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S11",
+            "S12",
+            "S13"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S11"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S12",
+            "S13"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S12"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S13"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12",
+            "S13"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12",
+            "S13"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12",
+            "S13"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S6",
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        }
+      ]
+    },
+    "02-speed-leaning": {
+      "fragility": 0.091,
+      "fragility_curve": {
+        "1": 0.1,
+        "2": 0.0
+      },
+      "avg_severity": 2.0,
+      "rollback_failure_rate": 0.909,
+      "achilles_heel": [
+        [
+          "S1",
+          0.5
+        ],
+        [
+          "S2",
+          0.0
+        ],
+        [
+          "S3",
+          0.0
+        ],
+        [
+          "S4",
+          0.0
+        ],
+        [
+          "S5",
+          0.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 1,
+        "manual_ops": 10
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4",
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        }
+      ]
+    },
+    "03-safety-tilted": {
+      "fragility": 0.929,
+      "fragility_curve": {
+        "1": 1.0,
+        "2": 0.0
+      },
+      "avg_severity": 2.71,
+      "rollback_failure_rate": 0.286,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S2",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 4,
+        "manual_ops": 10
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S10"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S11"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S3",
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        }
+      ]
+    }
+  },
+  "pareto": {
+    "front_0_labels": [
+      "02-speed-leaning",
+      "03-safety-tilted",
+      "00-cost-leaning",
+      "01-safety-leaning"
+    ],
+    "all_points": [
+      {
+        "label": "00-cost-leaning",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.852,
+          "avg_severity": 2.87,
+          "rollback_failure_rate": 0.4,
+          "steps": 12.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      {
+        "label": "01-safety-leaning",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.882,
+          "avg_severity": 2.71,
+          "rollback_failure_rate": 0.294,
+          "steps": 13.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      {
+        "label": "02-speed-leaning",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.091,
+          "avg_severity": 2.0,
+          "rollback_failure_rate": 0.909,
+          "steps": 9.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          1.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "label": "03-safety-tilted",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.929,
+          "avg_severity": 2.71,
+          "rollback_failure_rate": 0.286,
+          "steps": 11.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.0,
+          0.5,
+          0.5
+        ]
+      }
+    ],
+    "winner": "02-speed-leaning",
+    "winner_utility": 0.12315,
+    "user_weights": {
+      "fragility": 0.4,
+      "coverage": 0.3,
+      "steps": 0.1,
+      "severity": 0.15,
+      "rollback_failure": 0.05
+    }
+  }
+}

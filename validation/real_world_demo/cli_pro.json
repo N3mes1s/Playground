@@ -1,0 +1,3710 @@
+{
+  "intent_path": "validation/real_world_demo/intent_acme_pydantic_v2.md",
+  "constraints": [
+    {
+      "axis": "api",
+      "summary": "Keep request/response contracts backward-compatible during migration",
+      "scope": "FastAPI/Pydantic model changes, OpenAPI regeneration, and all payment endpoints consumed by @acme/payments-client@1.x",
+      "gate": "wait_for:compatibility_tests_pass",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Deploy schema/model compatibility code before client-facing release",
+      "scope": "Order of code rollout for Pydantic v2 serializers/validators and any server-side behavior changes",
+      "gate": "wait_for:canary_error_rate_within_baseline",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "api",
+      "summary": "Publish @acme/payments-client@2.x before any breaking server change",
+      "scope": "OpenAPI-generated TypeScript client, mobile SDK regeneration, and any endpoint schema changes that would break v1 consumers",
+      "gate": "wait_for:client_v2_published_and_mobile_sdk_released",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Run dual-support window for v1 and v2 clients before deprecating v1",
+      "scope": "Server support for both @acme/payments-client@1.x and @acme/payments-client@2.x during migration",
+      "gate": "monitor:internal_client_v2_adoption>=80%",
+      "rollback": "redeploy_previous",
+      "blocking": false,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "data",
+      "summary": "Validate v2 payloads against baseline before broad rollout",
+      "scope": "payments-api request/response JSON emitted by FastAPI/Pydantic v2",
+      "gate": "monitor:validation-rejection-rate<=0.1%",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Regenerate OpenAPI and SDKs from the exact v2 schema only",
+      "scope": "published OpenAPI artifact, TypeScript client v2, mobile SDK inputs",
+      "gate": "wait_for:published_openapi_v2_and_signed_off_schema_diff",
+      "rollback": "withdraw_v2_artifacts_and_republish_v1_artifacts",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Do not drop legacy fields until consumer traffic is quiet",
+      "scope": "any deprecated request/response fields, columns, or stored JSON keys removed for v2",
+      "gate": "wait_for:30_day_quiet_period_with_no_legacy_field_usage",
+      "rollback": "restore_legacy_fields_and_backfill_missing_values",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Gate rollout on error-rejection rate staying within baseline",
+      "scope": "payments-api production canary and staged traffic increase",
+      "gate": "monitor:validation_rejection_rate<=0.1% above baseline",
+      "rollback": "shift traffic back to FastAPI 0.95.2 + Pydantic v1 deployment",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Keep a feature-flagged compatibility path for mixed clients",
+      "scope": "server response/schema cutover for @acme/payments-client v1 vs v2",
+      "gate": "none",
+      "rollback": "disable the v2 schema/serialization flag and serve v1-compatible output",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Publish new client and wait for safe consumer migration before breaking changes",
+      "scope": "API schema cutover that would affect internal SDK consumers and mobile apps",
+      "gate": "wait_for:80% internal client migration and mobile SDK release in user hands",
+      "rollback": "revert server to backward-compatible schema and keep v1 client support",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Run migration only in a safe deploy window, not during incidents or Friday",
+      "scope": "all production rollout steps for the FastAPI/Pydantic migration",
+      "gate": "window:business-hours excluding Friday afternoon and incident windows",
+      "rollback": "pause rollout and keep current production version serving traffic",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "security",
+      "summary": "Approve v2 validation changes after SOC2/security review",
+      "scope": "Pydantic v2 migration, especially stricter coercion and validators",
+      "gate": "approval:security",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Keep audit-trail coverage intact for all payment validation paths",
+      "scope": "Request validation, model serialization, and any rewritten validators",
+      "gate": "monitor:audit_log_missing_events0",
+      "rollback": "disable_new_validation_path and redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Rotate any secrets touched by validator or tax-service code changes first",
+      "scope": "The two endpoints that call the remote tax service from validators",
+      "gate": "wait_for:secret_rotation_complete",
+      "rollback": "restore previous secret version and redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify partners before any externally visible schema or behavior change",
+      "scope": "OpenAPI/client v2 publish, docs site updates, and breaking request validation",
+      "gate": "window:partner_notice_14d",
+      "rollback": "revert docs/client publish and redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify integrators before any breaking schema or client change",
+      "scope": "OpenAPI/schema changes, payments-client v2 publication, and any server-side breaking behavior change",
+      "gate": "wait_for:partner-integrator-notice-sent",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Allow partner comms lead time before first customer-facing rollout",
+      "scope": "Production rollout affecting API responses, request validation, or generated docs",
+      "gate": "window:after-committed_partner_notice_lead_time",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "ops",
+      "summary": "Do not roll out during launch windows or major customer events",
+      "scope": "Production deployment and any staged rollout steps for payments-api, docs, or client publication",
+      "gate": "approval:release_manager",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "business",
+      "summary": "Explicit owner must handle customer escalations during rollout",
+      "scope": "Cutover period for API, SDK, and documentation changes",
+      "gate": "approval:customer_escalation_owner",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep v1 and v2 client contract stable during dual-support",
+      "scope": "OpenAPI schema, request/response shapes, and published @acme/payments-client versions",
+      "gate": "wait_for:@acme/payments-client@2.x published and 80% internal consumer adoption",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Preserve legacy compatibility shim for v1 callers",
+      "scope": "Server-side compatibility layer for any removed/renamed fields, serializer behavior, and breaking schema deltas introduced by Pydantic v2/OpenAPI regen",
+      "gate": "window:dual-support until all critical internal services and mobile apps are on v2",
+      "rollback": "restore v1-compatible request/response handling",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Validate stricter v2 coercion against current real traffic",
+      "scope": "Endpoints affected by changed validation semantics, especially payments charge and any model migrated from implicit coercion",
+      "gate": "monitor:validation-rejection-rate<=0.1% increase",
+      "rollback": "relax affected fields with explicit non-strict validation or redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Do not cut over until regenerated client and app releases exist",
+      "scope": "Production rollout sequencing for API, mobile SDK, and docs publication",
+      "gate": "wait_for:mobile SDK shipped and in user hands",
+      "rollback": "hold server rollout on v1 and redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    }
+  ],
+  "plans": {
+    "00-cost-leaning": {
+      "summary": "Stage compatibility first, publish v2 client/mobile artifacts, then canary the server under dual-support and error-budget gates.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Audit current schemas/validators/encoders and classify breaking vs compatibility-only changes, including stricter coercion hotspots and the 2 tax-service validator endpoints.",
+          "owner": "Backend",
+          "depends_on": [],
+          "gate": "none",
+          "rollback": "discard audit notes and reopen the assessment",
+          "observability": "Inventory of all root validators, field validators, json_encoders, orm_mode models, and .dict()/.json() callsites"
+        },
+        {
+          "id": "S2",
+          "action": "Send partner/integrator notices and assign a named customer-escalation owner for the migration window.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "approval:customer_escalation_owner",
+          "rollback": "withdraw notices and reschedule communications",
+          "observability": "Notice delivery confirmation and escalation-contact assignment"
+        },
+        {
+          "id": "S3",
+          "action": "Complete security review for Pydantic v2 validation changes and rotate any secrets used by the validator-driven tax-service paths.",
+          "owner": "Security",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "approval:security",
+          "rollback": "restore previous secret versions and defer the migration",
+          "observability": "Security signoff, secret-rotation completion, and audit-trail coverage status"
+        },
+        {
+          "id": "S4",
+          "action": "Run bump-pydantic, upgrade FastAPI/Pydantic versions, convert orm_mode to from_attributes, replace dict/json calls, and manually rewrite root validators and custom serializers in a feature branch.",
+          "owner": "Backend",
+          "depends_on": [
+            "S2",
+            "S3"
+          ],
+          "gate": "none",
+          "rollback": "revert the branch to the pre-migration dependency and code state",
+          "observability": "Codemod diff size, validator rewrite completeness, serializer parity, and test pass rate"
+        },
+        {
+          "id": "S5",
+          "action": "Build and run compatibility tests against current traffic fixtures, focusing on coercion regressions, validator ordering, serializer output, and OpenAPI diffs.",
+          "owner": "Backend",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "wait_for:compatibility_tests_pass",
+          "rollback": "revert incompatible model changes and retry tests",
+          "observability": "Validation parity against baseline, schema diff report, and failing endpoint list"
+        },
+        {
+          "id": "S6",
+          "action": "Publish the exact v2 OpenAPI artifact and regenerate @acme/payments-client@2.x plus the mobile SDK from that artifact.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "wait_for:published_openapi_v2_and_signed_off_schema_diff",
+          "rollback": "withdraw_v2_artifacts_and_republish_v1_artifacts",
+          "observability": "Signed-off schema diff, client/mobile generation success, and artifact version tags"
+        },
+        {
+          "id": "S7",
+          "action": "Get mobile apps into a release-ready state and complete app-store submission so the new SDK is in user hands.",
+          "owner": "Mobile",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "wait_for:mobile SDK shipped and in user hands",
+          "rollback": "pull the submission and keep shipping the prior SDK",
+          "observability": "Store submission status, release adoption, and crash-free install metrics"
+        },
+        {
+          "id": "S8",
+          "action": "Coordinate internal consumer rollout of @acme/payments-client@2.x while keeping v1 support live for the mixed fleet.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "monitor:internal_client_v2_adoption>=80%",
+          "rollback": "revert affected consumers to @acme/payments-client@1.x",
+          "observability": "Adoption percentage, consumer build success, and v1/v2 request mix"
+        },
+        {
+          "id": "S9",
+          "action": "Enable the server-side v2 compatibility path behind a feature flag, keeping dual-support for v1 and v2 clients without dropping legacy fields.",
+          "owner": "SRE",
+          "depends_on": [
+            "S5",
+            "S6",
+            "S7",
+            "S8"
+          ],
+          "gate": "none",
+          "rollback": "disable the v2 schema/serialization flag and serve v1-compatible output",
+          "observability": "Flag state, v1/v2 response compatibility, and legacy-field usage"
+        },
+        {
+          "id": "S10",
+          "action": "Deploy the new server build in a business-hours canary and keep traffic small while measuring rejection rate and audit logs.",
+          "owner": "SRE",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "window:business-hours excluding Friday afternoon and incident windows",
+          "rollback": "shift traffic back to FastAPI 0.95.2 + Pydantic v1 deployment",
+          "observability": "Canary validation rejection rate, audit_log_missing_events0, latency, and error rate"
+        },
+        {
+          "id": "S11",
+          "action": "If canary stays within baseline, expand rollout to production while preserving the dual-support shim until adoption thresholds are met.",
+          "owner": "SRE",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "monitor:validation_rejection_rate<=0.1% above baseline",
+          "rollback": "revert server to backward-compatible schema and keep v1 client support",
+          "observability": "Production rejection rate, customer errors, and endpoint-specific validation failures"
+        },
+        {
+          "id": "S12",
+          "action": "After 80% internal adoption and mobile release are confirmed, schedule the deprecation window for v1-only compatibility code and legacy field support.",
+          "owner": "Backend",
+          "depends_on": [
+            "S11"
+          ],
+          "gate": "wait_for:80% internal client migration and mobile SDK release in user hands",
+          "rollback": "restore v1-compatible request/response handling",
+          "observability": "Legacy-field traffic, remaining v1 callers, and mobile version distribution"
+        }
+      ],
+      "open_questions": [
+        "Which request fields need explicit non-strict validation to preserve legitimate v1 coercions?",
+        "How should the two tax-service validators be refactored so they no longer perform remote calls inside validation?",
+        "Which OpenAPI differences are acceptable for v2 consumers versus which require compatibility shims?",
+        "What is the exact customer-escalation owner and partner-notice lead time to use?",
+        "Which legacy fields must stay until the 30-day quiet period is satisfied?"
+      ],
+      "conflicts": [
+        {
+          "owners": [
+            "BackendOwner",
+            "DataPlatform"
+          ],
+          "blocking_constraints": [
+            "Keep request/response contracts backward-compatible during migration",
+            "Regenerate OpenAPI and SDKs from the exact v2 schema only"
+          ],
+          "tension": "Compatibility-first rollout vs exact v2-schema publication can expose breaking diffs."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "SRE"
+          ],
+          "blocking_constraints": [
+            "Deploy schema/model compatibility code before client-facing release",
+            "Run migration only in a safe deploy window, not during incidents or Friday"
+          ],
+          "tension": "Code readiness may complete before the allowed production window opens."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "SRE"
+          ],
+          "blocking_constraints": [
+            "Publish new client and wait for safe consumer migration before breaking changes",
+            "Keep a feature-flagged compatibility path for mixed clients"
+          ],
+          "tension": "Breaking server changes are blocked until mixed-fleet compatibility is preserved."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "DataPlatform"
+          ],
+          "blocking_constraints": [
+            "Run dual-support window for v1 and v2 clients before deprecating v1",
+            "Do not drop legacy fields until consumer traffic is quiet"
+          ],
+          "tension": "Dual-support can end only after legacy-field usage becomes quiet."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "Security"
+          ],
+          "blocking_constraints": [
+            "Approve v2 validation changes after SOC2/security review",
+            "Keep audit-trail coverage intact for all payment validation paths"
+          ],
+          "tension": "Security approval depends on no audit gaps during the new validation path."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "Security"
+          ],
+          "blocking_constraints": [
+            "Rotate any secrets touched by validator or tax-service code changes first",
+            "Deploy schema/model compatibility code before client-facing release"
+          ],
+          "tension": "Secret rotation must complete before the validator/tax-service changes can go live."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Notify partners before any externally visible schema or behavior change",
+            "Do not roll out during launch windows or major customer events"
+          ],
+          "tension": "Partner notice and release-manager approval both constrain when rollout can occur."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Notify integrators before any breaking schema or client change",
+            "Allow partner comms lead time before first customer-facing rollout"
+          ],
+          "tension": "The customer-facing rollout cannot begin until comms lead time has elapsed."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ConsumerSubsystem"
+          ],
+          "blocking_constraints": [
+            "Publish @acme/payments-client@2.x before any breaking server change",
+            "Keep v1 and v2 client contract stable during dual-support"
+          ],
+          "tension": "A stable dual-support contract is required before any breakage can be introduced."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ConsumerSubsystem"
+          ],
+          "blocking_constraints": [
+            "Validate stricter v2 coercion against current real traffic",
+            "Preserve legacy compatibility shim for v1 callers"
+          ],
+          "tension": "Strict coercion validation must be balanced with a shim for existing callers."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ConsumerSubsystem"
+          ],
+          "blocking_constraints": [
+            "Do not cut over until regenerated client and app releases exist",
+            "Validate stricter v2 coercion against current real traffic"
+          ],
+          "tension": "Real-traffic validation cannot justify cutover before client and app releases are available."
+        },
+        {
+          "owners": [
+            "DataPlatform",
+            "SRE"
+          ],
+          "blocking_constraints": [
+            "Validate v2 payloads against baseline before broad rollout",
+            "Gate rollout on error-rejection rate staying within baseline"
+          ],
+          "tension": "Baseline validation must pass both data-quality and rollout-error gates."
+        }
+      ]
+    },
+    "01-safety-leaning": {
+      "summary": "Prepare v2 in code, publish v2 artifacts, ship mobile/client updates, then canary and dual-run server cutover with strict rollback gates.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Create a migration branch and inventory all Pydantic/FastAPI touchpoints: validators, root validators, json_encoders, orm_mode models, .dict/.json call sites, and the two tax-service validators.",
+          "owner": "Backend",
+          "depends_on": [],
+          "gate": "none",
+          "rollback": "delete migration branch and revert inventory notes",
+          "observability": "Counted migration surface, endpoint list, and risk hotspots for strict coercion and async validator behavior"
+        },
+        {
+          "id": "S2",
+          "action": "Run bump-pydantic codemod across the codebase, then manually rewrite the 6 root validators, 3 custom serializers, and 12 orm_mode models to v2 patterns.",
+          "owner": "Backend",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "none",
+          "rollback": "revert codemod changes and restore pre-migration model code",
+          "observability": "Build/test failures, model serialization diffs, validator ordering regressions, and any missing serializer coverage"
+        },
+        {
+          "id": "S3",
+          "action": "Replace remaining .dict()/.json() usage with .model_dump()/.model_dump_json(), then add targeted compatibility shims for any legacy response shapes still needed by v1 consumers.",
+          "owner": "Backend",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "none",
+          "rollback": "restore prior dump calls and compatibility shims from version control",
+          "observability": "Output payload diffs, JSON key ordering/nullability changes, and endpoint snapshot tests"
+        },
+        {
+          "id": "S4",
+          "action": "Refactor the two tax-service validators to remove async-in-validator behavior by moving remote calls into the request path or dependency layer, and rotate any touched secrets before enabling the new path.",
+          "owner": "Backend",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "wait_for:secret_rotation_complete",
+          "rollback": "restore previous secret version and revert validator-path refactor",
+          "observability": "Tax-service call success rate, latency, error handling, and audit-log coverage"
+        },
+        {
+          "id": "S5",
+          "action": "Run baseline traffic characterization on v1 for the strict-coercion-sensitive endpoints, identify bodies that would fail under v2, and decide explicit non-strict relaxations for accepted cases.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "monitor:validation_rejection_rate<=0.1% increase",
+          "rollback": "disable new validation path and redeploy_previous",
+          "observability": "Validation rejection delta, field-level coercion failures, and endpoint-specific rejection samples"
+        },
+        {
+          "id": "S6",
+          "action": "Regenerate OpenAPI from the v2 code, review schema diffs, publish the signed-off v2 OpenAPI artifact, and generate the TypeScript client v2 plus mobile SDK artifacts from that exact schema.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S3",
+            "S5"
+          ],
+          "gate": "wait_for:published_openapi_v2_and_signed_off_schema_diff",
+          "rollback": "withdraw_v2_artifacts_and_republish_v1_artifacts",
+          "observability": "OpenAPI diff report, generated client incompatibilities, nullable/discriminator changes, and SDK build outputs"
+        },
+        {
+          "id": "S7",
+          "action": "Publish @acme/payments-client@2.x and release the updated mobile SDKs to app stores, keeping server behavior on v1-compatible output during the mixed-fleet period.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "wait_for:client_v2_published_and_mobile_sdk_released",
+          "rollback": "revert client publish and mobile SDK release artifacts",
+          "observability": "Package publication status, app store submission/review state, and consumer download/adoption signals"
+        },
+        {
+          "id": "S8",
+          "action": "Send partner/integrator notices and release-manager approvals for the upcoming migration window, including docs-site and externally visible schema-change communication.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "window:partner_notice_14d",
+          "rollback": "revert docs/client publish and redeploy_previous",
+          "observability": "Notice delivery confirmation, escalation intake readiness, and comms approval trail"
+        },
+        {
+          "id": "S9",
+          "action": "Deploy the FastAPI 0.110 + Pydantic v2 server behind a feature flag that preserves v1-compatible serialization and validation behavior for all external callers.",
+          "owner": "SRE",
+          "depends_on": [
+            "S4",
+            "S6",
+            "S8"
+          ],
+          "gate": "approval:security",
+          "rollback": "disable the v2 schema/serialization flag and serve v1-compatible output",
+          "observability": "Canary error rate, validation rejection rate, audit-log completeness, latency, and any schema-diff-driven response changes"
+        },
+        {
+          "id": "S10",
+          "action": "Run business-hours canary rollout with staged traffic increase, holding the deploy if validation rejection exceeds baseline or audit events go missing.",
+          "owner": "SRE",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "window:business-hours excluding Friday afternoon and incident windows",
+          "rollback": "shift traffic back to FastAPI 0.95.2 + Pydantic v1 deployment",
+          "observability": "Canary p99 latency, rejection-rate delta, audit log missing events, tax-service validator failures, and end-to-end payment success"
+        },
+        {
+          "id": "S11",
+          "action": "Maintain dual-support for v1 and v2 clients in production, with the compatibility shim left enabled until internal adoption and mobile rollout are safely complete.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S7",
+            "S9"
+          ],
+          "gate": "monitor:internal_client_v2_adoption>=80%",
+          "rollback": "restore v1-compatible request/response handling",
+          "observability": "Client version mix, v1 fallback usage, mobile app version distribution, and legacy field usage"
+        },
+        {
+          "id": "S12",
+          "action": "After 80% internal adoption and mobile SDKs are in user hands, remove the legacy compatibility path, retire deprecated fields only after a 30-day quiet period, and finalize the v2-only server contract.",
+          "owner": "Backend",
+          "depends_on": [
+            "S11"
+          ],
+          "gate": "wait_for:30_day_quiet_period_with_no_legacy_field_usage",
+          "rollback": "restore legacy fields and backfill missing values",
+          "observability": "Legacy field traffic, customer incidents, downstream parser errors, and long-tail consumer failures"
+        }
+      ],
+      "open_questions": [
+        "Which request fields should be relaxed with explicit non-strict validation versus kept strict under Pydantic v2?",
+        "What is the exact partner notice lead time that satisfies both Product and Security comms constraints?",
+        "Which legacy fields, if any, are planned for eventual removal after the quiet period?",
+        "Who is the named customer escalation owner for the rollout window?",
+        "Do the two tax-service validators require dependency injection changes, or can they be fully decoupled without endpoint contract impact?"
+      ],
+      "conflicts": [
+        {
+          "owners": [
+            "BackendOwner",
+            "SRE",
+            "ConsumerSubsystem",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Keep request/response contracts backward-compatible during migration",
+            "Deploy schema/model compatibility code before client-facing release",
+            "Publish @acme/payments-client@2.x before any breaking server change",
+            "Publish new client and wait for safe consumer migration before breaking changes",
+            "Keep v1 and v2 client contract stable during dual-support",
+            "Preserve legacy compatibility shim for v1 callers",
+            "Do not cut over until regenerated client and app releases exist"
+          ],
+          "why": "One set of blockers requires backward compatibility and dual support, while others require publishing new clients before any breaking server-side change; these pull opposite directions on when the server may cut over."
+        },
+        {
+          "owners": [
+            "DataPlatform",
+            "ConsumerSubsystem",
+            "BackendOwner"
+          ],
+          "blocking_constraints": [
+            "Validate v2 payloads against baseline before broad rollout",
+            "Validate stricter v2 coercion against current real traffic",
+            "Do not drop legacy fields until consumer traffic is quiet"
+          ],
+          "why": "Strict v2 validation and eventual field removal can reject or reshape traffic, but the migration must preserve legacy compatibility until consumer usage is quiet."
+        },
+        {
+          "owners": [
+            "DataPlatform",
+            "ProductPM",
+            "Security"
+          ],
+          "blocking_constraints": [
+            "Regenerate OpenAPI and SDKs from the exact v2 schema only",
+            "Notify partners before any externally visible schema or behavior change",
+            "Notify integrators before any breaking schema or client change"
+          ],
+          "why": "Publishing exact-v2 OpenAPI/SDK artifacts is a prerequisite for the new client, but partner notification and comms lead time block externally visible schema changes until notice is sent."
+        },
+        {
+          "owners": [
+            "ConsumerSubsystem",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Do not cut over until regenerated client and app releases exist",
+            "Allow partner comms lead time before first customer-facing rollout",
+            "Run migration only in a safe deploy window, not during incidents or Friday"
+          ],
+          "why": "The rollout cannot proceed until artifacts exist, notices are sent, and the deployment window is safe, which constrains sequencing and timing."
+        },
+        {
+          "owners": [
+            "Security",
+            "BackendOwner"
+          ],
+          "blocking_constraints": [
+            "Approve v2 validation changes after SOC2/security review",
+            "Rotate any secrets touched by validator or tax-service code changes first",
+            "Keep audit-trail coverage intact for all payment validation paths"
+          ],
+          "why": "Security review and secret rotation must precede enabling the refactored validator path, while audit coverage must remain intact throughout."
+        }
+      ]
+    },
+    "02-speed-leaning": {
+      "summary": "Stage v2 rollout with code migration, schema publish, client/mobile release, then canary and dual-support cutover.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Run the FastAPI/Pydantic migration codemods across the codebase, then manually rewrite root validators, custom encoders, orm_mode models, and known dict/json callsites.",
+          "owner": "Backend",
+          "depends_on": [],
+          "gate": "none",
+          "rollback": "revert the migration branch and restore the last v1-compatible commit",
+          "observability": "Codemod diff size, test compilation errors, lint/typecheck failures, count of remaining v1 APIs"
+        },
+        {
+          "id": "S2",
+          "action": "Manually review and patch the two async tax-service validators, then rotate any touched secrets and update audit logging coverage for all rewritten validation paths.",
+          "owner": "Security",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "wait_for:secret_rotation_complete",
+          "rollback": "restore previous secret version and revert validator changes",
+          "observability": "Secret rotation status, audit-log event completeness, tax-service error rate, validator execution traces"
+        },
+        {
+          "id": "S3",
+          "action": "Run compatibility and regression tests against the v2 codebase, focusing on request/response parity, validator ordering, coercion deltas, and ORM serialization.",
+          "owner": "Backend",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "wait_for:compatibility_tests_pass",
+          "rollback": "revert to the last passing v1-compatible branch",
+          "observability": "Golden response diffs, validation rejection deltas, serialization snapshots, failing endpoint coverage"
+        },
+        {
+          "id": "S4",
+          "action": "Generate the exact v2 OpenAPI artifact from the reviewed code and publish it for schema-diff signoff.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S3"
+          ],
+          "gate": "wait_for:published_openapi_v2_and_signed_off_schema_diff",
+          "rollback": "withdraw v2 artifacts and republish the v1 artifacts",
+          "observability": "OpenAPI schema diff, breaking-change report, model/endpoint drift, downstream parser warnings"
+        },
+        {
+          "id": "S5",
+          "action": "Regenerate and publish @acme/payments-client@2.x, then regenerate the mobile SDKs from the signed-off v2 schema.",
+          "owner": "Platform",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "wait_for:client_v2_published_and_mobile_sdk_released",
+          "rollback": "withdraw v2 client/mobile artifacts and republish the prior stable versions",
+          "observability": "Package publish success, SDK generation output, integration test pass rate, artifact version tags"
+        },
+        {
+          "id": "S6",
+          "action": "Send partner/integrator notices and customer escalation ownership for the coming schema and behavior changes.",
+          "owner": "Product",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "window:partner_notice_14d",
+          "rollback": "retract notices only if no external distribution occurred; otherwise issue correction notice",
+          "observability": "Notice delivery completion, partner acknowledgements, escalation-owner assignment"
+        },
+        {
+          "id": "S7",
+          "action": "Run internal consumer migration and mobile rollout tracking until the new client reaches required adoption and apps are in user hands.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S5",
+            "S6"
+          ],
+          "gate": "wait_for:mobile SDK shipped and in user hands",
+          "rollback": "keep v1 client support and pause any v1 deprecation work",
+          "observability": "Internal consumer upgrade rate, mobile release adoption, app-store availability, client version telemetry"
+        },
+        {
+          "id": "S8",
+          "action": "Enable the server-side v2 compatibility flag in canary, keeping dual-support for v1 and v2 clients while serving production traffic.",
+          "owner": "SRE",
+          "depends_on": [
+            "S3",
+            "S5",
+            "S6",
+            "S7"
+          ],
+          "gate": "monitor:validation_rejection_rate<=0.1% above baseline",
+          "rollback": "disable the v2 schema/serialization flag and serve v1-compatible output",
+          "observability": "Canary error rate, validation rejection rate, p99 latency, 4xx/5xx mix, audit-log completeness"
+        },
+        {
+          "id": "S9",
+          "action": "Expand staged rollout during the safe production window while keeping legacy compatibility shims active.",
+          "owner": "SRE",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "window:business-hours excluding Friday afternoon and incident windows",
+          "rollback": "pause rollout and keep current production version serving traffic",
+          "observability": "Traffic-split stability, rejection-rate trend, latency, incident count, rollback triggers"
+        },
+        {
+          "id": "S10",
+          "action": "After sustained baseline performance, deprecate v1-only paths and keep the dual-support window until consumer usage is quiet.",
+          "owner": "Backend",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "monitor:internal_client_v2_adoption>=80%",
+          "rollback": "restore v1-compatible request/response handling",
+          "observability": "v1/v2 request mix, legacy-field usage, consumer error reports, adoption telemetry"
+        }
+      ],
+      "open_questions": [
+        "Which exact endpoints/fields need explicit non-strict validation to preserve v1 behavior?",
+        "What is the committed partner notice lead time date for the 14-day window?",
+        "Who is the named customer escalation owner for the rollout?",
+        "Are there any legacy fields that must remain past initial cutover for Data Platform consumers?",
+        "What is the final internal threshold for 'in user hands' for the mobile SDK release?"
+      ],
+      "conflicts": [
+        {
+          "owners": [
+            "BackendOwner",
+            "SRE",
+            "ConsumerSubsystem"
+          ],
+          "blocking_constraints": [
+            "Keep request/response contracts backward-compatible during migration",
+            "Keep a feature-flagged compatibility path for mixed clients",
+            "Preserve legacy compatibility shim for v1 callers"
+          ],
+          "conflict": "These all require retaining v1-compatible behavior, but they can conflict with the desire to cut over to v2-only behavior quickly."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "DataPlatform"
+          ],
+          "blocking_constraints": [
+            "Do not drop legacy fields until consumer traffic is quiet",
+            "Regenerate OpenAPI and SDKs from the exact v2 schema only"
+          ],
+          "conflict": "Exact v2 schema publication can expose field removals or shape changes before legacy usage is quiet."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "SRE",
+            "ConsumerSubsystem"
+          ],
+          "blocking_constraints": [
+            "Publish @acme/payments-client@2.x before any breaking server change",
+            "Do not cut over until regenerated client and app releases exist",
+            "Run dual-support window for v1 and v2 clients before deprecating v1"
+          ],
+          "conflict": "The server cannot break v1 consumers until client/mobile releases exist, while dual-support also delays full deprecation."
+        },
+        {
+          "owners": [
+            "SRE",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Run migration only in a safe deploy window, not during incidents or Friday",
+            "Do not roll out during launch windows or major customer events"
+          ],
+          "conflict": "Both restrict rollout timing and can conflict if available safe windows overlap with business blackout periods."
+        },
+        {
+          "owners": [
+            "Security",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Approve v2 validation changes after SOC2/security review",
+            "Do not roll out during launch windows or major customer events"
+          ],
+          "conflict": "Security approval timing may push rollout into or past business blackout windows, blocking deployment."
+        },
+        {
+          "owners": [
+            "Security",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Notify partners before any externally visible schema or behavior change",
+            "Notify integrators before any breaking schema or client change"
+          ],
+          "conflict": "Partner and integrator notices must happen before publication, which can delay the rollout sequence."
+        },
+        {
+          "owners": [
+            "DataPlatform",
+            "ConsumerSubsystem"
+          ],
+          "blocking_constraints": [
+            "Validate v2 payloads against baseline before broad rollout",
+            "Validate stricter v2 coercion against current real traffic"
+          ],
+          "conflict": "Baseline and real-traffic validation gates both need to pass, and either can block rollout if stricter coercion changes rejection rates."
+        }
+      ]
+    },
+    "03-safety-tilted": {
+      "summary": "Migrate code under v2 compatibility, publish exact-schema artifacts, then canary with dual-support until client/mobile adoption and error rates are safe.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Inventory all v1-only Pydantic usage, flag the 2 tax-service validator endpoints, and diff current OpenAPI against expected v2 output.",
+          "owner": "Backend",
+          "depends_on": [],
+          "gate": "none",
+          "rollback": "discard analysis artifacts and restore previous migration notes",
+          "observability": "Count of @validator/@root_validator, json_encoders, orm_mode, dict/json call sites, and endpoints with schema drift risk"
+        },
+        {
+          "id": "S2",
+          "action": "Apply bump-pydantic codemod across the repo, then manually rewrite 6 root validators, 3 custom serializers, 12 orm_mode models, and remaining dict/json calls.",
+          "owner": "Backend",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "none",
+          "rollback": "revert codemod commit and manual edits",
+          "observability": "Typecheck failures, serializer output diffs, validator parity tests, and model import errors"
+        },
+        {
+          "id": "S3",
+          "action": "Refactor the 2 async tax-service validators into sync-safe paths with explicit service calls outside validation, and rotate any touched secrets first.",
+          "owner": "Backend",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "wait_for:secret_rotation_complete",
+          "rollback": "restore previous validator implementation and previous secret version",
+          "observability": "Tax-service call success rate, validation latency, secret access errors, and audit trail completeness"
+        },
+        {
+          "id": "S4",
+          "action": "Add compatibility shims and explicit non-strict relaxations for fields that regress under stricter v2 coercion, keeping v1-compatible request/response shapes behind a feature flag.",
+          "owner": "Backend",
+          "depends_on": [
+            "S2",
+            "S3"
+          ],
+          "gate": "monitor:validation_rejection_rate<=0.1% above baseline",
+          "rollback": "disable the v2 validation path and serve v1-compatible handling",
+          "observability": "Per-endpoint rejection rate, payloads failing new coercion rules, and audit-log event coverage"
+        },
+        {
+          "id": "S5",
+          "action": "Run the full v2 test suite, including compatibility tests for all payment endpoints and OpenAPI snapshot comparison against the published schema target.",
+          "owner": "Backend",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "wait_for:compatibility_tests_pass",
+          "rollback": "revert to the last green migration commit",
+          "observability": "Schema diff results, contract test failures, and any changed nullable/union/example rendering"
+        },
+        {
+          "id": "S6",
+          "action": "Generate the exact v2 OpenAPI artifact from the tested code, publish it, and sign off the schema diff for downstream consumers.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "wait_for:published_openapi_v2_and_signed_off_schema_diff",
+          "rollback": "withdraw_v2_artifacts_and_republish_v1_artifacts",
+          "observability": "Published spec hash, diff summary, and compatibility impact on generated clients"
+        },
+        {
+          "id": "S7",
+          "action": "Regenerate and publish @acme/payments-client@2.x from the exact v2 schema, then regenerate the mobile SDK artifacts for app release planning.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "none",
+          "rollback": "unpublish v2 client artifacts and restore v1 client publishing",
+          "observability": "Client package publish success, generated SDK diffs, and downstream compile/test results"
+        },
+        {
+          "id": "S8",
+          "action": "Update docs.acme.internal/payments to reflect the v2 schema and new client major version, without removing legacy field documentation yet.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "window:after-committed_partner_notice_lead_time",
+          "rollback": "revert docs to the v1-compatible version",
+          "observability": "Docs build status, schema snippets rendered, and partner-facing content drift"
+        },
+        {
+          "id": "S9",
+          "action": "Send partner and integrator notices covering the v2 client, docs changes, and any behavior changes that may affect external consumers.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S7",
+            "S8"
+          ],
+          "gate": "approval:release_manager",
+          "rollback": "retract the notice and pause downstream rollout",
+          "observability": "Notice delivery confirmation, partner acknowledgements, and escalation queue volume"
+        },
+        {
+          "id": "S10",
+          "action": "Ship the new mobile SDK through app store release channels and wait until it is in user hands before any server-side breaking schema cutover.",
+          "owner": "Mobile",
+          "depends_on": [
+            "S7",
+            "S9"
+          ],
+          "gate": "wait_for:mobile SDK shipped and in user hands",
+          "rollback": "halt server cutover and keep mobile on the old SDK path",
+          "observability": "App release adoption, crash-free sessions, and SDK version distribution"
+        },
+        {
+          "id": "S11",
+          "action": "Enable the v2 compatibility flag for a small canary slice in production, keeping dual-support for v1 and v2 clients active.",
+          "owner": "SRE",
+          "depends_on": [
+            "S5",
+            "S9",
+            "S10"
+          ],
+          "gate": "window:business-hours excluding Friday afternoon and incident windows",
+          "rollback": "disable the v2 schema/serialization flag and serve v1-compatible output",
+          "observability": "Validation rejection rate, p99 latency on /v1/payments/charge, audit-log missing events, and canary error rate"
+        },
+        {
+          "id": "S12",
+          "action": "Expand production rollout only if canary metrics stay within baseline, while preserving the v1 compatibility shim for mixed-fleet consumers.",
+          "owner": "SRE",
+          "depends_on": [
+            "S11"
+          ],
+          "gate": "monitor:validation_rejection_rate<=0.1% above baseline",
+          "rollback": "shift traffic back to FastAPI 0.95.2 + Pydantic v1 deployment",
+          "observability": "Error-budget burn, consumer-specific failures, schema-related support tickets, and rollback triggers"
+        }
+      ],
+      "open_questions": [
+        "Which request fields should be explicitly marked non-strict versus left to fail under v2 coercion?",
+        "Do the two tax-service validator endpoints require a service-layer refactor or a temporary wrapper outside Pydantic validation?",
+        "What exact partner notice lead time is committed for the schema/client/doc changes?",
+        "Which internal services are designated as 'critical' for the dual-support window closure condition?",
+        "What constitutes 'in user hands' for mobile SDK release evidence?"
+      ],
+      "conflicts": [
+        {
+          "owners": [
+            "BackendOwner",
+            "DataPlatform"
+          ],
+          "blocking_constraints": [
+            "Publish @acme/payments-client@2.x before any breaking server change",
+            "Do not drop legacy fields until consumer traffic is quiet"
+          ],
+          "why": "Client v2 publication and any breaking schema change are blocked until consumers are ready, while legacy fields must remain until quiet traffic proves they are unused."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "SRE"
+          ],
+          "blocking_constraints": [
+            "Deploy schema/model compatibility code before client-facing release",
+            "Keep a feature-flagged compatibility path for mixed clients"
+          ],
+          "why": "The rollout must first land compatibility code, while the feature-flagged path must stay available through the mixed-fleet transition."
+        },
+        {
+          "owners": [
+            "SRE",
+            "ConsumerSubsystem"
+          ],
+          "blocking_constraints": [
+            "Publish new client and wait for safe consumer migration before breaking changes",
+            "Preserve legacy compatibility shim for v1 callers"
+          ],
+          "why": "Breaking changes cannot proceed until the new client is broadly adopted, and the legacy shim must remain until v1 callers are fully migrated."
+        },
+        {
+          "owners": [
+            "Security",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Notify partners before any externally visible schema or behavior change",
+            "Run migration only in a safe deploy window, not during incidents or Friday"
+          ],
+          "why": "External communication lead time must be satisfied before rollout, and rollout timing is constrained to approved safe windows."
+        },
+        {
+          "owners": [
+            "DataPlatform",
+            "ConsumerSubsystem"
+          ],
+          "blocking_constraints": [
+            "Regenerate OpenAPI and SDKs from the exact v2 schema only",
+            "Do not cut over until regenerated client and app releases exist"
+          ],
+          "why": "Schema-derived artifacts must come from the exact v2 spec, and server cutover is blocked until regenerated client and mobile releases are available."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ConsumerSubsystem"
+          ],
+          "blocking_constraints": [
+            "Validate stricter v2 coercion against current real traffic",
+            "Keep request/response contracts backward-compatible during migration"
+          ],
+          "why": "Stricter validation may reject bodies that previously passed, but compatibility must be preserved for existing consumers during migration."
+        },
+        {
+          "owners": [
+            "Security",
+            "BackendOwner"
+          ],
+          "blocking_constraints": [
+            "Approve v2 validation changes after SOC2/security review",
+            "Rotate any secrets touched by validator or tax-service code changes first"
+          ],
+          "why": "Security review is required for validation behavior changes, and secret rotation must precede any validator/tax-service code rollout."
+        },
+        {
+          "owners": [
+            "DataPlatform",
+            "BackendOwner"
+          ],
+          "blocking_constraints": [
+            "Validate v2 payloads against baseline before broad rollout",
+            "Deploy schema/model compatibility code before client-facing release"
+          ],
+          "why": "Broad rollout is blocked until validation rejection stays within baseline, even after compatibility code is deployed."
+        }
+      ]
+    },
+    "04-speed-tilted": {
+      "summary": "Migrate code to v2, publish exact-schema artifacts, ship client/mobile first, then canary and dual-support rollout with strict validation monitoring.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Run secret rotation for the two tax-service validator endpoints and freeze rollout scheduling to a business-hours, non-Friday, non-incident window.",
+          "owner": "Security + SRE",
+          "depends_on": [],
+          "gate": "window:business-hours excluding Friday afternoon and incident windows",
+          "rollback": "restore previous secret version and pause rollout",
+          "observability": "Secret rotation completion status, incident calendar, deployment window availability"
+        },
+        {
+          "id": "S2",
+          "action": "Execute bump-pydantic across the codebase, then manually rewrite 6 root validators, 3 custom encoders to field serializers, 12 orm_mode models to ConfigDict(from_attributes=True), and replace .dict()/.json() with model_dump()/model_dump_json().",
+          "owner": "Backend",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "none",
+          "rollback": "redeploy_previous",
+          "observability": "Codemod diff size, unit test pass rate, lint/typecheck output"
+        },
+        {
+          "id": "S3",
+          "action": "Rewrite the two remote-tax-service validator paths into sync-safe logic, explicitly characterizing strict-coercion changes and relaxing only the affected fields with non-strict validation where required.",
+          "owner": "Backend",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "none",
+          "rollback": "redeploy_previous",
+          "observability": "Endpoint-level validation outcomes, strict/coercion diffs, remote tax-service call traces"
+        },
+        {
+          "id": "S4",
+          "action": "Run compatibility, regression, and schema-diff test suites against the v2 codepath, including validator-ordering cases, audit-log coverage, and request/response contract checks for all payment endpoints.",
+          "owner": "Backend + Security + DataPlatform",
+          "depends_on": [
+            "S2",
+            "S3"
+          ],
+          "gate": "wait_for:compatibility_tests_pass",
+          "rollback": "redeploy_previous",
+          "observability": "Test pass/fail, schema diffs, audit-log completeness, validation rejection samples"
+        },
+        {
+          "id": "S5",
+          "action": "Generate the OpenAPI artifact from the exact v2 schema, review and sign off the diff, then publish the v2 OpenAPI bundle as the source of truth.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "wait_for:published_openapi_v2_and_signed_off_schema_diff",
+          "rollback": "withdraw_v2_artifacts_and_republish_v1_artifacts",
+          "observability": "OpenAPI diff report, artifact publish status, schema checksum/version"
+        },
+        {
+          "id": "S6",
+          "action": "Regenerate and publish @acme/payments-client@2.x from the signed-off v2 OpenAPI, and regenerate the mobile SDK from the same artifact set.",
+          "owner": "SDK Release + Mobile",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "wait_for:client_v2_published_and_mobile_sdk_released",
+          "rollback": "withdraw_v2_artifacts_and_republish_v1_artifacts",
+          "observability": "Package publish status, SDK build artifacts, version tags, release notes"
+        },
+        {
+          "id": "S7",
+          "action": "Send partner-integrator notice and customer-facing communications covering schema/client changes and expected validation differences.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "wait_for:partner-integrator-notice-sent",
+          "rollback": "revert docs/client publish and redeploy_previous",
+          "observability": "Notice delivery confirmation, acknowledgment tracking, escalation queue"
+        },
+        {
+          "id": "S8",
+          "action": "Update the documentation site to reflect the v2 schema and new client guidance, keeping legacy references clearly marked during dual support.",
+          "owner": "ProductPM + Docs",
+          "depends_on": [
+            "S5",
+            "S7"
+          ],
+          "gate": "none",
+          "rollback": "revert docs/client publish and redeploy_previous",
+          "observability": "Docs deploy status, broken-link checks, documentation search/index health"
+        },
+        {
+          "id": "S9",
+          "action": "Roll out the server compatibility flag for v2 serialization/validation in canary mode while preserving v1-compatible output paths.",
+          "owner": "SRE + Backend",
+          "depends_on": [
+            "S6",
+            "S7",
+            "S8"
+          ],
+          "gate": "monitor:canary_error_rate_within_baseline",
+          "rollback": "disable the v2 schema/serialization flag and serve v1-compatible output",
+          "observability": "Canary error rate, latency, request validation failures, audit-log missing events"
+        },
+        {
+          "id": "S10",
+          "action": "Monitor production validation rejection rate and audit-log coverage against the v1 baseline, expanding traffic only if rejection increase stays within 0.1% and logs remain complete.",
+          "owner": "SRE + Security + DataPlatform",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "monitor:validation-rejection-rate<=0.1% and monitor:audit_log_missing_events0",
+          "rollback": "shift traffic back to FastAPI 0.95.2 + Pydantic v1 deployment",
+          "observability": "Validation rejection delta, audit-log gaps, rollback-trigger metrics, p99 charge latency"
+        },
+        {
+          "id": "S11",
+          "action": "Continue dual-support operation for v1 and v2 clients while monitoring internal adoption and keeping the legacy compatibility shim active.",
+          "owner": "Backend + SRE + ConsumerSubsystem",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "monitor:internal_client_v2_adoption>=80%",
+          "rollback": "restore v1-compatible request/response handling",
+          "observability": "Client version mix, per-consumer adoption, v1 fallback usage, support ticket volume"
+        },
+        {
+          "id": "S12",
+          "action": "After mobile apps are in users' hands and internal adoption reaches the threshold, schedule the breaking server-side cutover and retire deprecated v1-only behavior for legacy fields.",
+          "owner": "Backend + SRE + ProductPM + ConsumerSubsystem",
+          "depends_on": [
+            "S6",
+            "S10",
+            "S11"
+          ],
+          "gate": "window:dual-support until all critical internal services and mobile apps are on v2",
+          "rollback": "restore legacy fields and backfill missing values",
+          "observability": "Legacy-field usage, mobile release adoption, consumer breakage reports, data platform parser health"
+        }
+      ],
+      "open_questions": [
+        "Which fields, if any, need explicit non-strict validation to preserve current request acceptance under Pydantic v2?",
+        "What exact schema differences are acceptable for the v2 OpenAPI diff before partner notice is considered complete?",
+        "Who is the named customer escalation owner for the rollout approval?",
+        "What is the target date for the partner notice 14-day window relative to the planned canary?"
+      ],
+      "conflicts": [
+        {
+          "between": [
+            "BackendOwner",
+            "ConsumerSubsystem"
+          ],
+          "issue": "Backend wants compatibility code deployed before client-facing release, while ConsumerSubsystem requires the server to preserve legacy compatibility and wait for v2 client publication/adoption before cutover."
+        },
+        {
+          "between": [
+            "BackendOwner",
+            "ConsumerSubsystem"
+          ],
+          "issue": "Backend wants to publish client v2 before breaking server change, while ConsumerSubsystem requires dual support and stable v1/v2 contract during migration."
+        },
+        {
+          "between": [
+            "BackendOwner",
+            "SRE"
+          ],
+          "issue": "Backend wants schema/model compatibility code before release, while SRE requires a feature-flagged compatibility path and canary gating with rollback to v1."
+        },
+        {
+          "between": [
+            "BackendOwner",
+            "DataPlatform"
+          ],
+          "issue": "Backend wants the migration to proceed, while DataPlatform blocks broad rollout until v2 payloads are validated against baseline and the exact v2 OpenAPI is published with sign-off."
+        },
+        {
+          "between": [
+            "BackendOwner",
+            "Security"
+          ],
+          "issue": "Backend wants rollout of validator changes, while Security requires approval, audit-trail integrity, and secret rotation first for validator/tax-service changes."
+        },
+        {
+          "between": [
+            "BackendOwner",
+            "ProductPM"
+          ],
+          "issue": "Backend wants client/server changes shipped, while ProductPM requires partner notice, release-manager approval, customer escalation ownership, and non-launch-window rollout."
+        },
+        {
+          "between": [
+            "DataPlatform",
+            "ConsumerSubsystem"
+          ],
+          "issue": "DataPlatform requires no legacy field drops until traffic is quiet, while ConsumerSubsystem requires preserving legacy compatibility until all critical services and mobile apps are on v2."
+        },
+        {
+          "between": [
+            "SRE",
+            "ProductPM"
+          ],
+          "issue": "SRE wants business-hours-only rollout and error-rate gating, while ProductPM blocks rollout during launch windows/major events and requires approvals for release timing."
+        },
+        {
+          "between": [
+            "SRE",
+            "Security"
+          ],
+          "issue": "SRE wants rollout gating and compatibility flags, while Security requires approval and audit-log completeness before v2 validation changes are considered safe."
+        },
+        {
+          "between": [
+            "Security",
+            "ProductPM"
+          ],
+          "issue": "Security requires partner notice before externally visible schema or behavior changes, while ProductPM requires the same notice plus committed lead time and escalation ownership."
+        },
+        {
+          "between": [
+            "ConsumerSubsystem",
+            "DataPlatform"
+          ],
+          "issue": "ConsumerSubsystem requires mobile SDK shipped and in user hands before cutover, while DataPlatform requires exact-schema-only artifact regeneration and sign-off before publishing client inputs."
+        }
+      ]
+    },
+    "05-speed-tilted": {
+      "summary": "Prepare v2 artifacts and compatibility, run shadow/canary validation, then cut over only after partner/mobile/client readiness.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Run secret rotation for the two tax-service validator endpoints and freeze related credentials for the migration window.",
+          "owner": "Security",
+          "depends_on": [],
+          "gate": "wait_for:secret_rotation_complete",
+          "rollback": "restore previous secret version and redeploy_previous",
+          "observability": "Secret rotation completion, auth failures on tax-service calls, validator error logs"
+        },
+        {
+          "id": "S2",
+          "action": "Apply bump-pydantic codemod, upgrade FastAPI to 0.110.x and Pydantic to 2.7+, then manually rewrite root validators, json_encoders, orm_mode, and remaining dict/json call sites.",
+          "owner": "Backend",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "none",
+          "rollback": "redeploy_previous",
+          "observability": "Unit test pass rate, model import errors, serialization diffs, lint/typecheck results"
+        },
+        {
+          "id": "S3",
+          "action": "Update the two async tax-service validator endpoints to a sync-safe design and preserve audit logging on all validation paths.",
+          "owner": "Backend",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "none",
+          "rollback": "disable_new_validation_path and redeploy_previous",
+          "observability": "Audit log event counts, tax-service latency/errors, request validation failures"
+        },
+        {
+          "id": "S4",
+          "action": "Run compatibility and regression tests on the v2 codepath against recorded traffic and schema snapshots; characterize stricter coercion breakages and relax only the affected fields where needed.",
+          "owner": "Backend",
+          "depends_on": [
+            "S2",
+            "S3"
+          ],
+          "gate": "wait_for:compatibility_tests_pass",
+          "rollback": "redeploy_previous",
+          "observability": "Validation rejection deltas, schema diffs, request-body replay failures, endpoint-level error rates"
+        },
+        {
+          "id": "S5",
+          "action": "Publish the exact v2 OpenAPI artifact, regenerate @acme/payments-client@2.x and mobile SDKs from it, and publish the versioned artifacts.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "wait_for:published_openapi_v2_and_signed_off_schema_diff",
+          "rollback": "withdraw_v2_artifacts_and_republish_v1_artifacts",
+          "observability": "Signed-off schema diff, generated client diffs, mobile SDK build status, docs generation output"
+        },
+        {
+          "id": "S6",
+          "action": "Send partner/integrator notice for all externally visible schema and behavior changes, including docs updates and the new client major version.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "wait_for:partner-integrator-notice-sent",
+          "rollback": "revert docs/client publish and redeploy_previous",
+          "observability": "Notice delivery confirmation, partner acknowledgements, inbound support questions"
+        },
+        {
+          "id": "S7",
+          "action": "Release the mobile SDKs through app store submission and confirm the new builds are in user hands.",
+          "owner": "Mobile",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "wait_for:mobile SDK shipped and in user hands",
+          "rollback": "pull staged mobile release and publish previous SDK build",
+          "observability": "Store submission status, rollout adoption, crash reports, SDK version telemetry"
+        },
+        {
+          "id": "S8",
+          "action": "Deploy the backend with a feature-flagged compatibility path that serves v1-compatible output by default while enabling v2 serializers/validators in shadow/canary.",
+          "owner": "SRE",
+          "depends_on": [
+            "S4",
+            "S6",
+            "S7"
+          ],
+          "gate": "window:business-hours excluding Friday afternoon and incident windows",
+          "rollback": "disable the v2 schema/serialization flag and serve v1-compatible output",
+          "observability": "Canary validation rejection rate, audit log completeness, p99 validation latency, tax-service errors"
+        },
+        {
+          "id": "S9",
+          "action": "Monitor canary traffic and compare validation rejection rate, audit logging, and endpoint latency against baseline; keep rollout only if stable.",
+          "owner": "SRE",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "monitor:validation_rejection_rate<=0.1% above baseline",
+          "rollback": "shift traffic back to FastAPI 0.95.2 + Pydantic v1 deployment",
+          "observability": "Validation rejection rate, p99 latency on /v1/payments/charge, audit-log missing events, error budget burn"
+        },
+        {
+          "id": "S10",
+          "action": "Promote the v2 schema/serialization flag for production while maintaining dual-support for v1 and v2 clients.",
+          "owner": "SRE",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "monitor:validation_rejection_rate<=0.1%",
+          "rollback": "disable the v2 schema/serialization flag and serve v1-compatible output",
+          "observability": "Traffic split by client version, rejection rate, consumer error reports, response-shape diffs"
+        },
+        {
+          "id": "S11",
+          "action": "After 80% internal client adoption and mobile release completion, deprecate the v1 compatibility shim and remove only legacy fields that have been quiet for 30 days.",
+          "owner": "Backend",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "wait_for:30_day_quiet_period_with_no_legacy_field_usage",
+          "rollback": "restore legacy fields and backfill missing values",
+          "observability": "Legacy field usage, internal consumer version telemetry, mobile version telemetry, parser error reports"
+        },
+        {
+          "id": "S12",
+          "action": "Update documentation site and publish the new API docs aligned to the exact v2 schema after rollout stabilization.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "window:after-committed_partner_notice_lead_time",
+          "rollback": "revert docs/client publish and redeploy_previous",
+          "observability": "Docs build success, site uptime, partner feedback, schema/doc mismatch reports"
+        }
+      ],
+      "open_questions": [
+        "Which specific fields need explicit non-strict validation relaxations after replay testing?",
+        "What is the exact partner notice lead time already committed for the externally visible changes?",
+        "Who is the named customer escalation owner for rollout approvals?",
+        "Do the mobile apps require separate iOS and Android release dates, or can they share one submission window?",
+        "Which legacy fields are considered safe to deprecate after the quiet period, and which must remain indefinitely?"
+      ],
+      "conflicts": [
+        {
+          "between": [
+            "BackendOwner: keep request/response contracts backward-compatible during migration",
+            "DataPlatform: regenerate OpenAPI and SDKs from the exact v2 schema only"
+          ],
+          "reason": "Exact v2 schema regeneration can change contracts visible to existing v1 consumers."
+        },
+        {
+          "between": [
+            "BackendOwner: publish @acme/payments-client@2.x before any breaking server change",
+            "ConsumerSubsystem: preserve legacy compatibility shim for v1 callers"
+          ],
+          "reason": "Publishing the v2 client and introducing breaking schema changes must be sequenced with a v1 compatibility period."
+        },
+        {
+          "between": [
+            "DataPlatform: do not drop legacy fields until consumer traffic is quiet",
+            "ConsumerSubsystem: preserve legacy compatibility shim for v1 callers"
+          ],
+          "reason": "Both constrain removal of legacy fields, but the quiet-period gate can delay server simplification beyond client cutover."
+        },
+        {
+          "between": [
+            "SRE: keep a feature-flagged compatibility path for mixed clients",
+            "ConsumerSubsystem: keep v1 and v2 client contract stable during dual-support"
+          ],
+          "reason": "Both require dual-support, but feature-flagged behavior can still produce different outputs if not carefully pinned."
+        },
+        {
+          "between": [
+            "SRE: publish new client and wait for safe consumer migration before breaking changes",
+            "ConsumerSubsystem: do not cut over until regenerated client and app releases exist"
+          ],
+          "reason": "Both require client/mobile readiness before breakage, creating a hard dependency on external release timing."
+        },
+        {
+          "between": [
+            "Security: approve v2 validation changes after SOC2/security review",
+            "ProductPM: do not roll out during launch windows or major customer events"
+          ],
+          "reason": "Security review timing and release windows can block each other if the approved window is too narrow."
+        },
+        {
+          "between": [
+            "ProductPM: notify partners before any externally visible schema or behavior change",
+            "SRE: run migration only in a safe deploy window, not during incidents or Friday"
+          ],
+          "reason": "Partner notice lead time may force rollout dates outside the preferred safe deploy window."
+        },
+        {
+          "between": [
+            "DataPlatform: validate v2 payloads against baseline before broad rollout",
+            "BackendOwner: deploy schema/model compatibility code before client-facing release"
+          ],
+          "reason": "Validation baselining must complete before broad rollout, while compatibility code must land first to allow that validation."
+        },
+        {
+          "between": [
+            "Security: rotate any secrets touched by validator or tax-service code changes first",
+            "BackendOwner: update the two async tax-service validator endpoints to a sync-safe design"
+          ],
+          "reason": "Secret rotation must precede the validator code change because the endpoints themselves are security-sensitive."
+        },
+        {
+          "between": [
+            "ConsumerSubsystem: validate stricter v2 coercion against current real traffic",
+            "DataPlatform: do not drop legacy fields until consumer traffic is quiet"
+          ],
+          "reason": "Traffic validation requires real consumer traffic, which can delay the quiet period needed to remove legacy fields."
+        }
+      ]
+    }
+  },
+  "weights_for": {
+    "00-cost-leaning": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "01-safety-leaning": [
+      0.0,
+      1.0,
+      0.0
+    ],
+    "02-speed-leaning": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "03-safety-tilted": [
+      0.0,
+      0.5,
+      0.5
+    ],
+    "04-speed-tilted": [
+      0.5,
+      0.0,
+      0.5
+    ],
+    "05-speed-tilted": [
+      0.5,
+      0.5,
+      0.0
+    ]
+  },
+  "scores": {
+    "00-cost-leaning": {
+      "steps": 12,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 2,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.75,
+      "fragility_at_budget_1": 0.857,
+      "fragility_at_budget_2": 0.0,
+      "avg_severity": 2.75,
+      "rollback_failure_rate": 0.438,
+      "approval_gates": 2,
+      "window_gates": 1,
+      "monitor_gates": 2,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S8",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 9,
+        "manual_ops": 4,
+        "redo_full": 3
+      }
+    },
+    "01-safety-leaning": {
+      "steps": 12,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 2,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.667,
+      "fragility_at_budget_1": 0.769,
+      "fragility_at_budget_2": 0.0,
+      "avg_severity": 2.13,
+      "rollback_failure_rate": 0.4,
+      "approval_gates": 1,
+      "window_gates": 2,
+      "monitor_gates": 2,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ],
+        [
+          "S8",
+          1.0
+        ],
+        [
+          "S3",
+          0.5
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 3,
+        "manual_ops": 11,
+        "redo_full": 1
+      }
+    },
+    "02-speed-leaning": {
+      "steps": 10,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 2,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.071,
+      "fragility_at_budget_1": 0.083,
+      "fragility_at_budget_2": 0.0,
+      "avg_severity": 2.07,
+      "rollback_failure_rate": 0.929,
+      "approval_gates": 0,
+      "window_gates": 2,
+      "monitor_gates": 2,
+      "achilles_heel": [
+        [
+          "S1",
+          0.5
+        ],
+        [
+          "S2",
+          0.0
+        ],
+        [
+          "S3",
+          0.0
+        ],
+        [
+          "S4",
+          0.0
+        ],
+        [
+          "S5",
+          0.0
+        ]
+      ],
+      "recovery_distribution": {
+        "manual_ops": 14
+      }
+    },
+    "03-safety-tilted": {
+      "steps": 12,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 2,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.062,
+      "fragility_at_budget_1": 0.071,
+      "fragility_at_budget_2": 0.0,
+      "avg_severity": 1.94,
+      "rollback_failure_rate": 0.938,
+      "approval_gates": 1,
+      "window_gates": 2,
+      "monitor_gates": 2,
+      "achilles_heel": [
+        [
+          "S1",
+          0.5
+        ],
+        [
+          "S2",
+          0.0
+        ],
+        [
+          "S3",
+          0.0
+        ],
+        [
+          "S4",
+          0.0
+        ],
+        [
+          "S5",
+          0.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 1,
+        "manual_ops": 15
+      }
+    },
+    "04-speed-tilted": {
+      "steps": 12,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 2,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.938,
+      "fragility_at_budget_1": 0.929,
+      "fragility_at_budget_2": 1.0,
+      "avg_severity": 3.5,
+      "rollback_failure_rate": 0.312,
+      "approval_gates": 0,
+      "window_gates": 2,
+      "monitor_gates": 3,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S2",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 9,
+        "manual_ops": 3,
+        "unrecoverable": 1,
+        "redo_full": 3
+      }
+    },
+    "05-speed-tilted": {
+      "steps": 12,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 2,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.933,
+      "fragility_at_budget_1": 1.0,
+      "fragility_at_budget_2": 0.5,
+      "avg_severity": 3.33,
+      "rollback_failure_rate": 0.4,
+      "approval_gates": 0,
+      "window_gates": 2,
+      "monitor_gates": 2,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "manual_ops": 2,
+        "recoverable_in_window": 9,
+        "unrecoverable": 4
+      }
+    }
+  },
+  "smt": {
+    "00-cost-leaning": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 15,
+      "n_constraint_edges": 5,
+      "witness_ordering": [],
+      "unsat_core": [
+        "dep__S5__before__S6",
+        "con__BackendOwner__S6__before__S5"
+      ],
+      "unsat_core_explanations": [
+        "step `S6` depends_on `S5` (so `S5` must be earlier)",
+        "BackendOwner's blocking constraint requires `S6` before `S5` (gate `wait_for:compatibility_tests_pass`)"
+      ],
+      "notes": []
+    },
+    "01-safety-leaning": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 15,
+      "n_constraint_edges": 3,
+      "witness_ordering": [],
+      "unsat_core": [
+        "dep__S4__before__S9",
+        "con__BackendOwner__S9__before__S4"
+      ],
+      "unsat_core_explanations": [
+        "step `S9` depends_on `S4` (so `S4` must be earlier)",
+        "BackendOwner's blocking constraint requires `S9` before `S4` (gate `wait_for:compatibility_tests_pass`)"
+      ],
+      "notes": []
+    },
+    "02-speed-leaning": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 14,
+      "n_constraint_edges": 3,
+      "witness_ordering": [],
+      "unsat_core": [
+        "dep__S4__before__S5",
+        "con__DataPlatform__S5__before__S4"
+      ],
+      "unsat_core_explanations": [
+        "step `S5` depends_on `S4` (so `S4` must be earlier)",
+        "DataPlatform's blocking constraint requires `S5` before `S4` (gate `wait_for:published_openapi_v2_and_signed_off_schema_diff`)"
+      ],
+      "notes": []
+    },
+    "03-safety-tilted": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 16,
+      "n_constraint_edges": 4,
+      "witness_ordering": [],
+      "unsat_core": [
+        "con__DataPlatform__S7__before__S6",
+        "dep__S6__before__S7"
+      ],
+      "unsat_core_explanations": [
+        "DataPlatform's blocking constraint requires `S7` before `S6` (gate `wait_for:published_openapi_v2_and_signed_off_schema_diff`)",
+        "step `S7` depends_on `S6` (so `S6` must be earlier)"
+      ],
+      "notes": []
+    },
+    "04-speed-tilted": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 17,
+      "n_constraint_edges": 4,
+      "witness_ordering": [],
+      "unsat_core": [
+        "con__DataPlatform__S6__before__S5",
+        "dep__S5__before__S6"
+      ],
+      "unsat_core_explanations": [
+        "DataPlatform's blocking constraint requires `S6` before `S5` (gate `wait_for:published_openapi_v2_and_signed_off_schema_diff`)",
+        "step `S6` depends_on `S5` (so `S5` must be earlier)"
+      ],
+      "notes": []
+    },
+    "05-speed-tilted": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 14,
+      "n_constraint_edges": 4,
+      "witness_ordering": [],
+      "unsat_core": [
+        "dep__S4__before__S5",
+        "con__BackendOwner__S5__before__S4"
+      ],
+      "unsat_core_explanations": [
+        "step `S5` depends_on `S4` (so `S4` must be earlier)",
+        "BackendOwner's blocking constraint requires `S5` before `S4` (gate `wait_for:compatibility_tests_pass`)"
+      ],
+      "notes": []
+    }
+  },
+  "chaos": {
+    "00-cost-leaning": {
+      "fragility": 0.75,
+      "fragility_curve": {
+        "1": 0.857,
+        "2": 0.0
+      },
+      "avg_severity": 2.75,
+      "rollback_failure_rate": 0.438,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S8",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 9,
+        "manual_ops": 4,
+        "redo_full": 3
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S10"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S11"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "redo_full",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "redo_full",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "redo_full",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S6",
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2",
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        }
+      ]
+    },
+    "01-safety-leaning": {
+      "fragility": 0.667,
+      "fragility_curve": {
+        "1": 0.769,
+        "2": 0.0
+      },
+      "avg_severity": 2.13,
+      "rollback_failure_rate": 0.4,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ],
+        [
+          "S8",
+          1.0
+        ],
+        [
+          "S3",
+          0.5
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 3,
+        "manual_ops": 11,
+        "redo_full": 1
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "low"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S11"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "redo_full",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S11",
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S6",
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        }
+      ]
+    },
+    "02-speed-leaning": {
+      "fragility": 0.071,
+      "fragility_curve": {
+        "1": 0.083,
+        "2": 0.0
+      },
+      "avg_severity": 2.07,
+      "rollback_failure_rate": 0.929,
+      "achilles_heel": [
+        [
+          "S1",
+          0.5
+        ],
+        [
+          "S2",
+          0.0
+        ],
+        [
+          "S3",
+          0.0
+        ],
+        [
+          "S4",
+          0.0
+        ],
+        [
+          "S5",
+          0.0
+        ]
+      ],
+      "recovery_distribution": {
+        "manual_ops": 14
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S9",
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8",
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        }
+      ]
+    },
+    "03-safety-tilted": {
+      "fragility": 0.062,
+      "fragility_curve": {
+        "1": 0.071,
+        "2": 0.0
+      },
+      "avg_severity": 1.94,
+      "rollback_failure_rate": 0.938,
+      "achilles_heel": [
+        [
+          "S1",
+          0.5
+        ],
+        [
+          "S2",
+          0.0
+        ],
+        [
+          "S3",
+          0.0
+        ],
+        [
+          "S4",
+          0.0
+        ],
+        [
+          "S5",
+          0.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 1,
+        "manual_ops": 15
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "low"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S10"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S11"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8",
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8",
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        }
+      ]
+    },
+    "04-speed-tilted": {
+      "fragility": 0.938,
+      "fragility_curve": {
+        "1": 0.929,
+        "2": 1.0
+      },
+      "avg_severity": 3.5,
+      "rollback_failure_rate": 0.312,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S2",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 9,
+        "manual_ops": 3,
+        "unrecoverable": 1,
+        "redo_full": 3
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S10"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S11"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "unrecoverable",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "redo_full",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "redo_full",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S3",
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "redo_full",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S4",
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        }
+      ]
+    },
+    "05-speed-tilted": {
+      "fragility": 0.933,
+      "fragility_curve": {
+        "1": 1.0,
+        "2": 0.5
+      },
+      "avg_severity": 3.33,
+      "rollback_failure_rate": 0.4,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S7",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "manual_ops": 2,
+        "recoverable_in_window": 9,
+        "unrecoverable": 4
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S10"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "unrecoverable",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "unrecoverable",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "unrecoverable",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S2",
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "unrecoverable",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S4",
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        }
+      ]
+    }
+  },
+  "pareto": {
+    "front_0_labels": [
+      "02-speed-leaning",
+      "04-speed-tilted",
+      "01-safety-leaning",
+      "03-safety-tilted"
+    ],
+    "all_points": [
+      {
+        "label": "00-cost-leaning",
+        "rank": 1,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.75,
+          "avg_severity": 2.75,
+          "rollback_failure_rate": 0.438,
+          "steps": 12.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      {
+        "label": "01-safety-leaning",
+        "rank": 0,
+        "crowding": 2.8920156972588154,
+        "metrics": {
+          "fragility": 0.667,
+          "avg_severity": 2.13,
+          "rollback_failure_rate": 0.4,
+          "steps": 12.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      {
+        "label": "02-speed-leaning",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.071,
+          "avg_severity": 2.07,
+          "rollback_failure_rate": 0.929,
+          "steps": 10.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          1.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "label": "03-safety-tilted",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.062,
+          "avg_severity": 1.94,
+          "rollback_failure_rate": 0.938,
+          "steps": 12.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.0,
+          0.5,
+          0.5
+        ]
+      },
+      {
+        "label": "04-speed-tilted",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.938,
+          "avg_severity": 3.5,
+          "rollback_failure_rate": 0.312,
+          "steps": 12.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.5,
+          0.0,
+          0.5
+        ]
+      },
+      {
+        "label": "05-speed-tilted",
+        "rank": 1,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.933,
+          "avg_severity": 3.33,
+          "rollback_failure_rate": 0.4,
+          "steps": 12.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.5,
+          0.5,
+          0.0
+        ]
+      }
+    ],
+    "winner": "02-speed-leaning",
+    "winner_utility": 0.12165000000000002,
+    "user_weights": {
+      "fragility": 0.4,
+      "coverage": 0.3,
+      "steps": 0.1,
+      "severity": 0.15,
+      "rollback_failure": 0.05
+    }
+  }
+}

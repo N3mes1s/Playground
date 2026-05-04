@@ -1,0 +1,143 @@
+{
+  "intent": "fixtures/intent_sqlite_memory_migration.md",
+  "model": "gpt-5.4-mini",
+  "tokens_in": 958,
+  "tokens_out": 1541,
+  "plan": {
+    "summary": "Add opt-in SQLite memory with JSONL compatibility, safe concurrent writes, and a migration path that preserves existing agent history.",
+    "steps": [
+      {
+        "id": "S1",
+        "action": "Define the SQLite schema in mirofish_lab/memory.py for .mirofish_memory/memory.db, including a single table keyed by persona/agent context plus fields needed for tag and time-range queries.",
+        "owner": "backend",
+        "depends_on": [],
+        "gate": "approval:storage-schema-review",
+        "rollback": "Do not ship the SQLite backend; keep JSONL-only behavior active.",
+        "observability": "Schema review checklist confirms compatibility with existing memory record shape and query needs."
+      },
+      {
+        "id": "S2",
+        "action": "Implement SqliteMemory in mirofish_lab/memory.py using stdlib sqlite3 with explicit transactions, durable writes, and concurrency-safe access; ensure write failures raise loudly instead of dropping records.",
+        "owner": "backend",
+        "depends_on": [
+          "S1"
+        ],
+        "gate": "none",
+        "rollback": "Fallback to LocalMemory JSONL path if SQLite write/read initialization fails.",
+        "observability": "Log SQLite open/write errors; expose counts for successful writes and failed writes."
+      },
+      {
+        "id": "S3",
+        "action": "Keep LocalMemory signature unchanged, but turn it into a compatibility shim that reads any existing JSONL files under .mirofish_memory/ and routes new writes through the SQLite backend.",
+        "owner": "backend",
+        "depends_on": [
+          "S2"
+        ],
+        "gate": "approval:compatibility-review",
+        "rollback": "If shim behavior breaks legacy callers, revert LocalMemory write path to direct JSONL append while preserving read compatibility.",
+        "observability": "Track whether reads hit legacy JSONL versus SQLite-backed records and verify old memories remain visible."
+      },
+      {
+        "id": "S4",
+        "action": "Add mirofish_lab.memory.migrate_jsonl_to_sqlite() to scan all JSONL files in .mirofish_memory/, import records into memory.db, and preserve existing timestamps/tags for later queries.",
+        "owner": "backend",
+        "depends_on": [
+          "S2",
+          "S3"
+        ],
+        "gate": "approval:data-migration-signoff",
+        "rollback": "Delete the newly created database and rerun migration after fixing import logic; do not alter source JSONL files.",
+        "observability": "Report number of files scanned, records imported, duplicates skipped, and import errors."
+      },
+      {
+        "id": "S5",
+        "action": "Wire Agent constructor in mirofish_lab/agent.py to accept backend=\"sqlite\" and resolve MIROFISH_MEMORY_BACKEND with default \"jsonl\" for one-release backward compatibility.",
+        "owner": "backend",
+        "depends_on": [
+          "S2",
+          "S3"
+        ],
+        "gate": "approval:api-change-review",
+        "rollback": "Revert backend selection to hardcoded jsonl default if opt-in path causes regressions.",
+        "observability": "Emit backend selection in agent startup logs and count sqlite vs jsonl instantiations."
+      },
+      {
+        "id": "S6",
+        "action": "Update the persistent pr-review-rehearsal path to validate the opt-in SQLite backend end-to-end, while leaving pre-flight-rehearsal, adversarial-security-sim, and blast-radius-prediction unchanged unless persistence is enabled.",
+        "owner": "product",
+        "depends_on": [
+          "S5"
+        ],
+        "gate": "window:staged-rollout",
+        "rollback": "Disable MIROFISH_MEMORY_BACKEND=sqlite in CI and user docs if persistent agent history is not preserved.",
+        "observability": "Compare reviewer comment retrieval before/after rerun and confirm old comments reappear under SQLite."
+      },
+      {
+        "id": "S7",
+        "action": "Run concurrent experiment validation by starting pr-review-rehearsal and blast-radius-prediction against the same repo with sqlite backend to confirm the JSONL corruption issue is eliminated.",
+        "owner": "sre",
+        "depends_on": [
+          "S5",
+          "S6"
+        ],
+        "gate": "wait_for:concurrent-run-stability",
+        "rollback": "Switch the default back to jsonl and block sqlite rollout if concurrent writes produce lock contention or data loss.",
+        "observability": "Monitor SQLite lock waits, failed transactions, and compare record counts against expected writes from both runs."
+      },
+      {
+        "id": "S8",
+        "action": "Add query-path checks for tag and time-range access in SqliteMemory so lookups no longer require linear scans across the entire log, and ensure query results match legacy JSONL reads.",
+        "owner": "backend",
+        "depends_on": [
+          "S2",
+          "S4"
+        ],
+        "gate": "none",
+        "rollback": "Fall back to legacy scan-based lookup if indexed query behavior returns incorrect results.",
+        "observability": "Measure query latency on >10k-record repos and verify parity between JSONL-derived and SQLite-derived results."
+      },
+      {
+        "id": "S9",
+        "action": "Document the new single inspection point .mirofish_memory/memory.db, the MIROFISH_MEMORY_BACKEND env var, and the one-release default-jsonl compatibility policy for users and CI.",
+        "owner": "product",
+        "depends_on": [
+          "S5",
+          "S4"
+        ],
+        "gate": "approval:docs-and-release-note-review",
+        "rollback": "Remove sqlite instructions from docs if migration behavior is not stable enough for external use.",
+        "observability": "Support/docs feedback indicates users can locate reviewer history and run the migration successfully."
+      }
+    ],
+    "open_questions": [
+      "Should the migration helper deduplicate records when the same JSONL content appears in multiple per-agent files, or import all rows verbatim?",
+      "What exact table/key structure should be used to preserve the persona-name-as-table-key model while still supporting efficient tag/time-range queries?",
+      "Should LocalMemory in compatibility mode continue writing JSONL for any callers, or strictly write only through SQLite once the new backend exists?",
+      "Do we need an automatic one-time migration on first sqlite opt-in, or is the explicit helper sufficient for the initial release?",
+      "What is the expected behavior if both JSONL and memory.db exist with overlapping records and conflicting timestamps?"
+    ],
+    "conflicts": [
+      {
+        "between": [
+          "Backwards compatibility",
+          "Single SQLite source of truth"
+        ],
+        "issue": "The intent requires users not lose JSONL history while also moving writes to memory.db; compatibility mode and migration need a clear precedence rule."
+      },
+      {
+        "between": [
+          "Persistent memory must survive restart",
+          "No silent failures"
+        ],
+        "issue": "SQLite write errors must raise loudly, but Agent call sites may currently assume best-effort memory writes and need audit for exception handling."
+      },
+      {
+        "between": [
+          "One-release default remains jsonl",
+          "Users opt in via env var for sqlite"
+        ],
+        "issue": "Default behavior and opt-in behavior can diverge across experiments and CI unless backend selection is consistently wired through Agent."
+      }
+    ]
+  }
+}

@@ -1,0 +1,143 @@
+{
+  "intent": "fixtures/intent_pr_review_disagreement_detector.md",
+  "model": "gpt-5.4-mini",
+  "tokens_in": 715,
+  "tokens_out": 1561,
+  "plan": {
+    "summary": "Add an in-memory DisagreementChecker to surface reviewer conflicts in reports and pass them into the Judge without breaking existing report consumers.",
+    "steps": [
+      {
+        "id": "S1",
+        "action": "Update `mirofish_lab/personas.py` to add a new `DisagreementChecker` persona with instructions to compare SecurityHawk, PerfPedant, GrumpyArchitect, and ProductOwner outputs and emit explicit conflicts only.",
+        "owner": "backend",
+        "depends_on": [],
+        "gate": "approval:persona_prompt_review",
+        "rollback": "Remove the new persona definition and keep the four existing reviewer personas unchanged.",
+        "observability": "Unit test the persona prompt text for required output schema: `{topic, reviewers_for, reviewers_against, evidence}` and empty-case behavior."
+      },
+      {
+        "id": "S2",
+        "action": "Extend `pr-review-rehearsal/cli.py` orchestration to run `parallel_run(reviewers, ...)` first, then invoke `DisagreementChecker` on the in-memory review texts only, with no additional GitHub fetches.",
+        "owner": "backend",
+        "depends_on": [
+          "S1"
+        ],
+        "gate": "wait_for:reviewer_parallel_run_stable",
+        "rollback": "Feature-flag the checker step off and fall back to the existing reviewer\u2192judge flow.",
+        "observability": "Log the checker invocation count, input review count = 4, and a metric for zero vs non-zero conflicts."
+      },
+      {
+        "id": "S3",
+        "action": "Define the disagreement normalization logic so the checker returns a list of conflict objects with `topic`, `reviewers_for`, `reviewers_against`, and `evidence`, and explicitly returns a human-readable empty-state when no real conflict exists.",
+        "owner": "backend",
+        "depends_on": [
+          "S2"
+        ],
+        "gate": "approval:output_schema_review",
+        "rollback": "If parsing fails or output is malformed, treat the conflict list as empty and preserve the original report content.",
+        "observability": "Add parser tests for opposite recommendations on the same hunk and for 'implicit endorsement' detection; record malformed-output fallback rate."
+      },
+      {
+        "id": "S4",
+        "action": "Insert a new report section titled `Cross-reviewer conflicts` between the per-reviewer comments and the implementer iteration in the generated report, while keeping the rest of the report shape additive and readable by existing committed reports.",
+        "owner": "product",
+        "depends_on": [
+          "S2",
+          "S3"
+        ],
+        "gate": "approval:report_format_review",
+        "rollback": "Hide the new section behind a formatting flag or remove only the added section if downstream consumers break.",
+        "observability": "Snapshot-test the report rendering against existing files in `pr-review-rehearsal/reports/` to confirm backward compatibility."
+      },
+      {
+        "id": "S5",
+        "action": "Update the Judge prompt to accept the conflict list as additional context and instruct it to preserve the disagreement signal rather than collapsing it into a single verdict.",
+        "owner": "backend",
+        "depends_on": [
+          "S3",
+          "S4"
+        ],
+        "gate": "approval:judge_prompt_review",
+        "rollback": "Revert the prompt augmentation and keep the current judge ranking behavior if quality regresses.",
+        "observability": "A/B compare judge outputs on a representative sample to verify conflicts are referenced and not erased."
+      },
+      {
+        "id": "S6",
+        "action": "Add tests covering the four-reviewer disagreement cases: SecurityHawk vs GrumpyArchitect on keep/remove recommendations, PerfPedant vs ProductOwner on performance vs product tradeoffs, and a no-conflict case that must render an explicit empty statement.",
+        "owner": "backend",
+        "depends_on": [
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "gate": "wait_for:test_green",
+        "rollback": "Disable the new tests temporarily only if they expose unrelated failures, but do not merge without restoring coverage.",
+        "observability": "CI should report unit/snapshot coverage for conflict extraction, empty state, and report insertion."
+      },
+      {
+        "id": "S7",
+        "action": "Validate that the new step uses only in-memory review outputs and does not trigger any extra GitHub API calls, especially during disagreement analysis.",
+        "owner": "sre",
+        "depends_on": [
+          "S2"
+        ],
+        "gate": "monitor:github_api_call_rate",
+        "rollback": "If call volume increases, revert the checker integration and restore prior request patterns.",
+        "observability": "Track GitHub fetch count per PR run and compare to baseline; alert on any delta above zero from the checker path."
+      },
+      {
+        "id": "S8",
+        "action": "Review the conflict semantics with product and reviewer-author stakeholders to ensure the report surfaces genuine disagreement without overstating weak signal as conflict.",
+        "owner": "product",
+        "depends_on": [
+          "S3"
+        ],
+        "gate": "approval:stakeholder_alignment",
+        "rollback": "Tighten the checker prompt and reduce conflict classification to only explicit opposite recommendations if users find the output noisy.",
+        "observability": "Collect qualitative feedback from sample PR reports on whether the `Cross-reviewer conflicts` section is useful and honest."
+      },
+      {
+        "id": "S9",
+        "action": "Roll out the change behind a limited release window for `pr-review-rehearsal`, first to internal/sampled PRs, then to full traffic after the conflict section proves stable and readable.",
+        "owner": "sre",
+        "depends_on": [
+          "S6",
+          "S7",
+          "S8"
+        ],
+        "gate": "window:internal_canary",
+        "rollback": "Disable the canary and revert to the pre-change CLI/report path if any parsing, formatting, or latency issues appear.",
+        "observability": "Monitor error rate, report generation latency, and the percentage of PRs with non-empty conflict lists during canary."
+      }
+    ],
+    "open_questions": [
+      "Should `reviewers_for` and `reviewers_against` include implicit endorsements inferred from silence/soft language, or only explicit statements?",
+      "What exact wording should the empty-state use in `Cross-reviewer conflicts` to make clear there were no real conflicts?",
+      "Should the Judge see raw reviewer text plus conflicts, or only the normalized conflict list plus a summary of each reviewer?",
+      "Do we want to preserve conflict ordering by severity, by diff hunk order, or by first detected topic?"
+    ],
+    "conflicts": [
+      {
+        "between": [
+          "backend",
+          "product"
+        ],
+        "issue": "The checker is intended to surface implicit disagreements, but product may prefer a stricter definition to avoid noisy or subjective conflicts in the report."
+      },
+      {
+        "between": [
+          "sre",
+          "backend"
+        ],
+        "issue": "The new checker is cheap in LLM calls, but must still avoid any extra GitHub fetches; orchestration changes could accidentally reintroduce network cost."
+      },
+      {
+        "between": [
+          "product",
+          "sre"
+        ],
+        "issue": "Canary rollout improves safety, but may delay visibility of the new conflict section for users who need it immediately."
+      }
+    ]
+  }
+}

@@ -1,0 +1,900 @@
+{
+  "timestamp": "20260504T080952Z",
+  "args": {
+    "n": 30,
+    "sources": [
+      "swebench_verified",
+      "danluu_postmortems"
+    ],
+    "pipeline": "cli_feature",
+    "max_tokens": 1500,
+    "n_plans": 4,
+    "seed": 9256,
+    "judge": true,
+    "utility": null,
+    "run_label": "realdata_holdout_multistage",
+    "ids_file": null,
+    "out": "validation/REALDATA_HOLDOUT_multistage.md"
+  },
+  "scores": [
+    {
+      "id": "swebench_verified/django__django-11848",
+      "source": "swebench_verified",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 13,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 29.662896633148193,
+      "verdict_judge": "partial",
+      "judge_rationale": "It correctly targets parse_http_date and the RFC 850 two-digit year bug, but gives no file-level or algorithmic detail about using current_year/current_century or the 50-year future rule.",
+      "judge_captured": [
+        "Fix two-digit RFC 850 year interpretation in parse_http_date",
+        "Preserve existing behavior for non-rfc850 date formats",
+        "Include edge-case examples for boundary years",
+        "Specify test coverage for ambiguous and invalid http dates"
+      ],
+      "judge_missed": [
+        "Only canonical file django/utils/http.py is not named",
+        "No mention of comparing two-digit year against the current year",
+        "No use of current_year/current_century or datetime.utcnow",
+        "No explicit 50-year-in-the-future-to-past-year interpretation rule"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/pytest-dev__pytest-7324",
+      "source": "swebench_verified",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 14,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 38.76805281639099,
+      "verdict_judge": "partial",
+      "judge_rationale": "It correctly targets Expression.compile and a non-crashing fix, but gives no file-level patch detail for src/_pytest/mark/expression.py or the identifier/matcher conversion root cause.",
+      "judge_captured": [
+        "Fixes the debug-build crash in Expression.compile for Python 3.8+",
+        "Keeps the change minimal and limited to expression compilation",
+        "Preserves existing semantics for valid expressions",
+        "Mentions error/regression coverage"
+      ],
+      "judge_missed": [
+        "No explicit reference to src/_pytest/mark/expression.py",
+        "Does not mention the identifier/name conversion issue in the expression matcher",
+        "No plan for the illegal 'False/True/None' identifier handling or ident_prefix logic",
+        "No concrete diff sketch touching the parser/matcher code path"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/matplotlib__matplotlib-24637",
+      "source": "swebench_verified",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 6,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 33.666985511779785,
+      "verdict_judge": "partial",
+      "judge_rationale": "Captures the AnnotationBbox SVG gid regression, but no file-level evidence or renderer/open_group/close_group fix is reflected.",
+      "judge_captured": [
+        "Fix AnnotationBbox gid propagation to SVG output",
+        "Limit scope to gid preservation for the known regression"
+      ],
+      "judge_missed": [
+        "Canonical file lib/matplotlib/offsetbox.py is not identified",
+        "Renderer-side open_group/close_group and get_gid handling are not mentioned",
+        "class__ / name__ propagation details from the prior gid fix are absent"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/browserstack",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 0,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "no_ground_truth",
+      "elapsed_s": 31.240450143814087,
+      "verdict_judge": "caught",
+      "judge_rationale": "It directly names the Shellshock-vulnerable prototype machine and secret keys, plus remediation gates to remove/retire them before launch.",
+      "judge_captured": [
+        "old prototype/legacy machine holding secret keys",
+        "Shellshock-exposed host as the vulnerable root cause",
+        "pre-launch inventory of prototype hosts with secret exposure",
+        "patch or retire vulnerable hosts before rollout"
+      ],
+      "judge_missed": [
+        "specific production-system breach/attack outcome",
+        "explicit stakeholder constraint around preventing production-secret exposure beyond the legacy host"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/django__django-14140",
+      "source": "swebench_verified",
+      "winner": "robust_launch",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 6,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 33.33309888839722,
+      "verdict_judge": "caught",
+      "judge_rationale": "It targets Q.deconstruct, the single-child boolean-expression crash, and preserves compatibility by changing how children are handled.",
+      "judge_captured": [
+        "Fix Q.deconstruct for boolean-expression children",
+        "Preserve documented deconstruct output compatibility where safe",
+        "Single-child Q deconstruct behavior change",
+        "Avoid widening the change beyond Q deconstruct logic"
+      ],
+      "judge_missed": [
+        "No explicit reference to django/db/models/query_utils.py",
+        "No mention of checking child tuple shape/isinstance/length-2 guard in the deconstruct branch",
+        "No concrete diff sketch for the connector/children/child else-path logic"
+      ],
+      "judge_confidence": "medium"
+    },
+    {
+      "id": "danluu_postmortems/at-t",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 1,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 36.4808874130249,
+      "verdict_judge": "caught",
+      "judge_rationale": "Plan directly targets the AT&T failure mode: staggered switch restart, controlled resumption messages, and hard stop on reboot loops to avoid network-wide cascade.",
+      "judge_captured": [
+        "single-switch / staggered rollout across network switches",
+        "controlled resumption messages after planned outage",
+        "hard stop on reboot loop detection",
+        "prevention of network-wide cascade across many switches"
+      ],
+      "judge_missed": [
+        "explicit reference to the bad C-code race hazard that triggered the collapse",
+        "the full 114-switch iterative reboot propagation",
+        "the specific scale of impact (50 million calls, 9 hours to stabilize)"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/heroku",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 32.00288963317871,
+      "verdict_judge": "caught",
+      "judge_rationale": "It explicitly catches the FK/PK type-compatibility constraint that caused the database overflow and outage, matching the Heroku incident root cause.",
+      "judge_captured": [
+        "Ship only after confirming key type compatibility for FK/PK pairs",
+        "Limit rollout to auth/deploy paths behind a full-feature flag",
+        "Define launch as stable write success for all customers, not partial exposure",
+        "Relevant auth/deploy outage context aligns with the incident affecting authorizations and deployments"
+      ],
+      "judge_missed": [
+        "No explicit mention of the overflowing primary key exceeding the smaller foreign key data type",
+        "No direct reference to the Heroku API full outage escalation",
+        "No mention of the operational impact on new authorization creation and new deployments as the failure mode"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/shapeshift",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 0,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "no_ground_truth",
+      "elapsed_s": 36.57235336303711,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures the need for hardened internal pilot and custody-privileged access controls, but misses the actual security failure: employee theft enabled by weak internal controls, not launch/UX rollout",
+      "judge_captured": [
+        "hardened internal pilot only",
+        "explicit go/no-go on custody-privileged access",
+        "no public launch until incident-abuse safeguards are in place"
+      ],
+      "judge_missed": [
+        "employee stole $200k in cryptocurrency in three hacks over a month",
+        "poor security practices / internal custody controls as root cause",
+        "the plan is framed as product rollout/UX instead of access/security governance"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/django__django-15863",
+      "source": "swebench_verified",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 3,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 32.23265600204468,
+      "verdict_judge": "partial",
+      "judge_rationale": "It correctly targets Decimal precision in floatformat, but gives no file-level or code-level evidence of the input_val/text/repr conversion bug.",
+      "judge_captured": [
+        "Preserve Decimal precision in floatformat output",
+        "Do not change floatformat behavior for non-Decimal inputs",
+        "Regression coverage for the bug"
+      ],
+      "judge_missed": [
+        "Specific touchpoint in django/template/defaultfilters.py",
+        "Root cause involving input_val being converted via text/repr to float",
+        "Concrete diff sketch for the floatformat implementation"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/amazon",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 2,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 37.783793687820435,
+      "verdict_judge": "caught",
+      "judge_rationale": "It directly captures the S3 typo-driven server-removal outage and the need for exact target counts/preflight confirmation to avoid deleting critical S3 support servers.",
+      "judge_captured": [
+        "Amazon S3 server-removal typo as the failure mode",
+        "critical S3 support servers being the impacted scope",
+        "exact target count / destructive-command confirmation before removal",
+        "preflight summary of affected production systems",
+        "US-EAST-1 regional stability/canary gating"
+      ],
+      "judge_missed": [
+        "the broader cascading EC2/EBS dependency blast radius",
+        "the fact this was a manual ops typo during debugging with an established playbook",
+        "the specific post-mortem outcome of a widespread US-EAST-1 outage"
+      ],
+      "judge_confidence": "medium"
+    },
+    {
+      "id": "danluu_postmortems/homebrew",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 2,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 31.035244464874268,
+      "verdict_judge": "caught",
+      "judge_rationale": "It directly captures the GitHub PAT scope leak and the risk of git-push access to Homebrew repos, which is the core incident cause.",
+      "judge_captured": [
+        "PAT scope-risk review before rollout",
+        "recently elevated token scopes as the constraint",
+        "repo push access / git push rollback concern",
+        "communication to repository maintainers"
+      ],
+      "judge_missed": [
+        "Specific Jenkins source of the leak",
+        "Homebrew\u2019s exact security-incident context and impacted repositories",
+        "The fact this was a leaked GitHub personal access token, not a generic access issue"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/django__django-14017",
+      "source": "swebench_verified",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 34.14374303817749,
+      "verdict_judge": "caught",
+      "judge_rationale": "It targets Q/Exists operator commutativity in django/db/models/query_utils.py, matching the exact file and root cause area for the TypeError.",
+      "judge_captured": [
+        "Fix Q/Exists commutativity for & and | operators",
+        "Scope the change to operator handling in django/db/models/query_utils.py",
+        "Preserve existing Q semantics for empty and non-empty combinations",
+        "Regression example/test for the operator behavior"
+      ],
+      "judge_missed": [
+        "No explicit mention of the _combine() TypeError path on non-Q operands",
+        "No concrete diff sketch for __rand__ or conditional handling details",
+        "No mention of the 'other' / isinstance / getattr logic from the root cause"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/google",
+      "source": "danluu_postmortems",
+      "winner": "mvp_fast",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 2,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 95.36812543869019,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures canary-first rollout and error-rate gating, but misses the specific deadlock in Google's internal streaming RPC library and overload of the Write API Streaming frontend.",
+      "judge_captured": [
+        "Small US Multi-Region canary first",
+        "Do not expand until error rate stays within baseline",
+        "Rollback-ready hold point before broader launch"
+      ],
+      "judge_missed": [
+        "Bug in Google's internal streaming RPC library as the root cause",
+        "Deadlock-triggered overload of the Write API Streaming frontend",
+        "Elevated BigQuery Storage Write API errors in the US Multi-Region"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/sympy__sympy-18199",
+      "source": "swebench_verified",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 30,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 32.68590688705444,
+      "verdict_judge": "partial",
+      "judge_rationale": "It correctly identifies the zero-root bug in nthroot_mod and asks for a targeted regression test, but no file/diff details match the canonical residue_ntheory.py fix.",
+      "judge_captured": [
+        "Bug: nthroot_mod misses x=0 as a root when a % p == 0",
+        "Targeted fix to modular nth roots without changing nonzero-root behavior",
+        "Regression test for the reported example 17*17, 5, 17"
+      ],
+      "judge_missed": [
+        "Specific file sympy/ntheory/residue_ntheory.py",
+        "Concrete edit around composite-root handling / tot_roots / roots_in_base / new_roots logic",
+        "Diff sketch touching the branch that accumulates roots in nthroot_mod_composite"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/django__django-15098",
+      "source": "swebench_verified",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 2,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 34.91694617271423,
+      "verdict_judge": "partial",
+      "judge_rationale": "It correctly identifies i18n_patterns locale matching for script+region and case-insensitive BCP 47 tags, but misses the actual file and regex-based root cause.",
+      "judge_captured": [
+        "Fix i18n_patterns locale matching for script+region tags",
+        "Support case-insensitive BCP 47 locale variants"
+      ],
+      "judge_missed": [
+        "Ground-truth file django/utils/translation/trans_real.py",
+        "Root-cause details language_code_prefix_re and lazy_re_compile",
+        "Specific regex logic for matching locale prefixes"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/django__django-15930",
+      "source": "swebench_verified",
+      "winner": "mvp_fast",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 19,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 37.753716468811035,
+      "verdict_judge": "caught",
+      "judge_rationale": "It targets the exact negated empty-IN Case/When crash and names the empty-predicate regression test plus preserving non-negated semantics.",
+      "judge_captured": [
+        "Fix Case/When with negated empty IN lookup (~Q(pk__in=[]))",
+        "Regression test for the empty-state predicate path",
+        "Preserve existing empty-IN semantics for non-negated Qs",
+        "No SQL syntax error on annotated query"
+      ],
+      "judge_missed": [
+        "No explicit mention of django/db/models/expressions.py",
+        "No specific root-cause detail about condition_sql/WHERE clause handling inside Case/When"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/metrist",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 1,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 32.269750356674194,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures Azure dependency risk and monitored rollout/rollback, but not the unannounced Azure breaking change nor the downstream recovery/identification specifics.",
+      "judge_captured": [
+        "Azure dependency impact must be confirmed before launch",
+        "launch should be monitored exposure rather than full availability",
+        "rollback or pause should remain available during rollout"
+      ],
+      "judge_missed": [
+        "the root cause was an Azure unannounced breaking change",
+        "the plan does not reflect the need to detect a vendor-side breaking change before customers were affected",
+        "no specifics on Metrist's downstream incident detection/recovery from the Azure change"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/pallets__flask-5014",
+      "source": "swebench_verified",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 34.47593331336975,
+      "verdict_judge": "caught",
+      "judge_rationale": "Plan directly matches GT: add constructor guard in blueprints.py to reject empty Blueprint names with ValueError and test the regression.",
+      "judge_captured": [
+        "Disallow empty Blueprint names at construction time",
+        "Add a constructor guard for empty Blueprint names",
+        "ValueError-style empty-name validation",
+        "Focused regression test coverage for empty-name flow",
+        "Touching the Blueprint constructor path in src/flask/blueprints.py"
+      ],
+      "judge_missed": [],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/google",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 3,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 36.60470485687256,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures a staged, risk-limited rollout and avoiding combined risky changes, but misses the specific Google Cloud network/configuration failure and East Coast scope.",
+      "judge_captured": [
+        "staged rollout with a hard pause point",
+        "do not combine multiple risky changes in one launch",
+        "limit launch to non-US-East Coast traffic first"
+      ],
+      "judge_missed": [
+        "Google Cloud network failure as the incident type",
+        "root cause being misconfigurations plus a software bug",
+        "US East Coast-specific blast radius/constraint"
+      ],
+      "judge_confidence": "medium"
+    },
+    {
+      "id": "danluu_postmortems/cloudflare",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 35.530739068984985,
+      "verdict_judge": "caught",
+      "judge_rationale": "It explicitly targets BGP prefix ordering validation and staged canary rollout, matching the Cloudflare outage caused by incorrect disabled-prefix ordering across datacenters.",
+      "judge_captured": [
+        "BGP prefix ordering contract",
+        "validation of prefix ordering before expansion",
+        "single canary datacenter first",
+        "multi-datacenter rollout",
+        "disabled prefix ordering issue"
+      ],
+      "judge_missed": [
+        "explicit Cloudflare-specific 19 datacenters impact",
+        "disabled BGP advertised prefixes phrasing from the postmortem",
+        "stakeholder constraint tied to preventing the exact config-error outage"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/parity",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 1,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 31.770867586135864,
+      "verdict_judge": "caught",
+      "judge_rationale": "The plan directly captures the Parity bug: a non-UI multisig/core contract change mislabeled as UI-only and needing deploy gating/review.",
+      "judge_captured": [
+        "Do not bundle core multisig logic into a UI-only release",
+        "Require explicit gating for any library affecting shared contract state",
+        "Freeze rollout if any third-party dependency still assumes old behavior"
+      ],
+      "judge_missed": [
+        "No explicit mention of the 4000-line change being inadequately reviewed before deploy",
+        "No direct reference to the $30M stolen / $150M rescued outcome",
+        "No clear stakeholder constraint tied to unsuspecting third parties using the deployed code"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/django__django-12262",
+      "source": "swebench_verified",
+      "winner": "robust_launch",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 5,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 32.041136503219604,
+      "verdict_judge": "partial",
+      "judge_rationale": "It clearly targets template-tag arg handling and error messages, but never names the shared implementation file or the kwonly/param/varkw root cause.",
+      "judge_captured": [
+        "Fix keyword-only/default args handling in template tags",
+        "Preserve correct duplicate-keyword error for repeated args",
+        "Keep change limited to the shared tag-call path",
+        "Add/adjust tests for both error-message variants",
+        "TemplateSyntaxError text must be precise for tag arg errors"
+      ],
+      "judge_missed": [
+        "Canonical file django/template/library.py",
+        "Root cause in the param/params/varkw/unhandled_kwargs/kwonly handling",
+        "Explicit distinction between unexpected keyword vs multiple-values error for kw-only defaults"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/github",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 2,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 32.86039590835571,
+      "verdict_judge": "partial",
+      "judge_rationale": "It reflects a DDoS-mitigation rollout and staged exposure, but misses the GitHub-specific 1.35Tbps incident context and any concrete outage root cause detail.",
+      "judge_captured": [
+        "DDoS mitigation coverage is explicitly required",
+        "minimum safe launch slice before broad exposure",
+        "staged release with go/no-go checkpoints"
+      ],
+      "judge_missed": [
+        "GitHub 2018 DDoS incident context",
+        "1.35Tbps traffic spike",
+        "actual outage-preventing constraint from the postmortem beyond generic mitigation"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/joyent",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 1,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 34.867273807525635,
+      "verdict_judge": "caught",
+      "judge_rationale": "It explicitly flags the key Postgres failure mode: a new global lock in metadata queries and rollout gated on no lock contention/blockage.",
+      "judge_captured": [
+        "PostgreSQL metadata-server locking as the failure surface",
+        "avoid introducing any global lock acquisition in metadata queries",
+        "define success as no metadata operation blockage in prod",
+        "lock contention treated as a no-go criterion"
+      ],
+      "judge_missed": [
+        "the transaction wraparound maintenance lock interaction specifically",
+        "the Manta/Joyent metadata server context from the postmortem",
+        "the exact incident mechanism where an unnecessary query tried to take a global lock while maintenance held another lock"
+      ],
+      "judge_confidence": "medium"
+    },
+    {
+      "id": "swebench_verified/django__django-13925",
+      "source": "swebench_verified",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 9,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 32.479159116744995,
+      "verdict_judge": "partial",
+      "judge_rationale": "It correctly identifies W042 false positives on inherited manual PKs, but gives no concrete hint of the base-model/parent_link check in django/db/models/base.py.",
+      "judge_captured": [
+        "models.W042 false positives for inherited manual primary keys",
+        "minimal fix to warning logic",
+        "regression coverage / tests"
+      ],
+      "judge_missed": [
+        "canonical file django/db/models/base.py",
+        "root cause involving inherited models and parent_link/OneToOneField parent checks",
+        "specific meta/parents/isinstance check in model base logic"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/cloudflare",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 31.068028926849365,
+      "verdict_judge": "partial",
+      "judge_rationale": "It recognizes a Cloudflare DNS rollout and the need to limit exposure before broad 1.1.1.1 rollout, but it misses the config-error/internal DNS failure specifics.",
+      "judge_captured": [
+        "Cloudflare-related rollout context",
+        "DNS / 1.1.1.1 exposure",
+        "staged rollout and rollback-safe release constraint"
+      ],
+      "judge_missed": [
+        "the incident was a config error causing SERVFAIL for valid DNS queries",
+        "the affected surfaces included WARP, Zero Trust, and third-party resolvers using 1.1.1.1",
+        "the root cause was an internal software error rather than an attack"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/sentry",
+      "source": "danluu_postmortems",
+      "winner": "standard",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 1,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 31.00340485572815,
+      "verdict_judge": "caught",
+      "judge_rationale": "It directly names Postgres txid-wraparound prevention and a gate on transaction age headroom, matching the incident root cause.",
+      "judge_captured": [
+        "postgres txid-wraparound prevention changes",
+        "pre-launch gate on transaction age headroom",
+        "staged rollout with a canary database first",
+        "operator-facing rollout/status page for DB upgrade steps"
+      ],
+      "judge_missed": [
+        "No explicit mention of the Sentry outage lasting most of a working day",
+        "No concrete reference to vacuum/freeze or XID age monitoring from the postmortem"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/django__django-10999",
+      "source": "swebench_verified",
+      "winner": "robust_launch",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 33.52749156951904,
+      "verdict_judge": "partial",
+      "judge_rationale": "It correctly targets parse_duration negative-duration parsing with regression tests, but never names the actual file or the hours/minutes/seconds sign/lookahead fix.",
+      "judge_captured": [
+        "Limits scope to the parse_duration negative-duration bug",
+        "Adds regression tests for negative duration forms",
+        "Preserves existing duration behavior"
+      ],
+      "judge_missed": [
+        "Canonical touched file django/utils/dateparse.py",
+        "Root cause in standard_duration_re around the hours lookahead sign handling",
+        "Specific hours/minutes/seconds sign-aware regex change"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/pytest-dev__pytest-7432",
+      "source": "swebench_verified",
+      "winner": "robust_launch",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 1,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 30.733365058898926,
+      "verdict_judge": "caught",
+      "judge_rationale": "It correctly targets skip-location reporting under --runxfail and limits the fix to src/_pytest/skipping.py, matching the ground-truth hook/file.",
+      "judge_captured": [
+        "Fix skip report location when --runxfail is enabled",
+        "Limit the change to skip reporting path only",
+        "Touch src/_pytest/skipping.py / pytest_runtest_makereport",
+        "Preserve existing skip and skipif output"
+      ],
+      "judge_missed": [
+        "Does not explicitly identify the elif branch in pytest_runtest_makereport as the root cause",
+        "No concrete diff sketch shown in the summary"
+      ],
+      "judge_confidence": "medium"
+    },
+    {
+      "id": "swebench_verified/django__django-16139",
+      "source": "swebench_verified",
+      "winner": "robust_launch",
+      "winner_family": "other",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 31.537391901016235,
+      "verdict_judge": "caught",
+      "judge_rationale": "It matches the GT bug: a minimal fix in django/contrib/auth/forms.py for password help_text link generation using instance pk when UserAdmin is reached via to_field.",
+      "judge_captured": [
+        "Targets the UserAdmin password help_text link bug",
+        "Plans a minimal change in django/contrib/auth/forms.py",
+        "Uses instance.pk in the password link path instead of assuming pk-based access",
+        "Preserves existing behavior for normal UserAdmin URLs"
+      ],
+      "judge_missed": [],
+      "judge_confidence": "high"
+    }
+  ]
+}

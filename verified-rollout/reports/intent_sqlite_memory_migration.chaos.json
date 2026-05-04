@@ -1,0 +1,843 @@
+{
+  "intent_path": "fixtures/intent_sqlite_memory_migration.md",
+  "plan": {
+    "summary": "Add SQLite memory with JSONL compatibility, validate migration, keep JSONL default for one release, then make SQLite opt-in-ready.",
+    "steps": [
+      {
+        "id": "S1",
+        "action": "Implement SqliteMemory in mirofish_lab/memory.py with stdlib sqlite3, loud write failures, and a stable single-table schema; add read/write APIs used by Agent.",
+        "owner": "BackendOwner",
+        "depends_on": [],
+        "gate": "window:maintenance-hours",
+        "rollback": "Drop the newly created memory.db and restore the prior JSONL layout",
+        "observability": "Schema creation success, basic CRUD tests, write error surfacing, table presence via sqlite3 .tables"
+      },
+      {
+        "id": "S2",
+        "action": "Add migration helper migrate_jsonl_to_sqlite() that imports existing .mirofish_memory JSONL files into SQLite in bounded batches with validation hooks.",
+        "owner": "DataPlatform",
+        "depends_on": [
+          "S1"
+        ],
+        "gate": "monitor:replication_lag<0s",
+        "rollback": "Delete .mirofish_memory/memory.db and rerun import with smaller batches",
+        "observability": "Batch throughput, import completeness, duplicate/missing record counts, IOPS spikes"
+      },
+      {
+        "id": "S3",
+        "action": "Add LocalMemory compatibility shim to keep reading legacy JSONL files while writing new entries through the SQLite path when enabled.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S1",
+          "S2"
+        ],
+        "gate": "wait_for:migrate_jsonl_to_sqlite_available",
+        "rollback": "Restore JSONL reader path in LocalMemory",
+        "observability": "Legacy reads still resolve, new writes land in SQLite, no silent record loss"
+      },
+      {
+        "id": "S4",
+        "action": "Add Agent backend selection via backend kwarg and MIROFISH_MEMORY_BACKEND env var, defaulting to jsonl for now.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S3"
+        ],
+        "gate": "window:one release after merge",
+        "rollback": "Revert default backend selection to jsonl",
+        "observability": "Backend selection behavior, persistent=True flow still functions, default remains jsonl"
+      },
+      {
+        "id": "S5",
+        "action": "Run migration helper validation on a real JSONL corpus and backfill/readback tests against existing .mirofish_memory data.",
+        "owner": "DataPlatform",
+        "depends_on": [
+          "S2",
+          "S3"
+        ],
+        "gate": "wait_for:backfill_and_readback_test",
+        "rollback": "Stop SQLite writes and continue using the original JSONL files",
+        "observability": "Imported record counts match, reads return prior reviewer comments, no corruption on concurrent access"
+      },
+      {
+        "id": "S6",
+        "action": "Publish release notes and operator documentation covering retained JSONL access, migration behavior, and support/escalation ownership.",
+        "owner": "ProductPM",
+        "depends_on": [
+          "S4",
+          "S5"
+        ],
+        "gate": "approval:security",
+        "rollback": "Restore jsonl as default backend and keep sqlite opt-in only",
+        "observability": "Docs published, support briefed, escalation path named, review approvals collected"
+      },
+      {
+        "id": "S7",
+        "action": "Enable SQLite as an opt-in backend for users setting MIROFISH_MEMORY_BACKEND=sqlite, while keeping jsonl default unchanged.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S6"
+        ],
+        "gate": "wait_for:successful JSONL-to-SQLite import validation",
+        "rollback": "Revert backend selection to jsonl",
+        "observability": "Opt-in adoption, write failure rate, import success rate, no silent drops"
+      },
+      {
+        "id": "S8",
+        "action": "Monitor production-ish runs for 24h and verify SQLite write error rate stays below threshold before any default flip consideration.",
+        "owner": "SRE",
+        "depends_on": [
+          "S7"
+        ],
+        "gate": "monitor:memory_write_error_rate<0.1% for 24h",
+        "rollback": "Revert backend default to jsonl via env var",
+        "observability": "Write error rate, concurrent run integrity, support tickets, lingering JSONL read compatibility"
+      },
+      {
+        "id": "S9",
+        "action": "After one full release cycle and notice period, flip the default backend selection to sqlite while preserving explicit jsonl opt-in.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S8"
+        ],
+        "gate": "window:minimum_1_release_cycle_before_default_flip",
+        "rollback": "Set MIROFISH_MEMORY_BACKEND=jsonl and restart agents",
+        "observability": "Default selection behavior, user-reported continuity, write health, migration completion coverage"
+      },
+      {
+        "id": "S10",
+        "action": "After a quiet period, remove legacy JSONL files only if migration/import validation remains clean and rollback snapshots are available.",
+        "owner": "DataPlatform",
+        "depends_on": [
+          "S9"
+        ],
+        "gate": "wait_for:quiet_period_after_migration",
+        "rollback": "Restore the deleted JSONL files from backup or filesystem snapshot",
+        "observability": "No read regressions, no pending imports, backup restore verification, inspectability via sqlite3"
+      }
+    ],
+    "open_questions": [
+      "What qualifies as the real JSONL corpus for migration validation?",
+      "Who owns the exact maintenance-hours window for initial schema creation?",
+      "What is the quiet-period duration before legacy JSONL deletion?",
+      "Which release is counted as the one-release notice period for the default flip?",
+      "Who is the named escalation owner for migration issues?"
+    ],
+    "conflicts": [
+      {
+        "between": [
+          "BackendOwner",
+          "SRE"
+        ],
+        "issue": "BackendOwner wants default jsonl for one release, while SRE only allows switching default after SQLite is proven healthy. Resolved by keeping jsonl default until post-migration monitoring passes."
+      },
+      {
+        "between": [
+          "BackendOwner",
+          "ProductPM"
+        ],
+        "issue": "BackendOwner wants JSONL default for one release, while ProductPM requires notice and at least one release lead time before default change. Resolved by delaying the default flip until after a full release cycle and published notes."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "BackendOwner"
+        ],
+        "issue": "DataPlatform requires JSONL to remain source of truth until import completes, while BackendOwner needs SQLite write path for opt-in usage. Resolved by keeping JSONL default and enabling SQLite only after import validation succeeds."
+      },
+      {
+        "between": [
+          "Security",
+          "BackendOwner"
+        ],
+        "issue": "Security requires JSONL be migrated before enabling SQLite write path in production, while BackendOwner wants opt-in SQLite support added. Resolved by landing code first, then gating production opt-in on successful migration validation."
+      },
+      {
+        "between": [
+          "ConsumerSubsystem",
+          "BackendOwner"
+        ],
+        "issue": "ConsumerSubsystem wants jsonl default for one release and compatibility shim during transition, while BackendOwner is introducing SQLite backend selection. Resolved by implementing shim and preserving jsonl default until the transition window ends."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "SRE"
+        ],
+        "issue": "DataPlatform wants bounded-batch backfill with replication-lag monitoring, while SRE requires successful import validation before rollout and later healthy write monitoring. Resolved by sequencing batch import, validation, then opt-in exposure."
+      }
+    ]
+  },
+  "constraints": [
+    {
+      "axis": "api",
+      "summary": "Keep Agent backend default as jsonl for one release",
+      "scope": "mirofish_lab/agent.py backend selection and MIROFISH_MEMORY_BACKEND default",
+      "gate": "none",
+      "rollback": "Revert default backend selection to jsonl",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Ship sqlite support before any deploy that flips default",
+      "scope": "Deploy order for code introducing SqliteMemory and migration helper",
+      "gate": "wait_for:sqlite_backend_merged_and_released",
+      "rollback": "Redeploy previous release with jsonl-only behavior",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Do not remove JSONL read path until migration is available",
+      "scope": "LocalMemory compatibility shim and migration helper rollout",
+      "gate": "wait_for:migrate_jsonl_to_sqlite_available",
+      "rollback": "Restore JSONL reader path in LocalMemory",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "api",
+      "summary": "Writes must fail loudly if SQLite persistence cannot commit",
+      "scope": "SqliteMemory write path used by Agent and persistent=True flows",
+      "gate": "none",
+      "rollback": "Redeploy previous release with JSONL persistence",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "data",
+      "summary": "Backfill JSONL into SQLite in bounded batches to avoid IOPS spikes",
+      "scope": "migrate_jsonl_to_sqlite() import of existing .mirofish_memory JSONL files",
+      "gate": "monitor:replication_lag<0s",
+      "rollback": "delete .mirofish_memory/memory.db and re-run import with smaller batches",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Keep JSONL as source of truth until import completes successfully",
+      "scope": "migration path from legacy JSONL files to memory.db",
+      "gate": "wait_for:full_jsonl_import_complete",
+      "rollback": "stop SQLite writes and continue using the original JSONL files",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "schema",
+      "summary": "Create SQLite schema once, with no schema changes during business hours",
+      "scope": "initial creation of memory.db and any table/index setup",
+      "gate": "window:maintenance-hours",
+      "rollback": "drop the newly created memory.db and recreate the prior JSONL layout",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Do not delete legacy JSONL files until a quiet read period passes",
+      "scope": "cleanup after successful JSONL-to-SQLite migration",
+      "gate": "wait_for:quiet_period_after_migration",
+      "rollback": "restore the deleted JSONL files from backup or filesystem snapshot",
+      "blocking": false,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Default stays JSONL for one release; SQLite is opt-in",
+      "scope": "Agent backend selection and MIROFISH_MEMORY_BACKEND default",
+      "gate": "window:avoid Friday afternoon and active incident windows",
+      "rollback": "set MIROFISH_MEMORY_BACKEND=jsonl and restart agents",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Do not switch default until SQLite path is proven healthy",
+      "scope": "Turning on sqlite as the default backend in production runs",
+      "gate": "monitor:memory_write_error_rate<0.1% for 24h",
+      "rollback": "revert backend default to jsonl via env var",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Migration must be gated by successful import verification",
+      "scope": "migrate_jsonl_to_sqlite() rollout and use on existing repos",
+      "gate": "wait_for:successful JSONL-to-SQLite import validation",
+      "rollback": "delete memory.db and rerun migration from JSONL sources",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Any SQLite write failure must fail closed, not drop records",
+      "scope": "SqliteMemory write path and Agent persistence calls",
+      "gate": "none",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "security",
+      "summary": "Migrate JSONL before enabling SQLite write path in production",
+      "scope": "memory backend rollout and default backend flip",
+      "gate": "wait_for:migration_helper_validated_on_real_jsonl_corpus",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Preserve audit trail continuity during JSONL-to-SQLite import",
+      "scope": "migrate_jsonl_to_sqlite() and initial SQLite population",
+      "gate": "approval:security",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify users before any externally visible backend default change",
+      "scope": "MIROFISH_MEMORY_BACKEND default flip from jsonl to sqlite",
+      "gate": "window:at_least_1_release_notice",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Document retained JSONL access and migration behavior for reviews",
+      "scope": "release notes and operator documentation for memory migration",
+      "gate": "approval:security",
+      "rollback": "redeploy_previous",
+      "blocking": false,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify users before JSONL default is retired",
+      "scope": "Change from default backend jsonl to sqlite in Agent/env selection",
+      "gate": "wait_for:release-note-and-docs-published",
+      "rollback": "Restore jsonl as default backend and keep sqlite opt-in only",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Give at least one release lead time for migration notice",
+      "scope": "Users with existing .mirofish_memory/ JSONL data",
+      "gate": "window:minimum_1_release_cycle_before_default_flip",
+      "rollback": "Delay the default flip and continue dual-path compatibility",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "ops",
+      "summary": "Support must be briefed before enabling sqlite default",
+      "scope": "Rollout readiness for MIROFISH_MEMORY_BACKEND=sqlite",
+      "gate": "approval:support-lead",
+      "rollback": "Pause rollout and revert announcement to opt-in only",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "ops",
+      "summary": "Assign an escalation owner for memory migration issues",
+      "scope": "Customer escalations during JSONL-to-SQLite adoption",
+      "gate": "approval:release-manager",
+      "rollback": "Suspend rollout until named owner and escalation path are published",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep jsonl default for one release; sqlite opt-in only",
+      "scope": "Agent backend selection via MIROFISH_MEMORY_BACKEND and backend kwarg",
+      "gate": "window:one release after merge",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Add compatibility shim for reading legacy JSONL during transition",
+      "scope": "LocalMemory fallback behavior and migrate_jsonl_to_sqlite() path",
+      "gate": "wait_for:migration_helper_test_pass",
+      "rollback": "Disable sqlite default and route reads to JSONL only",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Preserve loud failure on sqlite write errors; no silent drops",
+      "scope": "SqliteMemory write path and Agent persistence flow",
+      "gate": "wait_for:write_failure_integration_test",
+      "rollback": "Revert backend selection to jsonl",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Ship cutover only after dual-read migration test covers old data",
+      "scope": "Pre-release validation for existing .mirofish_memory JSONL imports",
+      "gate": "wait_for:backfill_and_readback_test",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Fallback if sqlite slips: keep jsonl backend available unchanged",
+      "scope": "Release plan if sqlite backend is delayed or unstable",
+      "gate": "none",
+      "rollback": "Keep MIROFISH_MEMORY_BACKEND default at jsonl and disable sqlite opt-in",
+      "blocking": false,
+      "owner": "ConsumerSubsystem"
+    }
+  ],
+  "llm_probe": {
+    "fragility": 0.583,
+    "avg_severity": 2.5,
+    "rollback_failure_rate": 0.5,
+    "achilles_heel": [
+      [
+        "S1",
+        1.0
+      ],
+      [
+        "S4",
+        1.0
+      ],
+      [
+        "S5",
+        1.0
+      ],
+      [
+        "S6",
+        1.0
+      ],
+      [
+        "S2",
+        0.5
+      ]
+    ],
+    "recovery_distribution": {
+      "recoverable_in_window": 6,
+      "manual_ops": 5,
+      "redo_full": 1
+    }
+  },
+  "static": {
+    "fragility_curve": {
+      "1": 0.489,
+      "2": 0.653,
+      "3": 0.738
+    },
+    "overall_fragility": 0.489,
+    "achilles_top_per_k": {
+      "1": [
+        {
+          "failure_set": [
+            "S1"
+          ],
+          "blocked": [
+            "S10",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "failure_set": [
+            "S2"
+          ],
+          "blocked": [
+            "S10",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 0.889
+        },
+        {
+          "failure_set": [
+            "S3"
+          ],
+          "blocked": [
+            "S10",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 0.778
+        },
+        {
+          "failure_set": [
+            "S4"
+          ],
+          "blocked": [
+            "S10",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 0.556
+        },
+        {
+          "failure_set": [
+            "S5"
+          ],
+          "blocked": [
+            "S10",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 0.556
+        }
+      ],
+      "2": [
+        {
+          "failure_set": [
+            "S1",
+            "S10"
+          ],
+          "blocked": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "failure_set": [
+            "S1",
+            "S2"
+          ],
+          "blocked": [
+            "S10",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "failure_set": [
+            "S1",
+            "S3"
+          ],
+          "blocked": [
+            "S10",
+            "S2",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "failure_set": [
+            "S1",
+            "S4"
+          ],
+          "blocked": [
+            "S10",
+            "S2",
+            "S3",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "failure_set": [
+            "S1",
+            "S5"
+          ],
+          "blocked": [
+            "S10",
+            "S2",
+            "S3",
+            "S4",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        }
+      ],
+      "3": [
+        {
+          "failure_set": [
+            "S1",
+            "S2",
+            "S10"
+          ],
+          "blocked": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "failure_set": [
+            "S1",
+            "S2",
+            "S3"
+          ],
+          "blocked": [
+            "S10",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "failure_set": [
+            "S1",
+            "S2",
+            "S4"
+          ],
+          "blocked": [
+            "S10",
+            "S3",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "failure_set": [
+            "S1",
+            "S2",
+            "S5"
+          ],
+          "blocked": [
+            "S10",
+            "S3",
+            "S4",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        },
+        {
+          "failure_set": [
+            "S1",
+            "S2",
+            "S6"
+          ],
+          "blocked": [
+            "S10",
+            "S3",
+            "S4",
+            "S5",
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "fragility": 1.0
+        }
+      ]
+    }
+  },
+  "adversarial_search": {
+    "k": 2,
+    "rounds": 3,
+    "n_proposed": 18,
+    "n_scored": 18,
+    "history": [
+      {
+        "round": 0,
+        "proposed": 6,
+        "added": 6,
+        "best_fragility_round": 1.0,
+        "best_fragility_so_far": 1.0
+      },
+      {
+        "round": 1,
+        "proposed": 6,
+        "added": 6,
+        "best_fragility_round": 1.0,
+        "best_fragility_so_far": 1.0
+      },
+      {
+        "round": 2,
+        "proposed": 6,
+        "added": 6,
+        "best_fragility_round": 1.0,
+        "best_fragility_so_far": 1.0
+      }
+    ],
+    "best": [
+      {
+        "ids": [
+          "S1",
+          "S2"
+        ],
+        "blocked": [
+          "S10",
+          "S3",
+          "S4",
+          "S5",
+          "S6",
+          "S7",
+          "S8",
+          "S9"
+        ],
+        "fragility": 1.0,
+        "reasoning": "S1 is the root schema/engine implementation and S2 is the migration gateway built directly on top of it; failing both blocks nearly all downstream work, including shim, validation, opt-in, and any future default flip."
+      },
+      {
+        "ids": [
+          "S1",
+          "S3"
+        ],
+        "blocked": [
+          "S10",
+          "S2",
+          "S4",
+          "S5",
+          "S6",
+          "S7",
+          "S8",
+          "S9"
+        ],
+        "fragility": 1.0,
+        "reasoning": "S1 is the foundational SQLite implementation and S3 is the compatibility bridge that depends on both S1 and S2; taking both out severs the main migration path and blocks most downstream rollout steps, including backend selection and validation."
+      },
+      {
+        "ids": [
+          "S1",
+          "S4"
+        ],
+        "blocked": [
+          "S10",
+          "S2",
+          "S3",
+          "S5",
+          "S6",
+          "S7",
+          "S8",
+          "S9"
+        ],
+        "fragility": 1.0,
+        "reasoning": "S1 supplies the new storage backend, while S4 is the runtime selection mechanism that exposes it. Failing both prevents any controlled adoption path and strands all later release/rollout steps that require an active backend choice."
+      },
+      {
+        "ids": [
+          "S1",
+          "S5"
+        ],
+        "blocked": [
+          "S10",
+          "S2",
+          "S3",
+          "S4",
+          "S6",
+          "S7",
+          "S8",
+          "S9"
+        ],
+        "fragility": 1.0,
+        "reasoning": "S1 is the core SQLite implementation and S5 is the real-corpus validation gate that proves migration integrity. Removing both blocks not just implementation and migration, but also the evidence needed for docs, opt-in rollout, monitoring, and the eventual default flip."
+      },
+      {
+        "ids": [
+          "S1",
+          "S6"
+        ],
+        "blocked": [
+          "S10",
+          "S2",
+          "S3",
+          "S4",
+          "S5",
+          "S7",
+          "S8",
+          "S9"
+        ],
+        "fragility": 1.0,
+        "reasoning": "S1 provides the backend foundation and S6 provides the release-note/security approval bridge into rollout. Failing both cuts off the technical base and the operational authorization path, stopping all user-facing exposure steps."
+      }
+    ]
+  },
+  "montecarlo": {
+    "n_samples": 500,
+    "avg_success_rate": 0.746,
+    "p10": 0.2,
+    "p50": 1.0,
+    "p90": 1.0,
+    "full_success_rate": 0.562,
+    "full_failure_rate": 0.062,
+    "per_step_failure_rate": {
+      "S1": 0.062,
+      "S2": 0.036,
+      "S3": 0.042,
+      "S4": 0.066,
+      "S5": 0.064,
+      "S6": 0.088,
+      "S7": 0.054,
+      "S8": 0.052,
+      "S9": 0.072,
+      "S10": 0.034
+    },
+    "histogram": {
+      "0-10%": 31,
+      "10-20%": 16,
+      "20-30%": 18,
+      "30-40%": 1,
+      "40-50%": 58,
+      "50-60%": 29,
+      "60-70%": 19,
+      "70-80%": 13,
+      "80-90%": 24,
+      "90-100%": 291
+    }
+  }
+}

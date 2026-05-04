@@ -1,0 +1,2027 @@
+{
+  "intent_path": "validation/grounded_demo/intent_dspy_to_anthropic.md",
+  "repo_path": "/home/user/Playground/recursive-lm-security-audit",
+  "search_plan": {
+    "intent_excerpt": "# Migrate `recursive-lm-security-audit/` from DSPy to direct Anthropic API calls\n\n## What\n\nThe scanner pipeline in `recursive-lm-security-audit/` currently uses\nthe DSPy framework to orchestrate LLM calls. We are replacing DSPy\nwith direct calls to the Anthropic Messages API.\n\nConcretely:\n\n- Replace every `dspy.LM(...)`, `dspy.Predict(...)`, and\n  `dspy.ChainOfThought(...)` instantiation with an `anthropic.Anthropic()`\n  client + plain `messages.create(...)` calls.\n- Replace DSPy's signature-bas",
+    "patterns": [
+      {
+        "description": "DSPy LM configuration instances",
+        "regex": "\\bdspy\\.LM\\s*\\(",
+        "ast_kind": "Call",
+        "ast_name_regex": "^dspy\\.LM$",
+        "file_globs": [
+          "**/*.py"
+        ]
+      },
+      {
+        "description": "DSPy Predict module instantiations",
+        "regex": "\\bdspy\\.Predict\\s*\\(",
+        "ast_kind": "Call",
+        "ast_name_regex": "^dspy\\.Predict$",
+        "file_globs": [
+          "**/*.py"
+        ]
+      },
+      {
+        "description": "DSPy ChainOfThought module instantiations",
+        "regex": "\\bdspy\\.ChainOfThought\\s*\\(",
+        "ast_kind": "Call",
+        "ast_name_regex": "^dspy\\.ChainOfThought$",
+        "file_globs": [
+          "**/*.py"
+        ]
+      },
+      {
+        "description": "Imports of DSPy framework",
+        "regex": "^\\s*(?:import\\s+dspy\\b|from\\s+dspy\\b\\s+import\\b)",
+        "ast_kind": "Import",
+        "ast_name_regex": "^dspy$",
+        "file_globs": [
+          "**/*.py"
+        ]
+      },
+      {
+        "description": "Anthropic client creation or Messages API use",
+        "regex": "\\banthropic\\.Anthropic\\s*\\(|\\.messages\\.create\\s*\\(",
+        "ast_kind": "Call",
+        "ast_name_regex": "^(anthropic\\.Anthropic|messages\\.create)$",
+        "file_globs": [
+          "**/*.py"
+        ]
+      },
+      {
+        "description": "Validator verdict taxonomy labels in code or prompts",
+        "regex": "\\b(?:CONFIRMED|DOWNGRADED|DISMISSED)\\b",
+        "ast_kind": null,
+        "ast_name_regex": null,
+        "file_globs": [
+          "**/*.py",
+          "**/*.md",
+          "**/*.txt"
+        ]
+      },
+      {
+        "description": "Validator prosecution defense verdict prompt markers",
+        "regex": "\\b(?:prosecution|defense|verdict)\\b",
+        "ast_kind": null,
+        "ast_name_regex": null,
+        "file_globs": [
+          "**/*.py",
+          "**/*.md",
+          "**/*.txt"
+        ]
+      },
+      {
+        "description": "CLI API key environment variable plumbing",
+        "regex": "\\b(?:ANTHROPIC_API_KEY|OPENROUTER_API_KEY)\\b",
+        "ast_kind": null,
+        "ast_name_regex": null,
+        "file_globs": [
+          "**/*.py",
+          "**/*.md",
+          "**/*.sh"
+        ]
+      },
+      {
+        "description": "Model selection flags or defaults for Claude models",
+        "regex": "\\b(?:claude-opus-4-7|claude-haiku-4-5)\\b",
+        "ast_kind": null,
+        "ast_name_regex": null,
+        "file_globs": [
+          "**/*.py",
+          "**/*.md",
+          "**/*.txt",
+          "**/*.sh"
+        ]
+      },
+      {
+        "description": "Requirement entries for DSPy or Anthropic dependency changes",
+        "regex": "^\\s*(?:dspy-ai|anthropic)\\b",
+        "ast_kind": null,
+        "ast_name_regex": null,
+        "file_globs": [
+          "**/requirements.txt",
+          "**/*.in",
+          "**/*.py"
+        ]
+      }
+    ]
+  },
+  "findings": {
+    "repo_path": "/home/user/Playground/recursive-lm-security-audit",
+    "n_files_scanned": 15,
+    "n_matches": 93,
+    "matches_by_pattern": {
+      "Imports of DSPy framework": [
+        {
+          "pattern": "Imports of DSPy framework",
+          "file": "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+          "line": 27,
+          "context": "import dspy"
+        },
+        {
+          "pattern": "Imports of DSPy framework",
+          "file": "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+          "line": 27,
+          "context": "import dspy"
+        },
+        {
+          "pattern": "Imports of DSPy framework",
+          "file": "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py",
+          "line": 21,
+          "context": "import dspy"
+        },
+        {
+          "pattern": "Imports of DSPy framework",
+          "file": "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py",
+          "line": 21,
+          "context": "import dspy"
+        },
+        {
+          "pattern": "Imports of DSPy framework",
+          "file": "/home/user/Playground/recursive-lm-security-audit/scanner.py",
+          "line": 14,
+          "context": "import dspy"
+        },
+        {
+          "pattern": "Imports of DSPy framework",
+          "file": "/home/user/Playground/recursive-lm-security-audit/scanner.py",
+          "line": 14,
+          "context": "import dspy"
+        },
+        {
+          "pattern": "Imports of DSPy framework",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 17,
+          "context": "import dspy"
+        },
+        {
+          "pattern": "Imports of DSPy framework",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 17,
+          "context": "import dspy"
+        }
+      ],
+      "DSPy LM configuration instances": [
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+          "line": 108,
+          "context": "lm = dspy.LM(model, max_tokens=4000)"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+          "line": 443,
+          "context": "lm = dspy.LM(model, max_tokens=max_tokens)"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+          "line": 444,
+          "context": "sub_lm = dspy.LM(sub_model, max_tokens=max_tokens) if sub_model else lm"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+          "line": 108,
+          "context": "lm = dspy.LM(model, max_tokens=4000)"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+          "line": 443,
+          "context": "lm = dspy.LM(model, max_tokens=max_tokens)"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+          "line": 444,
+          "context": "sub_lm = dspy.LM(sub_model, max_tokens=max_tokens) if sub_model else lm"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py",
+          "line": 311,
+          "context": "lm = dspy.LM(model, max_tokens=max_tokens, **lm_kwargs)"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py",
+          "line": 410,
+          "context": "lm = dspy.LM(model, max_tokens=max_tokens, **lm_kwargs)"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py",
+          "line": 180,
+          "context": "lm = dspy.LM(model, max_tokens=max_tokens, **lm_kwargs)"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py",
+          "line": 392,
+          "context": "lm = dspy.LM(model, max_tokens=max_tokens, **lm_kwargs)"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py",
+          "line": 181,
+          "context": "sub_lm = dspy.LM(sub_model, max_tokens=max_tokens, **lm_kwargs) if sub_model else lm"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py",
+          "line": 393,
+          "context": "sub_lm = dspy.LM(sub_model, max_tokens=max_tokens, **lm_kwargs) if sub_model else lm"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py",
+          "line": 180,
+          "context": "lm = dspy.LM(model, max_tokens=max_tokens, **lm_kwargs)"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py",
+          "line": 181,
+          "context": "sub_lm = dspy.LM(sub_model, max_tokens=max_tokens, **lm_kwargs) if sub_model else lm"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py",
+          "line": 311,
+          "context": "lm = dspy.LM(model, max_tokens=max_tokens, **lm_kwargs)"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py",
+          "line": 392,
+          "context": "lm = dspy.LM(model, max_tokens=max_tokens, **lm_kwargs)"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py",
+          "line": 393,
+          "context": "sub_lm = dspy.LM(sub_model, max_tokens=max_tokens, **lm_kwargs) if sub_model else lm"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py",
+          "line": 410,
+          "context": "lm = dspy.LM(model, max_tokens=max_tokens, **lm_kwargs)"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/scanner.py",
+          "line": 114,
+          "context": "lm = dspy.LM(model, max_tokens=max_tokens, **lm_kwargs)"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/scanner.py",
+          "line": 116,
+          "context": "sub_lm = dspy.LM(sub_model, max_tokens=max_tokens, **sub_lm_kwargs) if sub_model else lm"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/scanner.py",
+          "line": 114,
+          "context": "lm = dspy.LM(model, max_tokens=max_tokens, **lm_kwargs)"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/scanner.py",
+          "line": 116,
+          "context": "sub_lm = dspy.LM(sub_model, max_tokens=max_tokens, **sub_lm_kwargs) if sub_model else lm"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 116,
+          "context": "lm = dspy.LM(model, max_tokens=max_tokens)"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 212,
+          "context": "lm = dspy.LM(model, max_tokens=max_tokens)"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 241,
+          "context": "lm = dspy.LM(model, max_tokens=max_tokens)"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 213,
+          "context": "sub_lm = dspy.LM(sub_model, max_tokens=max_tokens) if sub_model else lm"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 116,
+          "context": "lm = dspy.LM(model, max_tokens=max_tokens)"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 212,
+          "context": "lm = dspy.LM(model, max_tokens=max_tokens)"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 213,
+          "context": "sub_lm = dspy.LM(sub_model, max_tokens=max_tokens) if sub_model else lm"
+        },
+        {
+          "pattern": "DSPy LM configuration instances",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 241,
+          "context": "lm = dspy.LM(model, max_tokens=max_tokens)"
+        }
+      ],
+      "DSPy ChainOfThought module instantiations": [
+        {
+          "pattern": "DSPy ChainOfThought module instantiations",
+          "file": "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+          "line": 111,
+          "context": "extractor = dspy.ChainOfThought(AdvisoryFetcher)"
+        },
+        {
+          "pattern": "DSPy ChainOfThought module instantiations",
+          "file": "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+          "line": 476,
+          "context": "matcher = dspy.ChainOfThought(CVEMatcher)"
+        },
+        {
+          "pattern": "DSPy ChainOfThought module instantiations",
+          "file": "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+          "line": 111,
+          "context": "extractor = dspy.ChainOfThought(AdvisoryFetcher)"
+        },
+        {
+          "pattern": "DSPy ChainOfThought module instantiations",
+          "file": "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+          "line": 476,
+          "context": "matcher = dspy.ChainOfThought(CVEMatcher)"
+        },
+        {
+          "pattern": "DSPy ChainOfThought module instantiations",
+          "file": "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py",
+          "line": 314,
+          "context": "synthesizer = dspy.ChainOfThought(ReportSynthesizer)"
+        },
+        {
+          "pattern": "DSPy ChainOfThought module instantiations",
+          "file": "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py",
+          "line": 286,
+          "context": "Uses a standard dspy.ChainOfThought (not RLM) since the input is"
+        },
+        {
+          "pattern": "DSPy ChainOfThought module instantiations",
+          "file": "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py",
+          "line": 314,
+          "context": "synthesizer = dspy.ChainOfThought(ReportSynthesizer)"
+        },
+        {
+          "pattern": "DSPy ChainOfThought module instantiations",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 119,
+          "context": "extractor = dspy.ChainOfThought(FindingExtractor)"
+        },
+        {
+          "pattern": "DSPy ChainOfThought module instantiations",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 244,
+          "context": "builder = dspy.ChainOfThought(ValidatedReportBuilder)"
+        },
+        {
+          "pattern": "DSPy ChainOfThought module instantiations",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 119,
+          "context": "extractor = dspy.ChainOfThought(FindingExtractor)"
+        },
+        {
+          "pattern": "DSPy ChainOfThought module instantiations",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 244,
+          "context": "builder = dspy.ChainOfThought(ValidatedReportBuilder)"
+        }
+      ],
+      "Validator verdict taxonomy labels in code or prompts": [
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 60,
+          "context": "- CONFIRMED: Real vulnerability with concrete exploit path"
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 61,
+          "context": "- DOWNGRADED: Real concern but lower severity than claimed"
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 62,
+          "context": "- DISMISSED: Not a vulnerability \u2014 feature working as designed,"
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 81,
+          "context": "desc=\"CONFIRMED, DOWNGRADED, or DISMISSED \u2014 with a one-paragraph justification\""
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 91,
+          "context": "Only include CONFIRMED and DOWNGRADED findings. For each finding,"
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 319,
+          "context": "if \"CONFIRMED\" in verdict:"
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 320,
+          "context": "status = \"CONFIRMED\""
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 321,
+          "context": "elif \"DOWNGRADED\" in verdict:"
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 322,
+          "context": "status = \"DOWNGRADED\""
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 323,
+          "context": "elif \"DISMISSED\" in verdict:"
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 324,
+          "context": "status = \"DISMISSED\""
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 334,
+          "context": "confirmed = sum(1 for v in validated if v[\"verdict_status\"] == \"CONFIRMED\")"
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 335,
+          "context": "downgraded = sum(1 for v in validated if v[\"verdict_status\"] == \"DOWNGRADED\")"
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 336,
+          "context": "dismissed = sum(1 for v in validated if v[\"verdict_status\"] == \"DISMISSED\")"
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/README.md",
+          "line": 14,
+          "context": "6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST the vulnerability, then delivers a verdict: CONFIRMED, DOWNGRADED, or DISMISSED"
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+          "line": 22,
+          "context": "| Validator Verdict | CONFIRMED |"
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+          "line": 50,
+          "context": "| Validator Verdict | CONFIRMED |"
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+          "line": 89,
+          "context": "| Validator Verdict | CONFIRMED |"
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+          "line": 117,
+          "context": "| Validator Verdict | CONFIRMED |"
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+          "line": 150,
+          "context": "| Validator Verdict | CONFIRMED |"
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+          "line": 175,
+          "context": "| 1 | Path Traversal (CRITICAL) | CRITICAL | CONFIRMED | **FALSE POSITIVE** | Scanner WRONG, Validator WRONG |"
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+          "line": 176,
+          "context": "| 2 | Plaintext API Keys (HIGH) | HIGH | CONFIRMED | **TRUE (HIGH)** | Both correct |"
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+          "line": 177,
+          "context": "| 3 | Missing Auth on Files (HIGH) | HIGH | CONFIRMED | **TRUE (MEDIUM)** | Real but severity wrong |"
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+          "line": 178,
+          "context": "| 4 | Weak Session Config (MEDIUM) | MEDIUM | CONFIRMED | **TRUE (HIGH/CRITICAL)** | Real but severity too low |"
+        },
+        {
+          "pattern": "Validator verdict taxonomy labels in code or prompts",
+          "file": "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+          "line": 179,
+          "context": "| 5 | No Auth Rate Limiting (MEDIUM) | MEDIUM | CONFIRMED | **TRUE (MEDIUM)** | Both correct |"
+        }
+      ],
+      "Validator prosecution defense verdict prompt markers": [
+        {
+          "pattern": "Validator prosecution defense verdict prompt markers",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 74,
+          "context": "prosecution: str = dspy.OutputField("
+        },
+        {
+          "pattern": "Validator prosecution defense verdict prompt markers",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 77,
+          "context": "defense: str = dspy.OutputField("
+        },
+        {
+          "pattern": "Validator prosecution defense verdict prompt markers",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 80,
+          "context": "verdict: str = dspy.OutputField("
+        },
+        {
+          "pattern": "Validator prosecution defense verdict prompt markers",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 92,
+          "context": "include the prosecution argument (why it matters) and note any"
+        },
+        {
+          "pattern": "Validator prosecution defense verdict prompt markers",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 93,
+          "context": "caveats from the defense. Group dismissed findings in a brief"
+        },
+        {
+          "pattern": "Validator prosecution defense verdict prompt markers",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 198,
+          "context": "then argues both sides before reaching a verdict."
+        },
+        {
+          "pattern": "Validator prosecution defense verdict prompt markers",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 227,
+          "context": "\"prosecution\": result.prosecution,"
+        },
+        {
+          "pattern": "Validator prosecution defense verdict prompt markers",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 228,
+          "context": "\"defense\": result.defense,"
+        },
+        {
+          "pattern": "Validator prosecution defense verdict prompt markers",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 229,
+          "context": "\"verdict\": result.verdict,"
+        },
+        {
+          "pattern": "Validator prosecution defense verdict prompt markers",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 315,
+          "context": "verdict = result.get(\"verdict\", \"\").upper()"
+        },
+        {
+          "pattern": "Validator prosecution defense verdict prompt markers",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 318,
+          "context": "# Parse verdict keyword from the text"
+        },
+        {
+          "pattern": "Validator prosecution defense verdict prompt markers",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 319,
+          "context": "if \"CONFIRMED\" in verdict:"
+        },
+        {
+          "pattern": "Validator prosecution defense verdict prompt markers",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 321,
+          "context": "elif \"DOWNGRADED\" in verdict:"
+        },
+        {
+          "pattern": "Validator prosecution defense verdict prompt markers",
+          "file": "/home/user/Playground/recursive-lm-security-audit/validator.py",
+          "line": 323,
+          "context": "elif \"DISMISSED\" in verdict:"
+        },
+        {
+          "pattern": "Validator prosecution defense verdict prompt markers",
+          "file": "/home/user/Playground/recursive-lm-security-audit/n8n-audit-report.md",
+          "line": 350,
+          "context": "This removes a critical defense-in-depth mechanism against XSS attacks, clickjacking, and other client-side injection attacks."
+        },
+        {
+          "pattern": "Validator prosecution defense verdict prompt markers",
+          "file": "/home/user/Playground/recursive-lm-security-audit/README.md",
+          "line": 14,
+          "context": "6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST the vulnerability, then delivers a verdict: CONFIRMED, DOWNGRADED, or DISMISSED"
+        },
+        {
+          "pattern": "Validator prosecution defense verdict prompt markers",
+          "file": "/home/user/Playground/recursive-lm-security-audit/README.md",
+          "line": 131,
+          "context": "| `validator.py` | Adversarial validation (prosecution/defense/verdict per finding) |"
+        },
+        {
+          "pattern": "Validator prosecution defense verdict prompt markers",
+          "file": "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+          "line": 41,
+          "context": "caused both the scanner and the adversarial validator to miss the defense-in-depth sanitization."
+        }
+      ],
+      "CLI API key environment variable plumbing": [
+        {
+          "pattern": "CLI API key environment variable plumbing",
+          "file": "/home/user/Playground/recursive-lm-security-audit/README.md",
+          "line": 27,
+          "context": "export OPENROUTER_API_KEY=\"your-key-here\""
+        }
+      ]
+    },
+    "hot_files": [
+      [
+        "/home/user/Playground/recursive-lm-security-audit/validator.py",
+        42
+      ],
+      [
+        "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py",
+        17
+      ],
+      [
+        "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+        12
+      ],
+      [
+        "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+        11
+      ],
+      [
+        "/home/user/Playground/recursive-lm-security-audit/scanner.py",
+        6
+      ],
+      [
+        "/home/user/Playground/recursive-lm-security-audit/README.md",
+        4
+      ],
+      [
+        "/home/user/Playground/recursive-lm-security-audit/n8n-audit-report.md",
+        1
+      ]
+    ]
+  },
+  "constraints": [
+    {
+      "axis": "api",
+      "summary": "Preserve existing scanner output schema for downstream consumers",
+      "scope": "recursive-lm-security-audit/scanner.py and parallel_scanner.py outputs consumed by adversarial-security-sim/cli.py",
+      "gate": "none",
+      "rollback": "Redeploy previous DSPy-based scanner implementation",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep CLI flags/call patterns working via compatibility shim",
+      "scope": "recursive-lm-security-audit/cli.py and any external scripts invoking scan entrypoints",
+      "gate": "none",
+      "rollback": "Restore prior argparse surface and DSPy-backed wiring",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Add Anthropic config paths before removing DSPy LM plumbing",
+      "scope": "recursive-lm-security-audit/benchmark.py, batch_runner.py, scanner.py, parallel_scanner.py",
+      "gate": "wait_for:anthropic_key_and_model_selection_verified",
+      "rollback": "Redeploy previous version with dspy.LM/dspy.ChainOfThought intact",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Run dual-write/dual-compare on sample reports before cutover",
+      "scope": "re-running flowise, juice-shop, n8n, and dvsa scans after migration",
+      "gate": "monitor:report_diff_rate<=0.1",
+      "rollback": "Switch back to DSPy path and stop Anthropic-only execution",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Do not ship Anthropic-only validator until verdict labels match",
+      "scope": "recursive-lm-security-audit/validator.py prosecution/defense/verdict prompts",
+      "gate": "wait_for:validator_taxonomy_checkpass_CONFIRMED_DOWNGRADED_DISMISSED",
+      "rollback": "Revert validator prompt changes to prior DSPy prompts",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "schema",
+      "summary": "Preserve existing scan/report output schema byte-for-byte",
+      "scope": "scanner.py, parallel_scanner.py, cli.py, and any serializers feeding adversarial-security-sim/cli.py",
+      "gate": "wait_for:validation against committed sample reports and downstream parser",
+      "rollback": "restore the previous serializer/output model and redeploy_previous",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Keep committed audit reports re-runnable without format drift",
+      "scope": "flowise-report.md, juice-shop-audit-report.md, n8n-audit-report.md, dvsa-audit-report.md regeneration path",
+      "gate": "wait_for:manual spot-check on flowise-manual-verification.md findings",
+      "rollback": "revert the migration and regenerate reports with the prior DSPy pipeline",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "No schema/data migration or report rewrites during active use",
+      "scope": "any change to stored report artifacts, caches, or benchmark outputs in recursive-lm-security-audit/",
+      "gate": "window:after a quiet period with no active scan/report regeneration",
+      "rollback": "restore the pre-change report artifacts from backup",
+      "blocking": false,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Preserve scan output on committed reports before broad rollout",
+      "scope": "scanner.py, parallel_scanner.py, validator.py, benchmark.py, batch_runner.py",
+      "gate": "monitor:confirmed_findings_retained=100%",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Ship behind a runtime toggle for Anthropic vs DSPy path",
+      "scope": "cli.py and all LM call sites in scanner/validator/parallel paths",
+      "gate": "approval:release_manager",
+      "rollback": "disable Anthropic mode and fall back to DSPy path",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Keep cost within the documented ~$0.87 full-scan budget",
+      "scope": "benchmark.py and batch_runner.py model selection/config",
+      "gate": "monitor:scan_cost<=0.96_per_full_scan",
+      "rollback": "switch to prior model/config and redeploy_previous",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Do not cut over during incident windows or Friday afternoon",
+      "scope": "production rollout of recursive-lm-security-audit CLI and runners",
+      "gate": "window:exclude_friday_afternoon_and_incident_windows",
+      "rollback": "halt rollout and keep current version active",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "security",
+      "summary": "Rotate Anthropic/OpenRouter API keys before first live scan",
+      "scope": "cli.py auth plumbing and any env-based key fallback for scanner/benchmark/batch runs",
+      "gate": "wait_for:secrets_rotation_complete",
+      "rollback": "Revoke new keys and restore prior key material/config references",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Preserve audit-trail coverage during DSPy-to-Anthropic migration",
+      "scope": "scanner.py, parallel_scanner.py, validator.py prompt/call paths and emitted report metadata",
+      "gate": "approval:security_review",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify downstream consumers of any externally visible CLI/output changes",
+      "scope": "cli.py argument/env behavior and any changes that affect external scripts or report parsing",
+      "gate": "window:customer_partner_notice_before_release",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Freeze validator label taxonomy: CONFIRMED/DOWNGRADED/DISMISSED",
+      "scope": "validator.py verdict prompt and parsing logic",
+      "gate": "approval:security_review",
+      "rollback": "restore previous verdict prompt and parser behavior",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify downstream users before any report-format or verdict change",
+      "scope": "validator.py prompts and any scanner output consumed by adversarial-security-sim/cli.py and scan_*.py wrappers",
+      "gate": "wait_for:customer_comms_sent",
+      "rollback": "revert prompts and outputs to the last shipped DSPy-based behavior",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Publish migration notice with preserved CONFIRMED/DOWNGRADED/DISMISSED taxonomy",
+      "scope": "cli.py and validator.py user-facing docs/usage for the Anthropic API migration",
+      "gate": "approval:support_lead",
+      "rollback": "remove migration notice and restore prior documented CLI contract",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "ops",
+      "summary": "Do not roll out during launch windows or major customer events",
+      "scope": "deployment of recursive-lm-security-audit changes to scanner pipeline",
+      "gate": "window:outside_launch_window_and_major_event_freeze",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "ops",
+      "summary": "Assign an escalation owner for scan failures and verdict regressions",
+      "scope": "scanner.py, parallel_scanner.py, validator.py rollout support path",
+      "gate": "approval:named_rollout_owner",
+      "rollback": "pause rollout and route incidents to the named owner",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep dual support for DSPy and Anthropic during migration",
+      "scope": "scanner.py, parallel_scanner.py, validator.py, benchmark.py, batch_runner.py",
+      "gate": "wait_for:parity test pass on committed sample reports",
+      "rollback": "restore DSPy path and redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Preserve CLI flags/envs used by external scan scripts",
+      "scope": "cli.py argument parsing and API-key/model selection",
+      "gate": "none",
+      "rollback": "reintroduce old CLI flags as shim",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Do not cut over until validator taxonomy remains stable",
+      "scope": "validator.py verdict output for CONFIRMED/DOWNGRADED/DISMISSED",
+      "gate": "wait_for:golden diff against flowise-manual-verification.md",
+      "rollback": "switch validator back to DSPy prompts",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Add Anthropic fallback shim if new API path is delayed",
+      "scope": "requirements.txt plus runtime client selection in scanner pipeline",
+      "gate": "window:2 releases after merge",
+      "rollback": "prefer DSPy client path and disable Anthropic-only calls",
+      "blocking": false,
+      "owner": "ConsumerSubsystem"
+    }
+  ],
+  "plans": {
+    "00-cost-leaning": {
+      "summary": "",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Add Anthropic client wiring and a runtime toggle in recursive-lm-security-audit/cli.py plus shared config helpers so scanner/validator/benchmark/batch_runner can select DSPy or Anthropic via flags/env (ANTHROPIC_API_KEY, OPENROUTER_API_KEY, model name).",
+          "owner": "BackendOwner",
+          "depends_on": [],
+          "gate": "approval:release_manager",
+          "rollback": "Restore the prior argparse surface and DSPy-backed wiring.",
+          "observability": "CLI help, env resolution, selected model/client path, and compatibility with existing external script invocations.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:27` (CLI API key environment variable plumbing): export OPENROUTER_API_KEY=\"your-key-here\"\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:27` (Imports of DSPy framework): import dspy\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:108` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=4000)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:111` (DSPy ChainOfThought module instantiations): extractor = dspy.ChainOfThought(AdvisoryFetcher)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:443` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=max_tokens)"
+        },
+        {
+          "id": "S2",
+          "action": "Rotate and verify Anthropic/OpenRouter secrets for first live use; confirm the new API key path works with recursive-lm-security-audit/cli.py without changing report formats.",
+          "owner": "Security",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "wait_for:secrets_rotation_complete",
+          "rollback": "Revoke new keys and restore prior key material/config references.",
+          "observability": "Auth success/failure, provider selection, and any 401/403 errors from Messages API calls.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:27` (CLI API key environment variable plumbing): export OPENROUTER_API_KEY=\"your-key-here\""
+        },
+        {
+          "id": "S3",
+          "action": "Implement direct anthropic.Anthropic().messages.create(...) wrappers in recursive-lm-security-audit/scanner.py and recursive-lm-security-audit/parallel_scanner.py, keeping the existing scanner output schema and report serializers unchanged.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "none",
+          "rollback": "Redeploy the previous DSPy-based scanner implementation.",
+          "observability": "Output schema parity, chunking behavior, token usage, response formatting, and downstream parser compatibility.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/parallel_scanner.py.\n  - `/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py:21` (Imports of DSPy framework): import dspy\n  - `/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py:180` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=max_tokens, **lm_kwargs)\n  - `/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py:181` (DSPy LM configuration instances): sub_lm = dspy.LM(sub_model, max_tokens=max_tokens, **lm_kwargs) if sub_model else lm\n  - `/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py:286` (DSPy ChainOfThought module instantiations): Uses a standard dspy.ChainOfThought (not RLM) since the input is\n  - `/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py:311` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=max_tokens, **lm_kwargs)"
+        },
+        {
+          "id": "S4",
+          "action": "Rewrite recursive-lm-security-audit/validator.py prosecution/defense/verdict prompts as explicit Anthropic message templates, preserving CONFIRMED/DOWNGRADED/DISMISSED and tightening the verdict prompt.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "approval:security_review",
+          "rollback": "Revert validator prompt changes to prior DSPy prompts.",
+          "observability": "Verdict label distribution, golden diff against flowise-manual-verification.md, and any changes in prosecution/defense reasoning text.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/n8n-audit-report.md",
+            "/home/user/Playground/recursive-lm-security-audit/validator.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/n8n-audit-report.md, /home/user/Playground/recursive-lm-security-audit/validator.py.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator prosecution defense verdict prompt markers): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/n8n-audit-report.md:350` (Validator prosecution defense verdict prompt markers): This removes a critical defense-in-depth mechanism against XSS attacks, clickjacking, and other client-side injection at\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:81` (Validator verdict taxonomy labels in code or prompts): desc=\"CONFIRMED, DOWNGRADED, or DISMISSED \u2014 with a one-paragraph justification\"\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:93` (Validator prosecution defense verdict prompt markers): caveats from the defense. Group dismissed findings in a brief\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:319` (Validator prosecution defense verdict prompt markers): if \"CONFIRMED\" in verdict:"
+        },
+        {
+          "id": "S5",
+          "action": "Switch recursive-lm-security-audit/benchmark.py and recursive-lm-security-audit/batch_runner.py from dspy.LM configuration to Anthropic client/model selection, keeping the existing ~$0.87/full-scan budget target.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "monitor:scan_cost<=0.96_per_full_scan",
+          "rollback": "Switch to the prior model/config and redeploy_previous.",
+          "observability": "Per-scan cost, token counts, model choice, and benchmark throughput/output equivalence.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/parallel_scanner.py.\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:108` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=4000)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:443` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=max_tokens)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:444` (DSPy LM configuration instances): sub_lm = dspy.LM(sub_model, max_tokens=max_tokens) if sub_model else lm\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:27` (Imports of DSPy framework): import dspy\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:111` (DSPy ChainOfThought module instantiations): extractor = dspy.ChainOfThought(AdvisoryFetcher)"
+        },
+        {
+          "id": "S6",
+          "action": "Keep recursive-lm-security-audit/cli.py backwards-compatible with prior call patterns used by scan_sliver_latest.py and other shells by adding thin shims for old flags/envs and preserving existing output/report entrypoints.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "none",
+          "rollback": "Reintroduce old CLI flags as shim.",
+          "observability": "Existing scripts continue to run, argument parsing remains stable, and no report schema drift is introduced.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/n8n-audit-report.md",
+            "/home/user/Playground/recursive-lm-security-audit/validator.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/n8n-audit-report.md, /home/user/Playground/recursive-lm-security-audit/validator.py.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:27` (CLI API key environment variable plumbing): export OPENROUTER_API_KEY=\"your-key-here\"\n  - `/home/user/Playground/recursive-lm-security-audit/n8n-audit-report.md:350` (Validator prosecution defense verdict prompt markers): This removes a critical defense-in-depth mechanism against XSS attacks, clickjacking, and other client-side injection at\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:92` (Validator prosecution defense verdict prompt markers): include the prosecution argument (why it matters) and note any"
+        },
+        {
+          "id": "S7",
+          "action": "Run parity checks on the committed sample reports flowise-report.md, juice-shop-audit-report.md, n8n-audit-report.md, and dvsa-audit-report.md using the Anthropic path while comparing against the DSPy baseline.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S3",
+            "S4",
+            "S5",
+            "S6"
+          ],
+          "gate": "monitor:report_diff_rate<=0.1",
+          "rollback": "Switch back to the DSPy path and stop Anthropic-only execution.",
+          "observability": "Report diffs, confirmed-finding retention, verdict taxonomy stability, and serializer/parser output identity.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+            "/home/user/Playground/recursive-lm-security-audit/validator.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md, /home/user/Playground/recursive-lm-security-audit/validator.py.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:91` (Validator verdict taxonomy labels in code or prompts): Only include CONFIRMED and DOWNGRADED findings. For each finding,\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:22` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:50` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:89` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |"
+        },
+        {
+          "id": "S8",
+          "action": "Verify manual spot-check on flowise-manual-verification.md so the 4 confirmed real findings remain CONFIRMED and the 1 false positive remains handled correctly after migration.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S4",
+            "S7"
+          ],
+          "gate": "wait_for:manual spot-check on flowise-manual-verification.md findings",
+          "rollback": "Revert the migration and regenerate reports with the prior DSPy pipeline.",
+          "observability": "Exact verdicts for the known ground-truth items and any label drift in edge cases.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+            "/home/user/Playground/recursive-lm-security-audit/validator.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md, /home/user/Playground/recursive-lm-security-audit/validator.py.\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:175` (Validator verdict taxonomy labels in code or prompts): | 1 | Path Traversal (CRITICAL) | CRITICAL | CONFIRMED | **FALSE POSITIVE** | Scanner WRONG, Validator WRONG |\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:91` (Validator verdict taxonomy labels in code or prompts): Only include CONFIRMED and DOWNGRADED findings. For each finding,\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:27` (Imports of DSPy framework): import dspy\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:108` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=4000)"
+        },
+        {
+          "id": "S9",
+          "action": "Validate downstream consumer compatibility with adversarial-security-sim/cli.py and scan_*.py wrappers by exercising the preserved scanner output schema and verdict parsing.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S3",
+            "S4",
+            "S7"
+          ],
+          "gate": "wait_for:validation against committed sample reports and downstream parser",
+          "rollback": "Restore the previous serializer/output model and redeploy_previous.",
+          "observability": "Parser success, schema compatibility, and any consumer-side errors or missing fields.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md.\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:41` (Validator prosecution defense verdict prompt markers): caused both the scanner and the adversarial validator to miss the defense-in-depth sanitization.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/README.md:131` (Validator prosecution defense verdict prompt markers): | `validator.py` | Adversarial validation (prosecution/defense/verdict per finding) |\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:175` (Validator verdict taxonomy labels in code or prompts): | 1 | Path Traversal (CRITICAL) | CRITICAL | CONFIRMED | **FALSE POSITIVE** | Scanner WRONG, Validator WRONG |\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:177` (Validator verdict taxonomy labels in code or prompts): | 3 | Missing Auth on Files (HIGH) | HIGH | CONFIRMED | **TRUE (MEDIUM)** | Real but severity wrong |"
+        },
+        {
+          "id": "S10",
+          "action": "Complete release communications for the Anthropic migration, including preserved CONFIRMED/DOWNGRADED/DISMISSED taxonomy and any CLI/env changes in recursive-lm-security-audit/cli.py and validator.py docs.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S6",
+            "S4"
+          ],
+          "gate": "window:customer_partner_notice_before_release",
+          "rollback": "Remove migration notice and restore prior documented CLI contract.",
+          "observability": "Notice sent status, support readiness, and acknowledgment from downstream users.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+            "/home/user/Playground/recursive-lm-security-audit/validator.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md, /home/user/Playground/recursive-lm-security-audit/validator.py.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:81` (Validator verdict taxonomy labels in code or prompts): desc=\"CONFIRMED, DOWNGRADED, or DISMISSED \u2014 with a one-paragraph justification\"\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:91` (Validator verdict taxonomy labels in code or prompts): Only include CONFIRMED and DOWNGRADED findings. For each finding,\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:320` (Validator verdict taxonomy labels in code or prompts): status = \"CONFIRMED\"\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:322` (Validator verdict taxonomy labels in code or prompts): status = \"DOWNGRADED\""
+        },
+        {
+          "id": "S11",
+          "action": "Schedule the cutover outside Friday afternoon, incident windows, launch windows, and major event freezes; then enable the Anthropic runtime toggle as the default while keeping the DSPy shim available for rollback.",
+          "owner": "SRE",
+          "depends_on": [
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "gate": "approval:release_manager",
+          "rollback": "Disable Anthropic mode and fall back to the DSPy path.",
+          "observability": "Rollout timing compliance, error rate, confirmed-finding retention, and immediate rollback readiness.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/validator.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/validator.py.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:91` (Validator verdict taxonomy labels in code or prompts): Only include CONFIRMED and DOWNGRADED findings. For each finding,\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:131` (Validator prosecution defense verdict prompt markers): | `validator.py` | Adversarial validation (prosecution/defense/verdict per finding) |\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:27` (Imports of DSPy framework): import dspy\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:108` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=4000)"
+        }
+      ],
+      "open_questions": [],
+      "conflicts": []
+    },
+    "01-safety-leaning": {
+      "summary": "Migrate to Anthropic behind a toggle, preserve output/schema and verdict labels, and cut over only after parity, security, and cost checks pass.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Add Anthropic client plumbing and a runtime toggle in recursive-lm-security-audit/cli.py, scanner.py, parallel_scanner.py, validator.py, benchmark.py, and batch_runner.py while keeping DSPy path intact; support ANTHROPIC_API_KEY and OPENROUTER_API_KEY plus model selection args.",
+          "owner": "BackendOwner",
+          "depends_on": [],
+          "gate": "approval:release_manager",
+          "rollback": "Disable Anthropic mode and restore prior DSPy-backed wiring",
+          "observability": "CLI parses old and new flags; runtime logs show selected provider/model; no change in report schema yet",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:27` (CLI API key environment variable plumbing): export OPENROUTER_API_KEY=\"your-key-here\"\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:27` (Imports of DSPy framework): import dspy\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:108` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=4000)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:111` (DSPy ChainOfThought module instantiations): extractor = dspy.ChainOfThought(AdvisoryFetcher)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:443` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=max_tokens)"
+        },
+        {
+          "id": "S2",
+          "action": "Rotate Anthropic/OpenRouter secrets and verify the new env-based key fallback works end-to-end for scan, benchmark, and batch flows.",
+          "owner": "Security",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "wait_for:secrets_rotation_complete",
+          "rollback": "Revoke new keys and restore prior key material/config references",
+          "observability": "Auth succeeds with fresh keys; no unauthorized/401 responses; key source is recorded in logs without leaking secrets",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/benchmark.py.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:27` (CLI API key environment variable plumbing): export OPENROUTER_API_KEY=\"your-key-here\"\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:27` (Imports of DSPy framework): import dspy\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:108` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=4000)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:111` (DSPy ChainOfThought module instantiations): extractor = dspy.ChainOfThought(AdvisoryFetcher)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:443` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=max_tokens)"
+        },
+        {
+          "id": "S3",
+          "action": "Rewrite recursive-lm-security-audit/scanner.py and recursive-lm-security-audit/parallel_scanner.py to use anthropic.Anthropic().messages.create(...) with explicit prompt templates, preserving existing scanner output schema and chunking behavior.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "monitor:confirmed_findings_retained=100%",
+          "rollback": "Switch back to the DSPy path and redeploy_previous",
+          "observability": "Report structure matches prior outputs; confirmed findings still appear; token usage and latency remain within expected bounds",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+            "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md, /home/user/Playground/recursive-lm-security-audit/parallel_scanner.py.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator prosecution defense verdict prompt markers): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:41` (Validator prosecution defense verdict prompt markers): caused both the scanner and the adversarial validator to miss the defense-in-depth sanitization.\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:175` (Validator verdict taxonomy labels in code or prompts): | 1 | Path Traversal (CRITICAL) | CRITICAL | CONFIRMED | **FALSE POSITIVE** | Scanner WRONG, Validator WRONG |\n  - `/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py:21` (Imports of DSPy framework): import dspy\n  - `/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py:180` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=max_tokens, **lm_kwargs)"
+        },
+        {
+          "id": "S4",
+          "action": "Rewrite recursive-lm-security-audit/validator.py proseuction/defense/verdict flow to direct Anthropic Messages calls, keep CONFIRMED/DOWNGRADED/DISMISSED taxonomy, and tighten prompts to reduce label drift.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "wait_for:validator_taxonomy_checkpass_CONFIRMED_DOWNGRADED_DISMISSED",
+          "rollback": "Revert validator prompt changes to prior DSPy prompts",
+          "observability": "Golden verdict labels on flowise-manual-verification.md remain stable; taxonomy parser sees only the allowed labels",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+            "/home/user/Playground/recursive-lm-security-audit/validator.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md, /home/user/Playground/recursive-lm-security-audit/validator.py.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:81` (Validator verdict taxonomy labels in code or prompts): desc=\"CONFIRMED, DOWNGRADED, or DISMISSED \u2014 with a one-paragraph justification\"\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:91` (Validator verdict taxonomy labels in code or prompts): Only include CONFIRMED and DOWNGRADED findings. For each finding,\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:22` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:50` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |"
+        },
+        {
+          "id": "S5",
+          "action": "Update recursive-lm-security-audit/benchmark.py and recursive-lm-security-audit/batch_runner.py LM configuration paths to Anthropic models while preserving existing benchmark inputs/outputs and the $0.87 scan budget target.",
+          "owner": "SRE",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "monitor:scan_cost<=0.96_per_full_scan",
+          "rollback": "Switch to prior model/config and redeploy_previous",
+          "observability": "Per-scan cost, token counts, and benchmark timings stay within budget; no regression in batch runner output format",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/parallel_scanner.py.\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:108` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=4000)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:443` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=max_tokens)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:444` (DSPy LM configuration instances): sub_lm = dspy.LM(sub_model, max_tokens=max_tokens) if sub_model else lm\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:27` (Imports of DSPy framework): import dspy\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:111` (DSPy ChainOfThought module instantiations): extractor = dspy.ChainOfThought(AdvisoryFetcher)"
+        },
+        {
+          "id": "S6",
+          "action": "Run dual-write/dual-compare on the committed sample reports by re-running scans for flowise-report.md, juice-shop-audit-report.md, n8n-audit-report.md, and dvsa-audit-report.md with both paths available.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S3",
+            "S4",
+            "S5"
+          ],
+          "gate": "monitor:report_diff_rate<=0.1",
+          "rollback": "Switch back to DSPy path and stop Anthropic-only execution",
+          "observability": "Diffs in report content, verdict labels, and downstream parser outputs; confirmed findings from flowise-manual-verification.md remain detected",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+            "/home/user/Playground/recursive-lm-security-audit/validator.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md, /home/user/Playground/recursive-lm-security-audit/validator.py.\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:91` (Validator verdict taxonomy labels in code or prompts): Only include CONFIRMED and DOWNGRADED findings. For each finding,\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:22` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:50` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:89` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |"
+        },
+        {
+          "id": "S7",
+          "action": "Validate byte-for-byte report/schema compatibility against committed sample reports and downstream adversarial-security-sim/cli.py parsing, including any external scan_*.py wrapper assumptions.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "wait_for:validation against committed sample reports and downstream parser",
+          "rollback": "Restore the previous serializer/output model and redeploy_previous",
+          "observability": "Parser success rate, field presence/order, and exact output shape remain stable",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+            "/home/user/Playground/recursive-lm-security-audit/n8n-audit-report.md"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md, /home/user/Playground/recursive-lm-security-audit/n8n-audit-report.md.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/README.md:27` (CLI API key environment variable plumbing): export OPENROUTER_API_KEY=\"your-key-here\"\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:131` (Validator prosecution defense verdict prompt markers): | `validator.py` | Adversarial validation (prosecution/defense/verdict per finding) |\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:41` (Validator prosecution defense verdict prompt markers): caused both the scanner and the adversarial validator to miss the defense-in-depth sanitization.\n  - `/home/user/Playground/recursive-lm-security-audit/n8n-audit-report.md:350` (Validator prosecution defense verdict prompt markers): This removes a critical defense-in-depth mechanism against XSS attacks, clickjacking, and other client-side injection at"
+        },
+        {
+          "id": "S8",
+          "action": "Perform manual spot-check on flowise-manual-verification.md confirmed findings and verify regenerated reports still classify the 4 real findings as CONFIRMED and the false positive as not CONFIRMED.",
+          "owner": "Security",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "wait_for:manual spot-check on flowise-manual-verification.md findings",
+          "rollback": "Revert the migration and regenerate reports with the prior DSPy pipeline",
+          "observability": "Manual ground truth mapping, confirmed count, and any false-positive drift",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+            "/home/user/Playground/recursive-lm-security-audit/validator.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md, /home/user/Playground/recursive-lm-security-audit/validator.py.\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:175` (Validator verdict taxonomy labels in code or prompts): | 1 | Path Traversal (CRITICAL) | CRITICAL | CONFIRMED | **FALSE POSITIVE** | Scanner WRONG, Validator WRONG |\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:91` (Validator verdict taxonomy labels in code or prompts): Only include CONFIRMED and DOWNGRADED findings. For each finding,\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:27` (Imports of DSPy framework): import dspy\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:108` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=4000)"
+        },
+        {
+          "id": "S9",
+          "action": "Complete security review for the Anthropic migration, including emitted report metadata and audit-trail coverage in scanner.py, parallel_scanner.py, and validator.py.",
+          "owner": "Security",
+          "depends_on": [
+            "S3",
+            "S4",
+            "S7"
+          ],
+          "gate": "approval:security_review",
+          "rollback": "Redeploy_previous",
+          "observability": "Review signoff notes, metadata completeness, and no loss of traceability in prompts/call paths",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md.\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:175` (Validator verdict taxonomy labels in code or prompts): | 1 | Path Traversal (CRITICAL) | CRITICAL | CONFIRMED | **FALSE POSITIVE** | Scanner WRONG, Validator WRONG |\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:22` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:41` (Validator prosecution defense verdict prompt markers): caused both the scanner and the adversarial validator to miss the defense-in-depth sanitization.\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:50` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |"
+        },
+        {
+          "id": "S10",
+          "action": "Send customer/downstream communication about the preserved CONFIRMED/DOWNGRADED/DISMISSED taxonomy, CLI compatibility, and any externally visible Anthropic migration behavior.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S1",
+            "S4",
+            "S7"
+          ],
+          "gate": "wait_for:customer_comms_sent",
+          "rollback": "Revert prompts and outputs to the last shipped DSPy-based behavior",
+          "observability": "Notice delivered to downstream consumers; support inbox and release notes updated",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+            "/home/user/Playground/recursive-lm-security-audit/validator.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md, /home/user/Playground/recursive-lm-security-audit/validator.py.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:81` (Validator verdict taxonomy labels in code or prompts): desc=\"CONFIRMED, DOWNGRADED, or DISMISSED \u2014 with a one-paragraph justification\"\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:91` (Validator verdict taxonomy labels in code or prompts): Only include CONFIRMED and DOWNGRADED findings. For each finding,\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:22` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:50` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |"
+        },
+        {
+          "id": "S11",
+          "action": "Obtain named rollout owner and launch a production rollout only outside incident windows, Friday afternoon, launch windows, and major customer event freezes; keep the Anthropic runtime toggle available for immediate fallback.",
+          "owner": "SRE",
+          "depends_on": [
+            "S9",
+            "S10",
+            "S8"
+          ],
+          "gate": "approval:named_rollout_owner",
+          "rollback": "Disable Anthropic mode and fall back to DSPy path",
+          "observability": "Rollout window compliance, incident status, owner presence, and immediate rollback readiness",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/parallel_scanner.py.\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:27` (Imports of DSPy framework): import dspy\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:108` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=4000)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:111` (DSPy ChainOfThought module instantiations): extractor = dspy.ChainOfThought(AdvisoryFetcher)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:443` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=max_tokens)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:444` (DSPy LM configuration instances): sub_lm = dspy.LM(sub_model, max_tokens=max_tokens) if sub_model else lm"
+        },
+        {
+          "id": "S12",
+          "action": "Flip the default path to Anthropic in cli.py and all LM call sites after the guarded rollout window, while retaining the compatibility shim for external scripts and the DSPy fallback for one release window.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S11"
+          ],
+          "gate": "window:2 releases after merge",
+          "rollback": "Prefer DSPy client path and disable Anthropic-only calls",
+          "observability": "Provider selection distribution, fallback rate, and downstream consumer success remain stable",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/n8n-audit-report.md"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/n8n-audit-report.md.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:27` (CLI API key environment variable plumbing): export OPENROUTER_API_KEY=\"your-key-here\"\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:27` (Imports of DSPy framework): import dspy\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:108` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=4000)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:111` (DSPy ChainOfThought module instantiations): extractor = dspy.ChainOfThought(AdvisoryFetcher)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:443` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=max_tokens)"
+        }
+      ],
+      "open_questions": [
+        "Which Anthropic model should be the default for scanner and validator flows: claude-opus-4-7, claude-haiku-4-5, or a split by task?",
+        "Should prompt caching and extended thinking be enabled everywhere or only for specific phases to control cost?",
+        "What exact CLI shim flags must remain supported for external scripts beyond the current call patterns?",
+        "What is the authoritative downstream parser contract for adversarial-security-sim/cli.py if current outputs differ subtly from DSPy?",
+        "Who is the named rollout owner approved for the release?"
+      ],
+      "conflicts": [
+        {
+          "between": [
+            "BackendOwner: add Anthropic config paths before removing DSPy LM plumbing",
+            "BackendOwner: ship Anthropic-only validator until verdict labels match"
+          ],
+          "issue": "The first requires keeping DSPy intact during migration; the second implies removing DSPy from validator before parity is proven.",
+          "chosen_path": "Keep dual-path validator until taxonomy parity is verified; only flip default after checks pass."
+        },
+        {
+          "between": [
+            "BackendOwner: run dual-write/dual-compare on sample reports before cutover",
+            "SRE: do not cut over during incident windows or Friday afternoon"
+          ],
+          "issue": "Dual compare delays cutover, but production timing must also avoid restricted windows.",
+          "chosen_path": "Sequentialize dual-compare first, then wait for an allowed rollout window."
+        },
+        {
+          "between": [
+            "SRE: ship behind a runtime toggle for Anthropic vs DSPy path",
+            "ConsumerSubsystem: keep dual support for DSPy and Anthropic during migration"
+          ],
+          "issue": "Both require a dual-path state, but the toggle-backed rollout pressures a future default flip while ConsumerSubsystem wants dual support maintained through parity.",
+          "chosen_path": "Keep dual support behind the toggle until parity, then flip default while preserving fallback for one release window."
+        },
+        {
+          "between": [
+            "Security: rotate Anthropic/OpenRouter API keys before first live scan",
+            "BackendOwner: add Anthropic config paths before removing DSPy LM plumbing"
+          ],
+          "issue": "Live Anthropic scans require new secrets, but config plumbing is a prerequisite and cannot be skipped.",
+          "chosen_path": "Implement config plumbing first, then rotate keys before any live Anthropic scan."
+        },
+        {
+          "between": [
+            "Security: preserve audit-trail coverage during DSPy-to-Anthropic migration",
+            "BackendOwner: replace every dspy.LM, dspy.Predict, and dspy.ChainOfThought instantiation"
+          ],
+          "issue": "Full replacement can reduce traceability unless explicit audit metadata is added.",
+          "chosen_path": "Add direct-call audit metadata and keep traceability fields in emitted reports."
+        },
+        {
+          "between": [
+            "ProductPM: notify downstream users before any report-format or verdict change",
+            "DataPlatform: keep committed audit reports re-runnable without format drift"
+          ],
+          "issue": "Re-running reports risks drift before comms are sent, while ProductPM requires notice first for visible changes.",
+          "chosen_path": "Hold external rollout until comms are sent and report regeneration is validated."
+        },
+        {
+          "between": [
+            "SRE: preserve scan output on committed reports before broad rollout",
+            "ConsumerSubsystem: preserve CLI flags/envs used by external scan scripts"
+          ],
+          "issue": "Broad rollout should wait for output preservation, but external scripts also need compatibility preserved throughout migration.",
+          "chosen_path": "Maintain a compatibility shim and validate outputs before widening rollout."
+        }
+      ]
+    },
+    "02-speed-leaning": {
+      "summary": "Migrate scanner/validator paths to Anthropic with compatibility shims, then parity-check sample reports and keep DSPy fallback until taxonomy/output match.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Add Anthropic client/config plumbing and CLI shims in recursive-lm-security-audit/cli.py, scanner.py, parallel_scanner.py, benchmark.py, and batch_runner.py; support ANTHROPIC_API_KEY/OPENROUTER_API_KEY plus model selection while keeping existing flags/call patterns.",
+          "owner": "BackendOwner",
+          "depends_on": [],
+          "gate": "wait_for:anthropic_key_and_model_selection_verified",
+          "rollback": "Restore prior argparse surface and DSPy-backed wiring.",
+          "observability": "CLI parse success, key resolution path, selected model logged, external scripts still invoke the same entrypoints.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/parallel_scanner.py.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:27` (CLI API key environment variable plumbing): export OPENROUTER_API_KEY=\"your-key-here\"\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:27` (Imports of DSPy framework): import dspy\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:108` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=4000)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:111` (DSPy ChainOfThought module instantiations): extractor = dspy.ChainOfThought(AdvisoryFetcher)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:443` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=max_tokens)"
+        },
+        {
+          "id": "S2",
+          "action": "Rotate Anthropic/OpenRouter API keys and verify secrets are available for live scans; update env-based auth references used by recursive-lm-security-audit/cli.py and runners.",
+          "owner": "Security",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "wait_for:secrets_rotation_complete",
+          "rollback": "Revoke new keys and restore prior key material/config references.",
+          "observability": "Key lookup success, auth failures absent, no use of stale credentials.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:27` (CLI API key environment variable plumbing): export OPENROUTER_API_KEY=\"your-key-here\""
+        },
+        {
+          "id": "S3",
+          "action": "Rewrite recursive-lm-security-audit/scanner.py and parallel_scanner.py to use anthropic.Anthropic().messages.create(...) instead of dspy.LM, dspy.Predict, and dspy.ChainOfThought while preserving the existing scanner output schema consumed by adversarial-security-sim/cli.py.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "monitor:confirmed_findings_retained=100%",
+          "rollback": "Redeploy previous DSPy-based scanner implementation.",
+          "observability": "Confirmed findings retained, output schema unchanged, chunked scan completion, token usage and latency per call.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+            "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md, /home/user/Playground/recursive-lm-security-audit/parallel_scanner.py.\n  - `/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py:286` (DSPy ChainOfThought module instantiations): Uses a standard dspy.ChainOfThought (not RLM) since the input is\n  - `/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py:314` (DSPy ChainOfThought module instantiations): synthesizer = dspy.ChainOfThought(ReportSynthesizer)\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:111` (DSPy ChainOfThought module instantiations): extractor = dspy.ChainOfThought(AdvisoryFetcher)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:476` (DSPy ChainOfThought module instantiations): matcher = dspy.ChainOfThought(CVEMatcher)"
+        },
+        {
+          "id": "S4",
+          "action": "Replace recursive-lm-security-audit/validator.py prosecution/defense/verdict DSPy modules with explicit Anthropic prompts and keep verdict labels limited to CONFIRMED, DOWNGRADED, and DISMISSED.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "wait_for:validator_taxonomy_checkpass_CONFIRMED_DOWNGRADED_DISMISSED",
+          "rollback": "Revert validator prompt changes to prior DSPy prompts.",
+          "observability": "Verdict label distribution, taxonomy parse success, golden diff against flowise-manual-verification.md.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+            "/home/user/Playground/recursive-lm-security-audit/validator.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md, /home/user/Playground/recursive-lm-security-audit/validator.py.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:81` (Validator verdict taxonomy labels in code or prompts): desc=\"CONFIRMED, DOWNGRADED, or DISMISSED \u2014 with a one-paragraph justification\"\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:91` (Validator verdict taxonomy labels in code or prompts): Only include CONFIRMED and DOWNGRADED findings. For each finding,\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:22` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:50` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |"
+        },
+        {
+          "id": "S5",
+          "action": "Update recursive-lm-security-audit/benchmark.py and batch_runner.py LM configuration paths to Anthropic models, preserving cost controls and scan settings used by current runs.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "monitor:scan_cost<=0.96_per_full_scan",
+          "rollback": "Switch to prior model/config and redeploy_previous.",
+          "observability": "Per-scan cost, token counts, benchmark runtime, model routing correctness.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/parallel_scanner.py.\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:108` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=4000)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:443` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=max_tokens)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:444` (DSPy LM configuration instances): sub_lm = dspy.LM(sub_model, max_tokens=max_tokens) if sub_model else lm\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:27` (Imports of DSPy framework): import dspy\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:111` (DSPy ChainOfThought module instantiations): extractor = dspy.ChainOfThought(AdvisoryFetcher)"
+        },
+        {
+          "id": "S6",
+          "action": "Run dual-write/dual-compare scans for flowise-report.md, juice-shop-audit-report.md, n8n-audit-report.md, and dvsa-audit-report.md through both paths and diff scanner/validator outputs.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S3",
+            "S4",
+            "S5"
+          ],
+          "gate": "monitor:report_diff_rate<=0.1",
+          "rollback": "Switch back to DSPy path and stop Anthropic-only execution.",
+          "observability": "Report diff rate, confirmed findings parity, validator verdict parity, downstream parser acceptance.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+            "/home/user/Playground/recursive-lm-security-audit/validator.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md, /home/user/Playground/recursive-lm-security-audit/validator.py.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:175` (Validator verdict taxonomy labels in code or prompts): | 1 | Path Traversal (CRITICAL) | CRITICAL | CONFIRMED | **FALSE POSITIVE** | Scanner WRONG, Validator WRONG |\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:91` (Validator verdict taxonomy labels in code or prompts): Only include CONFIRMED and DOWNGRADED findings. For each finding,\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:22` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:41` (Validator prosecution defense verdict prompt markers): caused both the scanner and the adversarial validator to miss the defense-in-depth sanitization."
+        },
+        {
+          "id": "S7",
+          "action": "Validate committed sample reports and downstream parser compatibility in recursive-lm-security-audit against adversarial-security-sim/cli.py, ensuring byte-for-byte schema stability for serializers and report consumers.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "wait_for:validation against committed sample reports and downstream parser",
+          "rollback": "Restore the previous serializer/output model and redeploy_previous.",
+          "observability": "Parser pass/fail, schema equality, sample report regeneration success, downstream consumer smoke tests.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+            "/home/user/Playground/recursive-lm-security-audit/n8n-audit-report.md"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md, /home/user/Playground/recursive-lm-security-audit/n8n-audit-report.md.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/README.md:27` (CLI API key environment variable plumbing): export OPENROUTER_API_KEY=\"your-key-here\"\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:131` (Validator prosecution defense verdict prompt markers): | `validator.py` | Adversarial validation (prosecution/defense/verdict per finding) |\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:41` (Validator prosecution defense verdict prompt markers): caused both the scanner and the adversarial validator to miss the defense-in-depth sanitization.\n  - `/home/user/Playground/recursive-lm-security-audit/n8n-audit-report.md:350` (Validator prosecution defense verdict prompt markers): This removes a critical defense-in-depth mechanism against XSS attacks, clickjacking, and other client-side injection at"
+        },
+        {
+          "id": "S8",
+          "action": "Run manual spot-check on flowise-manual-verification.md confirmed findings and verify the re-run reports preserve the CONFIRMED classification for the 4 real findings and the false positive remains non-CONFIRMED.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S7"
+          ],
+          "gate": "wait_for:manual spot-check on flowise-manual-verification.md findings",
+          "rollback": "Revert the migration and regenerate reports with the prior DSPy pipeline.",
+          "observability": "Manual verification matches, confirmed findings retained, false positive classification, report text consistency.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+            "/home/user/Playground/recursive-lm-security-audit/validator.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md, /home/user/Playground/recursive-lm-security-audit/validator.py.\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:175` (Validator verdict taxonomy labels in code or prompts): | 1 | Path Traversal (CRITICAL) | CRITICAL | CONFIRMED | **FALSE POSITIVE** | Scanner WRONG, Validator WRONG |\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:91` (Validator verdict taxonomy labels in code or prompts): Only include CONFIRMED and DOWNGRADED findings. For each finding,\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:27` (Imports of DSPy framework): import dspy\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:108` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=4000)"
+        },
+        {
+          "id": "S9",
+          "action": "Prepare and publish migration notice and downstream consumer comms for cli.py behavior, validator taxonomy preservation, and any externally visible report/output changes.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S1",
+            "S4"
+          ],
+          "gate": "approval:support_lead",
+          "rollback": "Remove migration notice and restore prior documented CLI contract.",
+          "observability": "Notice published, support acknowledgment, external script owners informed.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:22` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:50` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:89` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:117` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |"
+        },
+        {
+          "id": "S10",
+          "action": "Assign a named rollout owner and confirm escalation routing for scanner.py, parallel_scanner.py, validator.py, benchmark.py, and batch_runner.py rollout support.",
+          "owner": "ProductPM",
+          "depends_on": [],
+          "gate": "approval:named_rollout_owner",
+          "rollback": "Pause rollout and route incidents to the named owner.",
+          "observability": "Named owner recorded, escalation contact verified, on-call handoff complete.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md.\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:41` (Validator prosecution defense verdict prompt markers): caused both the scanner and the adversarial validator to miss the defense-in-depth sanitization.\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:175` (Validator verdict taxonomy labels in code or prompts): | 1 | Path Traversal (CRITICAL) | CRITICAL | CONFIRMED | **FALSE POSITIVE** | Scanner WRONG, Validator WRONG |\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/README.md:131` (Validator prosecution defense verdict prompt markers): | `validator.py` | Adversarial validation (prosecution/defense/verdict per finding) |\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:27` (Imports of DSPy framework): import dspy"
+        },
+        {
+          "id": "S11",
+          "action": "Cut over production CLI/runners to the Anthropic path with the runtime toggle enabled but defaulting to Anthropic, while retaining the DSPy fallback shim for external scripts during the migration window.",
+          "owner": "SRE",
+          "depends_on": [
+            "S3",
+            "S4",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "gate": "window:exclude_friday_afternoon_and_incident_windows",
+          "rollback": "Disable Anthropic mode and fall back to DSPy path.",
+          "observability": "Runtime toggle state, rollout window compliance, live error rate, confirmed findings retention.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/validator.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/validator.py.\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:91` (Validator verdict taxonomy labels in code or prompts): Only include CONFIRMED and DOWNGRADED findings. For each finding,\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/README.md:27` (CLI API key environment variable plumbing): export OPENROUTER_API_KEY=\"your-key-here\"\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:27` (Imports of DSPy framework): import dspy\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:108` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=4000)"
+        },
+        {
+          "id": "S12",
+          "action": "Remove dspy-ai from recursive-lm-security-audit/requirements.txt once the Anthropic path is stable and the compatibility shim remains available for external callers.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S11"
+          ],
+          "gate": "none",
+          "rollback": "Restore dspy-ai and previous lockfile/dependency pinning.",
+          "observability": "Dependency install success, import smoke tests, no unresolved runtime references to dspy.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/parallel_scanner.py.\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:27` (Imports of DSPy framework): import dspy\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:108` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=4000)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:111` (DSPy ChainOfThought module instantiations): extractor = dspy.ChainOfThought(AdvisoryFetcher)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:443` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=max_tokens)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:444` (DSPy LM configuration instances): sub_lm = dspy.LM(sub_model, max_tokens=max_tokens) if sub_model else lm"
+        }
+      ],
+      "open_questions": [
+        "Should the runtime toggle remain user-accessible after cutover or be hidden once parity is proven?",
+        "Which exact Anthropic model defaults should be used for scanner vs validator vs benchmark paths?",
+        "Is there an agreed owner/name for the rollout owner approval step?",
+        "Should OPENROUTER_API_KEY be supported indefinitely or only as a temporary fallback?"
+      ],
+      "conflicts": [
+        {
+          "between": [
+            "BackendOwner: add Anthropic config paths before removing DSPy LM plumbing",
+            "SRE: ship behind a runtime toggle for Anthropic vs DSPy path"
+          ],
+          "why": "One pushes direct Anthropic enablement first while the other requires keeping a runtime switch and DSPy fallback during rollout.",
+          "chosen_path": "Keep the runtime toggle and add Anthropic config plumbing first, then cut over with fallback shim retained."
+        },
+        {
+          "between": [
+            "BackendOwner: run dual-write/dual-compare on sample reports before cutover",
+            "SRE: preserve scan output on committed reports before broad rollout"
+          ],
+          "why": "Both require validation before rollout, but one prefers dual execution while the other requires no regression on committed outputs; they conflict if dual paths diverge.",
+          "chosen_path": "Run dual-compare and use confirmed-findings retention as the deciding gate."
+        },
+        {
+          "between": [
+            "BackendOwner: do not ship Anthropic-only validator until verdict labels match",
+            "SRE: ship behind a runtime toggle for Anthropic vs DSPy path"
+          ],
+          "why": "Validator-only cutover conflicts with a runtime toggle that keeps both paths available.",
+          "chosen_path": "Keep the toggle and delay Anthropic-only validator cutover until taxonomy parity is verified."
+        },
+        {
+          "between": [
+            "DataPlatform: preserve existing scan/report output schema byte-for-byte",
+            "ProductPM: notify downstream users before any report-format or verdict change"
+          ],
+          "why": "Schema stability aims for no visible change, while comms assumes externally visible changes may occur.",
+          "chosen_path": "Treat the migration as schema-preserving and send comms focused on implementation change rather than output change."
+        },
+        {
+          "between": [
+            "Security: preserve audit-trail coverage during DSPy-to-Anthropic migration",
+            "ConsumerSubsystem: keep dual support for DSPy and Anthropic during migration"
+          ],
+          "why": "Audit-trail coverage may require tighter instrumentation, while dual support extends the migration surface and runtime paths.",
+          "chosen_path": "Retain dual support with explicit logging/audit metadata in both paths."
+        },
+        {
+          "between": [
+            "ProductPM: do not roll out during launch windows or major customer events",
+            "SRE: do not cut over during incident windows or Friday afternoon"
+          ],
+          "why": "Both impose rollout windows; they can block each other if the available window is narrow.",
+          "chosen_path": "Use the intersection of both safe windows and delay if either restriction is active."
+        }
+      ]
+    },
+    "03-safety-tilted": {
+      "summary": "",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Add Anthropic client plumbing and compatibility shim in recursive-lm-security-audit/cli.py, scanner.py, parallel_scanner.py, validator.py, benchmark.py, and batch_runner.py; keep DSPy path selectable at runtime and preserve existing flags/envs while adding ANTHROPIC_API_KEY/OPENROUTER_API_KEY and model selection.",
+          "owner": "BackendOwner",
+          "depends_on": [],
+          "gate": "approval:named_rollout_owner",
+          "rollback": "Disable Anthropic mode and restore prior DSPy-backed wiring behind the runtime toggle.",
+          "observability": "CLI parsing compatibility, env var resolution, selected model name, and whether the DSPy or Anthropic path is active.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:27` (CLI API key environment variable plumbing): export OPENROUTER_API_KEY=\"your-key-here\"\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:27` (Imports of DSPy framework): import dspy\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:108` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=4000)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:111` (DSPy ChainOfThought module instantiations): extractor = dspy.ChainOfThought(AdvisoryFetcher)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:443` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=max_tokens)"
+        },
+        {
+          "id": "S2",
+          "action": "Rotate Anthropic/OpenRouter secrets and verify credentials for a no-op Anthropic Messages API call from the new client path.",
+          "owner": "Security",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "wait_for:secrets_rotation_complete",
+          "rollback": "Revoke new keys and restore prior key material/config references.",
+          "observability": "Auth success/failure, key source used, and any 401/403 errors from the Anthropic client.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/n8n-audit-report.md"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/n8n-audit-report.md.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:27` (CLI API key environment variable plumbing): export OPENROUTER_API_KEY=\"your-key-here\"\n  - `/home/user/Playground/recursive-lm-security-audit/n8n-audit-report.md:350` (Validator prosecution defense verdict prompt markers): This removes a critical defense-in-depth mechanism against XSS attacks, clickjacking, and other client-side injection at"
+        },
+        {
+          "id": "S3",
+          "action": "Rewrite recursive-lm-security-audit/scanner.py to replace dspy.LM/dspy.Predict/dspy.ChainOfThought with explicit anthropic.Anthropic().messages.create prompts, preserving output schema and report fields.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "monitor:confirmed_findings_retained=100%",
+          "rollback": "Switch scanner.py back to the prior DSPy implementation via the runtime toggle.",
+          "observability": "Confirmed finding retention, report field stability, prompt/response completeness, and token usage per scan chunk.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+            "/home/user/Playground/recursive-lm-security-audit/validator.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md, /home/user/Playground/recursive-lm-security-audit/validator.py.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:175` (Validator verdict taxonomy labels in code or prompts): | 1 | Path Traversal (CRITICAL) | CRITICAL | CONFIRMED | **FALSE POSITIVE** | Scanner WRONG, Validator WRONG |\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:91` (Validator verdict taxonomy labels in code or prompts): Only include CONFIRMED and DOWNGRADED findings. For each finding,\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:131` (Validator prosecution defense verdict prompt markers): | `validator.py` | Adversarial validation (prosecution/defense/verdict per finding) |\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:111` (DSPy ChainOfThought module instantiations): extractor = dspy.ChainOfThought(AdvisoryFetcher)"
+        },
+        {
+          "id": "S4",
+          "action": "Rewrite recursive-lm-security-audit/parallel_scanner.py chunked scan and report synthesis path to direct Anthropic messages.create calls, keeping chunk output and synthesized report format byte-compatible.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "monitor:confirmed_findings_retained=100%",
+          "rollback": "Fall back to the DSPy chunked scanner path and previous synthesizer wiring.",
+          "observability": "Chunk-level recall, synthesis consistency, output schema parity, and any diff in generated report sections.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/parallel_scanner.py.\n  - `/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py:314` (DSPy ChainOfThought module instantiations): synthesizer = dspy.ChainOfThought(ReportSynthesizer)\n  - `/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py:21` (Imports of DSPy framework): import dspy\n  - `/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py:180` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=max_tokens, **lm_kwargs)\n  - `/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py:181` (DSPy LM configuration instances): sub_lm = dspy.LM(sub_model, max_tokens=max_tokens, **lm_kwargs) if sub_model else lm\n  - `/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py:286` (DSPy ChainOfThought module instantiations): Uses a standard dspy.ChainOfThought (not RLM) since the input is"
+        },
+        {
+          "id": "S5",
+          "action": "Rewrite recursive-lm-security-audit/validator.py prosecution/defense/verdict prompts into explicit Anthropic messages.create calls, freezing verdict labels to CONFIRMED/DOWNGRADED/DISMISSED and tightening the verdict prompt.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "wait_for:validator_taxonomy_checkpass_CONFIRMED_DOWNGRADED_DISMISSED",
+          "rollback": "Revert validator.py prompt logic to the prior DSPy prompts and parser behavior.",
+          "observability": "Verdict label distribution, taxonomy compliance, flowise-manual-verification.md golden-case results, and any mislabels.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+            "/home/user/Playground/recursive-lm-security-audit/validator.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md, /home/user/Playground/recursive-lm-security-audit/validator.py.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:81` (Validator verdict taxonomy labels in code or prompts): desc=\"CONFIRMED, DOWNGRADED, or DISMISSED \u2014 with a one-paragraph justification\"\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:91` (Validator verdict taxonomy labels in code or prompts): Only include CONFIRMED and DOWNGRADED findings. For each finding,\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:22` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:50` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |"
+        },
+        {
+          "id": "S6",
+          "action": "Update recursive-lm-security-audit/benchmark.py and batch_runner.py model configuration to use Anthropic direct-client settings, including claude-opus-4-7/claude-haiku-4-5 selection and bounded max_tokens.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "monitor:scan_cost<=0.96_per_full_scan",
+          "rollback": "Switch benchmark/batch runner back to the prior model/config and DSPy-backed client path.",
+          "observability": "Per-scan cost, token counts, benchmark throughput, and any regression in full-scan runtime.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/parallel_scanner.py.\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:108` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=4000)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:443` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=max_tokens)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:444` (DSPy LM configuration instances): sub_lm = dspy.LM(sub_model, max_tokens=max_tokens) if sub_model else lm\n  - `/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py:180` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=max_tokens, **lm_kwargs)\n  - `/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py:181` (DSPy LM configuration instances): sub_lm = dspy.LM(sub_model, max_tokens=max_tokens, **lm_kwargs) if sub_model else lm"
+        },
+        {
+          "id": "S7",
+          "action": "Run dual-write/dual-compare scans on the committed sample reports flowise-report.md, juice-shop-audit-report.md, n8n-audit-report.md, and dvsa-audit-report.md using both DSPy and Anthropic paths; compare outputs and keep the better-matching path as default only if diff rate stays within threshold.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S3",
+            "S4",
+            "S5",
+            "S6"
+          ],
+          "gate": "monitor:report_diff_rate<=0.1",
+          "rollback": "Switch back to the DSPy path and stop Anthropic-only execution.",
+          "observability": "Report diffs, parser compatibility, confirmed findings retained, and any formatting drift in regenerated reports.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/validator.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/validator.py.\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:91` (Validator verdict taxonomy labels in code or prompts): Only include CONFIRMED and DOWNGRADED findings. For each finding,\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:27` (Imports of DSPy framework): import dspy\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:108` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=4000)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:111` (DSPy ChainOfThought module instantiations): extractor = dspy.ChainOfThought(AdvisoryFetcher)"
+        },
+        {
+          "id": "S8",
+          "action": "Validate regenerated outputs against the downstream adversarial-security-sim/cli.py consumer and the existing scan_*.py shell wrappers to confirm the scan/report schema is unchanged.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S7"
+          ],
+          "gate": "wait_for:validation against committed sample reports and downstream parser",
+          "rollback": "Restore the previous serializer/output model and redeploy_previous.",
+          "observability": "Downstream parse success, schema field presence, wrapper script behavior, and any consumer-side exceptions.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+            "/home/user/Playground/recursive-lm-security-audit/n8n-audit-report.md",
+            "/home/user/Playground/recursive-lm-security-audit/validator.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md, /home/user/Playground/recursive-lm-security-audit/n8n-audit-report.md, /home/user/Playground/recursive-lm-security-audit/validator.py.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/README.md:27` (CLI API key environment variable plumbing): export OPENROUTER_API_KEY=\"your-key-here\"\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:131` (Validator prosecution defense verdict prompt markers): | `validator.py` | Adversarial validation (prosecution/defense/verdict per finding) |\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:41` (Validator prosecution defense verdict prompt markers): caused both the scanner and the adversarial validator to miss the defense-in-depth sanitization.\n  - `/home/user/Playground/recursive-lm-security-audit/n8n-audit-report.md:350` (Validator prosecution defense verdict prompt markers): This removes a critical defense-in-depth mechanism against XSS attacks, clickjacking, and other client-side injection at"
+        },
+        {
+          "id": "S9",
+          "action": "Perform manual spot-check on flowise-manual-verification.md against the regenerated flowise report to confirm the 4 real findings remain CONFIRMED and the false positive remains non-confirmed.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S7",
+            "S8"
+          ],
+          "gate": "wait_for:manual spot-check on flowise-manual-verification.md findings",
+          "rollback": "Revert the migration and regenerate reports with the prior DSPy pipeline.",
+          "observability": "Ground-truth match rate, confirmed vs dismissed verdicts, and any drift in the known Flowise cases.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+            "/home/user/Playground/recursive-lm-security-audit/validator.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md, /home/user/Playground/recursive-lm-security-audit/validator.py.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:175` (Validator verdict taxonomy labels in code or prompts): | 1 | Path Traversal (CRITICAL) | CRITICAL | CONFIRMED | **FALSE POSITIVE** | Scanner WRONG, Validator WRONG |\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:81` (Validator verdict taxonomy labels in code or prompts): desc=\"CONFIRMED, DOWNGRADED, or DISMISSED \u2014 with a one-paragraph justification\"\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:91` (Validator verdict taxonomy labels in code or prompts): Only include CONFIRMED and DOWNGRADED findings. For each finding,\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:93` (Validator prosecution defense verdict prompt markers): caveats from the defense. Group dismissed findings in a brief"
+        },
+        {
+          "id": "S10",
+          "action": "Run validator golden-diff checks to ensure the verdict taxonomy remains stable and label parsing still yields CONFIRMED/DOWNGRADED/DISMISSED for the committed samples.",
+          "owner": "Security",
+          "depends_on": [
+            "S5",
+            "S9"
+          ],
+          "gate": "approval:security_review",
+          "rollback": "Restore previous verdict prompt and parser behavior.",
+          "observability": "Golden diff results, label set stability, and any invalid or missing verdict labels.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md",
+            "/home/user/Playground/recursive-lm-security-audit/validator.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md, /home/user/Playground/recursive-lm-security-audit/validator.py.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:81` (Validator verdict taxonomy labels in code or prompts): desc=\"CONFIRMED, DOWNGRADED, or DISMISSED \u2014 with a one-paragraph justification\"\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:177` (Validator verdict taxonomy labels in code or prompts): | 3 | Missing Auth on Files (HIGH) | HIGH | CONFIRMED | **TRUE (MEDIUM)** | Real but severity wrong |\n  - `/home/user/Playground/recursive-lm-security-audit/validator.py:91` (Validator verdict taxonomy labels in code or prompts): Only include CONFIRMED and DOWNGRADED findings. For each finding,\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:22` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |"
+        },
+        {
+          "id": "S11",
+          "action": "Publish migration notice and update CLI usage/docs in recursive-lm-security-audit/cli.py and validator.py comments/help text to reflect Anthropic support while explicitly preserving the verdict taxonomy and compatibility shim.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S8",
+            "S10"
+          ],
+          "gate": "approval:support_lead",
+          "rollback": "Remove migration notice and restore prior documented CLI contract.",
+          "observability": "Support acknowledgment, doc/help text consistency, and no new externally visible CLI breakage.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/README.md",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/README.md, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md.\n  - `/home/user/Playground/recursive-lm-security-audit/README.md:14` (Validator verdict taxonomy labels in code or prompts): 6. **(Optional) Adversarial validation**: Each finding goes through a devil's advocate pass that argues FOR and AGAINST \n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:22` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:50` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:89` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |\n  - `/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md:117` (Validator verdict taxonomy labels in code or prompts): | Validator Verdict | CONFIRMED |"
+        },
+        {
+          "id": "S12",
+          "action": "Flip the runtime default to Anthropic for scanner/validator/benchmark/batch paths in recursive-lm-security-audit while leaving the DSPy fallback shim available for one release.",
+          "owner": "SRE",
+          "depends_on": [
+            "S11"
+          ],
+          "gate": "window:exclude_friday_afternoon_and_incident_windows",
+          "rollback": "Disable Anthropic default and fall back to the prior DSPy path.",
+          "observability": "Default-path activation, incident signals, scan success rate, and any consumer-reported regressions.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/flowise-manual-verification.md.\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:27` (Imports of DSPy framework): import dspy\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:108` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=4000)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:111` (DSPy ChainOfThought module instantiations): extractor = dspy.ChainOfThought(AdvisoryFetcher)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:443` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=max_tokens)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:444` (DSPy LM configuration instances): sub_lm = dspy.LM(sub_model, max_tokens=max_tokens) if sub_model else lm"
+        },
+        {
+          "id": "S13",
+          "action": "Remove dspy-ai from recursive-lm-security-audit/requirements.txt only after the Anthropic default has soaked and the fallback is no longer needed.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S12"
+          ],
+          "gate": "monitor:error_rate<X for 24h",
+          "rollback": "Re-add dspy-ai and restore the previous dependency set.",
+          "observability": "Install success, runtime import errors, error rate across scans, and any fallback usage.",
+          "file_paths": [
+            "/home/user/Playground/recursive-lm-security-audit/benchmark.py",
+            "/home/user/Playground/recursive-lm-security-audit/parallel_scanner.py"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/recursive-lm-security-audit/benchmark.py, /home/user/Playground/recursive-lm-security-audit/parallel_scanner.py.\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:27` (Imports of DSPy framework): import dspy\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:108` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=4000)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:111` (DSPy ChainOfThought module instantiations): extractor = dspy.ChainOfThought(AdvisoryFetcher)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:443` (DSPy LM configuration instances): lm = dspy.LM(model, max_tokens=max_tokens)\n  - `/home/user/Playground/recursive-lm-security-audit/benchmark.py:444` (DSPy LM configuration instances): sub_lm = dspy.LM(sub_model, max_tokens=max_tokens) if sub_model else lm"
+        }
+      ],
+      "open_questions": [],
+      "conflicts": []
+    }
+  },
+  "smt": {
+    "00-cost-leaning": {
+      "feasible": false,
+      "unsat_core_size": 2,
+      "unsat_core_explanations": [
+        "step `S4` depends_on `S2` (so `S2` must be earlier)",
+        "BackendOwner's blocking constraint requires `S4` before `S2` (gate `wait_for:validator_taxonomy_checkpass_CONFIRMED_DOWNGRADED_DISMISSED`)"
+      ]
+    },
+    "01-safety-leaning": {
+      "feasible": true,
+      "unsat_core_size": 0,
+      "unsat_core_explanations": []
+    },
+    "02-speed-leaning": {
+      "feasible": false,
+      "unsat_core_size": 2,
+      "unsat_core_explanations": [
+        "ProductPM's blocking constraint requires `S3` before `S1` (gate `wait_for:customer_comms_sent`)",
+        "step `S3` depends_on `S1` (so `S1` must be earlier)"
+      ]
+    },
+    "03-safety-tilted": {
+      "feasible": false,
+      "unsat_core_size": 4,
+      "unsat_core_explanations": [
+        "step `S3` depends_on `S2` (so `S2` must be earlier)",
+        "step `S7` depends_on `S3` (so `S3` must be earlier)",
+        "ProductPM's blocking constraint requires `S8` before `S2` (gate `wait_for:customer_comms_sent`)",
+        "step `S8` depends_on `S7` (so `S7` must be earlier)"
+      ]
+    }
+  },
+  "chaos": {
+    "00-cost-leaning": {
+      "fragility": 0.382,
+      "fragility_curve": {
+        "1": 0.382,
+        "2": 0.539
+      },
+      "achilles_top_k1": [
+        [
+          "S1"
+        ],
+        [
+          "S2"
+        ],
+        [
+          "S4"
+        ]
+      ]
+    },
+    "01-safety-leaning": {
+      "fragility": 0.447,
+      "fragility_curve": {
+        "1": 0.447,
+        "2": 0.614
+      },
+      "achilles_top_k1": [
+        [
+          "S1"
+        ],
+        [
+          "S2"
+        ],
+        [
+          "S3"
+        ]
+      ]
+    },
+    "02-speed-leaning": {
+      "fragility": 0.371,
+      "fragility_curve": {
+        "1": 0.371,
+        "2": 0.512
+      },
+      "achilles_top_k1": [
+        [
+          "S1"
+        ],
+        [
+          "S2"
+        ],
+        [
+          "S4"
+        ]
+      ]
+    },
+    "03-safety-tilted": {
+      "fragility": 0.461,
+      "fragility_curve": {
+        "1": 0.461,
+        "2": 0.608
+      },
+      "achilles_top_k1": [
+        [
+          "S1"
+        ],
+        [
+          "S2"
+        ],
+        [
+          "S3"
+        ]
+      ]
+    }
+  },
+  "winner": "01-safety-leaning"
+}

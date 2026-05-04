@@ -1,0 +1,112 @@
+{
+  "_schema": {
+    "case_id": "stem of intent file",
+    "real_world": "human-readable description of the actual incident",
+    "root_cause_keywords": "tokens our pipeline output should match somewhere; used for token-overlap scoring",
+    "expected_constraint_themes": "themes we'd hope to see in stakeholder constraints",
+    "expected_conflicts": "stakeholder pairs we'd expect to see in conflict",
+    "would_have_caught_if": "what specific output would constitute 'would have caught it'"
+  },
+  "cases": {
+    "01_atlassian_app_deletion": {
+      "real_world": "Atlassian April 2022: ~800 customer sites entirely deleted because Team A handed Team B site-level IDs instead of app-level IDs.",
+      "root_cause_keywords": [
+        "id", "verification", "handoff", "sample", "dry-run", "verify",
+        "dry_run", "spot-check", "cross-team", "format", "schema",
+        "csv", "approval"
+      ],
+      "expected_constraint_themes": [
+        "cross-team handoff approval gate",
+        "ID format / schema verification before bulk action",
+        "dry-run on a small sample before full execution",
+        "customer notification before destructive ops",
+        "rollback strategy or per-site backup"
+      ],
+      "expected_conflicts": [
+        ["BackendOwner", "DataPlatform"],
+        ["Security", "ProductPM"]
+      ],
+      "would_have_caught_if": "any constraint or conflict references identifier-format verification, sample/dry-run before bulk delete, or cross-team handoff approval"
+    },
+    "02_cloudflare_mcp_rollout": {
+      "real_world": "Cloudflare June 21, 2022: stepped rollout reached 19 spine locations; 'steps weren't small enough' so all 19 went down together.",
+      "root_cause_keywords": [
+        "canary", "stepped", "batch", "monitor", "rollback", "wait",
+        "single", "one location", "per-location", "smoke",
+        "traffic", "smaller"
+      ],
+      "expected_constraint_themes": [
+        "single-location canary before any batch",
+        "per-batch traffic-loss monitor gate",
+        "automated rollback on traffic anomaly",
+        "long enough soak window between batches",
+        "smaller batch size than 'all 19'"
+      ],
+      "expected_conflicts": [
+        ["BackendOwner", "SRE"],
+        ["SRE", "ProductPM"]
+      ],
+      "would_have_caught_if": "any constraint or conflict references single-location canary, post-deploy traffic gate, or batch-size limits"
+    },
+    "03_cloudflare_dc_failover": {
+      "real_world": "Cloudflare Nov 2-4, 2023: 41-hour control-plane outage because many services believed to be HA were single-region in PDX-01; no recent failover drill.",
+      "root_cause_keywords": [
+        "ha", "drill", "verify", "dependency", "single-region",
+        "catalog", "single-point", "pdx", "failover order",
+        "audit"
+      ],
+      "expected_constraint_themes": [
+        "verify each service's actual HA configuration before failing over",
+        "regular failover drills on a fixed cadence",
+        "service-dependency audit before failover",
+        "explicit per-service HA approval gate",
+        "fall-back order if a 'HA' service turns out to be single-region"
+      ],
+      "expected_conflicts": [
+        ["SRE", "BackendOwner"],
+        ["DataPlatform", "Security"]
+      ],
+      "would_have_caught_if": "any constraint or conflict references HA verification, failover drills, or undocumented dependencies on a single region"
+    },
+    "04_gitlab_db_replica": {
+      "real_world": "GitLab Jan 31, 2017: engineer ran rm -rf on db1 (primary) instead of db2 (replica); 5 of 6 backup procedures had silently failed.",
+      "root_cause_keywords": [
+        "host", "verify", "destination", "backup", "verify backup",
+        "two-person", "buddy", "confirm", "wrong host",
+        "rm -rf", "dry-run"
+      ],
+      "expected_constraint_themes": [
+        "verify the target host before any destructive op",
+        "verify backups are working RIGHT NOW before destructive op",
+        "two-person concurrent verification of host identity",
+        "no rm without a typed-out confirmation",
+        "fatigue / time-of-day awareness"
+      ],
+      "expected_conflicts": [
+        ["DataPlatform", "SRE"],
+        ["BackendOwner", "Security"]
+      ],
+      "would_have_caught_if": "any constraint or conflict references host/target verification before destructive op, backup-validity check immediately before, or two-person concurrent confirmation"
+    },
+    "05_linear_cascade_migration": {
+      "real_world": "Linear Jan 24, 2024: generated migration with ON DELETE CASCADE deleted production data; PR reviewed by multiple engineers, local test ran against smaller snapshot that did not reproduce.",
+      "root_cause_keywords": [
+        "cascade", "generated", "ddl", "explain", "dry-run",
+        "production", "snapshot", "schema", "audit", "review",
+        "destructive"
+      ],
+      "expected_constraint_themes": [
+        "review the generated DDL itself, not just the migration intent",
+        "dry-run against a production-shape replica",
+        "explicit cascade-detection step in PR review",
+        "soak / quiet period before column drops",
+        "two-stage drop: deprecate first, drop later"
+      ],
+      "expected_conflicts": [
+        ["DataPlatform", "BackendOwner"],
+        ["DataPlatform", "ProductPM"]
+      ],
+      "would_have_caught_if": "any constraint or conflict references cascade-aware DDL review, dry-run on a production-equivalent dataset, or two-stage column deprecation"
+    }
+  }
+}

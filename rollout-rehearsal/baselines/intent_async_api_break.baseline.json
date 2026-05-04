@@ -1,0 +1,129 @@
+{
+  "intent": "fixtures/intent_async_api_break.md",
+  "model": "gpt-5.4-mini",
+  "tokens_in": 842,
+  "tokens_out": 1434,
+  "plan": {
+    "summary": "Rename Agent.respond(user_message) to async respond(prompt) and migrate all five experiments to asyncio without any compatibility shim.",
+    "steps": [
+      {
+        "id": "S1",
+        "action": "Update mirofish_lab/agent.py to change Agent.respond from sync to async def, rename the first arg from user_message to prompt, and remove any old kwarg handling so user_message raises TypeError.",
+        "owner": "backend",
+        "depends_on": [],
+        "gate": "approval:api-breaking-change",
+        "rollback": "Revert agent.py signature change and restore sync respond if downstream migrations fail.",
+        "observability": "Log/grep for TypeError on user_message in early runs; confirm prompt-based call sites compile and execute."
+      },
+      {
+        "id": "S2",
+        "action": "Rewrite mirofish_lab/simulation.py primitives parallel_run, debate, and round_table to use asyncio.gather and await the async Agent.respond path; preserve current result ordering and error propagation semantics where possible.",
+        "owner": "backend",
+        "depends_on": [
+          "S1"
+        ],
+        "gate": "wait_for:agent.py_async_signature",
+        "rollback": "Restore the ThreadPoolExecutor-based implementations if gather-based fan-out regresses behavior or performance.",
+        "observability": "Measure wall-clock for 16-agent fan-out and compare to ThreadPoolExecutor baseline; watch for unhandled exception fan-out and task cancellation logs."
+      },
+      {
+        "id": "S3",
+        "action": "Adjust the CAMEL-AI fallback path to call agent.step(...) via asyncio.to_thread so the sync fallback does not block the event loop.",
+        "owner": "backend",
+        "depends_on": [
+          "S1",
+          "S2"
+        ],
+        "gate": "monitor:camel_fallback_latency",
+        "rollback": "If to_thread introduces regressions, temporarily route fallback through the prior sync execution path while keeping the async API in place.",
+        "observability": "Track fallback invocation count, thread offload latency, and event-loop blockage symptoms during experiments."
+      },
+      {
+        "id": "S4",
+        "action": "Migrate pr-review-rehearsal/cli.py, pre-flight-rehearsal/cli.py, adversarial-security-sim/cli.py, blast-radius-prediction/cli.py, and rollout-rehearsal/cli.py so main() wraps parallel_run(...) in asyncio.run().",
+        "owner": "backend",
+        "depends_on": [
+          "S2",
+          "S3"
+        ],
+        "gate": "wait_for:simulation_primitives_async",
+        "rollback": "Revert each CLI entrypoint to the previous sync invocation pattern only if the async entrypoint breaks fixture execution.",
+        "observability": "Confirm each CLI exits cleanly with the expected markdown report path and no 'coroutine was never awaited' warnings."
+      },
+      {
+        "id": "S5",
+        "action": "Update all experiment README files to document the breaking API rename to prompt, the async await requirement, and the asyncio.run() CLI pattern.",
+        "owner": "product",
+        "depends_on": [
+          "S4"
+        ],
+        "gate": "approval:docs_and_usage_update",
+        "rollback": "Restore prior README examples if the new async usage examples prove inaccurate.",
+        "observability": "Review README snippets against actual CLI behavior and ensure examples match the new call signatures exactly."
+      },
+      {
+        "id": "S6",
+        "action": "Run each of the five experiments end-to-end against its committed fixture and verify the expected markdown report is produced unchanged in format and location.",
+        "owner": "sre",
+        "depends_on": [
+          "S4"
+        ],
+        "gate": "window:fixture_validation",
+        "rollback": "If any experiment fails, revert the last touched call site or primitive and re-run the affected fixture only.",
+        "observability": "Capture exit codes, generated report filenames, report diffs, and any asyncio exception traces per experiment."
+      },
+      {
+        "id": "S7",
+        "action": "Execute a synthetic benchmark that fans out 16 agents in parallel against the same prompt and compare wall-clock time to the previous ThreadPoolExecutor implementation.",
+        "owner": "sre",
+        "depends_on": [
+          "S2"
+        ],
+        "gate": "monitor:parallel_fanout_benchmark",
+        "rollback": "If performance regresses, isolate whether the issue is gather scheduling, OpenAI client pooling, or fallback to sync step.",
+        "observability": "Record total runtime, per-agent latency distribution, concurrency level achieved, and connection-pool saturation signals."
+      },
+      {
+        "id": "S8",
+        "action": "Perform a targeted security review of adversarial-security-sim after the async refactor to ensure the new event-loop usage and to_thread fallback do not change prompt handling or introduce shared-state race conditions.",
+        "owner": "security",
+        "depends_on": [
+          "S3",
+          "S4"
+        ],
+        "gate": "approval:security_review",
+        "rollback": "If a race or unsafe shared-state access appears, constrain the async fan-out or revert the affected path to the prior serialized behavior.",
+        "observability": "Inspect logs for interleaved agent outputs, race symptoms, and any unexpected cross-agent state mutation during the adversarial run."
+      }
+    ],
+    "open_questions": [
+      "Should the async Agent.respond preserve exact exception ordering from the old ThreadPoolExecutor-based parallel_run, or is gather's first-failure behavior acceptable?",
+      "Do the five CLIs need explicit async main() functions, or is wrapping only the parallel_run call in asyncio.run() sufficient for all current entrypoints?",
+      "Are there any external callers outside the listed experiments that invoke Agent.respond(user_message=...), and if so should they be left to fail fast or documented separately?",
+      "Should the benchmark for 16-agent fan-out be added to the rollout gate, or is it an informal validation only?"
+    ],
+    "conflicts": [
+      {
+        "between": [
+          "S1",
+          "S4"
+        ],
+        "issue": "The Agent.respond API is intentionally breaking, but the CLI migrations must land in the same change so no experiment is left broken at any intermediate commit."
+      },
+      {
+        "between": [
+          "S2",
+          "S6"
+        ],
+        "issue": "asyncio.gather may change cancellation and error propagation semantics relative to ThreadPoolExecutor, which could alter fixture behavior even if reports still produce."
+      },
+      {
+        "between": [
+          "S3",
+          "S7"
+        ],
+        "issue": "Wrapping the CAMEL-AI sync fallback in asyncio.to_thread may improve responsiveness but could add overhead that reduces the claimed parallel fan-out benchmark gains."
+      }
+    ]
+  }
+}

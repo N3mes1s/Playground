@@ -1,0 +1,11 @@
+{
+  "owner": "pallets",
+  "repo": "flask",
+  "number": 0,
+  "title": "pallets__flask-5014",
+  "body": "# pallets__flask-5014\n\n**Repository**: `pallets/flask` at `7ee9ceb7`\n\n## Problem statement\n\nRequire a non-empty name for Blueprints\nThings do not work correctly if a Blueprint is given an empty name (e.g. #4944).\r\nIt would be helpful if a `ValueError` was raised when trying to do that.\n\n\n## What we're asking\n\nProduce a plan and a diff sketch that would resolve this issue. Identify the file(s) you'd touch and the key edits.",
+  "labels": [
+    "swebench-verified"
+  ],
+  "url": "https://github.com/pallets/flask/issues/pallets__flask-5014"
+}

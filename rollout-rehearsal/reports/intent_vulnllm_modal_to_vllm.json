@@ -1,0 +1,457 @@
+{
+  "intent_path": "fixtures/intent_vulnllm_modal_to_vllm.md",
+  "constraints": [
+    {
+      "axis": "api",
+      "summary": "Keep analyzer request/response contract backward-compatible",
+      "scope": "vulnllm-analyzer/analyzer.py callers and scan_*.py integrations",
+      "gate": "none",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "api",
+      "summary": "Accept OpenAI-style non-streaming chat/completions responses only",
+      "scope": "New Modal vLLM OpenAI-compatible endpoint and analyzer client",
+      "gate": "none",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Deploy vLLM service before switching analyzer to new base_url",
+      "scope": "Modal rollout order for modal_vllm_service.py and analyzer.py",
+      "gate": "wait_for:Modal vLLM endpoint health check succeeds",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Keep old and new analyzers available during cutover window",
+      "scope": "Transition period for live scan_*.py workloads",
+      "gate": "window:until scan_sliver_latest.py and scan_bottle.py pass on new endpoint",
+      "rollback": "switch analyzer base_url back to legacy endpoint",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "data",
+      "summary": "Preserve analyzer verdict outputs during service cutover",
+      "scope": "vulnllm-analyzer scans writing/reading verdict data for scan_sliver_latest.py and scan_bottle.py",
+      "gate": "monitor:output_diff<=0.1%",
+      "rollback": "route analyzer back to the previous service and re-run affected scans",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Do not drop legacy service artifacts until post-cutover quiet period",
+      "scope": "old modal_service.py endpoint contract and any persisted data/schema tied to /health,/analyze,/analyze/batch",
+      "gate": "wait_for:7d_no_regressions",
+      "rollback": "restore the legacy Modal service and its prior endpoint implementation",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Throttle any backfill or reprocessing to avoid IOPS spikes",
+      "scope": "benchmark re-runs or any historical scan reprocessing triggered by the new client path",
+      "gate": "monitor:storage_iops<70%",
+      "rollback": "pause reprocessing and resume with smaller batch sizes",
+      "blocking": false,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Keep replication lag within budget during model-serving cutover",
+      "scope": "Modal-backed storage or artifact replication used by vLLM model weights and cached outputs",
+      "gate": "monitor:replication_lag<5m",
+      "rollback": "switch traffic back to the prior replica/source and drain the new path",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Roll out behind a switchable base_url/model config",
+      "scope": "analyzer.py client change and Modal vLLM service cutover",
+      "gate": "none",
+      "rollback": "Repoint the analyzer to the previous Modal raw endpoint and redeploy_previous",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Do not cut over during incident windows or Friday afternoon",
+      "scope": "Activation of the new Modal vLLM endpoint for live scans",
+      "gate": "window:outside-incident-windows-and-Friday-afternoon",
+      "rollback": "Keep traffic on the current raw Modal endpoint",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Require stable error rate before shifting scan traffic",
+      "scope": "Promotion of vLLM-backed scans for scan_sliver_latest.py and scan_bottle.py",
+      "gate": "monitor:5xx_error_rate<0.1% for 24h",
+      "rollback": "Disable the new endpoint via config and route scans back to the prior service",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Verify cold-start behavior before enabling regular scans",
+      "scope": "Modal vLLM idle timeout tuning for A10G-backed service",
+      "gate": "wait_for:successful_warm-start_and_first-request_latency_benchmark",
+      "rollback": "Increase idle timeout or revert to previous service settings",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "security",
+      "summary": "Rotate OpenAI-compatible API key before cutover",
+      "scope": "New Modal vLLM OpenAI-compatible endpoint and analyzer client auth",
+      "gate": "wait_for:key_rotation_complete",
+      "rollback": "Revoke the new key and redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Preserve audit logs for old and new inference paths",
+      "scope": "Migration period covering modal_service.py removal and modal_vllm_service.py rollout",
+      "gate": "monitor:audit_log_coverage>=100%",
+      "rollback": "Disable the new endpoint and restore previous logging path",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify external users before any verdict-format or endpoint change",
+      "scope": "Externally visible analyzer API behavior and scan script invocation changes",
+      "gate": "window:at_least_7d_notice",
+      "rollback": "Postpone rollout and keep the existing endpoint active",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Obtain compliance review for new hosted model endpoint",
+      "scope": "Modal-hosted vLLM service handling repository content and scan data",
+      "gate": "approval:compliance_officer",
+      "rollback": "Block deployment and revert to the prior service",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify scan-script users before any change to verdict shape",
+      "scope": "vulnllm-analyzer/analyzer.py and benchmark/scan script client switch",
+      "gate": "approval:product_comms_owner",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Send rollout notice with lead time before breaking API cutover",
+      "scope": "Replacement of bespoke Modal `/analyze*` endpoints with OpenAI-compatible endpoint",
+      "gate": "wait_for:customer_notice_sent_7d_prior",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "ops",
+      "summary": "Do not cut over during launch windows or major events",
+      "scope": "Production rollout of the new Modal vLLM service and client switchover",
+      "gate": "window:outside_launch_windows_and_major_events",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "ops",
+      "summary": "Support team must be briefed with escalation owner on rollout day",
+      "scope": "User-facing rollout and first 48h after switching scan scripts to vLLM",
+      "gate": "approval:support_lead",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep old /analyze contract until analyzer is migrated",
+      "scope": "vulnllm-analyzer/analyzer.py call path and scan_*.py clients",
+      "gate": "window:dual-support for 2 release cycles",
+      "rollback": "revert analyzer.py to direct HTTP calls against modal_service.py",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Provide OpenAI-compatible shim for existing verdict mapping",
+      "scope": "modal_vllm_service.py response shape and analyzer.py parsing",
+      "gate": "wait_for:OpenAI-compatible smoke tests passing",
+      "rollback": "restore bespoke modal_service.py endpoints",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Add pre-cutover parity tests for scan_sliver_latest and bottle",
+      "scope": "benchmark_advisories.py and scan_*.py against new client",
+      "gate": "approval:release-owner",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Hold rollback path to previous Modal service if new API slips",
+      "scope": "Modal deployment and analyzer rollout sequencing",
+      "gate": "window:cutover after vLLM service is healthy in prod",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    }
+  ],
+  "plan": {
+    "summary": "Roll out a Modal vLLM OpenAI-compatible analyzer with parity checks, guarded cutover, and rollback to the legacy service.",
+    "steps": [
+      {
+        "id": "S1",
+        "action": "Prepare the new Modal vLLM service implementation for VulnLLM-R-7B on A10G, keeping the legacy modal_service.py intact.",
+        "owner": "BackendOwner",
+        "depends_on": [],
+        "gate": "none",
+        "rollback": "Delete the new service module changes and keep serving from modal_service.py.",
+        "observability": "Code review status, build/lint success, and confirmation that legacy endpoints remain deployed."
+      },
+      {
+        "id": "S2",
+        "action": "Obtain compliance review, product comms approval, release-owner approval, support-lead briefing, and customer notice lead time before any externally visible cutover.",
+        "owner": "Security",
+        "depends_on": [
+          "S1"
+        ],
+        "gate": "approval:compliance_officer",
+        "rollback": "Block deployment and keep the legacy endpoint active until approvals are complete.",
+        "observability": "Approval records, notice sent timestamp, support briefing completion, and release-owner signoff."
+      },
+      {
+        "id": "S3",
+        "action": "Rotate the OpenAI-compatible API key and provision the Modal vLLM endpoint credentials for the new service.",
+        "owner": "Security",
+        "depends_on": [
+          "S2"
+        ],
+        "gate": "wait_for:key_rotation_complete",
+        "rollback": "Revoke the new key and restore the prior credential set.",
+        "observability": "Key rotation completion, auth failures, and audit-log continuity."
+      },
+      {
+        "id": "S4",
+        "action": "Deploy the new Modal vLLM endpoint and verify it serves non-streaming OpenAI chat/completions responses for VulnLLM-R-7B.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S3"
+        ],
+        "gate": "wait_for:Modal vLLM endpoint health check succeeds",
+        "rollback": "Redeploy the previous Modal raw endpoint service.",
+        "observability": "Health check success, 5xx rate, response schema validity, and audit-log coverage."
+      },
+      {
+        "id": "S5",
+        "action": "Run OpenAI-compatible smoke tests against the new endpoint and validate verdict mapping for the existing analyzer contract.",
+        "owner": "ConsumerSubsystem",
+        "depends_on": [
+          "S4"
+        ],
+        "gate": "wait_for:OpenAI-compatible smoke tests passing",
+        "rollback": "Restore bespoke modal_service.py endpoints and direct-call path.",
+        "observability": "Smoke-test pass rate, malformed-response errors, and verdict shape consistency."
+      },
+      {
+        "id": "S6",
+        "action": "Add parity tests for scan_sliver_latest.py and scan_bottle.py, then run them against the new client without switching production traffic.",
+        "owner": "ConsumerSubsystem",
+        "depends_on": [
+          "S5"
+        ],
+        "gate": "approval:release-owner",
+        "rollback": "Redeploy_previous and keep the legacy client path for the scan scripts.",
+        "observability": "Output diffs, regression failures, and benchmark results."
+      },
+      {
+        "id": "S7",
+        "action": "Tune Modal idle timeout and warm-start settings for the A10G service, then benchmark cold-start and first-request latency.",
+        "owner": "SRE",
+        "depends_on": [
+          "S4"
+        ],
+        "gate": "wait_for:successful_warm-start_and_first-request_latency_benchmark",
+        "rollback": "Increase idle timeout or revert to previous service settings.",
+        "observability": "Cold-start latency, warm-start success rate, first-request latency, and GPU availability."
+      },
+      {
+        "id": "S8",
+        "action": "Run a constrained canary of live scans using the new endpoint while keeping the legacy analyzer available for immediate fallback.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S6",
+          "S7"
+        ],
+        "gate": "monitor:output_diff<=0.1%",
+        "rollback": "Switch analyzer base_url back to the legacy endpoint and rerun affected scans.",
+        "observability": "scan_sliver_latest.py and scan_bottle.py diffs, 5xx rate, and malformed-response errors."
+      },
+      {
+        "id": "S9",
+        "action": "Hold the production switchover only outside incident windows, Friday afternoon, launch windows, and major events, then repoint analyzer.py to the Modal vLLM base_url behind config.",
+        "owner": "SRE",
+        "depends_on": [
+          "S8"
+        ],
+        "gate": "window:outside-incident-windows-and-Friday-afternoon",
+        "rollback": "Disable the new endpoint via config and route scans back to the prior service.",
+        "observability": "Traffic split, error rate, latency, and rollback readiness."
+      },
+      {
+        "id": "S10",
+        "action": "Keep both old and new analyzers available during a dual-support cutover period and monitor live scans until the new endpoint is stable.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S9"
+        ],
+        "gate": "window:dual-support for 2 release cycles",
+        "rollback": "Switch analyzer base_url back to the legacy endpoint.",
+        "observability": "Production scan success, drift in verdict outputs, and client error logs."
+      },
+      {
+        "id": "S11",
+        "action": "Continue monitoring post-cutover for error rate, audit log coverage, replication lag, and output parity before retiring the legacy endpoint.",
+        "owner": "DataPlatform",
+        "depends_on": [
+          "S10"
+        ],
+        "gate": "monitor:5xx_error_rate<0.1% for 24h",
+        "rollback": "Route analyzer back to the previous service and re-run affected scans.",
+        "observability": "5xx rate, audit-log completeness, replication lag, storage IOPS, and output diffs."
+      },
+      {
+        "id": "S12",
+        "action": "After a quiet period, decommission the legacy modal_service.py endpoints and remove old endpoint artifacts once regressions have stayed clear.",
+        "owner": "DataPlatform",
+        "depends_on": [
+          "S11"
+        ],
+        "gate": "wait_for:7d_no_regressions",
+        "rollback": "Restore the legacy Modal service and its prior endpoint implementation.",
+        "observability": "Regression reports, support tickets, and residual traffic to legacy endpoints."
+      }
+    ],
+    "open_questions": [
+      "What exact OpenAI request schema should analyzer.py use for verdict extraction: chat.completions or responses-style compatibility only?",
+      "What idle timeout value best balances cold-start avoidance with cost targets on A10G?",
+      "Which notice channel and template will satisfy the 7-day customer notice requirement?",
+      "Who owns the release-owner and support-lead approvals in practice?",
+      "What is the final cutoff for considering output diffs 'close enough' if tokenizer changes slightly alter bytes?"
+    ],
+    "conflicts": [
+      {
+        "between": [
+          "BackendOwner",
+          "DataPlatform"
+        ],
+        "issue": "BackendOwner wants legacy and new analyzers available only until live scans pass on the new endpoint; DataPlatform requires keeping legacy service artifacts until 7 days of no regressions. Resolved by keeping dual support through the quiet period before decommissioning."
+      },
+      {
+        "between": [
+          "BackendOwner",
+          "SRE"
+        ],
+        "issue": "BackendOwner's cutover sequence allows activation after health checks, while SRE forbids cutover during incident windows or Friday afternoon. Resolved by scheduling switchover only in approved windows."
+      },
+      {
+        "between": [
+          "BackendOwner",
+          "Security"
+        ],
+        "issue": "BackendOwner wants deployment order driven by endpoint health, while Security requires API key rotation and compliance review before cutover. Resolved by gating deployment on compliance and key rotation first."
+      },
+      {
+        "between": [
+          "BackendOwner",
+          "ProductPM"
+        ],
+        "issue": "BackendOwner's rollout can proceed once the service is healthy, but ProductPM requires 7-day customer notice, support briefing, and no launch-window cutover. Resolved by delaying production switchover until notices and briefings are complete."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "SRE"
+        ],
+        "issue": "DataPlatform wants output preservation and replication-lag monitoring during cutover, while SRE wants stable error rate and warm-start benchmarking before regular scans. Resolved by making canary, warm-start, and post-cutover monitoring sequential gates."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "Security"
+        ],
+        "issue": "DataPlatform requires audit-log coverage and quiet-period retention of old artifacts, while Security requires preserving audit logs across both paths and compliance review before hosting the new model. Resolved by preserving logs through the full migration and deferring artifact removal."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "ProductPM"
+        ],
+        "issue": "DataPlatform's short canary/output-diff gate could move faster than ProductPM's 7-day notice and launch-window restrictions. Resolved by making external notice and rollout-window constraints precede cutover."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "ConsumerSubsystem"
+        ],
+        "issue": "DataPlatform wants output parity preserved during live scans, while ConsumerSubsystem wants pre-cutover parity tests and OpenAI shim validation first. Resolved by running parity tests before any live traffic shift."
+      },
+      {
+        "between": [
+          "SRE",
+          "Security"
+        ],
+        "issue": "SRE requires cold-start and error-rate validation before enabling regular scans, while Security requires key rotation and compliance review before cutover. Resolved by sequencing security prerequisites before service validation and traffic promotion."
+      },
+      {
+        "between": [
+          "SRE",
+          "ProductPM"
+        ],
+        "issue": "SRE's rollout window excludes incidents and Friday afternoons, while ProductPM excludes launch windows and major events. Resolved by taking the intersection of all no-cutover windows."
+      },
+      {
+        "between": [
+          "Security",
+          "ProductPM"
+        ],
+        "issue": "Security requires compliance review and audit-log preservation, while ProductPM requires notice, support briefing, and a 7-day lead time before externally visible changes. Resolved by treating all as mandatory pre-cutover gates."
+      },
+      {
+        "between": [
+          "Security",
+          "ConsumerSubsystem"
+        ],
+        "issue": "Security wants preserved audit logs and compliant hosted model handling, while ConsumerSubsystem wants the OpenAI-compatible shim and smoke tests before migration. Resolved by validating compatibility before production switchover and retaining logs throughout."
+      },
+      {
+        "between": [
+          "ProductPM",
+          "ConsumerSubsystem"
+        ],
+        "issue": "ProductPM requires advance notice before verdict-shape changes, while ConsumerSubsystem requires parity tests and dual support for two release cycles. Resolved by keeping dual support and notifying users before external behavior changes."
+      }
+    ]
+  }
+}

@@ -1,0 +1,142 @@
+{
+  "intent": "fixtures/intent_preflight_iterative_refinement.md",
+  "model": "gpt-5.4-mini",
+  "tokens_in": 721,
+  "tokens_out": 1530,
+  "plan": {
+    "summary": "Add optional iterative revision rounds to pre-flight-rehearsal, preserving byte-for-byte round-1 behavior and ranking final persona plans with evolution history.",
+    "steps": [
+      {
+        "id": "S1",
+        "action": "Define CLI contract for --rounds N in pre-flight-rehearsal/cli.py: default 1, N>1 triggers additional revision rounds after the initial parallel pass, and output must label per-round sections like 'Plan: Minimalist (round 2)'.",
+        "owner": "backend",
+        "depends_on": [],
+        "gate": "approval:product",
+        "rollback": "Revert CLI parsing/default behavior to existing single-pass path and suppress round labels.",
+        "observability": "Add a command-line test asserting --rounds 1 emits identical report bytes to current baseline and --rounds 2 includes round-specific headings."
+      },
+      {
+        "id": "S2",
+        "action": "Add cost warning plumbing in cli.py for --rounds > 1, printing an estimated increase in LLM calls/cost before execution begins.",
+        "owner": "product",
+        "depends_on": [
+          "S1"
+        ],
+        "gate": "wait_for:cost_estimation_formula",
+        "rollback": "Disable warning banner and fall back to silent execution if estimate cannot be derived safely.",
+        "observability": "Capture stderr/stdout for the warning text and verify it appears only when rounds > 1."
+      },
+      {
+        "id": "S3",
+        "action": "Extend mirofish_lab/simulation.py with an adapter over round_table so each implementer can revise a prior plan given the merged plan set and previous outputs, instead of generating a fresh isolated contribution.",
+        "owner": "backend",
+        "depends_on": [
+          "S1"
+        ],
+        "gate": "approval:architecture",
+        "rollback": "Route round>1 through existing round_table fresh-contribution semantics and disable revision mode.",
+        "observability": "Unit test that the adapter receives prior outputs and returns a revised plan payload, not a blank-slate plan."
+      },
+      {
+        "id": "S4",
+        "action": "Implement iterative round orchestration: after the initial parallel pass, run up to N-1 additional rounds where each persona sees the merged plan set, revises its own plan, and receives the prior round context.",
+        "owner": "backend",
+        "depends_on": [
+          "S3"
+        ],
+        "gate": "none",
+        "rollback": "Short-circuit to the initial parallel pass only when revision orchestration fails or loops unexpectedly.",
+        "observability": "Integration test covering Minimalist/Defensive/TestFirst/RefactorHappy across 2 rounds and verifying each persona has round 1 and round 2 outputs when not converged."
+      },
+      {
+        "id": "S5",
+        "action": "Add per-persona convergence detection: if a persona's consecutive rounds are effectively identical, stop iterating that persona early to save tokens while other personas may continue.",
+        "owner": "sre",
+        "depends_on": [
+          "S4"
+        ],
+        "gate": "wait_for:definition_of_effectively_same",
+        "rollback": "Disable early-stop logic and always execute the configured number of rounds.",
+        "observability": "Metrics/logging for per-persona round count, early-stop rate, and a diff hash between consecutive plans."
+      },
+      {
+        "id": "S6",
+        "action": "Preserve byte-for-byte compatibility for --rounds 1 by ensuring the existing single-pass path, formatting, ordering, and judge inputs remain unchanged.",
+        "owner": "backend",
+        "depends_on": [
+          "S1",
+          "S4"
+        ],
+        "gate": "approval:regression",
+        "rollback": "Fallback to the pre-change code path for round 1 only if report diffs appear in golden tests.",
+        "observability": "Golden-file comparison against committed reports and judge ranking output for --rounds 1."
+      },
+      {
+        "id": "S7",
+        "action": "Update the Judge pipeline to rank the FINAL persona versions while surfacing evolution history, so the report shows how each plan changed between rounds before final ranking.",
+        "owner": "product",
+        "depends_on": [
+          "S4",
+          "S6"
+        ],
+        "gate": "none",
+        "rollback": "If history rendering breaks ranking, show final plans only and keep ranking logic on final versions.",
+        "observability": "Acceptance test that the judge receives final versions and that the rendered report includes both evolution trail and final rank order."
+      },
+      {
+        "id": "S8",
+        "action": "Add logging/telemetry for round progression, persona-specific revisions, and termination reasons (completed N rounds vs early convergence) to support debugging and cost tracking.",
+        "owner": "sre",
+        "depends_on": [
+          "S4",
+          "S5"
+        ],
+        "gate": "none",
+        "rollback": "Reduce logs to a single summary line per run if verbosity creates noise or PII risk.",
+        "observability": "Structured events with fields: rounds_requested, rounds_completed_per_persona, early_stop_reason, and llm_call_count."
+      },
+      {
+        "id": "S9",
+        "action": "Review prompt/security impact of showing each implementer the merged plan set, ensuring no unintended cross-plan leakage beyond the intended round_table visibility.",
+        "owner": "security",
+        "depends_on": [
+          "S3",
+          "S4"
+        ],
+        "gate": "approval:security",
+        "rollback": "Mask any non-essential context from peer plans and revert to isolated behavior for sensitive fields.",
+        "observability": "Prompt audit confirming only plan text needed for revision is disclosed and no extra metadata is included."
+      }
+    ],
+    "open_questions": [
+      "What exact heuristic defines 'effectively the same plan' for convergence detection: textual equality, normalized diff threshold, or embedding similarity?",
+      "Should the cost warning estimate be based on a fixed per-call model price table, actual configured model rates, or a rough multiplier only?",
+      "When one persona converges early but others continue, should the report repeat the final unchanged plan for later rounds or annotate it as 'no change'?",
+      "Does the 'merged plan set' shown to each persona include the judge's prior ranking, or only peer draft plans?",
+      "If a round fails for one persona, do we retry that persona, skip it, or abort the entire run?"
+    ],
+    "conflicts": [
+      {
+        "between": [
+          "S4",
+          "S5"
+        ],
+        "issue": "Early-stop convergence can reduce token cost, but it complicates the guarantee that each persona produces explicit per-round outputs for every requested round."
+      },
+      {
+        "between": [
+          "S2",
+          "S6"
+        ],
+        "issue": "Printing a cost warning for --rounds > 1 must not alter stdout/stderr ordering or formatting for --rounds 1, or byte-for-byte compatibility will break."
+      },
+      {
+        "between": [
+          "S7",
+          "S9"
+        ],
+        "issue": "Surfacing evolution history increases visibility of intermediate drafts, which may expose more peer-plan content than security is comfortable with."
+      }
+    ]
+  }
+}

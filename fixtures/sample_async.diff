@@ -1,0 +1,58 @@
+diff --git a/mirofish_lab/agent.py b/mirofish_lab/agent.py
+--- a/mirofish_lab/agent.py
++++ b/mirofish_lab/agent.py
+@@ -86,17 +86,21 @@ class Agent:
+     @property
+     def using_camel(self) -> bool:
+         return self._camel_agent is not None
+
+-    def respond(self, user_message: str, *, tags: tuple[str, ...] = ()) -> AgentResponse:
++    async def respond(
++        self, user_message: str, *, tags: tuple[str, ...] = ()
++    ) -> AgentResponse:
++        """BREAKING: respond is now async. All callers must `await` it.
++        Synchronous callers must wrap calls in asyncio.run() or migrate to
++        async."""
+         self.memory.add("user", user_message, tags=tags)
+         if self._camel_agent is not None:
+             try:
+                 msg = self._BaseMessage.make_user_message(
+                     role_name="User", content=user_message
+                 )
+-                result = self._camel_agent.step(msg)
++                result = await asyncio.to_thread(self._camel_agent.step, msg)
+                 content = result.msgs[0].content if result.msgs else ""
+diff --git a/mirofish_lab/simulation.py b/mirofish_lab/simulation.py
+--- a/mirofish_lab/simulation.py
++++ b/mirofish_lab/simulation.py
+@@ -1,6 +1,7 @@
+ from __future__ import annotations
+
+-from concurrent.futures import ThreadPoolExecutor, as_completed
++import asyncio
++from concurrent.futures import ThreadPoolExecutor, as_completed
+ from dataclasses import dataclass
+
+ from mirofish_lab.agent import Agent, AgentResponse
+@@ -16,16 +17,12 @@ class DebateTurn:
+ def parallel_run(
+     agents: list[Agent], prompt: str, *, max_workers: int = 4
+ ) -> list[AgentResponse]:
+-    """Send the same prompt to every agent concurrently. Order preserved."""
+-    results: list[AgentResponse | None] = [None] * len(agents)
+-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+-        futures = {
+-            pool.submit(agent.respond, prompt, tags=("parallel",)): i
+-            for i, agent in enumerate(agents)
+-        }
+-        for fut in as_completed(futures):
+-            i = futures[fut]
+-            results[i] = fut.result()
+-    return [r for r in results if r is not None]
++    """Send the same prompt to every agent concurrently via asyncio.gather.
++    BREAKING: now requires running inside an asyncio event loop."""
++    return asyncio.run(_parallel_run_async(agents, prompt))
++
++async def _parallel_run_async(agents, prompt):
++    coros = [a.respond(prompt, tags=("parallel",)) for a in agents]
++    return await asyncio.gather(*coros)

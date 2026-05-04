@@ -2,8 +2,20 @@ __pycache__/
 *.pyc
 .env
 
+# Local agent memory (mirofish_lab LocalMemory)
+.mirofish_memory/
+
 # Reference files downloaded during research
 *.go
 
 # Sliver source files fetched for scanning (not our code)
 vulnllm-analyzer/sliver-src/
+.clones/
+.ab_runs/
+.bench_runs/
+
+# Transient autocalibrate / GEPA backup files (created during in-place patching)
+*.gepa_bak
+*.autocal_bak
+.bench_runs_feature/
+validation/feature_gepa_runs/

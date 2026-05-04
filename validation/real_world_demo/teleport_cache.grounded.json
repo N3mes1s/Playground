@@ -1,0 +1,1658 @@
+{
+  "intent_path": "validation/real_world_demo/intent_teleport_sqlite_cache.md",
+  "repo_path": "/home/user/Playground/.clones/claude-teleport-analyzer",
+  "search_plan": {
+    "intent_excerpt": "# Add local SQLite cache layer with TTL invalidation to `n3mes1s/claude-teleport-analyzer`\n\n## What\n\n`claude-teleport-analyzer` is a Rust CLI that reads Claude Code\nremote-session data from the Anthropic API. Today every invocation\nhits the API live: `list_sessions()`, `get_session(id)`,\n`get_events(id, max)` (which can paginate 10k+ events at 1000/page),\nand `get_loglines(id)`. Repeated invocations against the same\nsession re-fetch the same data, bouncing off the same OAuth flow.\n\nWe are adding",
+    "patterns": [
+      {
+        "description": "Rust cache module declarations and cache-related imports",
+        "regex": "\\bmod\\s+cache\\b|\\buse\\s+[^;]*\\bcache\\b",
+        "ast_kind": "Import",
+        "ast_name_regex": ".*cache.*",
+        "file_globs": [
+          "src/**/*.rs"
+        ]
+      },
+      {
+        "description": "Client methods that should consult/write the cache",
+        "regex": "\\b(fn\\s+)?(list_sessions|get_session|get_events|get_loglines|fetch_org_uuid)\\b",
+        "ast_kind": "FunctionDef",
+        "ast_name_regex": "^(list_sessions|get_session|get_events|get_loglines|fetch_org_uuid)$",
+        "file_globs": [
+          "src/**/*.rs"
+        ]
+      },
+      {
+        "description": "CLI flag parsing and subcommand wiring for cache controls",
+        "regex": "--no-cache|--clear-cache|clear-cache|no_cache|no-cache",
+        "ast_kind": null,
+        "ast_name_regex": null,
+        "file_globs": [
+          "src/**/*.rs",
+          "src/**/*.toml"
+        ]
+      },
+      {
+        "description": "SQLite schema or migration code using user_version / WAL / cache tables",
+        "regex": "\\buser_version\\b|\\bWAL\\b|\\bjournal_mode\\b|\\bsessions\\b|\\bsession_events\\b|\\bloglines\\b|\\boauth_profile\\b",
+        "ast_kind": null,
+        "ast_name_regex": null,
+        "file_globs": [
+          "src/**/*.rs"
+        ]
+      },
+      {
+        "description": "Type definitions that need Serialize/Deserialize/Clone for caching",
+        "regex": "#\\[derive\\([^\\]]*(Serialize|Deserialize|Clone)[^\\]]*\\]\\s*\\n\\s*(pub\\s+)?(struct|enum)\\s+\\w+",
+        "ast_kind": "ClassDef",
+        "ast_name_regex": ".*",
+        "file_globs": [
+          "src/**/*.rs"
+        ]
+      },
+      {
+        "description": "Existing auth/OAuth profile lookup path to wrap with cache",
+        "regex": "/api/oauth/profile|oauth[_-]?profile|fetch_org_uuid|org-uuid|org_uuid",
+        "ast_kind": "Call",
+        "ast_name_regex": ".*(oauth|profile|org).*",
+        "file_globs": [
+          "src/**/*.rs"
+        ]
+      },
+      {
+        "description": "Cache path resolution and permissions handling",
+        "regex": "\\bdirs::\\b|\\bcache\\.db\\b|\\b0600\\b|\\bset_permissions\\b|\\bpermissions\\b",
+        "ast_kind": null,
+        "ast_name_regex": null,
+        "file_globs": [
+          "src/**/*.rs"
+        ]
+      },
+      {
+        "description": "Cargo dependency addition for rusqlite bundled SQLite",
+        "regex": "^\\s*rusqlite\\s*=\\s*\\{[^\\n]*bundled[^\\n]*\\}\\s*$|^\\s*rusqlite\\s*=\\s*\"0\\.32\"\\s*$",
+        "ast_kind": null,
+        "ast_name_regex": null,
+        "file_globs": [
+          "Cargo.toml"
+        ]
+      },
+      {
+        "description": "Docs sections for caching, cache clearing, and security guidance",
+        "regex": "Caching|cache\\.db|--clear-cache|--no-cache|0600|WAL|user_version",
+        "ast_kind": null,
+        "ast_name_regex": null,
+        "file_globs": [
+          "README.md",
+          "ARCHITECTURE.md",
+          "**/*.md"
+        ]
+      }
+    ]
+  },
+  "findings": {
+    "repo_path": "/home/user/Playground/.clones/claude-teleport-analyzer",
+    "n_files_scanned": 7,
+    "n_matches": 48,
+    "matches_by_pattern": {
+      "Client methods that should consult/write the cache": [
+        {
+          "pattern": "Client methods that should consult/write the cache",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 53,
+          "context": "let org_uuid = fetch_org_uuid(&client, &access_token).await?;"
+        },
+        {
+          "pattern": "Client methods that should consult/write the cache",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 81,
+          "context": "pub async fn list_sessions(&self) -> Result<Vec<Session>> {"
+        },
+        {
+          "pattern": "Client methods that should consult/write the cache",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 107,
+          "context": "pub async fn get_session(&self, session_id: &str) -> Result<Session> {"
+        },
+        {
+          "pattern": "Client methods that should consult/write the cache",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 131,
+          "context": "pub async fn get_events("
+        },
+        {
+          "pattern": "Client methods that should consult/write the cache",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 193,
+          "context": "pub async fn get_loglines(&self, session_id: &str) -> Result<Vec<Logline>> {"
+        },
+        {
+          "pattern": "Client methods that should consult/write the cache",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 298,
+          "context": "async fn fetch_org_uuid(client: &reqwest::Client, token: &str) -> Result<String> {"
+        },
+        {
+          "pattern": "Client methods that should consult/write the cache",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+          "line": 163,
+          "context": "let sessions = api.list_sessions().await?;"
+        },
+        {
+          "pattern": "Client methods that should consult/write the cache",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+          "line": 209,
+          "context": "let session = api.get_session(session_id).await?;"
+        },
+        {
+          "pattern": "Client methods that should consult/write the cache",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+          "line": 225,
+          "context": "let events = api.get_events(session_id, max_events).await?;"
+        },
+        {
+          "pattern": "Client methods that should consult/write the cache",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+          "line": 271,
+          "context": "let session = api.get_session(session_id).await?;"
+        },
+        {
+          "pattern": "Client methods that should consult/write the cache",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+          "line": 282,
+          "context": "let events = api.get_events(session_id, 0).await?;"
+        },
+        {
+          "pattern": "Client methods that should consult/write the cache",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+          "line": 350,
+          "context": "let loglines = api.get_loglines(session_id).await?;"
+        },
+        {
+          "pattern": "Client methods that should consult/write the cache",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+          "line": 380,
+          "context": "let session = api.get_session(session_id).await?;"
+        },
+        {
+          "pattern": "Client methods that should consult/write the cache",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+          "line": 383,
+          "context": "let events = api.get_events(session_id, 0).await?;"
+        }
+      ],
+      "SQLite schema or migration code using user_version / WAL / cache tables": [
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 82,
+          "context": "let url = format!(\"{BASE_API_URL}/v1/sessions\");"
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 95,
+          "context": "\"Failed to list sessions: {status} - {}\","
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 103,
+          "context": ".context(\"Failed to parse sessions list response\")?;"
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 108,
+          "context": "let url = format!(\"{BASE_API_URL}/v1/sessions/{session_id}\");"
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 141,
+          "context": "reqwest::Url::parse(&format!(\"{BASE_API_URL}/v1/sessions/{session_id}/events\"))"
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 201,
+          "context": ".with_context(|| format!(\"Failed to fetch loglines for session {session_id}\"))?;"
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 207,
+          "context": "\"Failed to fetch loglines for session {session_id}: {status} - {}\","
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 215,
+          "context": ".with_context(|| format!(\"Failed to parse loglines for session {session_id}\"))?;"
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 216,
+          "context": "Ok(data.loglines)"
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/types.rs",
+          "line": 114,
+          "context": "/// A tagged union over every event type the sessions API can return."
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/types.rs",
+          "line": 334,
+          "context": "pub loglines: Vec<Logline>,"
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/types.rs",
+          "line": 868,
+          "context": "\"loglines\": ["
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/types.rs",
+          "line": 874,
+          "context": "assert_eq!(resp.loglines.len(), 2);"
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+          "line": 19,
+          "context": "#[command(about = \"Read Claude Code remote sessions without cloning\")]"
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+          "line": 27,
+          "context": "/// List all remote sessions"
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+          "line": 29,
+          "context": "/// Max number of sessions to show"
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+          "line": 35,
+          "context": "/// Only show sessions created after this date (YYYY-MM-DD or ISO8601)"
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+          "line": 38,
+          "context": "/// Only show sessions created before this date (YYYY-MM-DD or ISO8601)"
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+          "line": 69,
+          "context": "/// Show loglines from the session_ingress endpoint"
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+          "line": 163,
+          "context": "let sessions = api.list_sessions().await?;"
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+          "line": 165,
+          "context": "let filtered: Vec<&Session> = sessions"
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+          "line": 195,
+          "context": "sessions.len(),"
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+          "line": 349,
+          "context": "eprintln!(\"Fetching session loglines...\");"
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+          "line": 350,
+          "context": "let loglines = api.get_loglines(session_id).await?;"
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+          "line": 353,
+          "context": "\"\\n{} ({} loglines)\\n\","
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+          "line": 355,
+          "context": "loglines.len()"
+        },
+        {
+          "pattern": "SQLite schema or migration code using user_version / WAL / cache tables",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+          "line": 358,
+          "context": "for log in &loglines {"
+        }
+      ],
+      "Existing auth/OAuth profile lookup path to wrap with cache": [
+        {
+          "pattern": "Existing auth/OAuth profile lookup path to wrap with cache",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 39,
+          "context": "org_uuid: String,"
+        },
+        {
+          "pattern": "Existing auth/OAuth profile lookup path to wrap with cache",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 53,
+          "context": "let org_uuid = fetch_org_uuid(&client, &access_token).await?;"
+        },
+        {
+          "pattern": "Existing auth/OAuth profile lookup path to wrap with cache",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 58,
+          "context": "org_uuid,"
+        },
+        {
+          "pattern": "Existing auth/OAuth profile lookup path to wrap with cache",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 70,
+          "context": "HeaderValue::from_str(&self.org_uuid)?,"
+        },
+        {
+          "pattern": "Existing auth/OAuth profile lookup path to wrap with cache",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 298,
+          "context": "async fn fetch_org_uuid(client: &reqwest::Client, token: &str) -> Result<String> {"
+        },
+        {
+          "pattern": "Existing auth/OAuth profile lookup path to wrap with cache",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 299,
+          "context": "let url = format!(\"{BASE_API_URL}/api/oauth/profile\");"
+        }
+      ],
+      "Cache path resolution and permissions handling": [
+        {
+          "pattern": "Cache path resolution and permissions handling",
+          "file": "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+          "line": 225,
+          "context": "dirs::home_dir()"
+        }
+      ]
+    },
+    "hot_files": [
+      [
+        "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+        22
+      ],
+      [
+        "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs",
+        22
+      ],
+      [
+        "/home/user/Playground/.clones/claude-teleport-analyzer/src/types.rs",
+        4
+      ]
+    ]
+  },
+  "constraints": [
+    {
+      "axis": "deploy",
+      "summary": "Add cache schema/module before code reads from it",
+      "scope": "src/cache.rs, src/client.rs, Cargo.toml",
+      "gate": "wait_for:cache.db user_version migration code merged and tested",
+      "rollback": "revert client cache reads and writes; keep live API path only",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Preserve existing stdout for all commands under --no-cache",
+      "scope": "src/main.rs, src/client.rs",
+      "gate": "monitor:stdout_diff=0 for --no-cache regression tests",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Read from cache before OAuth flow in client.rs",
+      "scope": "src/client.rs::list_sessions,get_session,get_events,get_loglines,fetch_org_uuid",
+      "gate": "wait_for:cache-hit path proven to skip credential loading",
+      "rollback": "remove pre-auth cache lookup and force live auth first",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Write cache only after successful API response",
+      "scope": "src/client.rs API wrappers and cache writeback",
+      "gate": "none",
+      "rollback": "disable cache writeback and fall through to live API only",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Support dual-read/dual-write during TTL rollout",
+      "scope": "session_events, loglines, oauth_profile cache paths",
+      "gate": "window:cache rollout in staged release with old binaries still running",
+      "rollback": "stop populating cache and keep reading via live API",
+      "blocking": false,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "data",
+      "summary": "Create cache.db with WAL and user_version migration guard",
+      "scope": "src/cache.rs SQLite init, schema creation, and any migration path",
+      "gate": "none",
+      "rollback": "Drop and recreate cache.db, resetting user_version and tables",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Enforce TTLs per endpoint; terminate-session data may cache forever",
+      "scope": "sessions, session_events, loglines, oauth_profile cache rows",
+      "gate": "none",
+      "rollback": "Invalidate matching rows and refetch from Anthropic API",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Bound backfill/write batch sizes to avoid SQLite I/O spikes",
+      "scope": "src/client.rs writes for paginated get_events and get_loglines",
+      "gate": "monitor:replication_lag<0s",
+      "rollback": "Disable cache writes for oversized pages and fetch live only",
+      "blocking": false,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Delay dropping old cache tables/columns until a quiet period",
+      "scope": "future cache schema changes in src/cache.rs",
+      "gate": "window:after_release_quiet_period",
+      "rollback": "Retain old schema objects and continue reading legacy rows",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "deploy",
+      "summary": "No Friday-afternoon or incident-window cache rollout",
+      "scope": "Release of src/cache.rs, src/client.rs cache wiring, and CLI flag cutover",
+      "gate": "window:outside Friday afternoon and active incident windows",
+      "rollback": "Disable the cache path via --no-cache and revert to the prior release",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Require debug-visible hit/miss logs before broad rollout",
+      "scope": "Cache lookup/write paths for list_sessions, get_session, get_events, get_loglines, fetch_org_uuid in src/client.rs",
+      "gate": "monitor:cache_hit_miss_logs_present at RUST_LOG=debug",
+      "rollback": "Turn on --no-cache and ship a revert if cache decisions cannot be observed",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Gate expansion on stable error rate after enabling cache",
+      "scope": "All cache-enabled API paths and the new cache.db lifecycle",
+      "gate": "monitor:api_error_rate<0.1% for 24h",
+      "rollback": "Rollback to the last non-caching build and clear cache.db if needed",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Preserve immediate rollback to uncached behavior",
+      "scope": "Top-level --no-cache and --clear-cache CLI wiring in src/main.rs",
+      "gate": "none",
+      "rollback": "Run with --no-cache to bypass cache, or delete cache.db and redeploy previous binary",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "security",
+      "summary": "Create cache.db with 0600 and never relax perms",
+      "scope": "src/cache.rs file creation at ~/.claude-teleport-analyzer/cache.db or $CLAUDE_TELEPORT_ANALYZER_CACHE",
+      "gate": "approval:Security",
+      "rollback": "delete cache.db and recreate it with restrictive permissions",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Rotate/write cache entries without changing token-based auth",
+      "scope": "src/client.rs wrappers for list_sessions/get_session/get_events/get_loglines/fetch_org_uuid",
+      "gate": "none",
+      "rollback": "disable cache reads and writes for the affected methods",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Document cache privacy, clear-cache, and cache-hit footer",
+      "scope": "ARCHITECTURE.md and README security guidance",
+      "gate": "approval:Security",
+      "rollback": "revert the added cache documentation and guidance sections",
+      "blocking": false,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Warn before any externally visible CLI behavior change ships",
+      "scope": "CLI UX for --no-cache, --clear-cache, and served-from-cache footer",
+      "gate": "window:release_notes_and_partner_notice",
+      "rollback": "remove the new CLI surface and footer from the release build",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Announce cache behavior and --no-cache before release",
+      "scope": "README.md, ARCHITECTURE.md, release notes, and any user-facing CLI help for cache-related flags",
+      "gate": "approval:ProductPM",
+      "rollback": "Remove release-note mention and revert cache-specific help text until comms are ready",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Document served-from-cache footer and when it appears",
+      "scope": "CLI output for cached responses from src/client.rs and the UX notes in ARCHITECTURE.md",
+      "gate": "approval:ProductPM",
+      "rollback": "Disable the cache-age footer and fall back to silent cache usage",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Publish guidance for cron/scripts to use --no-cache",
+      "scope": "README.md security/operations guidance and any examples of scripted use of src/main.rs flags",
+      "gate": "approval:ConsumerSubsystem",
+      "rollback": "Add a note directing automation back to live API behavior with --no-cache",
+      "blocking": false,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep old API path until cache path is proven stable",
+      "scope": "src/client.rs wrapping list_sessions/get_session/get_events/get_loglines/fetch_org_uuid",
+      "gate": "wait_for:cache-specific tests passing in CI",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Ship a compatibility shim for cache-bypass behavior",
+      "scope": "src/main.rs --no-cache and all cached client methods",
+      "gate": "none",
+      "rollback": "disable cache lookup path and force live HTTP for all methods",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Maintain dual-support window for old and new behavior",
+      "scope": "release rollout of cache-enabled binary",
+      "gate": "window:at least one full release cycle after initial cache release",
+      "rollback": "redeploy_previous",
+      "blocking": false,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Fallback must be immediate if cache release slips",
+      "scope": "distribution and release gating for cache feature",
+      "gate": "wait_for:cache feature release published",
+      "rollback": "ship previous binary with --no-cache as documented fallback",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    }
+  ],
+  "plans": {
+    "00-cost-leaning": {
+      "summary": "Add SQLite cache with TTLs, WAL, 0600 perms, and CLI bypass/clear controls; keep uncached behavior unchanged.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Add `rusqlite = { version = \"0.32\", features = [\"bundled\"] }` to Cargo.toml and create `src/cache.rs` with DB init, WAL mode, `user_version` guard, schema for `sessions`, `session_events`, `loglines`, and `oauth_profile`, plus 0600 file creation at `~/.claude-teleport-analyzer/cache.db` or `$CLAUDE_TELEPORT_ANALYZER_CACHE`.",
+          "owner": "BackendOwner",
+          "depends_on": [],
+          "gate": "wait_for:cache.db user_version migration code merged and tested",
+          "rollback": "revert cache.rs/Cargo.toml changes and delete any created cache.db",
+          "observability": "debug logs for DB open/init, WAL enabled, user_version read/write, and permission-setting failures",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs:19` (SQLite schema or migration code using user_version / WAL / cache tables): #[command(about = \"Read Claude Code remote sessions without cloning\")]\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs:35` (SQLite schema or migration code using user_version / WAL / cache tables): /// Only show sessions created after this date (YYYY-MM-DD or ISO8601)\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs:38` (SQLite schema or migration code using user_version / WAL / cache tables): /// Only show sessions created before this date (YYYY-MM-DD or ISO8601)\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:82` (SQLite schema or migration code using user_version / WAL / cache tables): let url = format!(\"{BASE_API_URL}/v1/sessions\");\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:95` (SQLite schema or migration code using user_version / WAL / cache tables): \"Failed to list sessions: {status} - {}\","
+        },
+        {
+          "id": "S2",
+          "action": "Extend `src/types.rs` so cached payload types derive `Serialize + Deserialize + Clone` as needed, focusing on `Session`, event/logline response types, and org profile shapes used by `src/client.rs`.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "none",
+          "rollback": "remove added derives and keep cache wrappers compiling against live-only types",
+          "observability": "compile success and serialization/deserialization test coverage for cached types",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:39` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid: String,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Existing auth/OAuth profile lookup path to wrap with cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:58` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:70` (Existing auth/OAuth profile lookup path to wrap with cache): HeaderValue::from_str(&self.org_uuid)?,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:81` (Client methods that should consult/write the cache): pub async fn list_sessions(&self) -> Result<Vec<Session>> {"
+        },
+        {
+          "id": "S3",
+          "action": "Implement typed cache helpers in `src/cache.rs` for `CacheEntry<T>` reads/writes with TTL evaluation, infinite TTL for terminated session events/loglines, and explicit invalidation/clear APIs.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "none",
+          "rollback": "disable cache helper calls and fall back to live API only",
+          "observability": "TTL age calculations, hit/miss reasons, expired-vs-valid row counts",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:201` (SQLite schema or migration code using user_version / WAL / cache tables): .with_context(|| format!(\"Failed to fetch loglines for session {session_id}\"))?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:207` (SQLite schema or migration code using user_version / WAL / cache tables): \"Failed to fetch loglines for session {session_id}: {status} - {}\",\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:215` (SQLite schema or migration code using user_version / WAL / cache tables): .with_context(|| format!(\"Failed to parse loglines for session {session_id}\"))?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs:349` (SQLite schema or migration code using user_version / WAL / cache tables): eprintln!(\"Fetching session loglines...\");\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:81` (Client methods that should consult/write the cache): pub async fn list_sessions(&self) -> Result<Vec<Session>> {"
+        },
+        {
+          "id": "S4",
+          "action": "Wrap `fetch_org_uuid` in `src/client.rs` to check cache before OAuth/profile fetch, then write back only after a successful `/api/oauth/profile` response; keep cache lookup ahead of credential loading.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S3"
+          ],
+          "gate": "wait_for:cache-hit path proven to skip credential loading",
+          "rollback": "remove pre-auth cache lookup and force live auth first",
+          "observability": "debug hit/miss logs, whether credentials were loaded, and org UUID source",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Existing auth/OAuth profile lookup path to wrap with cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:298` (Existing auth/OAuth profile lookup path to wrap with cache): async fn fetch_org_uuid(client: &reqwest::Client, token: &str) -> Result<String> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:39` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid: String,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:58` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:70` (Existing auth/OAuth profile lookup path to wrap with cache): HeaderValue::from_str(&self.org_uuid)?,"
+        },
+        {
+          "id": "S5",
+          "action": "Wrap `list_sessions` and `get_session` in `src/client.rs` with cache-first lookup and post-success writeback keyed by method+params only; preserve live API fallback and ensure `--no-cache` bypasses both cache and writeback.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S3",
+            "S4"
+          ],
+          "gate": "monitor:stdout_diff=0 for --no-cache regression tests",
+          "rollback": "disable cache reads/writes for these methods and use live API only",
+          "observability": "response equality under `--no-cache`, debug hit/miss logs, and stdout parity",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:39` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid: String,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Existing auth/OAuth profile lookup path to wrap with cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:58` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:70` (Existing auth/OAuth profile lookup path to wrap with cache): HeaderValue::from_str(&self.org_uuid)?,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:81` (Client methods that should consult/write the cache): pub async fn list_sessions(&self) -> Result<Vec<Session>> {"
+        },
+        {
+          "id": "S6",
+          "action": "Wrap `get_events` and `get_loglines` in `src/client.rs` with paginated cache read/write, TTL 5 minutes for running sessions, infinite cache for terminated sessions, and bounded write batching for large pages.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S3",
+            "S5"
+          ],
+          "gate": "monitor:replication_lag<0s",
+          "rollback": "disable cache writes for oversized pages and fetch live only",
+          "observability": "page count, cache fill rate, TTL decisions by session status, and WAL write latency",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:207` (SQLite schema or migration code using user_version / WAL / cache tables): \"Failed to fetch loglines for session {session_id}: {status} - {}\",\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:95` (SQLite schema or migration code using user_version / WAL / cache tables): \"Failed to list sessions: {status} - {}\",\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:201` (SQLite schema or migration code using user_version / WAL / cache tables): .with_context(|| format!(\"Failed to fetch loglines for session {session_id}\"))?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:81` (Client methods that should consult/write the cache): pub async fn list_sessions(&self) -> Result<Vec<Session>> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:82` (SQLite schema or migration code using user_version / WAL / cache tables): let url = format!(\"{BASE_API_URL}/v1/sessions\");"
+        },
+        {
+          "id": "S7",
+          "action": "Add `--no-cache` and `--clear-cache` wiring in `src/main.rs`, plus a `clear-cache` subcommand path that drops `cache.db` and exits 0; ensure cached commands still produce the existing stdout when bypassed.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S4",
+            "S5",
+            "S6"
+          ],
+          "gate": "none",
+          "rollback": "remove CLI flag/subcommand plumbing and restore prior argument handling",
+          "observability": "CLI parse success, clear-cache exit code, and stdout diffs with `--no-cache`",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Cache path resolution and permissions handling): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:39` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid: String,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Client methods that should consult/write the cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:58` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:70` (Existing auth/OAuth profile lookup path to wrap with cache): HeaderValue::from_str(&self.org_uuid)?,"
+        },
+        {
+          "id": "S8",
+          "action": "Add cache-hit/miss debug logging in `src/client.rs` for `list_sessions`, `get_session`, `get_events`, `get_loglines`, and `fetch_org_uuid`, and emit a visible footer like `served from cache, age Xs` when returning cached data.",
+          "owner": "SRE",
+          "depends_on": [
+            "S4",
+            "S5",
+            "S6",
+            "S7"
+          ],
+          "gate": "monitor:cache_hit_miss_logs_present at RUST_LOG=debug",
+          "rollback": "disable the cache-age footer and keep silent cache usage if needed",
+          "observability": "stderr debug lines for hit/miss/write and footer presence on cached responses",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Client methods that should consult/write the cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:81` (Client methods that should consult/write the cache): pub async fn list_sessions(&self) -> Result<Vec<Session>> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:107` (Client methods that should consult/write the cache): pub async fn get_session(&self, session_id: &str) -> Result<Session> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:131` (Client methods that should consult/write the cache): pub async fn get_events(\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:193` (Client methods that should consult/write the cache): pub async fn get_loglines(&self, session_id: &str) -> Result<Vec<Logline>> {"
+        },
+        {
+          "id": "S9",
+          "action": "Update `ARCHITECTURE.md` and `README.md` with the cache data flow, WAL/concurrency note, privacy guidance for `cache.db`, `--clear-cache` security guidance, `--no-cache` for scripts/cron, and the cache-age footer behavior.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S7",
+            "S8"
+          ],
+          "gate": "approval:ProductPM",
+          "rollback": "revert the added cache documentation and guidance sections",
+          "observability": "doc review completion and inclusion of all required user-facing cache notes",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Client methods that should consult/write the cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:81` (Client methods that should consult/write the cache): pub async fn list_sessions(&self) -> Result<Vec<Session>> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:82` (SQLite schema or migration code using user_version / WAL / cache tables): let url = format!(\"{BASE_API_URL}/v1/sessions\");\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:95` (SQLite schema or migration code using user_version / WAL / cache tables): \"Failed to list sessions: {status} - {}\",\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:103` (SQLite schema or migration code using user_version / WAL / cache tables): .context(\"Failed to parse sessions list response\")?;"
+        },
+        {
+          "id": "S10",
+          "action": "Add tests covering TTL expiry, terminated-session infinite caching, schema migration drop-and-recreate via `user_version`, WAL concurrent access, `--no-cache` stdout parity, and `--clear-cache` deletion behavior.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2",
+            "S3",
+            "S7"
+          ],
+          "gate": "wait_for:cache-specific tests passing in CI",
+          "rollback": "revert cache-specific tests and keep the live API path only",
+          "observability": "CI pass/fail, regression coverage for cache and non-cache code paths",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:201` (SQLite schema or migration code using user_version / WAL / cache tables): .with_context(|| format!(\"Failed to fetch loglines for session {session_id}\"))?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:207` (SQLite schema or migration code using user_version / WAL / cache tables): \"Failed to fetch loglines for session {session_id}: {status} - {}\",\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:215` (SQLite schema or migration code using user_version / WAL / cache tables): .with_context(|| format!(\"Failed to parse loglines for session {session_id}\"))?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs:165` (SQLite schema or migration code using user_version / WAL / cache tables): let filtered: Vec<&Session> = sessions\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs:349` (SQLite schema or migration code using user_version / WAL / cache tables): eprintln!(\"Fetching session loglines...\");"
+        },
+        {
+          "id": "S11",
+          "action": "Release the cache-enabled build with old API paths retained until the cache tests are green, and keep `--no-cache` as the immediate fallback for any slip.",
+          "owner": "SRE",
+          "depends_on": [
+            "S9",
+            "S10"
+          ],
+          "gate": "window:outside Friday afternoon and active incident windows",
+          "rollback": "redeploy_previous and run with --no-cache",
+          "observability": "api_error_rate, debug cache logs in production-like runs, and support tickets tied to cache behavior",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Client methods that should consult/write the cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:81` (Client methods that should consult/write the cache): pub async fn list_sessions(&self) -> Result<Vec<Session>> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:107` (Client methods that should consult/write the cache): pub async fn get_session(&self, session_id: &str) -> Result<Session> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:131` (Client methods that should consult/write the cache): pub async fn get_events(\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:193` (Client methods that should consult/write the cache): pub async fn get_loglines(&self, session_id: &str) -> Result<Vec<Logline>> {"
+        }
+      ],
+      "open_questions": [
+        "Should `get_session` share the same TTL as `list_sessions`, or be cached indefinitely for terminated sessions only if status is known?",
+        "Do we want a visible `--cache-stats` flag now, or keep only debug logs as the observability mechanism?",
+        "Should cache-age footer appear on every cached command output or only on commands that directly print fetched content?",
+        "What exact `user_version` should be assigned for the first cache schema?"
+      ],
+      "conflicts": [
+        {
+          "owners": [
+            "BackendOwner",
+            "ConsumerSubsystem"
+          ],
+          "blocking_constraints": [
+            "BackendOwner: Support dual-read/dual-write during TTL rollout",
+            "ConsumerSubsystem: Keep old API path until cache path is proven stable"
+          ],
+          "why": "Both require coexistence of old and new behavior, but the rollout gate/window expectations differ and can delay the same code path in opposite ways.",
+          "plan_choice": "Preserve the old API path while introducing cache read/write behind the same binary, then validate with cache-specific tests before expansion."
+        },
+        {
+          "owners": [
+            "SRE",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "SRE: Require debug-visible hit/miss logs before broad rollout",
+            "ProductPM: Document served-from-cache footer and when it appears"
+          ],
+          "why": "One requires operational visibility in stderr logs, the other requires user-visible footer behavior; both are blocking for broad rollout and must be satisfied together.",
+          "plan_choice": "Implement both logs and footer before release."
+        },
+        {
+          "owners": [
+            "Security",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Security: Warn before any externally visible CLI behavior change ships",
+            "ProductPM: Announce cache behavior and --no-cache before release"
+          ],
+          "why": "Both are blocking release-communication constraints over user-visible CLI changes and must be coordinated before shipping.",
+          "plan_choice": "Bundle the user-facing cache flags/footer into one documented release."
+        },
+        {
+          "owners": [
+            "DataPlatform",
+            "SRE"
+          ],
+          "blocking_constraints": [
+            "DataPlatform: Delay dropping old cache tables/columns until a quiet period",
+            "SRE: No Friday-afternoon or incident-window cache rollout"
+          ],
+          "why": "Both are rollout-window blockers that can independently prevent schema change and release timing.",
+          "plan_choice": "Avoid both quiet-period schema drops and risky rollout windows in the same release."
+        }
+      ]
+    },
+    "01-safety-leaning": {
+      "summary": "Add SQLite TTL cache behind flags, validate with tests, then document and roll out only after approval and soak.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Add rusqlite bundled dependency in Cargo.toml and create src/cache.rs with cache.db init, WAL mode, user_version guard, 0600 file creation, and drop-and-recreate on version mismatch.",
+          "owner": "DataPlatform",
+          "depends_on": [],
+          "gate": "approval:Security",
+          "rollback": "Delete cache.db and remove src/cache.rs initialization calls; revert to live API only.",
+          "observability": "SQLite open/init logs, file mode on created cache.db, user_version set/read, WAL enabled.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs:35` (SQLite schema or migration code using user_version / WAL / cache tables): /// Only show sessions created after this date (YYYY-MM-DD or ISO8601)\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs:38` (SQLite schema or migration code using user_version / WAL / cache tables): /// Only show sessions created before this date (YYYY-MM-DD or ISO8601)\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:82` (SQLite schema or migration code using user_version / WAL / cache tables): let url = format!(\"{BASE_API_URL}/v1/sessions\");\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:95` (SQLite schema or migration code using user_version / WAL / cache tables): \"Failed to list sessions: {status} - {}\",\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:103` (SQLite schema or migration code using user_version / WAL / cache tables): .context(\"Failed to parse sessions list response\")?;"
+        },
+        {
+          "id": "S2",
+          "action": "Derive Serialize, Deserialize, and Clone on cacheable types in src/types.rs used by Session, Event, Logline, and oauth profile-related payloads.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "none",
+          "rollback": "Remove the derives and keep the types on the live-only path.",
+          "observability": "Rust compile/test success for serde round-trips on cached types.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:39` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid: String,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Existing auth/OAuth profile lookup path to wrap with cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:58` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:70` (Existing auth/OAuth profile lookup path to wrap with cache): HeaderValue::from_str(&self.org_uuid)?,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:298` (Existing auth/OAuth profile lookup path to wrap with cache): async fn fetch_org_uuid(client: &reqwest::Client, token: &str) -> Result<String> {"
+        },
+        {
+          "id": "S3",
+          "action": "Implement typed CacheEntry<T> and TTL helpers in src/cache.rs for sessions (60s), session_events/loglines (5m or infinite when session.status != running), and oauth_profile (1h).",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "none",
+          "rollback": "Disable TTL-based cache reads and fall back to uncached fetches.",
+          "observability": "Cache hit/expiry decisions, stored age, terminated-session infinite TTL branch coverage.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:207` (SQLite schema or migration code using user_version / WAL / cache tables): \"Failed to fetch loglines for session {session_id}: {status} - {}\",\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:95` (SQLite schema or migration code using user_version / WAL / cache tables): \"Failed to list sessions: {status} - {}\",\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:201` (SQLite schema or migration code using user_version / WAL / cache tables): .with_context(|| format!(\"Failed to fetch loglines for session {session_id}\"))?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:215` (SQLite schema or migration code using user_version / WAL / cache tables): .with_context(|| format!(\"Failed to parse loglines for session {session_id}\"))?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs:165` (SQLite schema or migration code using user_version / WAL / cache tables): let filtered: Vec<&Session> = sessions"
+        },
+        {
+          "id": "S4",
+          "action": "Wrap list_sessions, get_session, get_events, get_loglines, and fetch_org_uuid in src/client.rs to consult cache before OAuth/network, then write back only after successful HTTP responses.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2",
+            "S3"
+          ],
+          "gate": "wait_for:cache-hit path proven to skip credential loading",
+          "rollback": "Remove pre-auth cache lookup and force live auth first; disable cache writeback.",
+          "observability": "Per-method cache hit/miss logs at RUST_LOG=debug, skipped credential loading on hits, HTTP fallthrough count.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Existing auth/OAuth profile lookup path to wrap with cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:298` (Existing auth/OAuth profile lookup path to wrap with cache): async fn fetch_org_uuid(client: &reqwest::Client, token: &str) -> Result<String> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:39` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid: String,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:58` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:70` (Existing auth/OAuth profile lookup path to wrap with cache): HeaderValue::from_str(&self.org_uuid)?,"
+        },
+        {
+          "id": "S5",
+          "action": "Add --no-cache and --clear-cache wiring in src/main.rs, including a clear-cache subcommand that deletes cache.db and exits 0, while preserving today's stdout byte-for-byte under --no-cache.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "monitor:stdout_diff=0 for --no-cache regression tests",
+          "rollback": "Revert the CLI flags and keep the existing command surface.",
+          "observability": "CLI parsing, stdout diffs for no-cache runs, deletion success for clear-cache, exit codes.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Client methods that should consult/write the cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:81` (Client methods that should consult/write the cache): pub async fn list_sessions(&self) -> Result<Vec<Session>> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:107` (Client methods that should consult/write the cache): pub async fn get_session(&self, session_id: &str) -> Result<Session> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:131` (Client methods that should consult/write the cache): pub async fn get_events(\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:193` (Client methods that should consult/write the cache): pub async fn get_loglines(&self, session_id: &str) -> Result<Vec<Logline>> {"
+        },
+        {
+          "id": "S6",
+          "action": "Update cache path resolution in src/cache.rs/src/client.rs to use dirs::home_dir or $CLAUDE_TELEPORT_ANALYZER_CACHE cross-platform, and enforce cache lookups by method+params rather than token identity.",
+          "owner": "Security",
+          "depends_on": [
+            "S1",
+            "S4"
+          ],
+          "gate": "none",
+          "rollback": "Revert to default home-dir-only path and disable cache lookup behavior.",
+          "observability": "Resolved cache path on macOS/Linux/Windows, consistent cache hits across token refreshes.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Cache path resolution and permissions handling): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:298` (Existing auth/OAuth profile lookup path to wrap with cache): async fn fetch_org_uuid(client: &reqwest::Client, token: &str) -> Result<String> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:39` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid: String,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Existing auth/OAuth profile lookup path to wrap with cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:58` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid,"
+        },
+        {
+          "id": "S7",
+          "action": "Add cache-specific tests for TTL expiry, terminated-session infinite caching, schema-migration drop-and-recreate via user_version, concurrent WAL access, and --no-cache stdout parity.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S3",
+            "S4",
+            "S5",
+            "S6"
+          ],
+          "gate": "wait_for:cache-specific tests passing in CI",
+          "rollback": "Remove the new tests and gate cache functionality off.",
+          "observability": "CI test pass/fail, concurrent process test stability, migration test behavior.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:201` (SQLite schema or migration code using user_version / WAL / cache tables): .with_context(|| format!(\"Failed to fetch loglines for session {session_id}\"))?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:207` (SQLite schema or migration code using user_version / WAL / cache tables): \"Failed to fetch loglines for session {session_id}: {status} - {}\",\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:215` (SQLite schema or migration code using user_version / WAL / cache tables): .with_context(|| format!(\"Failed to parse loglines for session {session_id}\"))?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs:165` (SQLite schema or migration code using user_version / WAL / cache tables): let filtered: Vec<&Session> = sessions\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs:349` (SQLite schema or migration code using user_version / WAL / cache tables): eprintln!(\"Fetching session loglines...\");"
+        },
+        {
+          "id": "S8",
+          "action": "Update ARCHITECTURE.md with the command data flow diagram and a Caching section, and update README.md security guidance for cache.db privacy, 0600 perms, and --clear-cache usage.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S5",
+            "S7"
+          ],
+          "gate": "approval:Security",
+          "rollback": "Revert the added cache documentation and guidance sections.",
+          "observability": "Docs review completion, presence of cache privacy guidance, clear-cache instructions, and cache-hit footer explanation.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Client methods that should consult/write the cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:81` (Client methods that should consult/write the cache): pub async fn list_sessions(&self) -> Result<Vec<Session>> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:107` (Client methods that should consult/write the cache): pub async fn get_session(&self, session_id: &str) -> Result<Session> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:131` (Client methods that should consult/write the cache): pub async fn get_events(\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:193` (Client methods that should consult/write the cache): pub async fn get_loglines(&self, session_id: &str) -> Result<Vec<Logline>> {"
+        },
+        {
+          "id": "S9",
+          "action": "Add debug-visible cache hit/miss logging in src/client.rs for every cached API method, and surface a served-from-cache footer with age Xs on cached responses that still require auth validation.",
+          "owner": "SRE",
+          "depends_on": [
+            "S4",
+            "S8"
+          ],
+          "gate": "monitor:cache_hit_miss_logs_present at RUST_LOG=debug",
+          "rollback": "Turn on --no-cache and remove the cache-age footer if decisions cannot be observed safely.",
+          "observability": "stderr debug logs for hit/miss, footer presence, age calculation, auth-required surfaces still validating auth.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Client methods that should consult/write the cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:81` (Client methods that should consult/write the cache): pub async fn list_sessions(&self) -> Result<Vec<Session>> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:107` (Client methods that should consult/write the cache): pub async fn get_session(&self, session_id: &str) -> Result<Session> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:131` (Client methods that should consult/write the cache): pub async fn get_events(\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:193` (Client methods that should consult/write the cache): pub async fn get_loglines(&self, session_id: &str) -> Result<Vec<Logline>> {"
+        },
+        {
+          "id": "S10",
+          "action": "Run staged rollout with the cache-enabled binary, keeping live API fallback and --no-cache available, then monitor api_error_rate for 24h before defaulting wider.",
+          "owner": "SRE",
+          "depends_on": [
+            "S7",
+            "S8",
+            "S9"
+          ],
+          "gate": "monitor:api_error_rate<0.1% for 24h",
+          "rollback": "Rollback to the last non-caching build and clear cache.db if needed.",
+          "observability": "API error rate, cache hit rate, OAuth/profile fetch failures, and user-reported command output regressions.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:39` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid: String,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Existing auth/OAuth profile lookup path to wrap with cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:58` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:70` (Existing auth/OAuth profile lookup path to wrap with cache): HeaderValue::from_str(&self.org_uuid)?,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:298` (Existing auth/OAuth profile lookup path to wrap with cache): async fn fetch_org_uuid(client: &reqwest::Client, token: &str) -> Result<String> {"
+        },
+        {
+          "id": "S11",
+          "action": "After the soak window and approvals, enable cache as the default path while preserving --no-cache and --clear-cache as immediate escapes.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "window:outside Friday afternoon and active incident windows",
+          "rollback": "Disable the cache path via --no-cache and redeploy the prior binary.",
+          "observability": "Default-path cache hit rate, command latency on repeated reads, absence of permission or schema errors.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Cache path resolution and permissions handling): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs:19` (SQLite schema or migration code using user_version / WAL / cache tables): #[command(about = \"Read Claude Code remote sessions without cloning\")]\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs:35` (SQLite schema or migration code using user_version / WAL / cache tables): /// Only show sessions created after this date (YYYY-MM-DD or ISO8601)\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:39` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid: String,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Client methods that should consult/write the cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;"
+        }
+      ],
+      "open_questions": [
+        "Should --clear-cache be a top-level flag, a subcommand, or both for final UX consistency?",
+        "Should cache-hit footers appear on all commands or only on auth-required surfaces like list-sessions --org-uuid?",
+        "What exact fields and serialization shape should be stored for session_events pagination metadata?",
+        "Should cache DB location fall back to a temp directory if dirs::home_dir is unavailable?",
+        "What release-note text and partner notice wording does ProductPM want before turning the cache on by default?"
+      ],
+      "conflicts": [
+        {
+          "between": [
+            "BackendOwner:blocking cache rollout with staged dual-read/dual-write support",
+            "ConsumerSubsystem:blocking old API path until cache-specific tests pass"
+          ],
+          "resolution": "Follow the stricter safety path: keep live API fallback until tests pass and stage rollout only after CI and soak."
+        },
+        {
+          "between": [
+            "SRE:blocking no Friday-afternoon or incident-window rollout",
+            "ProductPM:blocking announce cache behavior before release"
+          ],
+          "resolution": "Sequence documentation first, but delay shipping until outside forbidden release windows."
+        },
+        {
+          "between": [
+            "Security:blocking warn before any externally visible CLI behavior change ships",
+            "BackendOwner:blocking preserve existing stdout for --no-cache"
+          ],
+          "resolution": "Keep the new flags and footer gated behind release notes and regression tests before exposure."
+        },
+        {
+          "between": [
+            "ProductPM:blocking document served-from-cache footer and when it appears",
+            "Security:blocking no silent OAuth bypass / auth-required surfaces must still validate auth"
+          ],
+          "resolution": "Show the footer only on cached responses after any required auth validation logic runs."
+        },
+        {
+          "between": [
+            "DataPlatform:blocking delay dropping old cache tables/columns until a quiet period",
+            "DataPlatform:blocking schema migrations must drop-and-recreate on future version changes"
+          ],
+          "resolution": "Use drop-and-recreate for version mismatch now, but avoid schema removal during future quiet-period-sensitive changes unless version guard requires it."
+        },
+        {
+          "between": [
+            "BackendOwner:non-blocking dual-read/dual-write during TTL rollout",
+            "ConsumerSubsystem:blocking preserve old API path until stable"
+          ],
+          "resolution": "Prefer the blocking consumer requirement: maintain old live behavior as fallback while cache paths are introduced."
+        },
+        {
+          "between": [
+            "SRE:blocking stable error rate after enabling cache",
+            "ConsumerSubsystem:blocking immediate fallback if cache release slips"
+          ],
+          "resolution": "Treat immediate fallback as the rollback path and keep the cache off until error-rate soak passes."
+        }
+      ]
+    },
+    "02-speed-leaning": {
+      "summary": "Implement SQLite TTL cache behind a no-cache guard, then wire CLI/docs/tests and validate cross-platform behavior.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Add rusqlite bundled dependency in Cargo.toml and create src/cache.rs with SQLite init, WAL mode, user_version guard, 0600 permissions, cache path resolution via dirs, and typed CacheEntry<T> helpers.",
+          "owner": "BackendOwner",
+          "depends_on": [],
+          "gate": "none",
+          "rollback": "Remove src/cache.rs and the rusqlite dependency; keep client code on live API only.",
+          "observability": "Cargo build succeeds; cache.db opens in WAL mode; file mode is 0600; user_version is set/read.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:82` (SQLite schema or migration code using user_version / WAL / cache tables): let url = format!(\"{BASE_API_URL}/v1/sessions\");\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:95` (SQLite schema or migration code using user_version / WAL / cache tables): \"Failed to list sessions: {status} - {}\",\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:103` (SQLite schema or migration code using user_version / WAL / cache tables): .context(\"Failed to parse sessions list response\")?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:108` (SQLite schema or migration code using user_version / WAL / cache tables): let url = format!(\"{BASE_API_URL}/v1/sessions/{session_id}\");\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:141` (SQLite schema or migration code using user_version / WAL / cache tables): reqwest::Url::parse(&format!(\"{BASE_API_URL}/v1/sessions/{session_id}/events\"))"
+        },
+        {
+          "id": "S2",
+          "action": "Extend src/types.rs to derive Serialize, Deserialize, and Clone for cached payload types used by sessions, session_events, loglines, and oauth_profile.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "none",
+          "rollback": "Revert derives in src/types.rs and serialize through live API types only.",
+          "observability": "rustc derives compile; cached types round-trip through serde in unit tests.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/types.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/types.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/types.rs:114` (SQLite schema or migration code using user_version / WAL / cache tables): /// A tagged union over every event type the sessions API can return.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/types.rs:334` (SQLite schema or migration code using user_version / WAL / cache tables): pub loglines: Vec<Logline>,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/types.rs:868` (SQLite schema or migration code using user_version / WAL / cache tables): \"loglines\": [\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/types.rs:874` (SQLite schema or migration code using user_version / WAL / cache tables): assert_eq!(resp.loglines.len(), 2);\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:82` (SQLite schema or migration code using user_version / WAL / cache tables): let url = format!(\"{BASE_API_URL}/v1/sessions\");"
+        },
+        {
+          "id": "S3",
+          "action": "Implement cache-aware wrappers in src/client.rs for list_sessions, get_session, get_events, get_loglines, and fetch_org_uuid; consult cache before OAuth flow, write back only after successful HTTP responses, and log hit/miss at debug level.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "wait_for:cache-hit path proven to skip credential loading",
+          "rollback": "Remove cache reads/writes from src/client.rs and restore live HTTP-only behavior.",
+          "observability": "Debug stderr shows cache hit/miss per method; cache hits return without credential loading; API responses still serialize correctly.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Client methods that should consult/write the cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:81` (Client methods that should consult/write the cache): pub async fn list_sessions(&self) -> Result<Vec<Session>> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:107` (Client methods that should consult/write the cache): pub async fn get_session(&self, session_id: &str) -> Result<Session> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:131` (Client methods that should consult/write the cache): pub async fn get_events(\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:193` (Client methods that should consult/write the cache): pub async fn get_loglines(&self, session_id: &str) -> Result<Vec<Logline>> {"
+        },
+        {
+          "id": "S4",
+          "action": "Add TTL policy logic in src/cache.rs for sessions (60s), session_events and loglines (5m, infinite when session status != running), and oauth_profile (1h), including stale-row invalidation and cache-age calculation.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S1",
+            "S3"
+          ],
+          "gate": "none",
+          "rollback": "Invalidate all cached rows and fall back to live API fetches.",
+          "observability": "Unit tests cover TTL expiry, terminated-session infinite retention, and age metadata for cached responses.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:207` (SQLite schema or migration code using user_version / WAL / cache tables): \"Failed to fetch loglines for session {session_id}: {status} - {}\",\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:95` (SQLite schema or migration code using user_version / WAL / cache tables): \"Failed to list sessions: {status} - {}\",\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:201` (SQLite schema or migration code using user_version / WAL / cache tables): .with_context(|| format!(\"Failed to fetch loglines for session {session_id}\"))?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:215` (SQLite schema or migration code using user_version / WAL / cache tables): .with_context(|| format!(\"Failed to parse loglines for session {session_id}\"))?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs:165` (SQLite schema or migration code using user_version / WAL / cache tables): let filtered: Vec<&Session> = sessions"
+        },
+        {
+          "id": "S5",
+          "action": "Wire top-level CLI flags in src/main.rs for --no-cache and --clear-cache, ensuring --no-cache preserves current stdout byte-for-byte and --clear-cache deletes cache.db then exits 0.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S3"
+          ],
+          "gate": "monitor:stdout_diff=0 for --no-cache regression tests",
+          "rollback": "Revert CLI flag parsing and keep existing command behavior unchanged.",
+          "observability": "Regression tests confirm identical stdout under --no-cache; --clear-cache removes the DB file and returns success.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:39` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid: String,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Client methods that should consult/write the cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:58` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:70` (Existing auth/OAuth profile lookup path to wrap with cache): HeaderValue::from_str(&self.org_uuid)?,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:81` (Client methods that should consult/write the cache): pub async fn list_sessions(&self) -> Result<Vec<Session>> {"
+        },
+        {
+          "id": "S6",
+          "action": "Add cache-age footer emission for cached CLI outputs in src/client.rs / src/main.rs and keep auth-required surfaces validated as needed, while avoiding silent OAuth bypass only where validation is required.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S3",
+            "S5",
+            "S4"
+          ],
+          "gate": "approval:ProductPM",
+          "rollback": "Disable the cache-age footer and revert to silent cache usage.",
+          "observability": "Cached commands show 'served from cache, age Xs' when relevant; auth-required org-UUID flows still validate as expected.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:39` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid: String,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Existing auth/OAuth profile lookup path to wrap with cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:58` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:70` (Existing auth/OAuth profile lookup path to wrap with cache): HeaderValue::from_str(&self.org_uuid)?,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:298` (Existing auth/OAuth profile lookup path to wrap with cache): async fn fetch_org_uuid(client: &reqwest::Client, token: &str) -> Result<String> {"
+        },
+        {
+          "id": "S7",
+          "action": "Update ARCHITECTURE.md with the new command data flow diagram and a Caching section covering WAL, TTLs, cache-hit footer, and cache.db privacy.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S4",
+            "S6"
+          ],
+          "gate": "approval:ProductPM",
+          "rollback": "Revert the ARCHITECTURE.md caching edits.",
+          "observability": "Docs mention cache path, TTLs, WAL concurrency, and served-from-cache footer behavior.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Cache path resolution and permissions handling): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs:19` (SQLite schema or migration code using user_version / WAL / cache tables): #[command(about = \"Read Claude Code remote sessions without cloning\")]\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:39` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid: String,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Client methods that should consult/write the cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:58` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid,"
+        },
+        {
+          "id": "S8",
+          "action": "Update README.md security guidance to document cache.db permissions, privacy implications, --clear-cache, and scripted use of --no-cache for cron/monitoring.",
+          "owner": "Security",
+          "depends_on": [
+            "S5",
+            "S7"
+          ],
+          "gate": "approval:Security",
+          "rollback": "Remove the cache guidance additions from README.md.",
+          "observability": "README includes 0600 note, clear-cache instructions, and automation guidance.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Cache path resolution and permissions handling): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Client methods that should consult/write the cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:81` (Client methods that should consult/write the cache): pub async fn list_sessions(&self) -> Result<Vec<Session>> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:107` (Client methods that should consult/write the cache): pub async fn get_session(&self, session_id: &str) -> Result<Session> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:131` (Client methods that should consult/write the cache): pub async fn get_events("
+        },
+        {
+          "id": "S9",
+          "action": "Add cache-specific tests: TTL expiry, terminated-session infinite cache, schema-migration drop-and-recreate via user_version, concurrent WAL access, and --no-cache stdout regression.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S3",
+            "S4",
+            "S5"
+          ],
+          "gate": "wait_for:cache-specific tests passing in CI",
+          "rollback": "Remove the new cache tests and rely on live API behavior only.",
+          "observability": "CI shows all cache tests passing; concurrent readers/writers succeed; migration tests recreate cache.db on version mismatch.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:201` (SQLite schema or migration code using user_version / WAL / cache tables): .with_context(|| format!(\"Failed to fetch loglines for session {session_id}\"))?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:207` (SQLite schema or migration code using user_version / WAL / cache tables): \"Failed to fetch loglines for session {session_id}: {status} - {}\",\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:215` (SQLite schema or migration code using user_version / WAL / cache tables): .with_context(|| format!(\"Failed to parse loglines for session {session_id}\"))?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs:165` (SQLite schema or migration code using user_version / WAL / cache tables): let filtered: Vec<&Session> = sessions\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs:349` (SQLite schema or migration code using user_version / WAL / cache tables): eprintln!(\"Fetching session loglines...\");"
+        },
+        {
+          "id": "S10",
+          "action": "Run integration validation for RUST_LOG=debug cache hit/miss logging, confirm cache lookup precedes OAuth flow, and verify cache.db is created with SQLite WAL and restrictive permissions on macOS/Linux/Windows paths.",
+          "owner": "SRE",
+          "depends_on": [
+            "S3",
+            "S5",
+            "S9"
+          ],
+          "gate": "monitor:cache_hit_miss_logs_present at RUST_LOG=debug",
+          "rollback": "Turn on --no-cache and revert to the prior release if cache decisions cannot be observed.",
+          "observability": "stderr includes hit/miss logs for each method; file permissions stay 0600; path resolution works cross-platform.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Cache path resolution and permissions handling): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:39` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid: String,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Existing auth/OAuth profile lookup path to wrap with cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:58` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:70` (Existing auth/OAuth profile lookup path to wrap with cache): HeaderValue::from_str(&self.org_uuid)?,"
+        },
+        {
+          "id": "S11",
+          "action": "Release the cache-enabled binary after CI/tests and observability checks pass, keeping --no-cache as immediate fallback and ensuring existing scripts can opt out.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S9",
+            "S10",
+            "S8"
+          ],
+          "gate": "wait_for:cache feature release published",
+          "rollback": "Redeploy the previous binary and document --no-cache as the fallback.",
+          "observability": "Release artifact contains cache feature; post-release smoke tests succeed; rollback path remains immediate.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:39` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid: String,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Existing auth/OAuth profile lookup path to wrap with cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:58` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:70` (Existing auth/OAuth profile lookup path to wrap with cache): HeaderValue::from_str(&self.org_uuid)?,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Cache path resolution and permissions handling): dirs::home_dir()"
+        }
+      ],
+      "open_questions": [
+        "Should --clear-cache also recreate an empty cache.db or only delete it and exit?",
+        "Should the cache-age footer appear on stderr or stdout for each command?",
+        "What exact cache keying and pagination normalization should be used for get_events(id, max) responses?",
+        "Should terminated-session infinite caching apply to sessions inferred terminated from status only, or also to other terminal states if present in types?",
+        "Do auth-required org-UUID CLI surfaces need a forced auth validation even on cache hit, or is skip-auth acceptable when the cache already has the needed value?"
+      ],
+      "conflicts": [
+        {
+          "owners": [
+            "Security",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Security: Warn before any externally visible CLI behavior change ships",
+            "ProductPM: Announce cache behavior and --no-cache before release",
+            "ProductPM: Document served-from-cache footer and when it appears"
+          ],
+          "description": "CLI flag/footer changes are externally visible and require pre-release coordination/approval, while the implementation and docs work are otherwise desired now. Speed priority favors building the feature and delaying release gating."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ConsumerSubsystem"
+          ],
+          "blocking_constraints": [
+            "BackendOwner: Read from cache before OAuth flow in client.rs",
+            "ConsumerSubsystem: Keep old API path until cache path is proven stable",
+            "ConsumerSubsystem: Ship a compatibility shim for cache-bypass behavior"
+          ],
+          "description": "One constraint wants pre-auth cache lookup, another wants the old API path preserved until cache-specific tests pass. The compatible path is to implement a bypass shim and keep live fallback while proving cache stability."
+        },
+        {
+          "owners": [
+            "DataPlatform",
+            "BackendOwner"
+          ],
+          "blocking_constraints": [
+            "DataPlatform: Delay dropping old cache tables/columns until a quiet period",
+            "BackendOwner: Add cache schema/module before code reads from it"
+          ],
+          "description": "Schema lifecycle must be conservative for future changes, but initial implementation needs the new schema immediately. The plan uses create-first and avoids destructive migration until a future quiet period."
+        }
+      ]
+    },
+    "03-safety-tilted": {
+      "summary": "Add a SQLite cache with TTLs, WAL, 0600 perms, and CLI bypass/clear, while preserving --no-cache behavior and stable rollout.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Add rusqlite to Cargo.toml and create src/cache.rs with cache.db init, WAL mode, PRAGMA user_version guard, schema for sessions/session_events/loglines/oauth_profile, TTL helpers, and 0600 file creation under dirs-based path resolution or $CLAUDE_TELEPORT_ANALYZER_CACHE.",
+          "owner": "DataPlatform",
+          "depends_on": [],
+          "gate": "none",
+          "rollback": "Delete src/cache.rs additions, remove rusqlite from Cargo.toml, and drop cache.db on disk.",
+          "observability": "SQLite opens successfully, WAL is enabled, user_version is set/read, and cache.db mode is 0600.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:82` (SQLite schema or migration code using user_version / WAL / cache tables): let url = format!(\"{BASE_API_URL}/v1/sessions\");\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:95` (SQLite schema or migration code using user_version / WAL / cache tables): \"Failed to list sessions: {status} - {}\",\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:103` (SQLite schema or migration code using user_version / WAL / cache tables): .context(\"Failed to parse sessions list response\")?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:108` (SQLite schema or migration code using user_version / WAL / cache tables): let url = format!(\"{BASE_API_URL}/v1/sessions/{session_id}\");\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:141` (SQLite schema or migration code using user_version / WAL / cache tables): reqwest::Url::parse(&format!(\"{BASE_API_URL}/v1/sessions/{session_id}/events\"))"
+        },
+        {
+          "id": "S2",
+          "action": "Update src/types.rs to derive Serialize + Deserialize + Clone for all cached payload types used by list_sessions, get_session, get_events, get_loglines, and fetch_org_uuid responses.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "none",
+          "rollback": "Remove the added derives from src/types.rs and keep live API parsing only.",
+          "observability": "cargo test/build passes for serde round-trips on cached types.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Client methods that should consult/write the cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:81` (Client methods that should consult/write the cache): pub async fn list_sessions(&self) -> Result<Vec<Session>> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:107` (Client methods that should consult/write the cache): pub async fn get_session(&self, session_id: &str) -> Result<Session> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:131` (Client methods that should consult/write the cache): pub async fn get_events(\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:193` (Client methods that should consult/write the cache): pub async fn get_loglines(&self, session_id: &str) -> Result<Vec<Logline>> {"
+        },
+        {
+          "id": "S3",
+          "action": "Implement cache lookup/write wrappers in src/client.rs for list_sessions, get_session, get_events, get_loglines, and fetch_org_uuid; ensure lookup happens before OAuth flow, writes happen only after successful API responses, and cache keys are by method+params, not token.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "wait_for:cache-hit path proven to skip credential loading",
+          "rollback": "Remove cache reads/writes from src/client.rs and force live HTTP/OAuth flow.",
+          "observability": "Debug logs show hit/miss per method; cache hits avoid credential loading; no stale-token-dependent behavior.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:298` (Existing auth/OAuth profile lookup path to wrap with cache): async fn fetch_org_uuid(client: &reqwest::Client, token: &str) -> Result<String> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Existing auth/OAuth profile lookup path to wrap with cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:39` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid: String,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:58` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:70` (Existing auth/OAuth profile lookup path to wrap with cache): HeaderValue::from_str(&self.org_uuid)?,"
+        },
+        {
+          "id": "S4",
+          "action": "Add TTL policy enforcement in src/cache.rs and src/client.rs: sessions=60s, session_events/loglines=5m, oauth_profile=1h, and infinite TTL for terminated sessions where status != running; include age calculation for cache footer.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S3"
+          ],
+          "gate": "none",
+          "rollback": "Invalidate the affected rows and fall back to live API fetches.",
+          "observability": "Expired rows miss, fresh rows hit, terminated-session rows remain valid indefinitely, and returned ages are accurate.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:207` (SQLite schema or migration code using user_version / WAL / cache tables): \"Failed to fetch loglines for session {session_id}: {status} - {}\",\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:81` (Client methods that should consult/write the cache): pub async fn list_sessions(&self) -> Result<Vec<Session>> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:95` (SQLite schema or migration code using user_version / WAL / cache tables): \"Failed to list sessions: {status} - {}\",\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:107` (Client methods that should consult/write the cache): pub async fn get_session(&self, session_id: &str) -> Result<Session> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:201` (SQLite schema or migration code using user_version / WAL / cache tables): .with_context(|| format!(\"Failed to fetch loglines for session {session_id}\"))?;"
+        },
+        {
+          "id": "S5",
+          "action": "Wire src/main.rs CLI flags --no-cache and --clear-cache, plus a cache-aware footer path that prints 'served from cache, age Xs' for cached responses when relevant; preserve stdout byte-for-byte under --no-cache.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S3",
+            "S4"
+          ],
+          "gate": "monitor:stdout_diff=0 for --no-cache regression tests",
+          "rollback": "Disable the new flags/footer and revert to previous main.rs CLI behavior.",
+          "observability": "No-cache output matches baseline, clear-cache exits 0 after deleting cache.db, cached commands emit the footer only when appropriate.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Client methods that should consult/write the cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:81` (Client methods that should consult/write the cache): pub async fn list_sessions(&self) -> Result<Vec<Session>> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:107` (Client methods that should consult/write the cache): pub async fn get_session(&self, session_id: &str) -> Result<Session> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:131` (Client methods that should consult/write the cache): pub async fn get_events(\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:193` (Client methods that should consult/write the cache): pub async fn get_loglines(&self, session_id: &str) -> Result<Vec<Logline>> {"
+        },
+        {
+          "id": "S6",
+          "action": "Add debug-visible cache hit/miss logging in src/client.rs at RUST_LOG=debug for every cached API method and ensure logs distinguish lookup, hit, miss, write, and bypass.",
+          "owner": "SRE",
+          "depends_on": [
+            "S3",
+            "S4"
+          ],
+          "gate": "monitor:cache_hit_miss_logs_present at RUST_LOG=debug",
+          "rollback": "Turn off cache decision logging and bypass cache with --no-cache if needed.",
+          "observability": "Each API method produces a clear debug trace showing cache decision and outcome.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:39` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid: String,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Client methods that should consult/write the cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:58` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:70` (Existing auth/OAuth profile lookup path to wrap with cache): HeaderValue::from_str(&self.org_uuid)?,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:81` (Client methods that should consult/write the cache): pub async fn list_sessions(&self) -> Result<Vec<Session>> {"
+        },
+        {
+          "id": "S7",
+          "action": "Update ARCHITECTURE.md and README.md with the command data flow, caching section, privacy note, 0600 permissions, WAL/concurrent access note, --clear-cache guidance, and cron/script guidance to use --no-cache.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S5",
+            "S6"
+          ],
+          "gate": "approval:ProductPM",
+          "rollback": "Revert the documentation sections and cache-specific help text additions.",
+          "observability": "Docs mention cache path, security implications, footer behavior, and automation guidance consistently.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:225` (Cache path resolution and permissions handling): dirs::home_dir()\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs:19` (SQLite schema or migration code using user_version / WAL / cache tables): #[command(about = \"Read Claude Code remote sessions without cloning\")]\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:39` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid: String,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Client methods that should consult/write the cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:58` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid,"
+        },
+        {
+          "id": "S8",
+          "action": "Add cache-specific tests covering TTL expiry, terminated-session infinite cache, schema migration drop-and-recreate via user_version, concurrent access under WAL, and --no-cache stdout equivalence in src/client.rs/src/main.rs test suites.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S2",
+            "S3",
+            "S4",
+            "S5"
+          ],
+          "gate": "wait_for:cache-specific tests passing in CI",
+          "rollback": "Remove or disable the new cache tests and revert the cache-enabled client paths.",
+          "observability": "CI verifies cache hit/miss behavior, migration resets, concurrency works, and no-cache behavior is unchanged.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:201` (SQLite schema or migration code using user_version / WAL / cache tables): .with_context(|| format!(\"Failed to fetch loglines for session {session_id}\"))?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:207` (SQLite schema or migration code using user_version / WAL / cache tables): \"Failed to fetch loglines for session {session_id}: {status} - {}\",\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:215` (SQLite schema or migration code using user_version / WAL / cache tables): .with_context(|| format!(\"Failed to parse loglines for session {session_id}\"))?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:82` (SQLite schema or migration code using user_version / WAL / cache tables): let url = format!(\"{BASE_API_URL}/v1/sessions\");\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:95` (SQLite schema or migration code using user_version / WAL / cache tables): \"Failed to list sessions: {status} - {}\","
+        },
+        {
+          "id": "S9",
+          "action": "Run a staged release with cache enabled by default while keeping --no-cache as immediate fallback; monitor API error rate, cache logs, and user-facing regressions before broad rollout.",
+          "owner": "SRE",
+          "depends_on": [
+            "S6",
+            "S7",
+            "S8"
+          ],
+          "gate": "monitor:api_error_rate<0.1% for 24h",
+          "rollback": "Revert to the last non-caching build and clear cache.db if needed; users can also invoke --no-cache immediately.",
+          "observability": "Error rate stays below threshold, cache hit ratio rises on repeated commands, and no auth or stdout regressions appear.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:39` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid: String,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Client methods that should consult/write the cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:58` (Existing auth/OAuth profile lookup path to wrap with cache): org_uuid,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:70` (Existing auth/OAuth profile lookup path to wrap with cache): HeaderValue::from_str(&self.org_uuid)?,\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:81` (Client methods that should consult/write the cache): pub async fn list_sessions(&self) -> Result<Vec<Session>> {"
+        },
+        {
+          "id": "S10",
+          "action": "After successful soak, flip cache-enabled behavior to the documented default while preserving --no-cache and --clear-cache as stable escape hatches.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "wait_for:monitor:api_error_rate<0.1% for 24h",
+          "rollback": "Revert the default behavior to uncached mode and keep the cache code present but bypassed.",
+          "observability": "Default runs use cache, uncached runs remain identical, and cache/footer behavior stays consistent.",
+          "file_paths": [
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs",
+            "/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs"
+          ],
+          "agent_instructions": "Touch these files: /home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs, /home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs.\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/main.rs:35` (SQLite schema or migration code using user_version / WAL / cache tables): /// Only show sessions created after this date (YYYY-MM-DD or ISO8601)\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:53` (Client methods that should consult/write the cache): let org_uuid = fetch_org_uuid(&client, &access_token).await?;\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:81` (Client methods that should consult/write the cache): pub async fn list_sessions(&self) -> Result<Vec<Session>> {\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:82` (SQLite schema or migration code using user_version / WAL / cache tables): let url = format!(\"{BASE_API_URL}/v1/sessions\");\n  - `/home/user/Playground/.clones/claude-teleport-analyzer/src/client.rs:95` (SQLite schema or migration code using user_version / WAL / cache tables): \"Failed to list sessions: {status} - {}\","
+        }
+      ],
+      "open_questions": [
+        "Should the cache footer appear on all cached commands or only on commands that would otherwise re-fetch the same session data?",
+        "Should the cache path prefer $CLAUDE_TELEPORT_ANALYZER_CACHE verbatim, or treat it as a directory when it points to one?",
+        "Should --clear-cache delete only cache.db or also any WAL/shm sidecar files if present?"
+      ],
+      "conflicts": [
+        {
+          "between": [
+            "BackendOwner: dual-read/dual-write during TTL rollout",
+            "ConsumerSubsystem: keep old API path until cache path is proven stable"
+          ],
+          "reason": "Dual-write rollout implies new cache paths are active during a staged release, while keeping the old API path until tests prove stability prefers deferring behavioral shift."
+        },
+        {
+          "between": [
+            "SRE: no Friday-afternoon or incident-window cache rollout",
+            "ProductPM: announce cache behavior and --no-cache before release"
+          ],
+          "reason": "A fixed pre-release announcement window can collide with the restriction against incident-window or Friday-afternoon release timing."
+        },
+        {
+          "between": [
+            "Security: warn before any externally visible CLI behavior change ships",
+            "SRE: no Friday-afternoon or incident-window cache rollout"
+          ],
+          "reason": "Externally visible CLI changes require notice, but rollout timing is constrained away from certain windows, which can force a longer pre-announce-to-release gap."
+        },
+        {
+          "between": [
+            "ConsumerSubsystem: fallback must be immediate if cache release slips",
+            "SRE: gate expansion on stable error rate after enabling cache"
+          ],
+          "reason": "Immediate fallback on slip conflicts with waiting 24h of stable error rate before broader expansion."
+        },
+        {
+          "between": [
+            "DataPlatform: delay dropping old cache tables/columns until a quiet period",
+            "Security: create cache.db with 0600 and never relax perms"
+          ],
+          "reason": "A future quiet-period migration may require recreating files, but permissions must remain strict across any drop/recreate path."
+        }
+      ]
+    }
+  },
+  "smt": {
+    "00-cost-leaning": {
+      "feasible": true,
+      "unsat_core_size": 0,
+      "unsat_core_explanations": []
+    },
+    "01-safety-leaning": {
+      "feasible": true,
+      "unsat_core_size": 0,
+      "unsat_core_explanations": []
+    },
+    "02-speed-leaning": {
+      "feasible": true,
+      "unsat_core_size": 0,
+      "unsat_core_explanations": []
+    },
+    "03-safety-tilted": {
+      "feasible": true,
+      "unsat_core_size": 0,
+      "unsat_core_explanations": []
+    }
+  },
+  "chaos": {
+    "00-cost-leaning": {
+      "fragility": 0.482,
+      "fragility_curve": {
+        "1": 0.482,
+        "2": 0.661
+      },
+      "achilles_top_k1": [
+        [
+          "S1"
+        ],
+        [
+          "S2"
+        ],
+        [
+          "S3"
+        ]
+      ]
+    },
+    "01-safety-leaning": {
+      "fragility": 0.491,
+      "fragility_curve": {
+        "1": 0.491,
+        "2": 0.657
+      },
+      "achilles_top_k1": [
+        [
+          "S1"
+        ],
+        [
+          "S2"
+        ],
+        [
+          "S3"
+        ]
+      ]
+    },
+    "02-speed-leaning": {
+      "fragility": 0.436,
+      "fragility_curve": {
+        "1": 0.436,
+        "2": 0.624
+      },
+      "achilles_top_k1": [
+        [
+          "S1"
+        ],
+        [
+          "S2"
+        ],
+        [
+          "S3"
+        ]
+      ]
+    },
+    "03-safety-tilted": {
+      "fragility": 0.467,
+      "fragility_curve": {
+        "1": 0.467,
+        "2": 0.642
+      },
+      "achilles_top_k1": [
+        [
+          "S1"
+        ],
+        [
+          "S2"
+        ],
+        [
+          "S3"
+        ]
+      ]
+    }
+  },
+  "winner": "02-speed-leaning"
+}

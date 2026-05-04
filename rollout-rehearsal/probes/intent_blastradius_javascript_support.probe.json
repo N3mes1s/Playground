@@ -1,0 +1,65 @@
+{
+  "intent": "intent_blastradius_javascript_support",
+  "model": "gpt-5.4-mini",
+  "A_original": {
+    "steps": 12,
+    "conflicts": 2,
+    "raw_conflicts": [
+      {
+        "between": [
+          "DataPlatform: do not drop legacy source-file handling until a quiet period passes",
+          "ConsumerSubsystem: provide compatibility shim for old python_files() callers"
+        ],
+        "issue": "One asks to retain legacy handling for 7 days; the other requires a compatibility shim. These align on keeping old callers working, but the exact retirement timing for legacy discovery code is ambiguous."
+      },
+      {
+        "between": [
+          "SRE: window:business_hours_only_excluding_incident_windows",
+          "ProductPM: window:outside launch windows and major events"
+        ],
+        "issue": "Both constrain release timing. They are compatible in principle, but together create a stricter combined rollout window that may require scheduling coordination."
+      }
+    ]
+  },
+  "B_strict": {
+    "steps": 10,
+    "conflicts": 5,
+    "raw_conflicts": [
+      {
+        "between": [
+          "DataPlatform",
+          "SRE"
+        ],
+        "issue": "DataPlatform requires a 7d quiet period before dropping legacy python_files() handling, while SRE requires release-window controls and rollout progression that may want the rename/cutover sooner."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "ProductPM"
+        ],
+        "issue": "DataPlatform wants JS/TS backfill in small batches with lag monitoring, while ProductPM wants rollout notice and user-visible enablement; the operational pacing may delay the externally announced rollout."
+      },
+      {
+        "between": [
+          "SRE",
+          "Security"
+        ],
+        "issue": "SRE requires a 24h clean burn-in before expanding to JS/TS repos, while Security requires maintained audit logs and fallback verification for import failures; enabling before logging/fallback readiness would violate Security."
+      },
+      {
+        "between": [
+          "ProductPM",
+          "SRE"
+        ],
+        "issue": "ProductPM requires advance notice and support guidance before rollout, while SRE requires business-hours/incident-window constraints and can only enable the flag after approvals, creating a timing dependency."
+      },
+      {
+        "between": [
+          "ConsumerSubsystem",
+          "DataPlatform"
+        ],
+        "issue": "ConsumerSubsystem wants a compatibility shim for old python_files() callers during a one-release dual-support window, while DataPlatform wants legacy source-file handling not dropped until a quiet period passes, extending the coexistence window."
+      }
+    ]
+  }
+}

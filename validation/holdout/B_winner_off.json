@@ -1,0 +1,204 @@
+{
+  "timestamp": "20260430T143639Z",
+  "args": {
+    "n": 20,
+    "sources": null,
+    "pipeline": "cli_pro",
+    "max_tokens": 1500,
+    "n_plans": 3,
+    "seed": 1337,
+    "judge": true,
+    "utility": null,
+    "run_label": "holdout_B",
+    "ids_file": "validation/holdout_ids.txt",
+    "out": "validation/holdout/B_winner_off.md"
+  },
+  "scores": [
+    {
+      "id": "synthetic/react_17_19/security_hardening/mid_saas/tiny/00001",
+      "source": "synthetic",
+      "winner": "01-safety-leaning",
+      "winner_family": "safety",
+      "n_plans": 3,
+      "smt_feasible_count": 0,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 3,
+      "expected_stakeholders_hit": 4,
+      "expected_stakeholders_total": 4,
+      "verdict": "missed",
+      "elapsed_s": 182.92933702468872,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures the React 19 cutover with legacy context and concurrent-default testing, but misses the explicit default-deny/allowlist audit framing and the intended stakeholder set.",
+      "judge_captured": [
+        "React 17\u219219 migration",
+        "removed legacy context APIs / legacy context consumers",
+        "concurrent features default / concurrent defaults",
+        "security/compliance steps and customer notice",
+        "feature-flagged compatibility shim and dual-run rollout"
+      ],
+      "judge_missed": [
+        "default-deny audit and allowlist migration as the central security-hardening theme",
+        "expected stakeholders: backend, consumer, product, security",
+        "explicit SOC2-in-flight / security-hardening cutover framing",
+        "root-cause emphasis on tightened defaults beyond generic compatibility testing"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "synthetic/elasticsearch_7_8/schema_migration/mid_saas/medium/00001",
+      "source": "synthetic",
+      "winner": "02-balanced",
+      "winner_family": "balanced",
+      "n_plans": 3,
+      "smt_feasible_count": 2,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 4,
+      "expected_stakeholders_total": 4,
+      "verdict": "missed",
+      "elapsed_s": 234.81630682945251,
+      "verdict_judge": "caught",
+      "judge_rationale": "Plan explicitly covers ES7\u2192ES8 compatibility, new mappings, backfill/dual-write, and auth/TLS change handling, matching the migration's core signals.",
+      "judge_captured": [
+        "Elasticsearch 7\u21928 upgrade",
+        "preserve ES7-compatible query DSL/response handling",
+        "new index templates and mappings before reads",
+        "small-batch backfill/reindex",
+        "dual-write and dual-read window",
+        "customer notices for API/query or visible auth/TLS changes",
+        "rotate credentials and rebind clients for ES8 nodes"
+      ],
+      "judge_missed": [
+        "auto-security / mTLS by default as a named root-cause signal",
+        "removed types as an explicit schema-migration concern",
+        "explicit stakeholder set: data, product, security, sre",
+        "drop old columns later / explicit cleanup phase",
+        "observability requirement that every step be measurable"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/scikit-learn__scikit-learn-10908",
+      "source": "swebench_verified",
+      "winner": "02-balanced",
+      "winner_family": "balanced",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 1,
+      "files_total": 1,
+      "keyword_hits": 1,
+      "keyword_total": 3,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "caught",
+      "elapsed_s": 159.48532485961914,
+      "verdict_judge": "caught",
+      "judge_rationale": "Plan directly targets CountVectorizer.get_feature_names, explicit vocabulary pre-fit behavior, and vocabulary_/_validate_vocabulary state handling in the correct file.",
+      "judge_captured": [
+        "Touches sklearn/feature_extraction/text.py",
+        "Fixes CountVectorizer.get_feature_names for pre-fit explicit vocabulary",
+        "Mentions vocabulary_ materialization via validation path",
+        "Keeps NotFittedError for unfitted vectorizers without vocabulary",
+        "Adds regression tests for get_feature_names/transform parity"
+      ],
+      "judge_missed": [
+        "Does not name the exact _validate_vocabulary / hasattr(vocabulary_) root cause as concretely as GT",
+        "No explicit diff sketch details beyond high-level edit intent"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/sympy__sympy-18763",
+      "source": "swebench_verified",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 1,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "caught",
+      "elapsed_s": 268.42560362815857,
+      "verdict_judge": "caught",
+      "judge_rationale": "Plan targets sympy/printing/latex.py and the Subs LaTeX parenthesizing bug, matching the ground-truth root cause and file.",
+      "judge_captured": [
+        "Touches sympy/printing/latex.py",
+        "Fixes Subs LaTeX rendering/parenthesizing",
+        "Mentions the specific regression case 3*Subs(-x+y, (x,), (1,))",
+        "Focuses on printer-only behavior and tests"
+      ],
+      "judge_missed": [
+        "Does not explicitly mention left/right or substack formatting internals",
+        "No concrete diff sketch details for latex_expr handling"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_pro/instance_internetarchive__openlibrary-30bc73a1395fba2300087c7f307e54bb5372b60a-v76304ecdb3a5954fcf13feb710e8c40fcf24b73c",
+      "source": "swebench_pro",
+      "winner": "02-balanced",
+      "winner_family": "balanced",
+      "n_plans": 3,
+      "smt_feasible_count": 1,
+      "files_overlap": 0,
+      "files_total": 4,
+      "keyword_hits": 11,
+      "keyword_total": 30,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 226.22754859924316,
+      "verdict_judge": "caught",
+      "judge_rationale": "Plan matches the core patch: coverstore schema/status tracking, zip batch archival, covers_0008 URL handling, and >8M Archive.org redirects.",
+      "judge_captured": [
+        "openlibrary/coverstore schema/status tracking in schema.sql",
+        "zip-based batch archival utilities and storage-path helpers in archive.py/code.py",
+        "covers_0008 ZIP URL handling",
+        "redirecting uploaded cover IDs above 8,000,000 to Archive.org",
+        "README/docs update for archive location"
+      ],
+      "judge_missed": [
+        "specific canonical file split across archive.py, code.py, schema.sql, README.md is implied but not explicitly named in the plan",
+        "ground-truth keywords like batch_id/start_id/item_id/filename/path generation are not explicitly called out"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/amazon",
+      "source": "danluu_postmortems",
+      "winner": "01-safety-leaning",
+      "winner_family": "safety",
+      "n_plans": 3,
+      "smt_feasible_count": 1,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 1,
+      "keyword_total": 1,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "caught",
+      "elapsed_s": 206.94294357299805,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures the AWS capacity-scaling automation causing cross-network congestion, but adds generic canary/retry/security steps instead of the specific violated constraint.",
+      "judge_captured": [
+        "capacity-scaling automation rollout",
+        "main AWS network / internal network cross-network connection activity",
+        "network congestion, latency, and retries as the failure mode",
+        "stakeholder rollout gating on canary and error-rate checks"
+      ],
+      "judge_missed": [
+        "the actual violated constraint: the scaling action unexpectedly triggered many internal clients' connection behavior",
+        "no specific Amazon/AWS postmortem constraint or real root cause remediation tied to the incident",
+        "focuses on retries/backoff and security review, which are not evidenced by the incident brief"
+      ],
+      "judge_confidence": "medium"
+    }
+  ]
+}

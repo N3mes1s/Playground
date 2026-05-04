@@ -1,0 +1,46 @@
+{
+  "eval": {
+    "monolith": {
+      "n": 30,
+      "useful_judge": 1.0,
+      "caught_judge": 0.5333333333333333,
+      "missed_judge": 0.0,
+      "smt_rate": 1.0,
+      "max_family": 0.8,
+      "n_winners": 30
+    },
+    "multistage": {
+      "n": 30,
+      "useful_judge": 1.0,
+      "caught_judge": 0.6,
+      "missed_judge": 0.0,
+      "smt_rate": 1.0,
+      "max_family": 0.7666666666666667,
+      "n_winners": 30
+    },
+    "caught_delta_pp": 6.666666666666665
+  },
+  "holdout": {
+    "monolith": {
+      "n": 30,
+      "useful_judge": 1.0,
+      "caught_judge": 0.7333333333333333,
+      "missed_judge": 0.0,
+      "smt_rate": 1.0,
+      "max_family": 0.7,
+      "n_winners": 30
+    },
+    "multistage": {
+      "n": 30,
+      "useful_judge": 1.0,
+      "caught_judge": 0.5,
+      "missed_judge": 0.0,
+      "smt_rate": 1.0,
+      "max_family": 0.7666666666666667,
+      "n_winners": 30
+    },
+    "caught_delta_pp": -23.33333333333333,
+    "useful_delta_pp": 0.0
+  },
+  "verdict": "**DOWNGRADE TO DIRECTIONAL** \u2014 eval-slice +7pp caught did NOT reproduce on holdout (-23pp). useful and plans intact, so no regression \u2014 but the +7pp magnitude was likely sample noise. Multistage retained as default (no holdout regression) but external metric claims should NOT cite a caught-rate gain."
+}

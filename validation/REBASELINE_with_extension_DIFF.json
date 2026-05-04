@@ -1,0 +1,61 @@
+{
+  "n": 29,
+  "agg_a_no_extension": {
+    "n": 30,
+    "verdicts": {
+      "caught": 10,
+      "partial": 19,
+      "missed": 1
+    },
+    "caught_rate": 0.3333333333333333,
+    "partial_rate": 0.6333333333333333,
+    "missed_rate": 0.03333333333333333,
+    "useful_rate": 0.9666666666666667,
+    "winner_family_dist": {
+      "balanced": 5,
+      "safety": 14,
+      "speed": 11
+    },
+    "max_family_share": 0.4666666666666667,
+    "smt_feasibility_rate": 0.8222222222222222
+  },
+  "agg_b_with_extension": {
+    "n": 30,
+    "verdicts": {
+      "partial": 20,
+      "caught": 6,
+      "missed": 4
+    },
+    "caught_rate": 0.2,
+    "partial_rate": 0.6666666666666666,
+    "missed_rate": 0.13333333333333333,
+    "useful_rate": 0.8666666666666667,
+    "winner_family_dist": {
+      "balanced": 2,
+      "safety": 8,
+      "speed": 20
+    },
+    "max_family_share": 0.6666666666666666,
+    "smt_feasibility_rate": 0.8222222222222222
+  },
+  "verdict_useful_rate": {
+    "label": "A better",
+    "reason": "useful (caught+partial) rate A=97% \u2192 B=87%"
+  },
+  "verdict_balanced": {
+    "label": "A better",
+    "reason": "composite useful + 0.5*smt - 0.5*family-bias: A=1.144 \u2192 B=0.944"
+  },
+  "per_element_transitions": {
+    "caught -> partial": 4,
+    "caught -> caught": 4,
+    "partial -> partial": 16,
+    "partial -> caught": 1,
+    "partial -> missed": 2,
+    "missed -> missed": 1,
+    "caught -> missed": 1
+  },
+  "smt_delta_pp": 0.0,
+  "useful_delta_pp": -9.999999999999998,
+  "caught_delta_pp": -13.33333333333333
+}

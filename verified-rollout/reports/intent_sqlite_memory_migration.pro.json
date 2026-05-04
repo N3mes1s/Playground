@@ -1,0 +1,3436 @@
+{
+  "intent_path": "fixtures/intent_sqlite_memory_migration.md",
+  "constraints": [
+    {
+      "axis": "api",
+      "summary": "Keep LocalMemory API stable while adding sqlite backend",
+      "scope": "mirofish_lab/memory.py and mirofish_lab/agent.py constructor/path selection",
+      "gate": "none",
+      "rollback": "revert the backend selection to jsonl and keep LocalMemory signature unchanged",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Deploy schema-capable code before switching default backend",
+      "scope": "Release order for memory.db writer/reader and MIROFISH_MEMORY_BACKEND default",
+      "gate": "wait_for:sqlite backend deployed and migration helper available",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Maintain jsonl default for one release before opt-out",
+      "scope": "MIROFISH_MEMORY_BACKEND default behavior during rollout",
+      "gate": "window:one release after sqlite code is available",
+      "rollback": "reset default backend to jsonl",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "api",
+      "summary": "SQLite writes must fail loudly and never drop records",
+      "scope": "SqliteMemory write path and Agent persistence behavior",
+      "gate": "none",
+      "rollback": "disable sqlite backend and route persistence back to jsonl",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "data",
+      "summary": "Import existing JSONL into sqlite before relying on sqlite reads",
+      "scope": "migrate_jsonl_to_sqlite() and first-run access to prior memory",
+      "gate": "wait_for:successful migration of existing .mirofish_memory JSONL files",
+      "rollback": "clear memory.db and re-import from JSONL",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "data",
+      "summary": "Backfill JSONL into SQLite in small batches to avoid IOPS spikes",
+      "scope": "migrate_jsonl_to_sqlite() reading .mirofish_memory JSONL and inserting into memory.db",
+      "gate": "monitor:iops<80%",
+      "rollback": "delete .mirofish_memory/memory.db and rerun migration with smaller batch size",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Run schema-creating SQLite init and migration outside business hours",
+      "scope": "creation of memory.db, table/index setup, and any one-time migration step",
+      "gate": "window:off_hours",
+      "rollback": "drop newly created SQLite database and keep JSONL backend active",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Keep old JSONL files until SQLite parity is verified after a quiet period",
+      "scope": "retention and eventual removal of legacy .mirofish_memory/*.jsonl files",
+      "gate": "wait_for:7d_no_jsonl_reads_after_cutover",
+      "rollback": "restore JSONL files from backup and switch backend back to jsonl",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Hold off dropping legacy files if SQLite replication/lock errors appear",
+      "scope": "cutover period while writes move to memory.db and JSONL remains readable",
+      "gate": "monitor:sqlite_busy_errors<1%",
+      "rollback": "re-enable JSONL writes and pause SQLite writes until contention clears",
+      "blocking": false,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Gate opt-in rollout on clean JSONL\u2192SQLite import",
+      "scope": "MIROFISH_MEMORY_BACKEND=sqlite cutover and migration helper",
+      "gate": "wait_for:migration_validation_complete",
+      "rollback": "set MIROFISH_MEMORY_BACKEND=jsonl and stop using memory.db",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Hold default-backend switch until error rate stays low",
+      "scope": "Changing the default backend from jsonl to sqlite",
+      "gate": "monitor:sqlite_write_error_rate<0.1% for 24h",
+      "rollback": "revert default backend to jsonl",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "No default-backend flip during incidents or Friday afternoon",
+      "scope": "Release that changes the default memory backend",
+      "gate": "window:business-hours-excluding-friday-afternoon-and-incident-windows",
+      "rollback": "defer release; keep jsonl default until next approved window",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Require a fast rollback path for SQLite write failures",
+      "scope": "SqliteMemory write path and Agent backend selection",
+      "gate": "none",
+      "rollback": "switch backend selection back to jsonl without redeploy",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "security",
+      "summary": "Migrate JSONL to SQLite without losing audit trail history",
+      "scope": "migration helper and backend cutover for .mirofish_memory/",
+      "gate": "wait_for:migration_reconciliation_verified",
+      "rollback": "restore JSONL-only writes and keep existing JSONL files as source of truth",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Run secrets/permissions review before exposing sqlite-backed memory",
+      "scope": "new memory.db creation, file permissions, and local data access",
+      "gate": "approval:security",
+      "rollback": "disable sqlite backend and redeploy_previous",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify users before any default backend behavior changes",
+      "scope": "switching default from jsonl to sqlite in a later release",
+      "gate": "window:release-notice_at_least_1_release_ahead",
+      "rollback": "revert default backend to jsonl and keep opt-in only",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Publish migration guidance for users with existing JSONL memory",
+      "scope": "env var opt-in and migrate_jsonl_to_sqlite() usage",
+      "gate": "approval:docs",
+      "rollback": "remove opt-in docs and keep JSONL path documented as primary",
+      "blocking": false,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Announce JSONL->SQLite change before any breaking rollout",
+      "scope": "Default backend switch and any user-facing change in memory storage behavior",
+      "gate": "wait_for:customer_announcement_sent",
+      "rollback": "Restore JSONL as the default backend and pause rollout",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Give one-release lead time before changing the default",
+      "scope": "The flip from default backend jsonl to sqlite for new runs",
+      "gate": "window:after_one_release_notice_period",
+      "rollback": "Keep default on jsonl for the current release",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "ops",
+      "summary": "Support team must be briefed on SQLite opt-in and migration",
+      "scope": "User support handling for backend selection, migration, and recovery",
+      "gate": "approval:support_lead",
+      "rollback": "Suspend opt-in guidance until support playbook is updated",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "business",
+      "summary": "Do not roll out during launch windows or major events",
+      "scope": "Any enabling of sqlite backend by default or via opt-in rollout",
+      "gate": "window:no_launch_window_or_major_event",
+      "rollback": "Delay rollout until the quiet period after the event",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Name an escalation owner for memory migration issues",
+      "scope": "Customer-facing issues during migration, failed imports, or missing history",
+      "gate": "approval:escalation_owner_assigned",
+      "rollback": "Route all rollout-related escalations back to the prior owner",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep jsonl default for one release; sqlite opt-in only",
+      "scope": "Agent constructor backend kwarg and MIROFISH_MEMORY_BACKEND default",
+      "gate": "window:one_release",
+      "rollback": "set MIROFISH_MEMORY_BACKEND=jsonl and remove sqlite opt-in",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Preserve LocalMemory signature and legacy JSONL reads",
+      "scope": "mirofish_lab/memory.py compatibility shim during transition",
+      "gate": "none",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Ship migrate_jsonl_to_sqlite before backend cutover",
+      "scope": "migration helper and initial sqlite onboarding path",
+      "gate": "wait_for:migration_helper_tests_pass",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Add concurrency and restart persistence tests pre-cutover",
+      "scope": "sqlite write path, concurrent agents, restart/readback behavior",
+      "gate": "approval:release_manager",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Fallback to jsonl if sqlite backend is not shipping on time",
+      "scope": "release rollout and environment default selection",
+      "gate": "monitor:sqlite_cutover_readytrue",
+      "rollback": "keep MIROFISH_MEMORY_BACKEND=jsonl as default",
+      "blocking": false,
+      "owner": "ConsumerSubsystem"
+    }
+  ],
+  "plans": {
+    "00-cost-leaning": {
+      "summary": "Ship sqlite backend and migration helper first, keep jsonl default for one release, then opt-in cutover after migration/validation and off-hours review.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Implement SqliteMemory in mirofish_lab/memory.py with init, append/write, read/query, and loud failures on write errors; keep LocalMemory signature unchanged and route legacy reads through any existing JSONL files.",
+          "owner": "BackendOwner",
+          "depends_on": [],
+          "gate": "none",
+          "rollback": "Disable sqlite backend and route persistence back to jsonl.",
+          "observability": "Unit tests for write failures, restart readback, and unchanged LocalMemory constructor/signature."
+        },
+        {
+          "id": "S2",
+          "action": "Add Agent backend selection via backend='sqlite' kwarg and MIROFISH_MEMORY_BACKEND env var, defaulting to jsonl for now.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "none",
+          "rollback": "Reset backend selection to jsonl without changing LocalMemory API.",
+          "observability": "Integration tests confirming Agent selects the requested backend and defaults to jsonl."
+        },
+        {
+          "id": "S3",
+          "action": "Add migrate_jsonl_to_sqlite() to read all .mirofish_memory/*.jsonl files and import records into memory.db with batching and idempotent inserts.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "none",
+          "rollback": "Delete .mirofish_memory/memory.db and rerun migration from JSONL.",
+          "observability": "Migration test coverage, row counts before/after, batch size behavior, and duplicate handling."
+        },
+        {
+          "id": "S4",
+          "action": "Add schema/table/index creation and cross-run query support for tags/time ranges in SQLite; keep JSONL as readable legacy source.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1",
+            "S3"
+          ],
+          "gate": "window:off_hours",
+          "rollback": "Drop newly created SQLite database and keep JSONL backend active.",
+          "observability": "Schema creation logs, index creation success, query latency, and sqlite_busy / integrity errors."
+        },
+        {
+          "id": "S5",
+          "action": "Run concurrency, restart persistence, and migration helper tests for sqlite write path and readback behavior.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S2",
+            "S3",
+            "S4"
+          ],
+          "gate": "approval:release_manager",
+          "rollback": "Redeploy previous revision.",
+          "observability": "Concurrent agent write corruption checks, restart recovery checks, and migration test suite results."
+        },
+        {
+          "id": "S6",
+          "action": "Perform security/permissions review for memory.db creation and local file access, and assign escalation owner plus support briefing for migration issues.",
+          "owner": "Security",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "approval:security",
+          "rollback": "Disable sqlite backend and redeploy_previous.",
+          "observability": "Security signoff, file permission verification, support playbook completion, and escalation owner assignment."
+        },
+        {
+          "id": "S7",
+          "action": "Run migrate_jsonl_to_sqlite() for existing .mirofish_memory JSONL files and validate reconciliation against legacy records.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S4",
+            "S5",
+            "S6"
+          ],
+          "gate": "wait_for:migration_reconciliation_verified",
+          "rollback": "Clear memory.db and re-import from JSONL.",
+          "observability": "Reconciliation diffs, imported row counts, audit trail completeness, and validation status."
+        },
+        {
+          "id": "S8",
+          "action": "Deploy sqlite backend code with MIROFISH_MEMORY_BACKEND still defaulting to jsonl; expose sqlite as opt-in only.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S5",
+            "S6"
+          ],
+          "gate": "none",
+          "rollback": "Revert backend selection to jsonl and keep LocalMemory signature unchanged.",
+          "observability": "Build/deploy success and opt-in availability without default behavior change."
+        },
+        {
+          "id": "S9",
+          "action": "Publish migration guidance and customer announcement for JSONL->SQLite opt-in, including how to use MIROFISH_MEMORY_BACKEND=sqlite and migrate_jsonl_to_sqlite().",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "approval:docs",
+          "rollback": "Remove opt-in docs and keep JSONL path documented as primary.",
+          "observability": "Docs approval, announcement sent status, and support readiness."
+        },
+        {
+          "id": "S10",
+          "action": "Enable opt-in sqlite usage for selected runs after migration validation, keeping jsonl default unchanged for one release.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S7",
+            "S9"
+          ],
+          "gate": "window:one_release",
+          "rollback": "Set MIROFISH_MEMORY_BACKEND=jsonl and stop using memory.db.",
+          "observability": "sqlite write error rate, sqlite_busy errors, opt-in usage, and readback correctness."
+        },
+        {
+          "id": "S11",
+          "action": "Retain legacy JSONL files until a quiet period verifies no JSONL reads for 7 days, then remove them.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "wait_for:7d_no_jsonl_reads_after_cutover",
+          "rollback": "Restore JSONL files from backup and switch backend back to jsonl.",
+          "observability": "JSONL read telemetry, cutoff date tracking, and backup availability."
+        },
+        {
+          "id": "S12",
+          "action": "After one release notice period, low error rate, and non-incident business window, flip default backend to sqlite for new runs.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S10"
+          ],
+          "gate": "window:after_one_release_notice_period",
+          "rollback": "Keep default on jsonl for the current release.",
+          "observability": "sqlite_write_error_rate, incident status, release notice completion, and default selection telemetry."
+        }
+      ],
+      "open_questions": [
+        "Should memory.db live alongside the existing JSONL files in .mirofish_memory/ or be isolated in a subpath?",
+        "What exact reconciliation criteria define migration_reconciliation_verified?",
+        "What batch size should migrate_jsonl_to_sqlite() use by default?",
+        "Who is the named escalation owner for migration issues?",
+        "What support contact or channel should be included in the migration guidance?"
+      ],
+      "conflicts": [
+        {
+          "owners": [
+            "DataPlatform",
+            "SRE"
+          ],
+          "constraints": [
+            "Run schema-creating SQLite init and migration outside business hours",
+            "No default-backend flip during incidents or Friday afternoon"
+          ],
+          "why": "Both are blocking windows on the rollout path; they can align, but if business hours exclude Friday afternoon and off-hours is required, timing must be sequenced carefully."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "DataPlatform"
+          ],
+          "constraints": [
+            "Maintain jsonl default for one release before opt-out",
+            "Keep old JSONL files until SQLite parity is verified after a quiet period"
+          ],
+          "why": "Default-switch timing can occur before legacy-file retention is eligible for deletion, so cutover and cleanup are intentionally decoupled."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "SRE"
+          ],
+          "constraints": [
+            "Deploy schema-capable code before switching default backend",
+            "Hold default-backend switch until error rate stays low"
+          ],
+          "why": "Backend must ship before the default can change, but error-rate gating delays the flip even after shipping."
+        },
+        {
+          "owners": [
+            "Security",
+            "ProductPM"
+          ],
+          "constraints": [
+            "Run secrets/permissions review before exposing sqlite-backed memory",
+            "Support team must be briefed on SQLite opt-in and migration"
+          ],
+          "why": "Both are blocking approvals prior to opt-in exposure; they need coordination before rollout can proceed."
+        },
+        {
+          "owners": [
+            "ProductPM",
+            "ConsumerSubsystem"
+          ],
+          "constraints": [
+            "Keep jsonl default for one release; sqlite opt-in only",
+            "Ship migrate_jsonl_to_sqlite before backend cutover"
+          ],
+          "why": "The system can ship migration helper before cutover, but opt-in and default behavior must remain split across phases."
+        }
+      ]
+    },
+    "01-safety-leaning": {
+      "summary": "Add sqlite backend behind opt-in, migrate old JSONL safely, verify, then flip default only after notice and soak.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Implement SqliteMemory in mirofish_lab/memory.py with stdlib sqlite3, keep LocalMemory signature unchanged, and ensure writes raise on failure.",
+          "owner": "BackendOwner",
+          "depends_on": [],
+          "gate": "none",
+          "rollback": "disable sqlite backend and route persistence back to jsonl",
+          "observability": "sqlite write exceptions, record counts after write, read/write parity in unit tests"
+        },
+        {
+          "id": "S2",
+          "action": "Add Agent backend selection in mirofish_lab/agent.py via backend=\"sqlite\" kwarg and MIROFISH_MEMORY_BACKEND env var, defaulting to jsonl.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "none",
+          "rollback": "set MIROFISH_MEMORY_BACKEND=jsonl and remove sqlite opt-in",
+          "observability": "backend choice telemetry/logging, agent init success, persistence path selected"
+        },
+        {
+          "id": "S3",
+          "action": "Implement migrate_jsonl_to_sqlite() to import all existing .mirofish_memory/*.jsonl records into memory.db in small batches with reconciliation checks.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "none",
+          "rollback": "delete .mirofish_memory/memory.db and rerun migration with smaller batch size",
+          "observability": "migration progress, batch size, iops, import counts, duplicate/parse errors"
+        },
+        {
+          "id": "S4",
+          "action": "Add tests for concurrent writes, restart persistence, legacy JSONL reads through LocalMemory, and migration helper import parity.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S1",
+            "S2",
+            "S3"
+          ],
+          "gate": "approval:release_manager",
+          "rollback": "redeploy_previous",
+          "observability": "test pass rate, concurrency race reproduction, restart readback correctness"
+        },
+        {
+          "id": "S5",
+          "action": "Run schema creation and initial migration in an off-hours window on a staging or canary repo, keeping JSONL as source of truth during validation.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S3",
+            "S4"
+          ],
+          "gate": "window:off_hours",
+          "rollback": "drop newly created SQLite database and keep JSONL backend active",
+          "observability": "sqlite_busy_errors, migration reconciliation, iops, table creation success"
+        },
+        {
+          "id": "S6",
+          "action": "Complete security review for memory.db permissions and local access before exposing sqlite-backed memory to users.",
+          "owner": "Security",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "approval:security",
+          "rollback": "disable sqlite backend and redeploy_previous",
+          "observability": "permission model review outcome, file mode checks, access audit findings"
+        },
+        {
+          "id": "S7",
+          "action": "Publish migration guidance and support playbook for opt-in SQLite use, including recovery steps and escalation owner.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S2",
+            "S3"
+          ],
+          "gate": "approval:docs",
+          "rollback": "remove opt-in docs and keep JSONL path documented as primary",
+          "observability": "docs approval status, support readiness, customer-facing FAQ completeness"
+        },
+        {
+          "id": "S8",
+          "action": "Enable sqlite opt-in for a limited validation cohort using MIROFISH_MEMORY_BACKEND=sqlite after successful import verification.",
+          "owner": "SRE",
+          "depends_on": [
+            "S5",
+            "S6",
+            "S7"
+          ],
+          "gate": "wait_for:migration_validation_complete",
+          "rollback": "set MIROFISH_MEMORY_BACKEND=jsonl and stop using memory.db",
+          "observability": "sqlite_write_error_rate, sqlite_busy_errors, missing-history reports, restore path success"
+        },
+        {
+          "id": "S9",
+          "action": "Keep legacy JSONL files present and readable while monitoring for 7 days after cutover; do not remove them yet.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "monitor:sqlite_busy_errors<1%",
+          "rollback": "restore JSONL files from backup and switch backend back to jsonl",
+          "observability": "jsonl read frequency, sqlite read parity, error rates, support tickets"
+        },
+        {
+          "id": "S10",
+          "action": "Send customer announcement and release notice for the upcoming default-backend change, with at least one release of lead time.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S7"
+          ],
+          "gate": "wait_for:customer_announcement_sent",
+          "rollback": "Restore JSONL as the default backend and pause rollout",
+          "observability": "announcement completion, notice date, customer acknowledgements, launch-window conflicts"
+        },
+        {
+          "id": "S11",
+          "action": "After one release notice period and during an approved non-incident business-hours window, flip the default backend to sqlite while keeping the jsonl fallback available.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "gate": "monitor:sqlite_write_error_rate<0.1% for 24h",
+          "rollback": "revert default backend to jsonl",
+          "observability": "write error rate, startup backend selection, busy-lock errors, support incidents"
+        },
+        {
+          "id": "S12",
+          "action": "Once 7 days pass with no JSONL reads after cutover, remove legacy JSONL files or archive them per policy.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S11"
+          ],
+          "gate": "wait_for:7d_no_jsonl_reads_after_cutover",
+          "rollback": "restore JSONL files from backup and switch backend back to jsonl",
+          "observability": "jsonl access logs, archival completion, restore capability checks"
+        }
+      ],
+      "open_questions": [
+        "Should the SQLite migration be triggered automatically on first opt-in, or only via an explicit operator command?",
+        "What schema/index set should memory.db use for tag and time-range queries?",
+        "What exact record reconciliation rule should the migration use for duplicate or malformed JSONL lines?",
+        "Should the legacy JSONL files be archived or deleted after the 7-day quiet period?",
+        "Who is the named escalation owner for migration and missing-history incidents?"
+      ],
+      "conflicts": [
+        {
+          "between": [
+            "BackendOwner: Deploy schema-capable code before switching default backend",
+            "ProductPM: Give one-release lead time before changing the default"
+          ],
+          "why": "Default flip must wait for both code availability and a one-release notice period.",
+          "chosen_path": "Ship code and hold the default on jsonl until the notice period completes."
+        },
+        {
+          "between": [
+            "BackendOwner: Maintain jsonl default for one release before opt-out",
+            "SRE: Hold default-backend switch until error rate stays low"
+          ],
+          "why": "The default cannot flip until both the release window and the soak window are satisfied.",
+          "chosen_path": "Use jsonl default initially, then require 24h low write-error soak before flipping."
+        },
+        {
+          "between": [
+            "DataPlatform: Run schema-creating SQLite init and migration outside business hours",
+            "ProductPM: Do not roll out during launch windows or major events"
+          ],
+          "why": "Both are blocking timing constraints on migration/cutover and may overlap with rollout timing.",
+          "chosen_path": "Schedule initialization and rollout only in a quiet off-hours, no-launch window."
+        },
+        {
+          "between": [
+            "DataPlatform: Keep old JSONL files until SQLite parity is verified after a quiet period",
+            "BackendOwner: Users must not immediately lose access to memory accumulated under JSONL"
+          ],
+          "why": "Legacy retention is required for continuity until parity and quiet-period checks pass.",
+          "chosen_path": "Preserve JSONL through validation and the 7-day no-read soak."
+        },
+        {
+          "between": [
+            "SRE: No default-backend flip during incidents or Friday afternoon",
+            "ProductPM: Do not roll out during launch windows or major events"
+          ],
+          "why": "Multiple scheduling blockers constrain the cutover window.",
+          "chosen_path": "Only cut over during an approved low-risk business-hours window with no incidents or launches."
+        },
+        {
+          "between": [
+            "Security: Run secrets/permissions review before exposing sqlite-backed memory",
+            "BackendOwner: SQLite writes must fail loudly and never drop records"
+          ],
+          "why": "The safety review must complete before exposing the write path, but the write path itself must still be strict.",
+          "chosen_path": "Keep sqlite opt-in gated behind security approval and retain loud-failure semantics."
+        }
+      ]
+    },
+    "02-speed-leaning": {
+      "summary": "Ship sqlite backend behind opt-in, migrate existing JSONL, verify parity, then later switch defaults after notice windows.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Implement SqliteMemory in mirofish_lab/memory.py with schema creation, durable writes, legacy JSONL reads, and LocalMemory as a stable compatibility shim.",
+          "owner": "BackendOwner",
+          "depends_on": [],
+          "gate": "none",
+          "rollback": "revert the backend selection to jsonl and keep LocalMemory signature unchanged",
+          "observability": "Unit tests for read/write parity, schema init success, and loud failures on write errors"
+        },
+        {
+          "id": "S2",
+          "action": "Add Agent backend selection in mirofish_lab/agent.py using backend=\"jsonl\" default and MIROFISH_MEMORY_BACKEND override for sqlite opt-in.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "none",
+          "rollback": "switch backend selection back to jsonl without redeploy",
+          "observability": "Agent construction paths, selected backend logs, and persistence path coverage"
+        },
+        {
+          "id": "S3",
+          "action": "Add migration helper migrate_jsonl_to_sqlite() that imports all .mirofish_memory JSONL records into memory.db in small batches.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "monitor:iops<80%",
+          "rollback": "delete .mirofish_memory/memory.db and rerun migration with smaller batch size",
+          "observability": "Batch throughput, IOPS, import counts, duplicate handling, and sqlite_busy errors"
+        },
+        {
+          "id": "S4",
+          "action": "Run concurrency, restart-persistence, and migration tests for the sqlite path, including import verification from existing JSONL history.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S2",
+            "S3"
+          ],
+          "gate": "wait_for:migration_helper_tests_pass",
+          "rollback": "redeploy_previous",
+          "observability": "Test suite results for concurrent writes, restart/readback, and historical query correctness"
+        },
+        {
+          "id": "S5",
+          "action": "Perform off-hours deployment of schema-creating SQLite init and migration-capable code, keeping jsonl as the default backend.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "window:off_hours",
+          "rollback": "drop newly created SQLite database and keep JSONL backend active",
+          "observability": "Deployment success, schema creation, migration completion, and startup errors"
+        },
+        {
+          "id": "S6",
+          "action": "Opt in selected runs to sqlite via MIROFISH_MEMORY_BACKEND=sqlite and validate successful migration-backed reads.",
+          "owner": "SRE",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "wait_for:migration_validation_complete",
+          "rollback": "set MIROFISH_MEMORY_BACKEND=jsonl and stop using memory.db",
+          "observability": "Write error rate, query correctness, busy-lock rate, and presence of prior JSONL history in sqlite"
+        },
+        {
+          "id": "S7",
+          "action": "Monitor sqlite write errors, busy-locks, and import/query correctness during opt-in usage.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "monitor:sqlite_busy_errors<1%",
+          "rollback": "re-enable JSONL writes and pause SQLite writes until contention clears",
+          "observability": "sqlite_busy_errors, sqlite_write_error_rate, latency, and record-count reconciliation"
+        },
+        {
+          "id": "S8",
+          "action": "Publish migration guidance, brief support, assign escalation ownership, and send customer announcement for the upcoming default switch.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "approval:support_lead",
+          "rollback": "remove opt-in docs and keep JSONL path documented as primary",
+          "observability": "Docs published, support readiness signoff, escalation owner assigned, and announcement sent"
+        },
+        {
+          "id": "S9",
+          "action": "After one full release notice period and low error metrics, flip the default backend to sqlite for new runs.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S7",
+            "S8"
+          ],
+          "gate": "window:after_one_release_notice_period",
+          "rollback": "reset default backend to jsonl",
+          "observability": "Default selection in new agents, sqlite_write_error_rate<0.1%, and no incident or Friday-afternoon window conflicts"
+        },
+        {
+          "id": "S10",
+          "action": "Retain legacy JSONL files until parity is proven over a quiet period, then deprecate them after no reads are observed for 7 days.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "wait_for:7d_no_jsonl_reads_after_cutover",
+          "rollback": "restore JSONL files from backup and switch backend back to jsonl",
+          "observability": "JSONL read counts, cutover stability, and backup/restore readiness"
+        }
+      ],
+      "open_questions": [
+        "Exact sqlite schema details for tags and time-range queries",
+        "Whether duplicate JSONL records should be deduplicated on import or preserved verbatim",
+        "Which experiments, if any, should be explicitly opted into sqlite first",
+        "Who is the named escalation owner for customer-facing migration issues",
+        "How long the support and announcement lead time must be beyond the minimum release notice"
+      ],
+      "conflicts": [
+        {
+          "owners": [
+            "BackendOwner",
+            "SRE"
+          ],
+          "constraints": [
+            "Maintain jsonl default for one release before opt-out",
+            "Hold default-backend switch until error rate stays low",
+            "No default-backend flip during incidents or Friday afternoon",
+            "Give one-release lead time before changing the default",
+            "Keep jsonl default for one release; sqlite opt-in only"
+          ],
+          "why": "Default must stay jsonl for a release, but some stakeholders also want low-error and timing gates before any flip; these all align on delaying the flip, not conflict."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "Security"
+          ],
+          "constraints": [
+            "Announce JSONL->SQLite change before any breaking rollout",
+            "Run secrets/permissions review before exposing sqlite-backed memory",
+            "Migrate JSONL to SQLite without losing audit trail history"
+          ],
+          "why": "Security review and announcement gates delay exposure; they do not directly oppose the compatibility requirement."
+        },
+        {
+          "owners": [
+            "DataPlatform",
+            "SRE",
+            "ProductPM"
+          ],
+          "constraints": [
+            "Run schema-creating SQLite init and migration outside business hours",
+            "No default-backend flip during incidents or Friday afternoon",
+            "Do not roll out during launch windows or major events",
+            "Wait for customer announcement and release notice"
+          ],
+          "why": "These are stacked timing gates that can all be satisfied together; no direct blocker-vs-blocker opposition is present."
+        }
+      ]
+    },
+    "03-safety-tilted": {
+      "summary": "Ship sqlite backend and migration helper first, keep jsonl default for one release, then opt-in cutover and later default flip after soak.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Implement SqliteMemory in mirofish_lab/memory.py with sqlite3-only storage, schema init, concurrent-safe writes, query helpers, and loud write failures",
+          "owner": "BackendOwner",
+          "depends_on": [],
+          "gate": "none",
+          "rollback": "disable sqlite backend and route persistence back to jsonl",
+          "observability": "Unit tests for write/read, schema creation, concurrent access, and explicit exceptions on sqlite write failures"
+        },
+        {
+          "id": "S2",
+          "action": "Keep LocalMemory signature unchanged and make it a compatibility shim that reads legacy JSONL files and writes new entries through the backend-selected path",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "none",
+          "rollback": "redeploy_previous",
+          "observability": "Legacy JSONL records remain readable; new writes land via the selected backend without API changes"
+        },
+        {
+          "id": "S3",
+          "action": "Add Agent backend selection in mirofish_lab/agent.py with backend=\"sqlite\" opt-in and MIROFISH_MEMORY_BACKEND env var defaulting to jsonl",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S2"
+          ],
+          "gate": "approval:release_manager",
+          "rollback": "set MIROFISH_MEMORY_BACKEND=jsonl and remove sqlite opt-in",
+          "observability": "Backend resolution path, constructor behavior, and feature-flag routing in tests"
+        },
+        {
+          "id": "S4",
+          "action": "Implement migrate_jsonl_to_sqlite() to import all .mirofish_memory JSONL files into memory.db in small batches with reconciliation metadata",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "window:off_hours",
+          "rollback": "delete .mirofish_memory/memory.db and rerun migration with smaller batch size",
+          "observability": "Batch insert progress, iops, record counts per source file, and reconciliation completeness"
+        },
+        {
+          "id": "S5",
+          "action": "Add migration and concurrency/restart tests covering JSONL import, sqlite readback, busy/error handling, and persistence after restart",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S3",
+            "S4"
+          ],
+          "gate": "approval:release_manager",
+          "rollback": "redeploy_previous",
+          "observability": "Test suite for helper correctness, round-trip parity, concurrent writers, and restart durability"
+        },
+        {
+          "id": "S6",
+          "action": "Ship the sqlite-capable code path, migration helper, and compatibility shim while keeping jsonl as the default backend",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "wait_for:sqlite backend deployed and migration helper available",
+          "rollback": "redeploy_previous",
+          "observability": "Deployed version exposes memory.db support and preserves existing jsonl access"
+        },
+        {
+          "id": "S7",
+          "action": "Run migrate_jsonl_to_sqlite() for existing repos during the approved off-hours window and validate imported history",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S6"
+          ],
+          "gate": "wait_for:successful migration of existing .mirofish_memory JSONL files",
+          "rollback": "clear memory.db and re-import from JSONL",
+          "observability": "Migration success rate, missing-record checks, row counts, and validation of prior reviewer comments"
+        },
+        {
+          "id": "S8",
+          "action": "Enable MIROFISH_MEMORY_BACKEND=sqlite as an opt-in for users who want sqlite-backed memory",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S7"
+          ],
+          "gate": "wait_for:migration_validation_complete",
+          "rollback": "set MIROFISH_MEMORY_BACKEND=jsonl and stop using memory.db",
+          "observability": "Opt-in activation rate, sqlite write error rate, busy-lock errors, and support issues"
+        },
+        {
+          "id": "S9",
+          "action": "After one release, flip the default backend to sqlite for new runs while keeping explicit jsonl opt-out available",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "window:one_release",
+          "rollback": "reset default backend to jsonl",
+          "observability": "Default-resolution telemetry, sqlite_write_error_rate, and adoption of sqlite by new runs"
+        },
+        {
+          "id": "S10",
+          "action": "Keep legacy JSONL files present until parity is verified after a quiet period, then retire them",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "wait_for:7d_no_jsonl_reads_after_cutover",
+          "rollback": "restore JSONL files from backup and switch backend back to jsonl",
+          "observability": "JSONL read counts, sqlite_busy_errors, and 7-day no-read confirmation before removal"
+        }
+      ],
+      "open_questions": [
+        "What exact SQLite schema and indexes should be created for tag and time-range queries?",
+        "Should migration deduplicate records if the same JSONL entry appears in multiple files?",
+        "What file permissions should memory.db use on creation?",
+        "Who is the named escalation owner for migration failures and customer reports?",
+        "Should opt-in users be able to re-run migration idempotently without clearing memory.db first?"
+      ],
+      "conflicts": [
+        {
+          "owners": [
+            "BackendOwner",
+            "DataPlatform"
+          ],
+          "blocking_constraints": [
+            "Maintain jsonl default for one release before opt-out",
+            "Run schema-creating SQLite init and migration outside business hours"
+          ],
+          "why": "The default flip and migration must wait, but the schema/init work itself is also constrained to off-hours."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "SRE"
+          ],
+          "blocking_constraints": [
+            "Hold default-backend switch until error rate stays low",
+            "No default-backend flip during incidents or Friday afternoon"
+          ],
+          "why": "The default flip is blocked both by a soak/error gate and by a restricted change window."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Maintain jsonl default for one release before opt-out",
+            "Give one-release lead time before changing the default"
+          ],
+          "why": "Both require a one-release delay before changing the default backend."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Maintain jsonl default for one release before opt-out",
+            "Notify users before any default backend behavior changes"
+          ],
+          "why": "The default cannot change until users are notified in advance and the notice period completes."
+        },
+        {
+          "owners": [
+            "DataPlatform",
+            "SRE"
+          ],
+          "blocking_constraints": [
+            "Backfill JSONL into SQLite in small batches to avoid IOPS spikes",
+            "Hold default-backend switch until error rate stays low"
+          ],
+          "why": "Migration must be rate-limited and the rollout must also satisfy low-error soak conditions."
+        },
+        {
+          "owners": [
+            "DataPlatform",
+            "Security"
+          ],
+          "blocking_constraints": [
+            "Keep old JSONL files until SQLite parity is verified after a quiet period",
+            "Migrate JSONL to SQLite without losing audit trail history"
+          ],
+          "why": "Legacy retention must continue until quiet-period verification, but security requires history preservation through cutover."
+        },
+        {
+          "owners": [
+            "DataPlatform",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Run schema-creating SQLite init and migration outside business hours",
+            "Do not roll out during launch windows or major events"
+          ],
+          "why": "The approved migration window must avoid both business-hour constraints and major-event freezes."
+        },
+        {
+          "owners": [
+            "SRE",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Gate opt-in rollout on clean JSONL\u2192SQLite import",
+            "Support team must be briefed on SQLite opt-in and migration"
+          ],
+          "why": "Opt-in cannot proceed until migration validation and support readiness are both satisfied."
+        },
+        {
+          "owners": [
+            "SRE",
+            "Security"
+          ],
+          "blocking_constraints": [
+            "Gate opt-in rollout on clean JSONL\u2192SQLite import",
+            "Run secrets/permissions review before exposing sqlite-backed memory"
+          ],
+          "why": "Security review is required before exposing sqlite-backed memory, in addition to migration validation."
+        },
+        {
+          "owners": [
+            "SRE",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Gate opt-in rollout on clean JSONL\u2192SQLite import",
+            "Announce JSONL->SQLite change before any breaking rollout"
+          ],
+          "why": "Customer announcement is a required blocker before any user-visible backend change."
+        },
+        {
+          "owners": [
+            "SRE",
+            "ProductPM"
+          ],
+          "blocking_constraints": [
+            "Gate opt-in rollout on clean JSONL\u2192SQLite import",
+            "Name an escalation owner for memory migration issues"
+          ],
+          "why": "An escalation owner must be assigned before customer-facing migration issues can be handled."
+        }
+      ]
+    },
+    "04-speed-tilted": {
+      "summary": "Ship sqlite backend and migration first, keep jsonl default for one release, then opt-in cutover and later default flip.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Implement SqliteMemory in mirofish_lab/memory.py, keep LocalMemory signature stable, and add Agent backend selection via backend kwarg plus MIROFISH_MEMORY_BACKEND env var.",
+          "owner": "BackendOwner",
+          "depends_on": [],
+          "gate": "none",
+          "rollback": "revert backend selection to jsonl and keep LocalMemory signature unchanged",
+          "observability": "Unit tests for API compatibility, backend selection, and sqlite write/read basics"
+        },
+        {
+          "id": "S2",
+          "action": "Add migration helper migrate_jsonl_to_sqlite() and compatibility reads from legacy JSONL files while writing new entries through SQLite path.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "none",
+          "rollback": "disable sqlite backend and route persistence back to jsonl",
+          "observability": "Migration helper tests, legacy JSONL import coverage, round-trip record counts"
+        },
+        {
+          "id": "S3",
+          "action": "Add concurrency, restart persistence, and migration validation tests for sqlite write path and import behavior.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S1",
+            "S2"
+          ],
+          "gate": "approval:release_manager",
+          "rollback": "redeploy_previous",
+          "observability": "Concurrent writer test results, restart/readback checks, migration test suite status"
+        },
+        {
+          "id": "S4",
+          "action": "Create memory.db schema and indexes, verify file permissions, and run the one-time JSONL-to-SQLite migration in off-hours with small batches.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S2",
+            "S3"
+          ],
+          "gate": "window:off_hours",
+          "rollback": "drop newly created SQLite database and keep JSONL backend active",
+          "observability": "sqlite_busy_errors, IOPS, migration row counts, schema creation success"
+        },
+        {
+          "id": "S5",
+          "action": "Validate migrated data reconciliation and confirm existing JSONL history is present in SQLite before enabling opt-in use.",
+          "owner": "Security",
+          "depends_on": [
+            "S4"
+          ],
+          "gate": "wait_for:migration_reconciliation_verified",
+          "rollback": "restore JSONL-only writes and keep existing JSONL files as source of truth",
+          "observability": "Record parity, missing-history checks, reconciliation report, sample queries by tag/time"
+        },
+        {
+          "id": "S6",
+          "action": "Publish migration guidance, brief support, and assign escalation ownership for sqlite opt-in and recovery.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S5"
+          ],
+          "gate": "approval:docs",
+          "rollback": "remove opt-in docs and keep JSONL path documented as primary",
+          "observability": "Docs published, support playbook updated, escalation owner named"
+        },
+        {
+          "id": "S7",
+          "action": "Enable sqlite opt-in for users by setting MIROFISH_MEMORY_BACKEND=sqlite after migration and validation complete.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S5",
+            "S6"
+          ],
+          "gate": "wait_for:customer_announcement_sent",
+          "rollback": "set MIROFISH_MEMORY_BACKEND=jsonl and stop using memory.db",
+          "observability": "sqlite_write_error_rate, sqlite_busy_errors, user-reported readback success"
+        },
+        {
+          "id": "S8",
+          "action": "Monitor sqlite write errors, lock contention, and migration support incidents while opt-in traffic runs.",
+          "owner": "SRE",
+          "depends_on": [
+            "S7"
+          ],
+          "gate": "monitor:sqlite_write_error_rate<0.1% for 24h",
+          "rollback": "switch backend selection back to jsonl without redeploy",
+          "observability": "Write error rate, busy errors, support tickets, restart persistence success"
+        },
+        {
+          "id": "S9",
+          "action": "Keep JSONL files in place until seven days pass without JSONL reads after cutover, then retire legacy files.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "wait_for:7d_no_jsonl_reads_after_cutover",
+          "rollback": "restore JSONL files from backup and switch backend back to jsonl",
+          "observability": "JSONL read counts, file retention status, backup integrity"
+        },
+        {
+          "id": "S10",
+          "action": "Flip the default backend to sqlite for new runs after the notice period and stable monitoring window.",
+          "owner": "SRE",
+          "depends_on": [
+            "S8",
+            "S9"
+          ],
+          "gate": "window:after_one_release_notice_period",
+          "rollback": "revert default backend to jsonl",
+          "observability": "Default backend selection, sqlite write error rate, incident signals"
+        }
+      ],
+      "open_questions": [
+        "What exact batch size should migrate_jsonl_to_sqlite() use for the first off-hours run?",
+        "Who is the named escalation owner for migration issues?",
+        "Has the customer announcement been sent before opt-in cutover?",
+        "Are there any current incident or launch windows that would delay the default flip?"
+      ],
+      "conflicts": [
+        {
+          "owners": [
+            "BackendOwner",
+            "DataPlatform"
+          ],
+          "constraints": [
+            "Deploy schema-capable code before switching default backend",
+            "Run schema-creating SQLite init and migration outside business hours"
+          ],
+          "why": "Default/backend readiness can happen anytime, but schema creation/migration is blocked to off-hours, which delays the overall rollout path."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "DataPlatform"
+          ],
+          "constraints": [
+            "Import existing JSONL into sqlite before relying on sqlite reads",
+            "Keep old JSONL files until SQLite parity is verified after a quiet period"
+          ],
+          "why": "Read reliance wants SQLite first; retention of JSONL until a quiet period means both stores must coexist for a while."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "SRE"
+          ],
+          "constraints": [
+            "Deploy schema-capable code before switching default backend",
+            "No default-backend flip during incidents or Friday afternoon"
+          ],
+          "why": "The default flip is blocked by incident/Friday windows even after the code is ready."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "SRE"
+          ],
+          "constraints": [
+            "Maintain jsonl default for one release before opt-out",
+            "Hold default-backend switch until error rate stays low"
+          ],
+          "why": "One-release delay and error-rate stability both gate the default change, creating a compound wait."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "Security"
+          ],
+          "constraints": [
+            "Import existing JSONL into sqlite before relying on sqlite reads",
+            "Run secrets/permissions review before exposing sqlite-backed memory"
+          ],
+          "why": "Migration readiness is blocked until security review approves exposure of the sqlite-backed store."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ProductPM"
+          ],
+          "constraints": [
+            "Maintain jsonl default for one release before opt-out",
+            "Notify users before any default backend behavior changes"
+          ],
+          "why": "The default cannot change until both the release lead-time and user notification requirement are satisfied."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ProductPM"
+          ],
+          "constraints": [
+            "Run schema-creating SQLite init and migration outside business hours",
+            "Do not roll out during launch windows or major events"
+          ],
+          "why": "Both timing rules can independently block the same migration/cutover activity."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ConsumerSubsystem"
+          ],
+          "constraints": [
+            "Keep jsonl default for one release; sqlite opt-in only",
+            "Ship migrate_jsonl_to_sqlite before backend cutover"
+          ],
+          "why": "The migration helper must land before cutover, while the actual backend remains jsonl-default for one release."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ConsumerSubsystem"
+          ],
+          "constraints": [
+            "Preserve LocalMemory signature and legacy JSONL reads",
+            "Ship migrate_jsonl_to_sqlite before backend cutover"
+          ],
+          "why": "Compatibility shim work must remain intact while migration support is added."
+        },
+        {
+          "owners": [
+            "DataPlatform",
+            "Security"
+          ],
+          "constraints": [
+            "Backfill JSONL into SQLite in small batches to avoid IOPS spikes",
+            "Migrate JSONL to SQLite without losing audit trail history"
+          ],
+          "why": "Small-batch migration is required for IOPS safety while still preserving full history."
+        }
+      ]
+    },
+    "05-speed-tilted": {
+      "summary": "Ship sqlite code, keep jsonl default for one release, migrate safely in off-hours, then opt in and later flip default after soak.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "Implement SqliteMemory in mirofish_lab/memory.py with sqlite3-only persistence, thread/process-safe writes, query helpers, and loud failures on write errors; keep LocalMemory signature unchanged as a compatibility shim that still reads legacy JSONL.",
+          "owner": "BackendOwner",
+          "depends_on": [],
+          "gate": "none",
+          "rollback": "Disable sqlite backend selection and route all persistence back to jsonl.",
+          "observability": "Unit tests for read/write parity, exceptions on failed writes, and legacy JSONL read compatibility."
+        },
+        {
+          "id": "S2",
+          "action": "Add Agent backend selection in mirofish_lab/agent.py with backend=\"sqlite\" support and MIROFISH_MEMORY_BACKEND default resolution, preserving jsonl as the default.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "none",
+          "rollback": "Revert Agent backend selection to jsonl-only default behavior.",
+          "observability": "Constructor tests confirming default=jsonl, explicit sqlite opt-in, and no per-experiment changes required."
+        },
+        {
+          "id": "S3",
+          "action": "Add migration helper migrate_jsonl_to_sqlite() that imports every .mirofish_memory/*.jsonl record into memory.db with batching suitable for low IOPS and reconciliation checks.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S1"
+          ],
+          "gate": "wait_for:migration_helper_tests_pass",
+          "rollback": "Delete .mirofish_memory/memory.db and rerun import from JSONL.",
+          "observability": "Migration test results, imported row counts, duplicate detection, and reconciliation output."
+        },
+        {
+          "id": "S4",
+          "action": "Add concurrency, restart-persistence, and migration validation tests covering simultaneous agents, sqlite_busy behavior, and recovery of prior JSONL history.",
+          "owner": "ConsumerSubsystem",
+          "depends_on": [
+            "S1",
+            "S2",
+            "S3"
+          ],
+          "gate": "approval:release_manager",
+          "rollback": "Redeploy previous version and keep jsonl-only execution.",
+          "observability": "CI test suite results for concurrent writes, restart readback, and migration correctness."
+        },
+        {
+          "id": "S5",
+          "action": "Create the SQLite schema and initial .mirofish_memory/memory.db in an off-hours window, then run a one-time import of existing JSONL data into SQLite without changing the default backend.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S3",
+            "S4"
+          ],
+          "gate": "window:off_hours",
+          "rollback": "Drop the newly created SQLite database and keep JSONL backend active.",
+          "observability": "Table/index creation success, import counts, sqlite_busy rate, and low-level IOPS during migration."
+        },
+        {
+          "id": "S6",
+          "action": "Keep JSONL as the default backend for one release while exposing sqlite only via explicit opt-in and documenting the migration path and support escalation flow.",
+          "owner": "ProductPM",
+          "depends_on": [
+            "S2",
+            "S5"
+          ],
+          "gate": "window:one_release",
+          "rollback": "Set MIROFISH_MEMORY_BACKEND=jsonl and keep sqlite opt-in only.",
+          "observability": "Opt-in usage, support tickets, documentation readiness, and customer announcement completion."
+        },
+        {
+          "id": "S7",
+          "action": "Enable sqlite opt-in for users who set MIROFISH_MEMORY_BACKEND=sqlite after migration validation passes, while keeping legacy JSONL files readable.",
+          "owner": "BackendOwner",
+          "depends_on": [
+            "S5",
+            "S6"
+          ],
+          "gate": "wait_for:migration_validation_complete",
+          "rollback": "Switch MIROFISH_MEMORY_BACKEND back to jsonl and stop using memory.db.",
+          "observability": "Import validation status, sqlite write errors, history lookup correctness, and memory inspection behavior."
+        },
+        {
+          "id": "S8",
+          "action": "Monitor sqlite opt-in traffic and keep JSONL files retained until 7 days pass with no JSONL reads after cutover; if busy errors rise, pause sqlite writes and fall back to JSONL.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S7"
+          ],
+          "gate": "monitor:sqlite_busy_errors<1%",
+          "rollback": "Re-enable JSONL writes and pause SQLite writes until contention clears.",
+          "observability": "sqlite_busy_errors, JSONL read count, write latency, and fallback frequency."
+        },
+        {
+          "id": "S9",
+          "action": "After one full release notice period and 24h of low sqlite write errors, flip the default backend to sqlite for new runs, keeping an immediate env-var rollback to jsonl.",
+          "owner": "SRE",
+          "depends_on": [
+            "S8"
+          ],
+          "gate": "monitor:sqlite_write_error_rate<0.1% for 24h",
+          "rollback": "Revert default backend to jsonl without redeploying code.",
+          "observability": "sqlite_write_error_rate, incident status, Friday/launch-window constraints, and default-selection metrics."
+        },
+        {
+          "id": "S10",
+          "action": "After 7 days with no JSONL reads following cutover, remove legacy JSONL files or archive them per policy, leaving the single SQLite table as the inspectable store.",
+          "owner": "DataPlatform",
+          "depends_on": [
+            "S9"
+          ],
+          "gate": "wait_for:7d_no_jsonl_reads_after_cutover",
+          "rollback": "Restore JSONL files from backup and switch backend back to jsonl.",
+          "observability": "JSONL read telemetry, backup integrity, final table presence, and user-accessibility checks."
+        }
+      ],
+      "open_questions": [
+        "Should migration import preserve original file order exactly or just record timestamps as stored?",
+        "What backup/retention policy should apply to legacy JSONL files before final removal?",
+        "Who is the named escalation owner for customer-facing migration issues?"
+      ],
+      "conflicts": [
+        {
+          "owners": [
+            "BackendOwner",
+            "DataPlatform"
+          ],
+          "constraints": [
+            "Deploy schema-capable code before switching default backend",
+            "Run schema-creating SQLite init and migration outside business hours"
+          ],
+          "resolution": "Create and migrate SQLite in an off-hours window before any default flip."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "SRE"
+          ],
+          "constraints": [
+            "Deploy schema-capable code before switching default backend",
+            "Hold default-backend switch until error rate stays low"
+          ],
+          "resolution": "Ship code first, then gate default flip on low error rate after soak."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ProductPM"
+          ],
+          "constraints": [
+            "Maintain jsonl default for one release before opt-out",
+            "Give one-release lead time before changing the default"
+          ],
+          "resolution": "Keep jsonl default for one release and notify ahead of any later flip."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "Security"
+          ],
+          "constraints": [
+            "Keep jsonl default for one release before opt-out",
+            "Run secrets/permissions review before exposing sqlite-backed memory"
+          ],
+          "resolution": "Complete security review before sqlite exposure, while still keeping jsonl default initially."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ProductPM"
+          ],
+          "constraints": [
+            "Keep jsonl default for one release before opt-out",
+            "Announce JSONL->SQLite change before any breaking rollout"
+          ],
+          "resolution": "Use the first release window for announcement and documentation, then allow opt-in only."
+        },
+        {
+          "owners": [
+            "BackendOwner",
+            "ConsumerSubsystem"
+          ],
+          "constraints": [
+            "Preserve LocalMemory signature and legacy JSONL reads",
+            "Ship migrate_jsonl_to_sqlite before backend cutover"
+          ],
+          "resolution": "Keep LocalMemory compatible while adding migration helper before cutover."
+        },
+        {
+          "owners": [
+            "DataPlatform",
+            "SRE"
+          ],
+          "constraints": [
+            "Backfill JSONL into SQLite in small batches to avoid IOPS spikes",
+            "Hold default-backend switch until error rate stays low"
+          ],
+          "resolution": "Batch migration first, then require low error-rate soak before default flip."
+        },
+        {
+          "owners": [
+            "DataPlatform",
+            "ProductPM"
+          ],
+          "constraints": [
+            "Keep old JSONL files until SQLite parity is verified after a quiet period",
+            "Do not roll out during launch windows or major events"
+          ],
+          "resolution": "Retain JSONL during the quiet verification period and avoid launch windows for rollout steps."
+        },
+        {
+          "owners": [
+            "Security",
+            "ProductPM"
+          ],
+          "constraints": [
+            "Run secrets/permissions review before exposing sqlite-backed memory",
+            "Support team must be briefed on SQLite opt-in and migration"
+          ],
+          "resolution": "Complete review and support briefing before opt-in exposure."
+        },
+        {
+          "owners": [
+            "Security",
+            "ProductPM"
+          ],
+          "constraints": [
+            "Announce JSONL->SQLite change before any breaking rollout",
+            "Do not roll out during launch windows or major events"
+          ],
+          "resolution": "Schedule the announcement and any rollout activity in a quiet non-launch window."
+        },
+        {
+          "owners": [
+            "ProductPM",
+            "ConsumerSubsystem"
+          ],
+          "constraints": [
+            "Keep jsonl default for one release; sqlite opt-in only",
+            "Ship migrate_jsonl_to_sqlite before backend cutover"
+          ],
+          "resolution": "Expose migration helper before cutover while leaving the default unchanged for one release."
+        }
+      ]
+    }
+  },
+  "weights_for": {
+    "00-cost-leaning": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "01-safety-leaning": [
+      0.0,
+      1.0,
+      0.0
+    ],
+    "02-speed-leaning": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "03-safety-tilted": [
+      0.0,
+      0.5,
+      0.5
+    ],
+    "04-speed-tilted": [
+      0.5,
+      0.0,
+      0.5
+    ],
+    "05-speed-tilted": [
+      0.5,
+      0.5,
+      0.0
+    ]
+  },
+  "scores": {
+    "00-cost-leaning": {
+      "steps": 12,
+      "structural_pass": true,
+      "smt_feasible": true,
+      "smt_unsat_core_size": 0,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.648,
+      "fragility_at_budget_1": 0.747,
+      "fragility_at_budget_2": 0.0,
+      "avg_severity": 2.6,
+      "rollback_failure_rate": 0.533,
+      "approval_gates": 3,
+      "window_gates": 3,
+      "monitor_gates": 0,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S9",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "manual_ops": 8,
+        "recoverable_in_window": 4,
+        "redo_full": 3
+      }
+    },
+    "01-safety-leaning": {
+      "steps": 12,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 2,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.689,
+      "fragility_at_budget_1": 0.73,
+      "fragility_at_budget_2": 0.4,
+      "avg_severity": 2.5,
+      "rollback_failure_rate": 0.25,
+      "approval_gates": 3,
+      "window_gates": 1,
+      "monitor_gates": 2,
+      "achilles_heel": [
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S8",
+          1.0
+        ],
+        [
+          "S10",
+          1.0
+        ],
+        [
+          "S11",
+          1.0
+        ],
+        [
+          "S9",
+          0.9
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 12,
+        "manual_ops": 4
+      }
+    },
+    "02-speed-leaning": {
+      "steps": 10,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 2,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.167,
+      "fragility_at_budget_1": 0.2,
+      "fragility_at_budget_2": 0.0,
+      "avg_severity": 2.17,
+      "rollback_failure_rate": 0.833,
+      "approval_gates": 1,
+      "window_gates": 2,
+      "monitor_gates": 2,
+      "achilles_heel": [
+        [
+          "S1",
+          0.5
+        ],
+        [
+          "S2",
+          0.333
+        ],
+        [
+          "S3",
+          0.0
+        ],
+        [
+          "S4",
+          0.0
+        ],
+        [
+          "S5",
+          0.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 2,
+        "manual_ops": 10
+      }
+    },
+    "03-safety-tilted": {
+      "steps": 10,
+      "structural_pass": true,
+      "smt_feasible": true,
+      "smt_unsat_core_size": 0,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.357,
+      "fragility_at_budget_1": 0.417,
+      "fragility_at_budget_2": 0.0,
+      "avg_severity": 2.14,
+      "rollback_failure_rate": 0.643,
+      "approval_gates": 2,
+      "window_gates": 2,
+      "monitor_gates": 0,
+      "achilles_heel": [
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S1",
+          0.5
+        ],
+        [
+          "S3",
+          0.5
+        ],
+        [
+          "S5",
+          0.5
+        ],
+        [
+          "S2",
+          0.333
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 5,
+        "manual_ops": 9
+      }
+    },
+    "04-speed-tilted": {
+      "steps": 10,
+      "structural_pass": true,
+      "smt_feasible": true,
+      "smt_unsat_core_size": 0,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.071,
+      "fragility_at_budget_1": 0.083,
+      "fragility_at_budget_2": 0.0,
+      "avg_severity": 2.07,
+      "rollback_failure_rate": 0.929,
+      "approval_gates": 2,
+      "window_gates": 2,
+      "monitor_gates": 1,
+      "achilles_heel": [
+        [
+          "S1",
+          0.5
+        ],
+        [
+          "S2",
+          0.0
+        ],
+        [
+          "S3",
+          0.0
+        ],
+        [
+          "S4",
+          0.0
+        ],
+        [
+          "S5",
+          0.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 1,
+        "manual_ops": 13
+      }
+    },
+    "05-speed-tilted": {
+      "steps": 10,
+      "structural_pass": true,
+      "smt_feasible": false,
+      "smt_unsat_core_size": 2,
+      "is_dag": true,
+      "unreachable": 0,
+      "coverage_ratio": 1.0,
+      "fragility": 0.5,
+      "fragility_at_budget_1": 0.583,
+      "fragility_at_budget_2": 0.0,
+      "avg_severity": 2.5,
+      "rollback_failure_rate": 0.571,
+      "approval_gates": 1,
+      "window_gates": 2,
+      "monitor_gates": 2,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S2",
+          0.5
+        ],
+        [
+          "S3",
+          0.5
+        ],
+        [
+          "S4",
+          0.5
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 6,
+        "manual_ops": 8
+      }
+    }
+  },
+  "smt": {
+    "00-cost-leaning": {
+      "feasible": true,
+      "backend": "z3",
+      "n_dependency_edges": 18,
+      "n_constraint_edges": 3,
+      "witness_ordering": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5",
+        "S6",
+        "S8",
+        "S9",
+        "S7",
+        "S10",
+        "S11",
+        "S12"
+      ],
+      "unsat_core": [],
+      "unsat_core_explanations": [],
+      "notes": []
+    },
+    "01-safety-leaning": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 19,
+      "n_constraint_edges": 5,
+      "witness_ordering": [],
+      "unsat_core": [
+        "con__Security__S9__before__S8",
+        "dep__S8__before__S9"
+      ],
+      "unsat_core_explanations": [
+        "Security's blocking constraint requires `S9` before `S8` (gate `wait_for:migration_reconciliation_verified`)",
+        "step `S9` depends_on `S8` (so `S8` must be earlier)"
+      ],
+      "notes": []
+    },
+    "02-speed-leaning": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 11,
+      "n_constraint_edges": 3,
+      "witness_ordering": [],
+      "unsat_core": [
+        "con__ProductPM__S5__before__S4",
+        "dep__S4__before__S5"
+      ],
+      "unsat_core_explanations": [
+        "ProductPM's blocking constraint requires `S5` before `S4` (gate `wait_for:customer_announcement_sent`)",
+        "step `S5` depends_on `S4` (so `S4` must be earlier)"
+      ],
+      "notes": []
+    },
+    "03-safety-tilted": {
+      "feasible": true,
+      "backend": "z3",
+      "n_dependency_edges": 11,
+      "n_constraint_edges": 5,
+      "witness_ordering": [
+        "S1",
+        "S2",
+        "S4",
+        "S3",
+        "S5",
+        "S6",
+        "S7",
+        "S8",
+        "S9",
+        "S10"
+      ],
+      "unsat_core": [],
+      "unsat_core_explanations": [],
+      "notes": []
+    },
+    "04-speed-tilted": {
+      "feasible": true,
+      "backend": "z3",
+      "n_dependency_edges": 13,
+      "n_constraint_edges": 4,
+      "witness_ordering": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5",
+        "S6",
+        "S7",
+        "S8",
+        "S9",
+        "S10"
+      ],
+      "unsat_core": [],
+      "unsat_core_explanations": [],
+      "notes": []
+    },
+    "05-speed-tilted": {
+      "feasible": false,
+      "backend": "z3",
+      "n_dependency_edges": 14,
+      "n_constraint_edges": 4,
+      "witness_ordering": [],
+      "unsat_core": [
+        "dep__S3__before__S5",
+        "con__Security__S5__before__S3"
+      ],
+      "unsat_core_explanations": [
+        "step `S5` depends_on `S3` (so `S3` must be earlier)",
+        "Security's blocking constraint requires `S5` before `S3` (gate `wait_for:migration_reconciliation_verified`)"
+      ],
+      "notes": []
+    }
+  },
+  "chaos": {
+    "00-cost-leaning": {
+      "fragility": 0.648,
+      "fragility_curve": {
+        "1": 0.747,
+        "2": 0.0
+      },
+      "avg_severity": 2.6,
+      "rollback_failure_rate": 0.533,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S3",
+          1.0
+        ],
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S9",
+          1.0
+        ]
+      ],
+      "recovery_distribution": {
+        "manual_ops": 8,
+        "recoverable_in_window": 4,
+        "redo_full": 3
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "manual_ops",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S10"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "redo_full",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S5",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "redo_full",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "redo_full",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S10",
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S7",
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        }
+      ]
+    },
+    "01-safety-leaning": {
+      "fragility": 0.689,
+      "fragility_curve": {
+        "1": 0.73,
+        "2": 0.4
+      },
+      "avg_severity": 2.5,
+      "rollback_failure_rate": 0.25,
+      "achilles_heel": [
+        [
+          "S5",
+          1.0
+        ],
+        [
+          "S8",
+          1.0
+        ],
+        [
+          "S10",
+          1.0
+        ],
+        [
+          "S11",
+          1.0
+        ],
+        [
+          "S9",
+          0.9
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 12,
+        "manual_ops": 4
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S6",
+            "S8",
+            "S9",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S9",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S10"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S11"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S7",
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S8",
+            "S10",
+            "S11",
+            "S12"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S2",
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        }
+      ]
+    },
+    "02-speed-leaning": {
+      "fragility": 0.167,
+      "fragility_curve": {
+        "1": 0.2,
+        "2": 0.0
+      },
+      "avg_severity": 2.17,
+      "rollback_failure_rate": 0.833,
+      "achilles_heel": [
+        [
+          "S1",
+          0.5
+        ],
+        [
+          "S2",
+          0.333
+        ],
+        [
+          "S3",
+          0.0
+        ],
+        [
+          "S4",
+          0.0
+        ],
+        [
+          "S5",
+          0.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 2,
+        "manual_ops": 10
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8",
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S5",
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        }
+      ]
+    },
+    "03-safety-tilted": {
+      "fragility": 0.357,
+      "fragility_curve": {
+        "1": 0.417,
+        "2": 0.0
+      },
+      "avg_severity": 2.14,
+      "rollback_failure_rate": 0.643,
+      "achilles_heel": [
+        [
+          "S4",
+          1.0
+        ],
+        [
+          "S1",
+          0.5
+        ],
+        [
+          "S3",
+          0.5
+        ],
+        [
+          "S5",
+          0.5
+        ],
+        [
+          "S2",
+          0.333
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 5,
+        "manual_ops": 9
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S5",
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2",
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        }
+      ]
+    },
+    "04-speed-tilted": {
+      "fragility": 0.071,
+      "fragility_curve": {
+        "1": 0.083,
+        "2": 0.0
+      },
+      "avg_severity": 2.07,
+      "rollback_failure_rate": 0.929,
+      "achilles_heel": [
+        [
+          "S1",
+          0.5
+        ],
+        [
+          "S2",
+          0.0
+        ],
+        [
+          "S3",
+          0.0
+        ],
+        [
+          "S4",
+          0.0
+        ],
+        [
+          "S5",
+          0.0
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 1,
+        "manual_ops": 13
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8",
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S2",
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        }
+      ]
+    },
+    "05-speed-tilted": {
+      "fragility": 0.5,
+      "fragility_curve": {
+        "1": 0.583,
+        "2": 0.0
+      },
+      "avg_severity": 2.5,
+      "rollback_failure_rate": 0.571,
+      "achilles_heel": [
+        [
+          "S1",
+          1.0
+        ],
+        [
+          "S6",
+          1.0
+        ],
+        [
+          "S2",
+          0.5
+        ],
+        [
+          "S3",
+          0.5
+        ],
+        [
+          "S4",
+          0.5
+        ]
+      ],
+      "recovery_distribution": {
+        "recoverable_in_window": 6,
+        "manual_ops": 8
+      },
+      "probes": [
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S4"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S6"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "high"
+        },
+        {
+          "target_ids": [
+            "S7"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S8"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S9"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [
+            "S10"
+          ],
+          "rollback_holds": true,
+          "recovery_class": "recoverable_in_window",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S1"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "critical"
+        },
+        {
+          "target_ids": [
+            "S2"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S3"
+          ],
+          "failure_type": "rollback_failure",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S4",
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        },
+        {
+          "target_ids": [
+            "S9",
+            "S5"
+          ],
+          "failure_type": "gate_violation",
+          "blocked_downstream": [],
+          "rollback_holds": false,
+          "recovery_class": "manual_ops",
+          "severity": "medium"
+        }
+      ]
+    }
+  },
+  "pareto": {
+    "front_0_labels": [
+      "05-speed-tilted",
+      "03-safety-tilted",
+      "02-speed-leaning",
+      "04-speed-tilted",
+      "01-safety-leaning",
+      "00-cost-leaning"
+    ],
+    "all_points": [
+      {
+        "label": "00-cost-leaning",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.648,
+          "avg_severity": 2.6,
+          "rollback_failure_rate": 0.533,
+          "steps": 12.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      {
+        "label": "01-safety-leaning",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.689,
+          "avg_severity": 2.5,
+          "rollback_failure_rate": 0.25,
+          "steps": 12.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      {
+        "label": "02-speed-leaning",
+        "rank": 0,
+        "crowding": 1.5632361128609633,
+        "metrics": {
+          "fragility": 0.167,
+          "avg_severity": 2.17,
+          "rollback_failure_rate": 0.833,
+          "steps": 10.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          1.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "label": "03-safety-tilted",
+        "rank": 0,
+        "crowding": 1.1133757578586225,
+        "metrics": {
+          "fragility": 0.357,
+          "avg_severity": 2.14,
+          "rollback_failure_rate": 0.643,
+          "steps": 10.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.0,
+          0.5,
+          0.5
+        ]
+      },
+      {
+        "label": "04-speed-tilted",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.071,
+          "avg_severity": 2.07,
+          "rollback_failure_rate": 0.929,
+          "steps": 10.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.5,
+          0.0,
+          0.5
+        ]
+      },
+      {
+        "label": "05-speed-tilted",
+        "rank": 0,
+        "crowding": null,
+        "metrics": {
+          "fragility": 0.5,
+          "avg_severity": 2.5,
+          "rollback_failure_rate": 0.571,
+          "steps": 10.0,
+          "neg_coverage": -1.0
+        },
+        "weights": [
+          0.5,
+          0.5,
+          0.0
+        ]
+      }
+    ],
+    "winner": "04-speed-tilted",
+    "winner_utility": 0.12165000000000002,
+    "user_weights": {
+      "fragility": 0.4,
+      "coverage": 0.3,
+      "steps": 0.1,
+      "severity": 0.15,
+      "rollback_failure": 0.05
+    }
+  }
+}

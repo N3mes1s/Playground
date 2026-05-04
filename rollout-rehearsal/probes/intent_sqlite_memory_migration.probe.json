@@ -1,0 +1,94 @@
+{
+  "intent": "intent_sqlite_memory_migration",
+  "model": "gpt-5.4-mini",
+  "A_original": {
+    "steps": 11,
+    "conflicts": 3,
+    "raw_conflicts": [
+      {
+        "between": [
+          "S10",
+          "DataPlatform: keep old JSONL files until quiet period confirms no lagging readers",
+          "Security: keep both old and new memory writable during cutover"
+        ],
+        "issue": "Legacy JSONL retention is required, but the coexistence requirement to keep both old and new writable during cutover is time-bound to one release and must not extend past cleanup gating."
+      },
+      {
+        "between": [
+          "S4",
+          "DataPlatform: Do not create or alter the SQLite schema during business hours"
+        ],
+        "issue": "Initial SQLite creation and schema setup must be scheduled after business hours."
+      },
+      {
+        "between": [
+          "S8",
+          "S11"
+        ],
+        "issue": "Opt-in SQLite can start only after readiness/compliance/notice gates, while the default flip must wait one release and customer notice window."
+      }
+    ]
+  },
+  "B_strict": {
+    "steps": 11,
+    "conflicts": 8,
+    "raw_conflicts": [
+      {
+        "between": [
+          "BackendOwner",
+          "Security"
+        ],
+        "issue": "BackendOwner requires the default to stay jsonl for one release, while Security wants both old and new memory writable during cutover, implying a dual-write period that must still preserve the jsonl default and transition rules."
+      },
+      {
+        "between": [
+          "BackendOwner",
+          "ProductPM"
+        ],
+        "issue": "BackendOwner keeps jsonl as the default for one release, while ProductPM requires one-release lead time before making sqlite the default; these align on delaying the flip, but ProductPM's default-change sequencing adds an extra blocker before any visible switch."
+      },
+      {
+        "between": [
+          "BackendOwner",
+          "SRE"
+        ],
+        "issue": "BackendOwner wants the migration deployed before the switch and default jsonl preserved, while SRE requires fallback to jsonl if sqlite is not ready on release day and also restricts rollout windows, creating a conditional gate that can block the planned cutover."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "Security"
+        ],
+        "issue": "DataPlatform wants old JSONL files kept until a 7-day no-read quiet period, while Security wants migration before switching defaults and preserving the audit trail; this creates tension between cleanup timing and mandatory retention/access controls."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "SRE"
+        ],
+        "issue": "DataPlatform requires staging-copy validation and durability monitoring before promotion, while SRE requires rollout outside incident windows and under a low error-rate threshold, so the sqlite enablement must satisfy both operational gates before proceeding."
+      },
+      {
+        "between": [
+          "Security",
+          "ProductPM"
+        ],
+        "issue": "Security requires customer notice before any visible backend-default change, while ProductPM requires the notice be sent before announcing or switching the default and also mandates one release of lead time; the change cannot happen until both communication gates are satisfied."
+      },
+      {
+        "between": [
+          "Security",
+          "SRE"
+        ],
+        "issue": "Security allows sqlite cutover only in a one-release dual-read/write window and with compliance review, while SRE forbids enabling sqlite during incident windows and requires post-cutover error monitoring, creating multiple blocking conditions on the same rollout."
+      },
+      {
+        "between": [
+          "ConsumerSubsystem",
+          "ProductPM"
+        ],
+        "issue": "ConsumerSubsystem wants a shim/test-passed transition before switching defaults, while ProductPM requires support playbook readiness and business-event blackout windows before rollout; this adds extra release-management blockers around the same default flip."
+      }
+    ]
+  }
+}

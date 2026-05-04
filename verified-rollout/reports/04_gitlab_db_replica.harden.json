@@ -1,0 +1,480 @@
+{
+  "intent_path": "validation/postmortems/intents/04_gitlab_db_replica.md",
+  "constraints": [
+    {
+      "axis": "deploy",
+      "summary": "Stop PostgreSQL on db2 before any data-directory wipe",
+      "scope": "db2 rebuild sequence prior to rm -rf of the PostgreSQL data dir",
+      "gate": "none",
+      "rollback": "Start PostgreSQL on db2 again without wiping data",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Rebuild db2 with pg_basebackup before starting postgres",
+      "scope": "db2 reinitialization from db1 and service restart order",
+      "gate": "wait_for:pg_basebackup completion on db2",
+      "rollback": "Remove the incomplete data directory and rerun pg_basebackup",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Do not point any read/write traffic to db2 until replication is caught up",
+      "scope": "Post-rebuild validation before db2 is considered usable as failover/backups source",
+      "gate": "monitor:replication_lag=0",
+      "rollback": "Keep db2 out of rotation and continue monitoring until caught up",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep db1/db2 roles unchanged during rebuild; no failover cutover",
+      "scope": "Client-facing PostgreSQL endpoint usage while db2 is rebuilt",
+      "gate": "none",
+      "rollback": "Re-point any attempted failover traffic back to db1",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "data",
+      "summary": "Rebuild db2 from db1 only after confirming the target host",
+      "scope": "SSH session, host selection, and any destructive action on the PostgreSQL data directory",
+      "gate": "approval:two_engineers",
+      "rollback": "Stop work on the current host; if any files were removed, restore db2 from the latest known-good backup or re-run pg_basebackup on db2",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Do not run the data-dir wipe outside the approved maintenance window",
+      "scope": "Stop PostgreSQL, remove the existing db2 data directory, and re-seed from base backup",
+      "gate": "window:approved_maintenance_window",
+      "rollback": "Abort before destructive steps and resume in the next maintenance window",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Keep replication lag within the migration budget during reseed",
+      "scope": "Replication catch-up after pg_basebackup and WAL replay on db2",
+      "gate": "monitor:replication_lag<=5min",
+      "rollback": "Pause the rebuild, stop replay on db2, and reinitialize from a fresh base backup if lag exceeds budget",
+      "blocking": false,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Backfill batch size must not saturate storage IOPS",
+      "scope": "pg_basebackup copy rate and any WAL/backfill activity on db2 storage",
+      "gate": "monitor:disk_iops<=70%",
+      "rollback": "Throttle or cancel the base backup and restart with a lower transfer rate",
+      "blocking": false,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Only remove old replica data after catch-up is stable",
+      "scope": "Final cleanup of the previous db2 data directory and any temporary backup artifacts",
+      "gate": "wait_for:replication_healthy_and_stable",
+      "rollback": "If stability is lost, keep the old artifacts until db2 is confirmed healthy again",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Require two-person verification of host before any destructive step",
+      "scope": "SSH session and preflight checks on db2.cluster.gitlab.com before stop/wipe/rebuild",
+      "gate": "approval:second_engineer",
+      "rollback": "Abort procedure; do not stop PostgreSQL or remove any files",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Do not proceed if host identity is not explicitly confirmed as db2",
+      "scope": "All steps involving SSH access, service stop, and data-directory deletion",
+      "gate": "wait_for:host_identity_confirmed_db2",
+      "rollback": "Exit session and reconnect only after re-verifying hostname, FQDN, and instance markers",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Block destructive rebuild outside the approved maintenance window",
+      "scope": "Stopping PostgreSQL, wiping the data directory, and running pg_basebackup on db2",
+      "gate": "window:approved_maintenance_window",
+      "rollback": "Defer the rebuild and leave db2 running in its current state until the window opens",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Verify replica health after rebuild before declaring recovery complete",
+      "scope": "Post-start validation and handoff for db2 after pg_basebackup and PostgreSQL restart",
+      "gate": "monitor:replication_lag<1min",
+      "rollback": "If lag or replay stalls, stop PostgreSQL on db2 and repeat the rebuild from db1",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "security",
+      "summary": "Verify target host identity before any destructive command",
+      "scope": "SSH session on db2.cluster.gitlab.com and pre-rm -rf step",
+      "gate": "approval:observer",
+      "rollback": "abort the session; reconnect only after out-of-band host verification",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Preserve audit trail for stop, wipe, backup, and restart steps",
+      "scope": "Entire replica rebuild execution on db2",
+      "gate": "none",
+      "rollback": "pause rebuild and restore logging; if logs were disabled, stop and document the gap",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify on-call and backup owners before starting destructive rebuild",
+      "scope": "Before stopping PostgreSQL and wiping db2 data directory",
+      "gate": "approval:on-call",
+      "rollback": "send completion/abort notice and reschedule after notification is acknowledged",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Use a change window covering the 2-4h rebuild and validation",
+      "scope": "Customer/partner-facing timing for any replica unavailability",
+      "gate": "window:approved-maintenance-window",
+      "rollback": "stop after the current step and defer remaining actions to the next approved window",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Confirm no external access path depends on db2 during rebuild",
+      "scope": "Before taking db2 offline and during catch-up validation",
+      "gate": "approval:security",
+      "rollback": "abort rebuild and keep existing replica intact until dependency review clears",
+      "blocking": false,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Announce the rebuild to support before starting",
+      "scope": "The planned `db2` replica rebuild window",
+      "gate": "approval:Support Lead",
+      "rollback": "Pause the rebuild and send a completion/hold update to support",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify customer-facing teams of temporary replica unavailability",
+      "scope": "Expected 2\u20134 hour period while `db2` is wiped and re-seeded",
+      "gate": "wait_for:customer-facing notification sent",
+      "rollback": "Send an immediate status update that the rebuild has been delayed",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "business",
+      "summary": "Do not start during launch windows or major events",
+      "scope": "Scheduling the `db2` rebuild start time",
+      "gate": "window:outside launch windows and major events",
+      "rollback": "Defer the rebuild to the next approved maintenance window",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "ops",
+      "summary": "Assign a named incident owner for customer escalations",
+      "scope": "During the entire rebuild and catch-up period",
+      "gate": "approval:named escalation owner assigned",
+      "rollback": "Escalation handling reverts to the on-call queue and the rollout pauses",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Provide a clear update when `db2` is back in sync",
+      "scope": "Post-rebuild confirmation and customer status update",
+      "gate": "wait_for:replication caught up confirmation",
+      "rollback": "Issue a correction if sync status changes after the update",
+      "blocking": false,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep db2 serving the same replica interface during rebuild",
+      "scope": "PostgreSQL connection details and standby role for clients/backups",
+      "gate": "wait_for:db2_rebuild_complete",
+      "rollback": "rebuild db2 from the previous base backup and restore standby.conf",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Use a dual-check host verification step before any destructive command",
+      "scope": "SSH session on db2 vs db1 before stop/wipe/rm -rf",
+      "gate": "none",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Freeze cutover until a clean pg_basebackup and catch-up test pass",
+      "scope": "Replica rebuild validation before declaring db2 healthy",
+      "gate": "wait_for:pg_basebackup_success_and_replication_caught_up",
+      "rollback": "discard rebuilt data directory and rerun basebackup from db1",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Maintain a rollback path to leave db2 untouched if rebuild slips",
+      "scope": "Schedule for the 2\u20134 hour rebuild window and on-call execution",
+      "gate": "window:23:00-02:00_local",
+      "rollback": "redeploy_previous",
+      "blocking": false,
+      "owner": "ConsumerSubsystem"
+    }
+  ],
+  "trajectory": [
+    {
+      "iteration": 0,
+      "stage": "base",
+      "fragility": 0.5,
+      "n_steps": 10,
+      "smt_feasible": true,
+      "smt_unsat_core_size": 0,
+      "achilles_top": [
+        [
+          "S1"
+        ],
+        [
+          "S2"
+        ],
+        [
+          "S3"
+        ]
+      ],
+      "diff_from_previous": [
+        "initial plan"
+      ]
+    },
+    {
+      "iteration": 1,
+      "stage": "hardened",
+      "fragility": 0.5,
+      "fragility_delta": 0.0,
+      "n_steps": 11,
+      "smt_feasible": true,
+      "smt_unsat_core_size": 0,
+      "achilles_top": [
+        [
+          "S1"
+        ],
+        [
+          "S2"
+        ],
+        [
+          "S3"
+        ]
+      ],
+      "diff_from_previous": [
+        "step count: 10 -> 11",
+        "added: ['S11']",
+        "edits:",
+        "  - S9.action: 'Remove temporary rebuild artifacts and a' \u2192 'Verify replica health and stability once'",
+        "  - S9.gate: 'wait_for:replication_healthy_and_stable' \u2192 'monitor:replication_lag<1min'",
+        "  - S9.rollback: 'Keep old artifacts until db2 is confirme' \u2192 'Stop PostgreSQL on db2, restore the time'",
+        "  - S9.observability: 'Artifact deletion status, remaining temp' \u2192 'Lag samples, replay stalls, health-check'",
+        "  - S6.action: 'Start PostgreSQL on db2 after base backu' \u2192 'Re-seed db2 from db1 using pg_basebackup'",
+        "  - S6.gate: 'monitor:replication_lag<=5min' \u2192 'wait_for:pg_basebackup completion on db2'",
+        "  - S6.rollback: 'Stop PostgreSQL on db2 and reinitialize ' \u2192 'Discard the partial basebackup directory'",
+        "  - S6.observability: 'Postgres startup success, replication st' \u2192 'Basebackup progress/completion, disk IOP'",
+        "  - S5.action: 'Remove the existing db2 data directory a' \u2192 'Move the existing db2 data directory asi'",
+        "  - S5.gate: 'wait_for:pg_basebackup completion on db2' \u2192 'monitor:backup_dir_present_and_target_em'",
+        "  - S5.rollback: 'Remove the incomplete data directory and' \u2192 'Move the timestamped backup directory ba'",
+        "  - S5.observability: 'Basebackup progress/completion, disk IOP' \u2192 'Directory rename/move success, target pa'",
+        "  - S7.action: 'Keep db2 out of any read/write traffic, ' \u2192 'Start PostgreSQL on db2 after base backu'",
+        "  - S7.gate: 'monitor:replication_lag=0' \u2192 'monitor:replication_lag<=5min'",
+        "  - S7.rollback: 'Leave db2 out of rotation and continue m' \u2192 'Stop PostgreSQL on db2, restore the time'",
+        "  - S7.observability: 'Replica lag, replay progress, and any at' \u2192 'Postgres startup success, replication st'",
+        "  - S10.action: 'Send the completion update that db2 is b' \u2192 'Remove temporary rebuild artifacts and a'",
+        "  - S10.gate: 'wait_for:replication caught up confirmat' \u2192 'wait_for:replication_healthy_and_stable'",
+        "  - S10.rollback: 'Issue a correction if sync status change' \u2192 'Keep old artifacts until db2 is confirme'",
+        "  - S10.observability: 'Customer/support update sent, final lag ' \u2192 'Artifact deletion status, remaining temp'"
+      ],
+      "llm_probe_rollback_failure_rate": 0.5
+    }
+  ],
+  "converged": false,
+  "reason": "iteration 1: no improvement (\u0394 0.0)",
+  "final_plan": {
+    "summary": "Rebuild db2 from db1 with earlier identity/notification checks, split destructive work, explicit health gates, and safer rollback/integrity checks.",
+    "steps": [
+      {
+        "id": "S1",
+        "action": "Confirm the maintenance window is open, notify on-call/backup/customer-facing teams, assign the named escalation owner, and obtain second-engineer/observer acknowledgment before touching db2.",
+        "owner": "SRE",
+        "depends_on": [],
+        "gate": "window:approved_maintenance_window",
+        "rollback": "Send hold/completion notices and defer the rebuild to the next approved window.",
+        "observability": "Acknowledgment receipts, change window status, named escalation owner assignment, and notification timestamps."
+      },
+      {
+        "id": "S2",
+        "action": "SSH to the target and perform explicit host identity checks for db2 using hostname, FQDN, and instance markers; both engineers must independently confirm the host is db2.",
+        "owner": "SRE",
+        "depends_on": [
+          "S1"
+        ],
+        "gate": "approval:second_engineer",
+        "rollback": "Exit the session immediately and reconnect only after re-verifying host identity out of band.",
+        "observability": "Shell prompt, hostname/FQDN output, instance markers, and both engineers' confirmation."
+      },
+      {
+        "id": "S3",
+        "action": "Preserve audit logging for the session and preflight that no external dependency requires db2 as an access path during the rebuild.",
+        "owner": "Security",
+        "depends_on": [
+          "S2"
+        ],
+        "gate": "approval:security",
+        "rollback": "Pause the rebuild, restore logging if needed, and abort if an external dependency is found.",
+        "observability": "Audit log continuity, dependency review result, and any security approval note."
+      },
+      {
+        "id": "S4",
+        "action": "Stop PostgreSQL on db2 only after host identity and approvals are confirmed.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S3"
+        ],
+        "gate": "monitor:postgres_down_and_no_writes",
+        "rollback": "Start PostgreSQL on db2 again without wiping data.",
+        "observability": "Service stop status, process exit, connection refusal on db2, and no writes accepted on db2."
+      },
+      {
+        "id": "S5",
+        "action": "Move the existing db2 data directory aside to a timestamped backup location, then verify the empty target path and free space before reseed.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S4"
+        ],
+        "gate": "monitor:backup_dir_present_and_target_empty",
+        "rollback": "Move the timestamped backup directory back into place and restore db2's original data directory.",
+        "observability": "Directory rename/move success, target path emptiness, backup directory checksum, and free-space headroom."
+      },
+      {
+        "id": "S6",
+        "action": "Re-seed db2 from db1 using pg_basebackup with throttling to avoid storage saturation; pause if disk or network pressure exceeds the safe budget.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S5"
+        ],
+        "gate": "wait_for:pg_basebackup completion on db2",
+        "rollback": "Discard the partial basebackup directory, restore the timestamped backup directory if needed, and rerun pg_basebackup from db1.",
+        "observability": "Basebackup progress/completion, disk IOPS, transfer rate, WAL fetch activity, and saturation alerts."
+      },
+      {
+        "id": "S7",
+        "action": "Start PostgreSQL on db2 after base backup completion and confirm streaming replication is running.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S6"
+        ],
+        "gate": "monitor:replication_lag<=5min",
+        "rollback": "Stop PostgreSQL on db2, restore the timestamped backup directory if startup corrupted the reseed, and reinitialize from a fresh base backup if lag exceeds budget.",
+        "observability": "Postgres startup success, replication state, initial lag trend, and replica connection logs."
+      },
+      {
+        "id": "S8",
+        "action": "Keep db2 out of any read/write traffic, failover, or backup-serving use while replication catches up, and verify the replica stays healthy before any later cleanup.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S7"
+        ],
+        "gate": "monitor:replication_lag=0",
+        "rollback": "Leave db2 out of rotation, reapply traffic blocks if needed, and continue monitoring until caught up.",
+        "observability": "Replica lag, replay progress, attempted routing to db2, and traffic-block enforcement."
+      },
+      {
+        "id": "S9",
+        "action": "Verify replica health and stability once lag reaches zero and stays healthy for the required observation period.",
+        "owner": "SRE",
+        "depends_on": [
+          "S8"
+        ],
+        "gate": "monitor:replication_lag<1min",
+        "rollback": "Stop PostgreSQL on db2, restore the timestamped backup directory if needed, and repeat the rebuild from db1.",
+        "observability": "Lag samples, replay stalls, health-check success, and stability over time."
+      },
+      {
+        "id": "S10",
+        "action": "Remove temporary rebuild artifacts and any old replica data only after stable catch-up is confirmed.",
+        "owner": "DataPlatform",
+        "depends_on": [
+          "S9"
+        ],
+        "gate": "wait_for:replication_healthy_and_stable",
+        "rollback": "Keep old artifacts until db2 is confirmed healthy again; if cleanup removed the wrong path, restore from the timestamped backup directory.",
+        "observability": "Artifact deletion status, remaining temporary files, backup-directory presence, and post-cleanup replica health."
+      },
+      {
+        "id": "S11",
+        "action": "Send the completion update that db2 is back in sync and hand ownership back to normal operations.",
+        "owner": "ProductPM",
+        "depends_on": [
+          "S10"
+        ],
+        "gate": "wait_for:replication caught up confirmation",
+        "rollback": "Issue a correction if sync status changes after the update.",
+        "observability": "Customer/support update sent, final lag confirmation, and handoff acknowledgment."
+      }
+    ],
+    "open_questions": [
+      "Which specific approved maintenance window should be used for the rebuild start?",
+      "Who is the named escalation owner for this event?",
+      "Have on-call, backup owners, support, and customer-facing teams already been notified or must S1 perform those notifications?",
+      "What exact host markers should the engineers use to confirm db2 identity?"
+    ],
+    "conflicts": [
+      {
+        "between": [
+          "BackendOwner",
+          "DataPlatform"
+        ],
+        "issue": "BackendOwner allows the standard rebuild sequence with stop/wipe/reseed, while DataPlatform/SRE/Security all require explicit host confirmation and two-person verification before destructive action; resolved by placing identity and approval gates before stop/wipe."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "SRE"
+        ],
+        "issue": "DataPlatform/SRE require blocking destructive rebuild outside an approved maintenance window; resolved by making the maintenance window the first gate before any host access or destructive step."
+      },
+      {
+        "between": [
+          "Security",
+          "ProductPM"
+        ],
+        "issue": "Security requires notifications and audit preservation before destructive work, while ProductPM requires support/customer comms and escalation ownership before start; resolved by a preflight step that bundles notifications, audit continuity, and escalation assignment before service stop."
+      },
+      {
+        "between": [
+          "ConsumerSubsystem",
+          "BackendOwner"
+        ],
+        "issue": "ConsumerSubsystem wants db2 to keep serving the same replica interface, while BackendOwner requires db2 not be used for traffic until fully caught up; resolved by keeping db2 offline from client use during rebuild and only validating the interface after replication is healthy."
+      }
+    ]
+  }
+}

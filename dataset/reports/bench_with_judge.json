@@ -1,0 +1,377 @@
+{
+  "timestamp": "20260430T045050Z",
+  "args": {
+    "n": 12,
+    "sources": [
+      "swebench_verified",
+      "swebench_pro",
+      "danluu_postmortems",
+      "synthetic"
+    ],
+    "pipeline": "cli_pro",
+    "max_tokens": 1200,
+    "n_plans": 3,
+    "seed": 1337,
+    "judge": true,
+    "out": "dataset/reports/bench_with_judge.md"
+  },
+  "scores": [
+    {
+      "id": "synthetic/node_16_20/split_monolith/oss_project/large/00001",
+      "source": "synthetic",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 3,
+      "expected_stakeholders_total": 3,
+      "verdict": "missed",
+      "elapsed_s": 14.903381586074829,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures a split-monolith migration with backward compatibility and consumer coordination, but misses the Node 16\u219220 specifics and key runtime issues.",
+      "judge_captured": [
+        "split-monolith style transition",
+        "backward-compatible dual-write / compatibility window",
+        "consumer reads before new-path reliance",
+        "preserve legacy API behavior for downstream consumers",
+        "throttled backfill and staged deprecation"
+      ],
+      "judge_missed": [
+        "Node 16 \u2192 20 LTS upgrade",
+        "native fetch API",
+        "legacy openssl removal impact",
+        "perf_hooks changes",
+        "strangler fig / traffic mirroring / data contracts",
+        "explicit backend, consumer, and SRE stakeholder coverage"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/pydata__xarray-4629",
+      "source": "swebench_verified",
+      "winner": "01-safety-leaning",
+      "winner_family": "safety",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 2,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 46.72935247421265,
+      "verdict_judge": "caught",
+      "judge_rationale": "Plan targets merge(combine_attrs='override') attrs aliasing and explicitly says to clone merged attrs / fix shared-mutable state, matching the bug root cause.",
+      "judge_captured": [
+        "merge(combine_attrs='override') attrs aliasing",
+        "shared mutable state between merged attrs and source attrs",
+        "clone/copy merged attrs to avoid mutation leaking back"
+      ],
+      "judge_missed": [
+        "No explicit reference to xarray/core/merge.py or the specific `variable_attrs[0]` -> `dict(variable_attrs[0])` code change",
+        "No mention of regression test coverage in the actual patch file"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/django__django-11095",
+      "source": "swebench_verified",
+      "winner": "01-safety-leaning",
+      "winner_family": "safety",
+      "n_plans": 3,
+      "smt_feasible_count": 1,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 7,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 53.47618293762207,
+      "verdict_judge": "caught",
+      "judge_rationale": "It matches the core GT: add a backward-compatible get_inlines hook for admin inline selection in django/contrib/admin/options.py.",
+      "judge_captured": [
+        "New get_inlines hook",
+        "Backward-compatible default to existing inline set",
+        "Admin inline selection",
+        "django/contrib/admin/options.py"
+      ],
+      "judge_missed": [
+        "No explicit request/obj-based signature",
+        "No mention of inline_class/custom specifying behavior"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "synthetic/mongodb_5_7/merge_services/regulated_fintech/large/00002",
+      "source": "synthetic",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 4,
+      "expected_stakeholders_hit": 4,
+      "expected_stakeholders_total": 4,
+      "verdict": "missed",
+      "elapsed_s": 17.09448528289795,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures merge-services rollout mechanics and rollback-per-tenant, but misses MongoDB 5\u21927 specifics like queryable encryption, CSFLE, and time-series collections.",
+      "judge_captured": [
+        "merged API union backward-compatible during cutover",
+        "dual-write for rollback-per-tenant during merge window",
+        "backfill merged collections in throttled batches",
+        "drop old tenant collections only after a quiet period"
+      ],
+      "judge_missed": [
+        "MongoDB 5\u21927 upgrade context",
+        "queryable encryption",
+        "CSFLE",
+        "time-series collections",
+        "regulated fintech / PCI-DSS security and legal-review stakeholder context",
+        "explicit data merge details beyond generic backfill"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "synthetic/react_17_19/api_breaking/small_startup/large/00001",
+      "source": "synthetic",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 2,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 3,
+      "expected_stakeholders_hit": 2,
+      "expected_stakeholders_total": 2,
+      "verdict": "missed",
+      "elapsed_s": 42.36220979690552,
+      "verdict_judge": "partial",
+      "judge_rationale": "It reflects versioned endpoints, backward compatibility, and a deprecation window, but misses the core React 17\u219219 specifics: concurrent-default behavior, removed legacy context APIs, and SDK regen.",
+      "judge_captured": [
+        "versioned endpoints backward-compatible during migration window",
+        "compatibility shims before dependent clients",
+        "remove legacy contract only after all callers migrate",
+        "30-day quiet period / deprecation window before destructive removal"
+      ],
+      "judge_missed": [
+        "React 17 \u2192 19 upgrade context",
+        "concurrent features default",
+        "removed legacy context APIs",
+        "SDK regeneration as part of the migration"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_pro/instance_ansible__ansible-622a493ae03bd5e5cf517d336fc426e9d12208c7-v906c969b551b346ef54a2c0b41e04f632b7b73c2",
+      "source": "swebench_pro",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 0,
+      "keyword_total": 30,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 12.110898733139038,
+      "verdict_judge": "missed",
+      "judge_rationale": "Output is a generic rollout/safety plan with feature flags and maintenance windows, not a patch plan for adding lib/ansible/modules/network/icx/icx_ping.py or its params/output parsing.",
+      "judge_captured": [],
+      "judge_missed": [
+        "Canonical file lib/ansible/modules/network/icx/icx_ping.py",
+        "Adding an Ansible module named icx_ping",
+        "Ping parameters like dest/source/count/timeout/size/ttl",
+        "Parsing ICX ping results into structured packet/RTT dict output",
+        "Module-style validation/state-based assertions"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/github",
+      "source": "danluu_postmortems",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 2,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 14.00148630142212,
+      "verdict_judge": "caught",
+      "judge_rationale": "The plan directly targets the GitHub DDoS incident by emphasizing DDoS mitigation steady-state and preserving the old edge-serving path until mitigations are proven.",
+      "judge_captured": [
+        "GitHub incident context",
+        "DDoS mitigation as the key change area",
+        "Keep old serving path until mitigations are proven",
+        "Preserve client and edge-facing behavior during cutover",
+        "Do not proceed without DDoS mitigation reaching steady state"
+      ],
+      "judge_missed": [
+        "No explicit reference to the 1.35 Tbps attack or the February 28, 2018 outage details",
+        "No stakeholder specificity tied to GitHub's actual engineering/ops roles beyond generic owner labels"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_pro/instance_flipt-io__flipt-c188284ff0c094a4ee281afebebd849555ebee59",
+      "source": "swebench_pro",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 15,
+      "keyword_hits": 0,
+      "keyword_total": 30,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 13.83765983581543,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures AWS-chain auth for OCI pulls and backward-compatible static auth, but is a rollout plan, not a patch plan with the concrete Flipt files or schema/code changes.",
+      "judge_captured": [
+        "AWS-chain auth as an optional mode for OCI pulls",
+        "existing static OCI auth fields remain backwards-compatible"
+      ],
+      "judge_missed": [
+        "Concrete Flipt patch files like cmd/flipt/bundle.go and internal/config/storage.go",
+        "Schema updates in config/flipt.schema.cue and config/flipt.schema.json",
+        "AWS ECR credentials-chain refresh behavior via oras/withcredentials",
+        "Test fixture for oci_provided_aws_ecr.yml"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/owasa",
+      "source": "danluu_postmortems",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 1,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 15.502526760101318,
+      "verdict_judge": "caught",
+      "judge_rationale": "Plan directly addresses the config-error root cause: wrong control/button mapping and fluoride setpoint verification for the OWASA overdose incident.",
+      "judge_captured": [
+        "config change / config-errors as root cause",
+        "wrong button/control-panel action via dry-run on test hardware",
+        "verify button mapping and control labels",
+        "fluoride setpoint/alarm values must match approved target",
+        "keep prior fluoride config available during rollout"
+      ],
+      "judge_missed": [
+        "does not name OWASA or water-treatment context explicitly",
+        "does not mention the exact human-error mechanism of pressing the wrong button",
+        "no stakeholder constraint tied to operator training/approval gates"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "danluu_postmortems/duo",
+      "source": "danluu_postmortems",
+      "winner": "01-safety-leaning",
+      "winner_family": "safety",
+      "n_plans": 3,
+      "smt_feasible_count": 2,
+      "files_overlap": 0,
+      "files_total": 0,
+      "keyword_hits": 0,
+      "keyword_total": 1,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 68.53986859321594,
+      "verdict_judge": "partial",
+      "judge_rationale": "It captures the core DB-capacity/queue overload theme, but the actual post-mortem details are too generic here and no incident-specific evidence or stakeholders are grounded in the source.",
+      "judge_captured": [
+        "request queue overloads an insufficient database capacity",
+        "capacity planning/headroom as the violated constraint",
+        "gradual rollout / throttling to avoid saturating the DB"
+      ],
+      "judge_missed": [
+        "any Duo-specific incident details from the linked post-mortem",
+        "root-cause evidence beyond generic queue/DB saturation",
+        "real stakeholders or affected service names from the incident"
+      ],
+      "judge_confidence": "medium"
+    },
+    {
+      "id": "swebench_pro/instance_element-hq__element-web-b007ea81b2ccd001b00f332bee65070aa7fc00f9-vnan",
+      "source": "swebench_pro",
+      "winner": "01-safety-leaning",
+      "winner_family": "safety",
+      "n_plans": 3,
+      "smt_feasible_count": 3,
+      "files_overlap": 0,
+      "files_total": 2,
+      "keyword_hits": 0,
+      "keyword_total": 30,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 69.33908081054688,
+      "verdict_judge": "missed",
+      "judge_rationale": "Output is a generic safety rollout plan; it \u0579\u056b mention the arrays.ts/Playback.ts utility patch, resample/rescale logic, or any numeric-array behavior.",
+      "judge_captured": [],
+      "judge_missed": [
+        "No reference to src/utils/arrays.ts or src/voice/Playback.ts",
+        "No mention of deterministic smoothing resample or linear rescale",
+        "No handling of input min/max mapping, waveform/samples/points/length behavior"
+      ],
+      "judge_confidence": "high"
+    },
+    {
+      "id": "swebench_verified/django__django-11087",
+      "source": "swebench_verified",
+      "winner": "00-speed-leaning",
+      "winner_family": "speed",
+      "n_plans": 3,
+      "smt_feasible_count": 2,
+      "files_overlap": 0,
+      "files_total": 1,
+      "keyword_hits": 4,
+      "keyword_total": 30,
+      "expected_stakeholders_hit": 0,
+      "expected_stakeholders_total": 0,
+      "verdict": "missed",
+      "elapsed_s": 95.12210249900818,
+      "verdict_judge": "partial",
+      "judge_rationale": "It targets QuerySet.delete()/deletion collector and required fields, matching the bug, but adds rollout/compliance/DB-credential steps not in the patch ground truth.",
+      "judge_captured": [
+        "QuerySet.delete() / deletion path optimization",
+        "loading only primary key/required relation fields",
+        "regression tests for delete cascades and non-ASCII/utf8mb4 data",
+        "staging validation using cycle_data-like purge batches"
+      ],
+      "judge_missed": [
+        "canonical patch file django/db/models/deletion.py",
+        "root-cause specifics like pre_delete/post_delete, has_listeners/has_signal_listeners, sub_objs, select_related, remote_field/on_delete",
+        "model/field/signal-based deletion collector details",
+        "the actual fix being a code patch rather than an operational rollout plan"
+      ],
+      "judge_confidence": "high"
+    }
+  ]
+}

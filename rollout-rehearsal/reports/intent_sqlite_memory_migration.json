@@ -1,0 +1,429 @@
+{
+  "intent_path": "fixtures/intent_sqlite_memory_migration.md",
+  "constraints": [
+    {
+      "axis": "api",
+      "summary": "Keep Agent backend default jsonl for one release",
+      "scope": "mirofish_lab/agent.py constructor and MIROFISH_MEMORY_BACKEND",
+      "gate": "none",
+      "rollback": "revert default backend selection to jsonl",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "api",
+      "summary": "Read legacy JSONL when sqlite backend is enabled",
+      "scope": "SqliteMemory/LocalMemory access path for existing .mirofish_memory files",
+      "gate": "wait_for:migration_helper_added",
+      "rollback": "disable sqlite backend selection and fall back to jsonl",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Add sqlite write path before flipping any readers to it",
+      "scope": "Release order for memory.db creation and Agent persistence writes",
+      "gate": "wait_for:sqlite_backend_merged",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Do not remove JSONL compatibility until one release later",
+      "scope": "Deprecation window for legacy JSONL files and shim behavior",
+      "gate": "window:one_release",
+      "rollback": "restore LocalMemory JSONL read support",
+      "blocking": true,
+      "owner": "BackendOwner"
+    },
+    {
+      "axis": "data",
+      "summary": "Backfill JSONL into SQLite in small batches to avoid IOPS spikes",
+      "scope": "migrate_jsonl_to_sqlite() import of existing .mirofish_memory JSONL files",
+      "gate": "monitor:replication_lag<0s",
+      "rollback": "Stop the migration and delete the partially imported memory.db, then rerun with smaller batches",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Do not drop or overwrite JSONL until SQLite import is complete",
+      "scope": "coexistence of legacy JSONL files and .mirofish_memory/memory.db during rollout",
+      "gate": "wait_for:migration_complete",
+      "rollback": "Restore JSONL-only reads and ignore memory.db until import completes",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "schema",
+      "summary": "Make SQLite schema changes only in a planned maintenance window",
+      "scope": "initial creation or future alteration of memory.db tables/indexes",
+      "gate": "window:business-hours-closed",
+      "rollback": "Revert to the prior SQLite schema and reapply migrations later",
+      "blocking": false,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "data",
+      "summary": "Keep old JSONL files for a quiet period before deletion",
+      "scope": "cleanup of .mirofish_memory/*.jsonl after successful migration",
+      "gate": "wait_for:quiet_period",
+      "rollback": "Restore archived JSONL files from backup if rollback is needed",
+      "blocking": true,
+      "owner": "DataPlatform"
+    },
+    {
+      "axis": "ops",
+      "summary": "Ship sqlite backend behind env var, keep jsonl default one release",
+      "scope": "Agent backend selection and default rollout path in mirofish_lab/agent.py",
+      "gate": "none",
+      "rollback": "Unset MIROFISH_MEMORY_BACKEND or set it back to jsonl",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "ops",
+      "summary": "Require a failed-write path that raises and preserves old backend access",
+      "scope": "SqliteMemory write path and LocalMemory shim behavior",
+      "gate": "none",
+      "rollback": "Switch backend to jsonl and disable sqlite writes",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Cut over only after sqlite canary shows stable error rate for 24h",
+      "scope": "Enabling MIROFISH_MEMORY_BACKEND=sqlite for persistent runs",
+      "gate": "monitor:memory_write_error_rate<0.1% for 24h",
+      "rollback": "Flip MIROFISH_MEMORY_BACKEND back to jsonl",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "deploy",
+      "summary": "Do not enable the sqlite default during incident windows or Friday PM",
+      "scope": "Production rollout of the new default backend",
+      "gate": "window:avoid Fridays 12:00-17:00 local time and active incident windows",
+      "rollback": "Postpone rollout and keep jsonl default",
+      "blocking": true,
+      "owner": "SRE"
+    },
+    {
+      "axis": "security",
+      "summary": "Rotate any secrets exposed in JSONL before SQLite cutover",
+      "scope": "Migration from `.mirofish_memory/*.jsonl` into `memory.db`",
+      "gate": "approval:security",
+      "rollback": "Purge imported records and restore JSONL-only reads",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "security",
+      "summary": "Audit trail must cover pre/post-migration writes",
+      "scope": "SqliteMemory write path and `migrate_jsonl_to_sqlite()` import",
+      "gate": "wait_for:audit-log-parity-check",
+      "rollback": "Disable SQLite backend and replay from preserved JSONL sources",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify users/partners before default backend changes",
+      "scope": "Any externally-visible behavior change from JSONL to SQLite default",
+      "gate": "window:7d-prelaunch-notice",
+      "rollback": "Restore `MIROFISH_MEMORY_BACKEND=jsonl` as the default",
+      "blocking": true,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Provide migration notice with opt-in and fallback guidance",
+      "scope": "Release notes for `MIROFISH_MEMORY_BACKEND` and migration helper",
+      "gate": "approval:comms",
+      "rollback": "Post a correction notice and defer auto-switching behavior",
+      "blocking": false,
+      "owner": "Security"
+    },
+    {
+      "axis": "comms",
+      "summary": "Notify users before backend default changes from JSONL to SQLite",
+      "scope": "MIROFISH_MEMORY_BACKEND default flip from jsonl to sqlite and any user-facing docs/CLI messaging",
+      "gate": "wait_for:customer_notice_sent",
+      "rollback": "revert default backend to jsonl and reissue comms",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "comms",
+      "summary": "Give one-release lead time before any breaking memory behavior",
+      "scope": "Removal or deprecation of JSONL-only assumptions in Agent/memory flow",
+      "gate": "window:one_release_after_announcement",
+      "rollback": "restore JSONL compatibility path as the default",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "ops",
+      "summary": "Do not roll out during launch windows or major events",
+      "scope": "Release timing for enabling sqlite backend by default or broad opt-in",
+      "gate": "window:outside_launch_window_and_major_event",
+      "rollback": "pause rollout and keep users on jsonl backend",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "ops",
+      "summary": "Support team must be briefed on migration and fallback steps",
+      "scope": "Support readiness for users migrating existing .mirofish_memory JSONL data",
+      "gate": "approval:support_lead",
+      "rollback": "revert to jsonl default and disable migration guidance until briefed",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "business",
+      "summary": "Assign explicit escalation owner for migration failures",
+      "scope": "Customer escalations involving failed imports or missing historical memory after opt-in",
+      "gate": "approval:product_owner",
+      "rollback": "route escalations to named owner and halt broader rollout",
+      "blocking": true,
+      "owner": "ProductPM"
+    },
+    {
+      "axis": "api",
+      "summary": "Keep LocalMemory API stable while sqlite backend lands",
+      "scope": "mirofish_lab/memory.py and Agent constructor backend selection",
+      "gate": "wait_for:SqliteMemory+compat shim merged",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Default stays jsonl for one release; sqlite is opt-in",
+      "scope": "MIROFISH_MEMORY_BACKEND default and Agent backend kwarg behavior",
+      "gate": "window:one_release_after_cutover",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "api",
+      "summary": "Ship migration test proving old JSONL reads in sqlite",
+      "scope": "migrate_jsonl_to_sqlite() and persistent agent restart path",
+      "gate": "wait_for:compatibility_test_passes",
+      "rollback": "redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    },
+    {
+      "axis": "deploy",
+      "summary": "If sqlite backend fails in prod, fall back to jsonl env var",
+      "scope": "runtime selection of memory backend during rollout",
+      "gate": "monitor:sqlite_write_error_rate>0",
+      "rollback": "set MIROFISH_MEMORY_BACKEND=jsonl and redeploy_previous",
+      "blocking": true,
+      "owner": "ConsumerSubsystem"
+    }
+  ],
+  "plan": {
+    "summary": "Add SQLite-backed memory with JSONL compatibility, migration helper, and opt-in rollout while preserving legacy access and safe fallback.",
+    "steps": [
+      {
+        "id": "S1",
+        "action": "Implement SqliteMemory in mirofish_lab/memory.py with stdlib sqlite3, persistent writes that raise on failure, and a stable schema for one inspectable table.",
+        "owner": "BackendOwner",
+        "depends_on": [],
+        "gate": "window:business-hours-closed",
+        "rollback": "Revert to the prior memory.py implementation and remove the SQLite write path.",
+        "observability": "Table creation success, write success/failure rate, and basic read/write round-trip tests."
+      },
+      {
+        "id": "S2",
+        "action": "Keep LocalMemory API stable as a compatibility shim that can read existing JSONL files and route new writes through the SQLite backend when selected.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S1"
+        ],
+        "gate": "wait_for:SqliteMemory+compat shim merged",
+        "rollback": "Restore LocalMemory JSONL read support and disable SQLite writes.",
+        "observability": "Legacy JSONL reads still work, new writes land in memory.db, and constructor signatures remain unchanged."
+      },
+      {
+        "id": "S3",
+        "action": "Add Agent backend selection in mirofish_lab/agent.py with backend=\"jsonl\" default, env-var override via MIROFISH_MEMORY_BACKEND, and opt-in sqlite wiring.",
+        "owner": "BackendOwner",
+        "depends_on": [
+          "S2"
+        ],
+        "gate": "none",
+        "rollback": "Revert default backend selection to jsonl and unset or ignore MIROFISH_MEMORY_BACKEND.",
+        "observability": "Backend selection path, default resolution, and Agent construction success for both backends."
+      },
+      {
+        "id": "S4",
+        "action": "Implement migrate_jsonl_to_sqlite() to import existing .mirofish_memory JSONL records into memory.db in small batches without deleting source files.",
+        "owner": "DataPlatform",
+        "depends_on": [
+          "S1",
+          "S2"
+        ],
+        "gate": "monitor:replication_lag<0s",
+        "rollback": "Stop migration, delete the partially imported memory.db, and rerun with smaller batches.",
+        "observability": "Batch throughput, import completeness, duplicate handling, and source JSONL preservation during import."
+      },
+      {
+        "id": "S5",
+        "action": "Add migration and compatibility tests proving old JSONL data is visible after sqlite opt-in and that failed SQLite writes raise loudly.",
+        "owner": "ConsumerSubsystem",
+        "depends_on": [
+          "S3",
+          "S4"
+        ],
+        "gate": "wait_for:compatibility_test_passes",
+        "rollback": "Redeploy previous memory behavior and keep sqlite disabled.",
+        "observability": "Test coverage for restart persistence, legacy read visibility, and write-failure behavior."
+      },
+      {
+        "id": "S6",
+        "action": "Prepare security and audit checks for pre/post-migration writes, secret rotation approval, and parity of imported records.",
+        "owner": "Security",
+        "depends_on": [
+          "S4"
+        ],
+        "gate": "approval:security",
+        "rollback": "Purge imported records and restore JSONL-only reads.",
+        "observability": "Security approval status, audit-log parity results, and any sensitive fields found in imported records."
+      },
+      {
+        "id": "S7",
+        "action": "Brief support and publish migration notes with opt-in, fallback, and escalation-owner guidance.",
+        "owner": "ProductPM",
+        "depends_on": [
+          "S3",
+          "S4"
+        ],
+        "gate": "approval:support_lead",
+        "rollback": "Revert to jsonl default and disable migration guidance until briefed.",
+        "observability": "Support readiness signoff, published guidance, and named escalation owner availability."
+      },
+      {
+        "id": "S8",
+        "action": "Run the JSONL-to-SQLite backfill after approvals, keep JSONL files intact, and only consider cleanup after a quiet period.",
+        "owner": "DataPlatform",
+        "depends_on": [
+          "S4",
+          "S6",
+          "S7"
+        ],
+        "gate": "wait_for:migration_complete",
+        "rollback": "Restore JSONL-only reads and ignore memory.db until import completes.",
+        "observability": "Import completion, record counts match, no source-file deletion, and low IOPS during batch import."
+      },
+      {
+        "id": "S9",
+        "action": "Enable sqlite for persistent runs behind MIROFISH_MEMORY_BACKEND=sqlite for a canary cohort and monitor write stability for 24h.",
+        "owner": "SRE",
+        "depends_on": [
+          "S5",
+          "S6",
+          "S7"
+        ],
+        "gate": "monitor:memory_write_error_rate<0.1% for 24h",
+        "rollback": "Flip MIROFISH_MEMORY_BACKEND back to jsonl.",
+        "observability": "SQLite write error rate, restart persistence, canary success rate, and any fallback events."
+      },
+      {
+        "id": "S10",
+        "action": "After a one-release notice window and outside launch/incident windows, make sqlite the default while keeping JSONL compatibility for the deprecation window.",
+        "owner": "ProductPM",
+        "depends_on": [
+          "S8",
+          "S9"
+        ],
+        "gate": "window:one_release_after_announcement",
+        "rollback": "Restore MIROFISH_MEMORY_BACKEND=jsonl as the default and reissue communications.",
+        "observability": "Default-backend adoption, support tickets, launch-window compliance, and remaining JSONL usage."
+      },
+      {
+        "id": "S11",
+        "action": "Keep JSONL files available for the quiet period, then archive or delete them only after migration and stability criteria are satisfied.",
+        "owner": "DataPlatform",
+        "depends_on": [
+          "S8",
+          "S10"
+        ],
+        "gate": "wait_for:quiet_period",
+        "rollback": "Restore archived JSONL files from backup if rollback is needed.",
+        "observability": "Quiet-period completion, archive integrity, and ability to restore old files if required."
+      }
+    ],
+    "open_questions": [
+      "What exact schema should the single SQLite table use for persona, timestamp, tags, and payload fields?",
+      "What constitutes 'quiet_period' length before JSONL cleanup?",
+      "Who is the named escalation owner for migration failures?",
+      "What is the exact customer_notice_sent process and who sends it?",
+      "Should memory.db be created automatically on first sqlite opt-in or only via explicit migration helper?",
+      "What batch size should migrate_jsonl_to_sqlite() use by default?"
+    ],
+    "conflicts": [
+      {
+        "between": [
+          "BackendOwner",
+          "ConsumerSubsystem"
+        ],
+        "issue": "BackendOwner requires JSONL default for one release while ConsumerSubsystem also requires the default stay jsonl for one release; these are aligned, so no rollout conflict. Resolved by keeping jsonl default until the one-release window completes."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "BackendOwner"
+        ],
+        "issue": "DataPlatform wants JSONL preserved until migration completes and then kept for a quiet period, while BackendOwner wants backward compatibility maintained for one release. Resolved by retaining JSONL source files through migration and only cleaning them up after the quiet period."
+      },
+      {
+        "between": [
+          "SRE",
+          "ProductPM"
+        ],
+        "issue": "SRE requires no rollout during launch windows/major events, while ProductPM requires one-release lead time and notification before default changes. Resolved by scheduling the default flip only after notice and outside restricted windows."
+      },
+      {
+        "between": [
+          "Security",
+          "ProductPM"
+        ],
+        "issue": "Security requires secret rotation and audit parity before cutover, while ProductPM requires support briefing and escalation readiness before broader rollout. Resolved by gating canary and default flip on both security and support readiness."
+      },
+      {
+        "between": [
+          "DataPlatform",
+          "ConsumerSubsystem"
+        ],
+        "issue": "DataPlatform wants small-batch backfill and no JSONL deletion until import completes, while ConsumerSubsystem wants a compatibility test proving old JSONL reads in sqlite. Resolved by running compatibility tests before migration cleanup and preserving source files through validation."
+      },
+      {
+        "between": [
+          "SRE",
+          "BackendOwner"
+        ],
+        "issue": "SRE requires failed SQLite writes to raise and preserve old backend access, while BackendOwner wants the sqlite backend added before readers are flipped. Resolved by implementing write failures as loud errors while keeping jsonl fallback available during opt-in."
+      },
+      {
+        "between": [
+          "Security",
+          "DataPlatform"
+        ],
+        "issue": "Security requires audit-log parity and secret rotation before cutover, while DataPlatform wants migration batches and JSONL coexistence. Resolved by running migration in batches with preserved source JSONL until audit approval is obtained."
+      },
+      {
+        "between": [
+          "ProductPM",
+          "ConsumerSubsystem"
+        ],
+        "issue": "ProductPM requires one-release lead time before breaking memory behavior, while ConsumerSubsystem requires the sqlite default remain opt-in for one release after cutover. Resolved by keeping sqlite opt-in until the announced default-flip window closes."
+      }
+    ]
+  }
+}
