@@ -1,0 +1,31 @@
+{
+  "data": [
+    {
+      "fr24_id": "3f902a0d",
+      "flight": "U27815",
+      "callsign": "EJU52UQ",
+      "operating_as": "EJU",
+      "painted_as": "EZY",
+      "type": "A20N",
+      "reg": "OE-LSM",
+      "orig_icao": "EHAM",
+      "orig_iata": "AMS",
+      "datetime_takeoff": "2026-05-06T12:05:39Z",
+      "runway_takeoff": "09",
+      "dest_icao": "LIPZ",
+      "dest_iata": "VCE",
+      "dest_icao_actual": "LIPZ",
+      "dest_iata_actual": "VCE",
+      "datetime_landed": "2026-05-06T14:04:38Z",
+      "runway_landed": "04R",
+      "flight_time": 7139,
+      "actual_distance": 1213.03,
+      "circle_distance": 937.956,
+      "category": "Passenger",
+      "hex": "440C83",
+      "first_seen": "2026-05-06T11:44:19Z",
+      "last_seen": "2026-05-06T14:08:27Z",
+      "flight_ended": true
+    }
+  ]
+}

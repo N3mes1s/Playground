@@ -1,0 +1,395 @@
+{
+  "flight": {
+    "fr24_id": "3f902a0d",
+    "flight": "U27815",
+    "callsign": "EJU52UQ",
+    "operator": "EJU",
+    "painted_as": "EZY",
+    "aircraft_type": "A20N",
+    "registration": "OE-LSM",
+    "orig": "AMS (EHAM)",
+    "dest": "VCE (LIPZ)",
+    "takeoff_utc": "2026-05-06T12:05:39Z",
+    "landing_utc": "2026-05-06T14:04:38Z",
+    "runway_takeoff": "09",
+    "runway_landed": "04R",
+    "flight_time_s": 7139,
+    "block_time_s": 7139,
+    "actual_distance_km": 1213.03,
+    "circle_distance_km": 937.956,
+    "max_groundspeed_kt": 446,
+    "max_altitude_ft": 39050,
+    "top_of_climb_utc": "2026-05-06T12:27:00Z",
+    "top_of_descent_utc": "2026-05-06T12:48:52Z",
+    "phases_n": 46,
+    "go_around": {
+      "min_alt_ft": 2900,
+      "min_alt_time": "2026-05-06T13:39:49Z",
+      "min_alt_lat": 45.38997,
+      "min_alt_lon": 12.20414,
+      "distance_to_dest_nm": 9.31,
+      "peak_climb_vspeed_fpm": 3072
+    },
+    "great_circle_nm": 505.9,
+    "flown_nm": 654.1,
+    "excess_nm": 148.3,
+    "max_offtrack_nm": 40.9,
+    "max_alt_ft": 39050,
+    "level_offs": [
+      {
+        "start": "2026-05-06T12:51:32Z",
+        "end": "2026-05-06T12:57:45Z",
+        "alt": 37000,
+        "duration_s": 373
+      },
+      {
+        "start": "2026-05-06T13:03:00Z",
+        "end": "2026-05-06T13:06:15Z",
+        "alt": 29025,
+        "duration_s": 195
+      },
+      {
+        "start": "2026-05-06T13:06:46Z",
+        "end": "2026-05-06T13:08:22Z",
+        "alt": 29000,
+        "duration_s": 96
+      },
+      {
+        "start": "2026-05-06T13:28:43Z",
+        "end": "2026-05-06T13:30:02Z",
+        "alt": 8025,
+        "duration_s": 79
+      },
+      {
+        "start": "2026-05-06T13:30:53Z",
+        "end": "2026-05-06T13:32:14Z",
+        "alt": 8000,
+        "duration_s": 81
+      },
+      {
+        "start": "2026-05-06T13:43:21Z",
+        "end": "2026-05-06T13:44:27Z",
+        "alt": 6100,
+        "duration_s": 66
+      },
+      {
+        "start": "2026-05-06T13:45:19Z",
+        "end": "2026-05-06T13:46:29Z",
+        "alt": 6100,
+        "duration_s": 70
+      },
+      {
+        "start": "2026-05-06T13:46:44Z",
+        "end": "2026-05-06T13:49:28Z",
+        "alt": 6100,
+        "duration_s": 164
+      },
+      {
+        "start": "2026-05-06T13:49:30Z",
+        "end": "2026-05-06T13:50:55Z",
+        "alt": 6100,
+        "duration_s": 85
+      }
+    ],
+    "heading_reversal_samples": 3
+  },
+  "ams_metars": [
+    {
+      "time": "2026-05-06T10:25:00.000Z",
+      "icao": "EHAM",
+      "wind_dir": 30,
+      "wind_kt": 11,
+      "gust_kt": null,
+      "visib_m": 9999,
+      "flags": [],
+      "raw": "METAR EHAM 061025Z 03011KT 360V120 9999 FEW028 SCT031 13/06 Q1009 NOSIG"
+    },
+    {
+      "time": "2026-05-06T11:00:00.000Z",
+      "icao": "EHAM",
+      "wind_dir": 30,
+      "wind_kt": 12,
+      "gust_kt": 22,
+      "visib_m": 9999,
+      "flags": [],
+      "raw": "METAR EHAM 061055Z 03012G22KT 340V080 9999 SCT035 14/06 Q1009 NOSIG"
+    },
+    {
+      "time": "2026-05-06T11:25:00.000Z",
+      "icao": "EHAM",
+      "wind_dir": 40,
+      "wind_kt": 14,
+      "gust_kt": null,
+      "visib_m": 9999,
+      "flags": [],
+      "raw": "METAR EHAM 061125Z 04014KT 360V070 9999 SCT035 14/03 Q1009 NOSIG"
+    },
+    {
+      "time": "2026-05-06T12:00:00.000Z",
+      "icao": "EHAM",
+      "wind_dir": 60,
+      "wind_kt": 14,
+      "gust_kt": null,
+      "visib_m": 9999,
+      "flags": [],
+      "raw": "METAR EHAM 061155Z 06014KT 010V090 9999 FEW041 14/02 Q1009 NOSIG"
+    },
+    {
+      "time": "2026-05-06T12:25:00.000Z",
+      "icao": "EHAM",
+      "wind_dir": 30,
+      "wind_kt": 10,
+      "gust_kt": null,
+      "visib_m": 9999,
+      "flags": [],
+      "raw": "METAR EHAM 061225Z 03010KT 360V070 9999 FEW047 15/03 Q1009 NOSIG"
+    },
+    {
+      "time": "2026-05-06T13:00:00.000Z",
+      "icao": "EHAM",
+      "wind_dir": 70,
+      "wind_kt": 13,
+      "gust_kt": null,
+      "visib_m": 9999,
+      "flags": [],
+      "raw": "METAR EHAM 061255Z 07013KT 9999 FEW033 15/03 Q1009 NOSIG"
+    },
+    {
+      "time": "2026-05-06T13:25:00.000Z",
+      "icao": "EHAM",
+      "wind_dir": 60,
+      "wind_kt": 12,
+      "gust_kt": null,
+      "visib_m": 9999,
+      "flags": [],
+      "raw": "METAR EHAM 061325Z 06012KT 010V090 9999 FEW033 14/02 Q1009 NOSIG"
+    },
+    {
+      "time": "2026-05-06T14:00:00.000Z",
+      "icao": "EHAM",
+      "wind_dir": 60,
+      "wind_kt": 12,
+      "gust_kt": null,
+      "visib_m": 9999,
+      "flags": [],
+      "raw": "METAR EHAM 061355Z 06012KT 360V100 9999 FEW033 14/02 Q1009 NOSIG"
+    },
+    {
+      "time": "2026-05-06T14:25:00.000Z",
+      "icao": "EHAM",
+      "wind_dir": 60,
+      "wind_kt": 11,
+      "gust_kt": null,
+      "visib_m": 9999,
+      "flags": [],
+      "raw": "METAR EHAM 061425Z 06011KT 010V090 9999 FEW032 14/02 Q1010 NOSIG"
+    },
+    {
+      "time": "2026-05-06T15:00:00.000Z",
+      "icao": "EHAM",
+      "wind_dir": 70,
+      "wind_kt": 9,
+      "gust_kt": null,
+      "visib_m": 9999,
+      "flags": [],
+      "raw": "METAR EHAM 061455Z 07009KT 010V110 9999 FEW032 SCT048 14/01 Q1010 NOSIG"
+    },
+    {
+      "time": "2026-05-06T15:25:00.000Z",
+      "icao": "EHAM",
+      "wind_dir": 60,
+      "wind_kt": 11,
+      "gust_kt": null,
+      "visib_m": 9999,
+      "flags": [],
+      "raw": "METAR EHAM 061525Z 06011KT 030V090 9999 FEW035 SCT048 13/02 Q1010 NOSIG"
+    },
+    {
+      "time": "2026-05-06T16:00:00.000Z",
+      "icao": "EHAM",
+      "wind_dir": 60,
+      "wind_kt": 10,
+      "gust_kt": null,
+      "visib_m": 9999,
+      "flags": [],
+      "raw": "METAR EHAM 061555Z 06010KT 040V100 9999 FEW035 SCT046 13/03 Q1010 NOSIG"
+    }
+  ],
+  "vce_metars": [
+    {
+      "time": "2026-05-06T10:20:00.000Z",
+      "icao": "LIPZ",
+      "wind_dir": 150,
+      "wind_kt": 4,
+      "gust_kt": null,
+      "visib_m": 8000,
+      "flags": [],
+      "raw": "METAR LIPZ 061020Z 15004KT 8000 -RA FEW006 SCT030 BKN070 16/15 Q1011 NOSIG"
+    },
+    {
+      "time": "2026-05-06T11:00:00.000Z",
+      "icao": "LIPZ",
+      "wind_dir": 150,
+      "wind_kt": 5,
+      "gust_kt": null,
+      "visib_m": 9999,
+      "flags": [],
+      "raw": "METAR LIPZ 061050Z 15005KT 120V180 9999 -RA FEW010 SCT030 BKN070 16/15 Q1011 NOSIG"
+    },
+    {
+      "time": "2026-05-06T11:20:00.000Z",
+      "icao": "LIPZ",
+      "wind_dir": 140,
+      "wind_kt": 4,
+      "gust_kt": null,
+      "visib_m": 9999,
+      "flags": [],
+      "raw": "METAR LIPZ 061120Z 14004KT 110V170 9999 -RA FEW010 BKN070 17/16 Q1011 NOSIG"
+    },
+    {
+      "time": "2026-05-06T12:00:00.000Z",
+      "icao": "LIPZ",
+      "wind_dir": 150,
+      "wind_kt": 4,
+      "gust_kt": null,
+      "visib_m": 9999,
+      "flags": [],
+      "raw": "METAR LIPZ 061150Z 15004KT 9999 -RA FEW010 SCT030 BKN070 17/16 Q1011 NOSIG"
+    },
+    {
+      "time": "2026-05-06T12:20:00.000Z",
+      "icao": "LIPZ",
+      "wind_dir": 150,
+      "wind_kt": 7,
+      "gust_kt": null,
+      "visib_m": 9999,
+      "flags": [],
+      "raw": "METAR LIPZ 061220Z 15007KT 110V170 9999 -RA FEW010 SCT030 BKN060 17/15 Q1010 NOSIG"
+    },
+    {
+      "time": "2026-05-06T13:00:00.000Z",
+      "icao": "LIPZ",
+      "wind_dir": 130,
+      "wind_kt": 8,
+      "gust_kt": null,
+      "visib_m": 9999,
+      "flags": [
+        "temporary thunderstorm with rain forecast",
+        "thunderstorm with rain"
+      ],
+      "raw": "METAR LIPZ 061250Z 13008KT 9999 FEW010 SCT040 BKN070 18/16 Q1010 TEMPO TSRA"
+    },
+    {
+      "time": "2026-05-06T13:20:00.000Z",
+      "icao": "LIPZ",
+      "wind_dir": 120,
+      "wind_kt": 8,
+      "gust_kt": null,
+      "visib_m": 9999,
+      "flags": [
+        "temporary thunderstorm with rain forecast",
+        "thunderstorm with rain"
+      ],
+      "raw": "METAR LIPZ 061320Z 12008KT 9999 FEW010 BKN045 18/16 Q1010 TEMPO TSRA"
+    },
+    {
+      "time": "2026-05-06T14:00:00.000Z",
+      "icao": "LIPZ",
+      "wind_dir": 100,
+      "wind_kt": 6,
+      "gust_kt": null,
+      "visib_m": 9999,
+      "flags": [
+        "cumulonimbus",
+        "runway windshear",
+        "temporary thunderstorm with rain forecast",
+        "thunderstorm in vicinity",
+        "thunderstorm with rain",
+        "windshear"
+      ],
+      "raw": "METAR LIPZ 061350Z 10006KT 070V130 9999 VCTS FEW010CB BKN040 17/16 Q1009 WS R04 R TEMPO 3000 TSRA"
+    },
+    {
+      "time": "2026-05-06T14:20:00.000Z",
+      "icao": "LIPZ",
+      "wind_dir": 190,
+      "wind_kt": 10,
+      "gust_kt": 23,
+      "visib_m": 1200,
+      "flags": [
+        "cumulonimbus",
+        "heavy thunderstorm with rain",
+        "runway windshear",
+        "windshear"
+      ],
+      "raw": "METAR LIPZ 061420Z 19010G23KT 130V230 1200 R04R/1600D +TSRA BKN008CB 14/14 Q1009 WS R04 R BECMG 6000 NSW"
+    },
+    {
+      "time": "2026-05-06T15:00:00.000Z",
+      "icao": "LIPZ",
+      "wind_dir": 180,
+      "wind_kt": 7,
+      "gust_kt": null,
+      "visib_m": 9999,
+      "flags": [],
+      "raw": "METAR LIPZ 061450Z 18007KT 9999 -RA SCT040 16/15 Q1009 RETSRA NOSIG"
+    },
+    {
+      "time": "2026-05-06T15:20:00.000Z",
+      "icao": "LIPZ",
+      "wind_dir": 170,
+      "wind_kt": 5,
+      "gust_kt": null,
+      "visib_m": 9999,
+      "flags": [],
+      "raw": "METAR LIPZ 061520Z 17005KT 9999 FEW040 17/14 Q1009 NOSIG"
+    },
+    {
+      "time": "2026-05-06T16:00:00.000Z",
+      "icao": "LIPZ",
+      "wind_dir": 160,
+      "wind_kt": 5,
+      "gust_kt": null,
+      "visib_m": 9999,
+      "flags": [],
+      "raw": "METAR LIPZ 061550Z 16005KT CAVOK 17/15 Q1009 NOSIG"
+    }
+  ],
+  "departure_metar": {
+    "time": "2026-05-06T12:00:00.000Z",
+    "icao": "EHAM",
+    "wind_dir": 60,
+    "wind_kt": 14,
+    "gust_kt": null,
+    "visib_m": 9999,
+    "flags": [],
+    "raw": "METAR EHAM 061155Z 06014KT 010V090 9999 FEW041 14/02 Q1009 NOSIG"
+  },
+  "arrival_top_of_descent_metar": {
+    "time": "2026-05-06T12:20:00.000Z",
+    "icao": "LIPZ",
+    "wind_dir": 150,
+    "wind_kt": 7,
+    "gust_kt": null,
+    "visib_m": 9999,
+    "flags": [],
+    "raw": "METAR LIPZ 061220Z 15007KT 110V170 9999 -RA FEW010 SCT030 BKN060 17/15 Q1010 NOSIG"
+  },
+  "landing_metar": {
+    "time": "2026-05-06T14:00:00.000Z",
+    "icao": "LIPZ",
+    "wind_dir": 100,
+    "wind_kt": 6,
+    "gust_kt": null,
+    "visib_m": 9999,
+    "flags": [
+      "cumulonimbus",
+      "runway windshear",
+      "temporary thunderstorm with rain forecast",
+      "thunderstorm in vicinity",
+      "thunderstorm with rain",
+      "windshear"
+    ],
+    "raw": "METAR LIPZ 061350Z 10006KT 070V130 9999 VCTS FEW010CB BKN040 17/16 Q1009 WS R04 R TEMPO 3000 TSRA"
+  }
+}

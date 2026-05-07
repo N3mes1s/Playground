@@ -1,0 +1,94 @@
+{
+  "fr24_id": "3f902a0d",
+  "flight": "U27815",
+  "callsign": "EJU52UQ",
+  "operator": "EJU",
+  "painted_as": "EZY",
+  "aircraft_type": "A20N",
+  "registration": "OE-LSM",
+  "orig": "AMS (EHAM)",
+  "dest": "VCE (LIPZ)",
+  "takeoff_utc": "2026-05-06T12:05:39Z",
+  "landing_utc": "2026-05-06T14:04:38Z",
+  "runway_takeoff": "09",
+  "runway_landed": "04R",
+  "flight_time_s": 7139,
+  "block_time_s": 7139,
+  "actual_distance_km": 1213.03,
+  "circle_distance_km": 937.956,
+  "max_groundspeed_kt": 446,
+  "max_altitude_ft": 39050,
+  "top_of_climb_utc": "2026-05-06T12:27:00Z",
+  "top_of_descent_utc": "2026-05-06T12:48:52Z",
+  "phases_n": 46,
+  "go_around": {
+    "min_alt_ft": 2900,
+    "min_alt_time": "2026-05-06T13:39:49Z",
+    "min_alt_lat": 45.38997,
+    "min_alt_lon": 12.20414,
+    "distance_to_dest_nm": 9.31,
+    "peak_climb_vspeed_fpm": 3072
+  },
+  "great_circle_nm": 505.9,
+  "flown_nm": 654.1,
+  "excess_nm": 148.3,
+  "max_offtrack_nm": 40.9,
+  "max_alt_ft": 39050,
+  "level_offs": [
+    {
+      "start": "2026-05-06T12:51:32Z",
+      "end": "2026-05-06T12:57:45Z",
+      "alt": 37000,
+      "duration_s": 373
+    },
+    {
+      "start": "2026-05-06T13:03:00Z",
+      "end": "2026-05-06T13:06:15Z",
+      "alt": 29025,
+      "duration_s": 195
+    },
+    {
+      "start": "2026-05-06T13:06:46Z",
+      "end": "2026-05-06T13:08:22Z",
+      "alt": 29000,
+      "duration_s": 96
+    },
+    {
+      "start": "2026-05-06T13:28:43Z",
+      "end": "2026-05-06T13:30:02Z",
+      "alt": 8025,
+      "duration_s": 79
+    },
+    {
+      "start": "2026-05-06T13:30:53Z",
+      "end": "2026-05-06T13:32:14Z",
+      "alt": 8000,
+      "duration_s": 81
+    },
+    {
+      "start": "2026-05-06T13:43:21Z",
+      "end": "2026-05-06T13:44:27Z",
+      "alt": 6100,
+      "duration_s": 66
+    },
+    {
+      "start": "2026-05-06T13:45:19Z",
+      "end": "2026-05-06T13:46:29Z",
+      "alt": 6100,
+      "duration_s": 70
+    },
+    {
+      "start": "2026-05-06T13:46:44Z",
+      "end": "2026-05-06T13:49:28Z",
+      "alt": 6100,
+      "duration_s": 164
+    },
+    {
+      "start": "2026-05-06T13:49:30Z",
+      "end": "2026-05-06T13:50:55Z",
+      "alt": 6100,
+      "duration_s": 85
+    }
+  ],
+  "heading_reversal_samples": 3
+}

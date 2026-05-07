@@ -1,0 +1,5388 @@
+[
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-07T05:27:14.872Z",
+    "obsTime": 1778131500,
+    "reportTime": "2026-05-07T05:25:00.000Z",
+    "temp": 7,
+    "dewp": 5,
+    "wdir": 320,
+    "wspd": 5,
+    "visib": "6+",
+    "altim": 1015,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 070525Z 32005KT 300V010 CAVOK 07/05 Q1015 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-07T05:26:06.093Z",
+    "obsTime": 1778131200,
+    "reportTime": "2026-05-07T05:20:00.000Z",
+    "temp": 14,
+    "dewp": 14,
+    "wdir": 340,
+    "wspd": 4,
+    "visib": 0.31,
+    "altim": 1012,
+    "qcField": 16,
+    "wxString": "FG",
+    "vertVis": 2,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 070520Z 34004KT 320V020 0500 R04R/1100U FG VV002 14/14 Q1012 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "OVX",
+    "clouds": [
+      {
+        "cover": "OVX",
+        "base": 200
+      }
+    ],
+    "fltCat": "LIFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-07T04:57:28.407Z",
+    "obsTime": 1778129700,
+    "reportTime": "2026-05-07T05:00:00.000Z",
+    "temp": 5,
+    "dewp": 4,
+    "wdir": 320,
+    "wspd": 4,
+    "visib": "6+",
+    "altim": 1015,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 070455Z 32004KT CAVOK 05/04 Q1015 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-07T04:55:42.904Z",
+    "obsTime": 1778129400,
+    "reportTime": "2026-05-07T05:00:00.000Z",
+    "temp": 14,
+    "dewp": 14,
+    "wdir": 10,
+    "wspd": 4,
+    "visib": 0.31,
+    "altim": 1011,
+    "qcField": 16,
+    "wxString": "FG",
+    "vertVis": 2,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 070450Z 01004KT 310V050 0500 R04R/0650N FG VV002 14/14 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "OVX",
+    "clouds": [
+      {
+        "cover": "OVX",
+        "base": 200
+      }
+    ],
+    "fltCat": "LIFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-07T04:27:11.566Z",
+    "obsTime": 1778127900,
+    "reportTime": "2026-05-07T04:25:00.000Z",
+    "temp": 5,
+    "dewp": 3,
+    "wdir": 330,
+    "wspd": 3,
+    "visib": "6+",
+    "altim": 1014,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 070425Z 33003KT CAVOK 05/03 Q1014 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-07T04:25:36.743Z",
+    "obsTime": 1778127600,
+    "reportTime": "2026-05-07T04:20:00.000Z",
+    "temp": 14,
+    "dewp": 14,
+    "wdir": 350,
+    "wspd": 5,
+    "visib": 0.31,
+    "altim": 1011,
+    "qcField": 16,
+    "wxString": "FG",
+    "vertVis": 2,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 070420Z 35005KT 320V030 0500 R04R/0450N FG VV002 14/14 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "OVX",
+    "clouds": [
+      {
+        "cover": "OVX",
+        "base": 200
+      }
+    ],
+    "fltCat": "LIFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-07T03:57:18.763Z",
+    "obsTime": 1778126100,
+    "reportTime": "2026-05-07T04:00:00.000Z",
+    "temp": 5,
+    "dewp": 3,
+    "wdir": 330,
+    "wspd": 4,
+    "visib": "6+",
+    "altim": 1014,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 070355Z 33004KT CAVOK 05/03 Q1014 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-07T03:55:25.141Z",
+    "obsTime": 1778125800,
+    "reportTime": "2026-05-07T04:00:00.000Z",
+    "temp": 14,
+    "dewp": 14,
+    "wdir": 10,
+    "wspd": 6,
+    "visib": 0.31,
+    "altim": 1011,
+    "qcField": 16,
+    "wxString": "FG",
+    "vertVis": 2,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 070350Z 01006KT 0500 R04R/0550N FG VV002 14/14 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "OVX",
+    "clouds": [
+      {
+        "cover": "OVX",
+        "base": 200
+      }
+    ],
+    "fltCat": "LIFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-07T03:27:11.849Z",
+    "obsTime": 1778124300,
+    "reportTime": "2026-05-07T03:25:00.000Z",
+    "temp": 5,
+    "dewp": 3,
+    "wdir": 340,
+    "wspd": 3,
+    "visib": "6+",
+    "altim": 1014,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 070325Z 34003KT CAVOK 05/03 Q1014 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-07T03:25:26.250Z",
+    "obsTime": 1778124000,
+    "reportTime": "2026-05-07T03:20:00.000Z",
+    "temp": 14,
+    "dewp": 14,
+    "wdir": 360,
+    "wspd": 4,
+    "visib": 0.31,
+    "altim": 1011,
+    "qcField": 16,
+    "wxString": "FG",
+    "vertVis": 2,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 070320Z 36004KT 0500 R04R/0550N FG VV002 14/14 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "OVX",
+    "clouds": [
+      {
+        "cover": "OVX",
+        "base": 200
+      }
+    ],
+    "fltCat": "LIFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-07T02:57:26.975Z",
+    "obsTime": 1778122500,
+    "reportTime": "2026-05-07T03:00:00.000Z",
+    "temp": 6,
+    "dewp": 4,
+    "wdir": 10,
+    "wspd": 4,
+    "visib": "6+",
+    "altim": 1014,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 070255Z 01004KT CAVOK 06/04 Q1014 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-07T02:55:22.710Z",
+    "obsTime": 1778122200,
+    "reportTime": "2026-05-07T03:00:00.000Z",
+    "temp": 14,
+    "dewp": 14,
+    "wdir": 350,
+    "wspd": 5,
+    "visib": 0.31,
+    "altim": 1011,
+    "qcField": 16,
+    "wxString": "FG",
+    "vertVis": 2,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 070250Z 35005KT 0500 R04R/0650N FG VV002 14/14 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "OVX",
+    "clouds": [
+      {
+        "cover": "OVX",
+        "base": 200
+      }
+    ],
+    "fltCat": "LIFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-07T02:27:14.194Z",
+    "obsTime": 1778120700,
+    "reportTime": "2026-05-07T02:25:00.000Z",
+    "temp": 7,
+    "dewp": 4,
+    "wdir": 10,
+    "wspd": 4,
+    "visib": "6+",
+    "altim": 1014,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 070225Z 01004KT CAVOK 07/04 Q1014 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-07T02:25:35.340Z",
+    "obsTime": 1778120400,
+    "reportTime": "2026-05-07T02:20:00.000Z",
+    "temp": 14,
+    "dewp": 14,
+    "wdir": 360,
+    "wspd": 3,
+    "visib": 0.31,
+    "altim": 1011,
+    "qcField": 16,
+    "wxString": "FG",
+    "vertVis": 2,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 070220Z 36003KT 0500 R04R/0500N FG VV002 14/14 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "OVX",
+    "clouds": [
+      {
+        "cover": "OVX",
+        "base": 200
+      }
+    ],
+    "fltCat": "LIFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-07T01:57:18.437Z",
+    "obsTime": 1778118900,
+    "reportTime": "2026-05-07T02:00:00.000Z",
+    "temp": 7,
+    "dewp": 4,
+    "wdir": 20,
+    "wspd": 4,
+    "visib": "6+",
+    "altim": 1014,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 070155Z 02004KT CAVOK 07/04 Q1014 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-07T01:55:26.307Z",
+    "obsTime": 1778118600,
+    "reportTime": "2026-05-07T02:00:00.000Z",
+    "temp": 13,
+    "dewp": 13,
+    "wdir": "VRB",
+    "wspd": 2,
+    "visib": 0.31,
+    "altim": 1011,
+    "qcField": 16,
+    "wxString": "FG",
+    "vertVis": 2,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 070150Z VRB02KT 0500 R04R/0500N FG VV002 13/13 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "OVX",
+    "clouds": [
+      {
+        "cover": "OVX",
+        "base": 200
+      }
+    ],
+    "fltCat": "LIFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-07T01:27:15.009Z",
+    "obsTime": 1778117100,
+    "reportTime": "2026-05-07T01:25:00.000Z",
+    "temp": 7,
+    "dewp": 4,
+    "wdir": 20,
+    "wspd": 6,
+    "visib": "6+",
+    "altim": 1014,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 070125Z 02006KT 350V050 CAVOK 07/04 Q1014 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-07T01:25:33.933Z",
+    "obsTime": 1778116800,
+    "reportTime": "2026-05-07T01:20:00.000Z",
+    "temp": 13,
+    "dewp": 13,
+    "wdir": 320,
+    "wspd": 4,
+    "visib": 0.31,
+    "altim": 1011,
+    "qcField": 16,
+    "wxString": "FG",
+    "vertVis": 2,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 070120Z 32004KT 0500 R04R/0450N FG VV002 13/13 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "OVX",
+    "clouds": [
+      {
+        "cover": "OVX",
+        "base": 200
+      }
+    ],
+    "fltCat": "LIFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-07T00:57:14.488Z",
+    "obsTime": 1778115300,
+    "reportTime": "2026-05-07T01:00:00.000Z",
+    "temp": 8,
+    "dewp": 4,
+    "wdir": 30,
+    "wspd": 6,
+    "visib": "6+",
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 070055Z 03006KT 360V060 CAVOK 08/04 Q1013 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-07T00:56:25.011Z",
+    "obsTime": 1778115000,
+    "reportTime": "2026-05-07T01:00:00.000Z",
+    "temp": 14,
+    "dewp": 13,
+    "wdir": 340,
+    "wspd": 3,
+    "visib": 1.86,
+    "altim": 1011,
+    "qcField": 0,
+    "wxString": "BR",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 070050Z 34003KT 3000 1000N BR SCT002 14/13 Q1011 BECMG 1200 BCFG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 200
+      }
+    ],
+    "fltCat": "IFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-07T00:27:17.008Z",
+    "obsTime": 1778113500,
+    "reportTime": "2026-05-07T00:25:00.000Z",
+    "temp": 8,
+    "dewp": 5,
+    "wdir": 30,
+    "wspd": 7,
+    "visib": "6+",
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 070025Z 03007KT 350V050 CAVOK 08/05 Q1013 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-07T00:25:16.854Z",
+    "obsTime": 1778113200,
+    "reportTime": "2026-05-07T00:20:00.000Z",
+    "temp": 14,
+    "dewp": 13,
+    "wdir": 360,
+    "wspd": 2,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 070020Z 36002KT CAVOK 14/13 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T23:57:12.640Z",
+    "obsTime": 1778111700,
+    "reportTime": "2026-05-07T00:00:00.000Z",
+    "temp": 8,
+    "dewp": 5,
+    "wdir": 20,
+    "wspd": 7,
+    "visib": "6+",
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 062355Z 02007KT 350V060 CAVOK 08/05 Q1013 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T23:55:29.023Z",
+    "obsTime": 1778111400,
+    "reportTime": "2026-05-07T00:00:00.000Z",
+    "temp": 14,
+    "dewp": 14,
+    "wdir": 320,
+    "wspd": 3,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 062350Z 32003KT 270V030 CAVOK 14/14 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T23:27:16.362Z",
+    "obsTime": 1778109900,
+    "reportTime": "2026-05-06T23:25:00.000Z",
+    "temp": 9,
+    "dewp": 5,
+    "wdir": 20,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 062325Z 02008KT CAVOK 09/05 Q1013 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T23:26:09.325Z",
+    "obsTime": 1778109600,
+    "reportTime": "2026-05-06T23:20:00.000Z",
+    "temp": 14,
+    "dewp": 14,
+    "wdir": 60,
+    "wspd": 2,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 062320Z 06002KT CAVOK 14/14 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T22:57:15.310Z",
+    "obsTime": 1778108100,
+    "reportTime": "2026-05-06T23:00:00.000Z",
+    "temp": 9,
+    "dewp": 5,
+    "wdir": 30,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 062255Z 03008KT 350V050 CAVOK 09/05 Q1013 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T22:55:18.704Z",
+    "obsTime": 1778107800,
+    "reportTime": "2026-05-06T23:00:00.000Z",
+    "temp": 14,
+    "dewp": 14,
+    "wdir": 20,
+    "wspd": 4,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 062250Z 02004KT CAVOK 14/14 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T22:27:16.326Z",
+    "obsTime": 1778106300,
+    "reportTime": "2026-05-06T22:25:00.000Z",
+    "temp": 9,
+    "dewp": 5,
+    "wdir": 30,
+    "wspd": 9,
+    "visib": "6+",
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 062225Z 03009KT 360V060 CAVOK 09/05 Q1013 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T22:25:17.277Z",
+    "obsTime": 1778106000,
+    "reportTime": "2026-05-06T22:20:00.000Z",
+    "temp": 14,
+    "dewp": 14,
+    "wdir": "VRB",
+    "wspd": 2,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 062220Z VRB02KT CAVOK 14/14 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T21:57:15.047Z",
+    "obsTime": 1778104500,
+    "reportTime": "2026-05-06T22:00:00.000Z",
+    "temp": 10,
+    "dewp": 5,
+    "wdir": 20,
+    "wspd": 6,
+    "visib": "6+",
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 062155Z 02006KT 340V060 CAVOK 10/05 Q1013 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T21:55:24.753Z",
+    "obsTime": 1778104200,
+    "reportTime": "2026-05-06T22:00:00.000Z",
+    "temp": 15,
+    "dewp": 14,
+    "wdir": 20,
+    "wspd": 4,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 062150Z 02004KT CAVOK 15/14 Q1010 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T21:27:21.448Z",
+    "obsTime": 1778102700,
+    "reportTime": "2026-05-06T21:25:00.000Z",
+    "temp": 10,
+    "dewp": 5,
+    "wdir": 20,
+    "wspd": 7,
+    "visib": "6+",
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 062125Z 02007KT 340V050 CAVOK 10/05 Q1013 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T21:25:37.047Z",
+    "obsTime": 1778102400,
+    "reportTime": "2026-05-06T21:20:00.000Z",
+    "temp": 16,
+    "dewp": 15,
+    "wdir": "VRB",
+    "wspd": 2,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 062120Z VRB02KT CAVOK 16/15 Q1010 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T20:57:18.712Z",
+    "obsTime": 1778100900,
+    "reportTime": "2026-05-06T21:00:00.000Z",
+    "temp": 11,
+    "dewp": 5,
+    "wdir": 20,
+    "wspd": 7,
+    "visib": "6+",
+    "altim": 1012,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 062055Z 02007KT 340V050 CAVOK 11/05 Q1012 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T20:55:39.631Z",
+    "obsTime": 1778100600,
+    "reportTime": "2026-05-06T21:00:00.000Z",
+    "temp": 16,
+    "dewp": 15,
+    "wdir": "VRB",
+    "wspd": 2,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 062050Z VRB02KT CAVOK 16/15 Q1010 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T20:27:13.255Z",
+    "obsTime": 1778099100,
+    "reportTime": "2026-05-06T20:25:00.000Z",
+    "temp": 11,
+    "dewp": 5,
+    "wdir": 20,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1012,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 062025Z 02008KT 340V050 CAVOK 11/05 Q1012 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T20:25:44.820Z",
+    "obsTime": 1778098800,
+    "reportTime": "2026-05-06T20:20:00.000Z",
+    "temp": 16,
+    "dewp": 14,
+    "wdir": "VRB",
+    "wspd": 2,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 062020Z VRB02KT CAVOK 16/14 Q1010 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T19:57:28.126Z",
+    "obsTime": 1778097300,
+    "reportTime": "2026-05-06T20:00:00.000Z",
+    "temp": 11,
+    "dewp": 4,
+    "wdir": 30,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1012,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 061955Z 03008KT 350V150 9999 FEW035 11/04 Q1012 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3500
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T19:55:43.765Z",
+    "obsTime": 1778097000,
+    "reportTime": "2026-05-06T20:00:00.000Z",
+    "temp": 17,
+    "dewp": 14,
+    "wdir": "VRB",
+    "wspd": 1,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 061950Z VRB01KT CAVOK 17/14 Q1010 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T19:27:24.579Z",
+    "obsTime": 1778095500,
+    "reportTime": "2026-05-06T19:25:00.000Z",
+    "temp": 12,
+    "dewp": 4,
+    "wdir": 20,
+    "wspd": 9,
+    "visib": "6+",
+    "altim": 1012,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 061925Z 02009KT 340V150 9999 FEW032 12/04 Q1012 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3200
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T19:25:25.039Z",
+    "obsTime": 1778095200,
+    "reportTime": "2026-05-06T19:20:00.000Z",
+    "temp": 17,
+    "dewp": 14,
+    "wdir": 190,
+    "wspd": 4,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 061920Z 19004KT CAVOK 17/14 Q1010 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T18:57:24.388Z",
+    "obsTime": 1778093700,
+    "reportTime": "2026-05-06T19:00:00.000Z",
+    "temp": 12,
+    "dewp": 5,
+    "wdir": 20,
+    "wspd": 9,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 061855Z 02009KT 350V060 9999 FEW032 12/05 Q1011 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3200
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T18:55:39.628Z",
+    "obsTime": 1778093400,
+    "reportTime": "2026-05-06T19:00:00.000Z",
+    "temp": 17,
+    "dewp": 14,
+    "wdir": "VRB",
+    "wspd": 3,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 061850Z VRB03KT CAVOK 17/14 Q1009 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T18:27:15.373Z",
+    "obsTime": 1778091900,
+    "reportTime": "2026-05-06T18:25:00.000Z",
+    "temp": 13,
+    "dewp": 5,
+    "wdir": 20,
+    "wspd": 10,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 061825Z 02010KT 340V050 9999 FEW032 SCT035 13/05 Q1011 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3200
+      },
+      {
+        "cover": "SCT",
+        "base": 3500
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T18:25:32.244Z",
+    "obsTime": 1778091600,
+    "reportTime": "2026-05-06T18:20:00.000Z",
+    "temp": 17,
+    "dewp": 15,
+    "wdir": 190,
+    "wspd": 3,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 061820Z 19003KT CAVOK 17/15 Q1009 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T17:57:17.766Z",
+    "obsTime": 1778090100,
+    "reportTime": "2026-05-06T18:00:00.000Z",
+    "temp": 13,
+    "dewp": 5,
+    "wdir": 40,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 061755Z 04008KT 360V080 9999 FEW032 SCT036 13/05 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3200
+      },
+      {
+        "cover": "SCT",
+        "base": 3600
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T17:55:30.359Z",
+    "obsTime": 1778089800,
+    "reportTime": "2026-05-06T18:00:00.000Z",
+    "temp": 17,
+    "dewp": 15,
+    "wdir": 210,
+    "wspd": 5,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 061750Z 21005KT 150V240 9999 FEW020 17/15 Q1009 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T17:27:14.949Z",
+    "obsTime": 1778088300,
+    "reportTime": "2026-05-06T17:25:00.000Z",
+    "temp": 12,
+    "dewp": 5,
+    "wdir": 60,
+    "wspd": 9,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 061725Z 06009KT 020V080 9999 FEW032 SCT034 12/05 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3200
+      },
+      {
+        "cover": "SCT",
+        "base": 3400
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T17:25:32.214Z",
+    "obsTime": 1778088000,
+    "reportTime": "2026-05-06T17:20:00.000Z",
+    "temp": 17,
+    "dewp": 16,
+    "wdir": 140,
+    "wspd": 5,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 061720Z 14005KT 9999 SCT010 17/16 Q1009 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 1000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T16:57:25.582Z",
+    "obsTime": 1778086500,
+    "reportTime": "2026-05-06T17:00:00.000Z",
+    "temp": 13,
+    "dewp": 4,
+    "wdir": 30,
+    "wspd": 10,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 061655Z 03010KT 360V060 9999 FEW032 BKN036 13/04 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3200
+      },
+      {
+        "cover": "BKN",
+        "base": 3600
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T16:55:25.031Z",
+    "obsTime": 1778086200,
+    "reportTime": "2026-05-06T17:00:00.000Z",
+    "temp": 17,
+    "dewp": 16,
+    "wdir": 120,
+    "wspd": 3,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 061650Z 12003KT 090V160 9999 SCT008 17/16 Q1009 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 800
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T16:27:14.965Z",
+    "obsTime": 1778084700,
+    "reportTime": "2026-05-06T16:25:00.000Z",
+    "temp": 13,
+    "dewp": 4,
+    "wdir": 60,
+    "wspd": 10,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 061625Z 06010KT 9999 FEW035 BKN043 13/04 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3500
+      },
+      {
+        "cover": "BKN",
+        "base": 4300
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T16:25:39.163Z",
+    "obsTime": 1778084400,
+    "reportTime": "2026-05-06T16:20:00.000Z",
+    "temp": 17,
+    "dewp": 15,
+    "wdir": 170,
+    "wspd": 4,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 061620Z 17004KT 140V200 9999 FEW030 17/15 Q1009 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T15:57:22.251Z",
+    "obsTime": 1778082900,
+    "reportTime": "2026-05-06T16:00:00.000Z",
+    "temp": 13,
+    "dewp": 3,
+    "wdir": 60,
+    "wspd": 10,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 061555Z 06010KT 040V100 9999 FEW035 SCT046 13/03 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3500
+      },
+      {
+        "cover": "SCT",
+        "base": 4600
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T15:55:27.552Z",
+    "obsTime": 1778082600,
+    "reportTime": "2026-05-06T16:00:00.000Z",
+    "temp": 17,
+    "dewp": 15,
+    "wdir": 160,
+    "wspd": 5,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 061550Z 16005KT CAVOK 17/15 Q1009 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "CAVOK",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T15:27:13.910Z",
+    "obsTime": 1778081100,
+    "reportTime": "2026-05-06T15:25:00.000Z",
+    "temp": 13,
+    "dewp": 2,
+    "wdir": 60,
+    "wspd": 11,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 061525Z 06011KT 030V090 9999 FEW035 SCT048 13/02 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3500
+      },
+      {
+        "cover": "SCT",
+        "base": 4800
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T15:25:22.578Z",
+    "obsTime": 1778080800,
+    "reportTime": "2026-05-06T15:20:00.000Z",
+    "temp": 17,
+    "dewp": 14,
+    "wdir": 170,
+    "wspd": 5,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 061520Z 17005KT 9999 FEW040 17/14 Q1009 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 4000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T14:57:19.368Z",
+    "obsTime": 1778079300,
+    "reportTime": "2026-05-06T15:00:00.000Z",
+    "temp": 14,
+    "dewp": 1,
+    "wdir": 70,
+    "wspd": 9,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 061455Z 07009KT 010V110 9999 FEW032 SCT048 14/01 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3200
+      },
+      {
+        "cover": "SCT",
+        "base": 4800
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T14:55:49.559Z",
+    "obsTime": 1778079000,
+    "reportTime": "2026-05-06T15:00:00.000Z",
+    "temp": 16,
+    "dewp": 15,
+    "wdir": 180,
+    "wspd": 7,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 061450Z 18007KT 9999 -RA SCT040 16/15 Q1009 RETSRA NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 4000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T14:27:12.999Z",
+    "obsTime": 1778077500,
+    "reportTime": "2026-05-06T14:25:00.000Z",
+    "temp": 14,
+    "dewp": 2,
+    "wdir": 60,
+    "wspd": 11,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 061425Z 06011KT 010V090 9999 FEW032 14/02 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3200
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T14:26:08.537Z",
+    "obsTime": 1778077200,
+    "reportTime": "2026-05-06T14:20:00.000Z",
+    "temp": 14,
+    "dewp": 14,
+    "wdir": 190,
+    "wspd": 10,
+    "wgst": 23,
+    "visib": 0.75,
+    "altim": 1009,
+    "qcField": 0,
+    "wxString": "+TSRA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 061420Z 19010G23KT 130V230 1200 R04R/1600D +TSRA BKN008CB 14/14 Q1009 WS R04 R BECMG 6000 NSW",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 800
+      }
+    ],
+    "fltCat": "LIFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T13:57:24.350Z",
+    "obsTime": 1778075700,
+    "reportTime": "2026-05-06T14:00:00.000Z",
+    "temp": 14,
+    "dewp": 2,
+    "wdir": 60,
+    "wspd": 12,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 061355Z 06012KT 360V100 9999 FEW033 14/02 Q1009 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3300
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T13:56:13.202Z",
+    "obsTime": 1778075400,
+    "reportTime": "2026-05-06T14:00:00.000Z",
+    "temp": 17,
+    "dewp": 16,
+    "wdir": 100,
+    "wspd": 6,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 0,
+    "wxString": "VCTS",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 061350Z 10006KT 070V130 9999 VCTS FEW010CB BKN040 17/16 Q1009 WS R04 R TEMPO 3000 TSRA",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1000
+      },
+      {
+        "cover": "BKN",
+        "base": 4000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T13:27:14.380Z",
+    "obsTime": 1778073900,
+    "reportTime": "2026-05-06T13:25:00.000Z",
+    "temp": 14,
+    "dewp": 2,
+    "wdir": 60,
+    "wspd": 12,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 061325Z 06012KT 010V090 9999 FEW033 14/02 Q1009 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3300
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T13:26:09.598Z",
+    "obsTime": 1778073600,
+    "reportTime": "2026-05-06T13:20:00.000Z",
+    "temp": 18,
+    "dewp": 16,
+    "wdir": 120,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 0,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 061320Z 12008KT 9999 FEW010 BKN045 18/16 Q1010 TEMPO TSRA",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1000
+      },
+      {
+        "cover": "BKN",
+        "base": 4500
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T12:57:23.882Z",
+    "obsTime": 1778072100,
+    "reportTime": "2026-05-06T13:00:00.000Z",
+    "temp": 15,
+    "dewp": 3,
+    "wdir": 70,
+    "wspd": 13,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 061255Z 07013KT 9999 FEW033 15/03 Q1009 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3300
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T12:56:17.571Z",
+    "obsTime": 1778071800,
+    "reportTime": "2026-05-06T13:00:00.000Z",
+    "temp": 18,
+    "dewp": 16,
+    "wdir": 130,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 0,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 061250Z 13008KT 9999 FEW010 SCT040 BKN070 18/16 Q1010 TEMPO TSRA",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1000
+      },
+      {
+        "cover": "SCT",
+        "base": 4000
+      },
+      {
+        "cover": "BKN",
+        "base": 7000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T12:27:12.162Z",
+    "obsTime": 1778070300,
+    "reportTime": "2026-05-06T12:25:00.000Z",
+    "temp": 15,
+    "dewp": 3,
+    "wdir": 30,
+    "wspd": 10,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 061225Z 03010KT 360V070 9999 FEW047 15/03 Q1009 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 4700
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T12:25:39.583Z",
+    "obsTime": 1778070000,
+    "reportTime": "2026-05-06T12:20:00.000Z",
+    "temp": 17,
+    "dewp": 15,
+    "wdir": 150,
+    "wspd": 7,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 061220Z 15007KT 110V170 9999 -RA FEW010 SCT030 BKN060 17/15 Q1010 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1000
+      },
+      {
+        "cover": "SCT",
+        "base": 3000
+      },
+      {
+        "cover": "BKN",
+        "base": 6000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T11:57:21.579Z",
+    "obsTime": 1778068500,
+    "reportTime": "2026-05-06T12:00:00.000Z",
+    "temp": 14,
+    "dewp": 2,
+    "wdir": 60,
+    "wspd": 14,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 061155Z 06014KT 010V090 9999 FEW041 14/02 Q1009 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 4100
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T11:55:27.578Z",
+    "obsTime": 1778068200,
+    "reportTime": "2026-05-06T12:00:00.000Z",
+    "temp": 17,
+    "dewp": 16,
+    "wdir": 150,
+    "wspd": 4,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 061150Z 15004KT 9999 -RA FEW010 SCT030 BKN070 17/16 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1000
+      },
+      {
+        "cover": "SCT",
+        "base": 3000
+      },
+      {
+        "cover": "BKN",
+        "base": 7000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T11:27:18.479Z",
+    "obsTime": 1778066700,
+    "reportTime": "2026-05-06T11:25:00.000Z",
+    "temp": 14,
+    "dewp": 3,
+    "wdir": 40,
+    "wspd": 14,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 061125Z 04014KT 360V070 9999 SCT035 14/03 Q1009 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 3500
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T11:25:48.532Z",
+    "obsTime": 1778066400,
+    "reportTime": "2026-05-06T11:20:00.000Z",
+    "temp": 17,
+    "dewp": 16,
+    "wdir": 140,
+    "wspd": 4,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 061120Z 14004KT 110V170 9999 -RA FEW010 BKN070 17/16 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1000
+      },
+      {
+        "cover": "BKN",
+        "base": 7000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T10:57:12.039Z",
+    "obsTime": 1778064900,
+    "reportTime": "2026-05-06T11:00:00.000Z",
+    "temp": 14,
+    "dewp": 6,
+    "wdir": 30,
+    "wspd": 12,
+    "wgst": 22,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 061055Z 03012G22KT 340V080 9999 SCT035 14/06 Q1009 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 3500
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T10:55:25.251Z",
+    "obsTime": 1778064600,
+    "reportTime": "2026-05-06T11:00:00.000Z",
+    "temp": 16,
+    "dewp": 15,
+    "wdir": 150,
+    "wspd": 5,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 061050Z 15005KT 120V180 9999 -RA FEW010 SCT030 BKN070 16/15 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1000
+      },
+      {
+        "cover": "SCT",
+        "base": 3000
+      },
+      {
+        "cover": "BKN",
+        "base": 7000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T10:27:15.468Z",
+    "obsTime": 1778063100,
+    "reportTime": "2026-05-06T10:25:00.000Z",
+    "temp": 13,
+    "dewp": 6,
+    "wdir": 30,
+    "wspd": 11,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 061025Z 03011KT 360V120 9999 FEW028 SCT031 13/06 Q1009 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2800
+      },
+      {
+        "cover": "SCT",
+        "base": 3100
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T10:25:34.037Z",
+    "obsTime": 1778062800,
+    "reportTime": "2026-05-06T10:20:00.000Z",
+    "temp": 16,
+    "dewp": 15,
+    "wdir": 150,
+    "wspd": 4,
+    "visib": 4.97,
+    "altim": 1011,
+    "qcField": 16,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 061020Z 15004KT 8000 -RA FEW006 SCT030 BKN070 16/15 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 600
+      },
+      {
+        "cover": "SCT",
+        "base": 3000
+      },
+      {
+        "cover": "BKN",
+        "base": 7000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T09:57:22.703Z",
+    "obsTime": 1778061300,
+    "reportTime": "2026-05-06T10:00:00.000Z",
+    "temp": 13,
+    "dewp": 6,
+    "wdir": 30,
+    "wspd": 12,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 060955Z 03012KT 360V060 9999 SCT027 13/06 Q1009 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 2700
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T09:55:27.177Z",
+    "obsTime": 1778061000,
+    "reportTime": "2026-05-06T10:00:00.000Z",
+    "temp": 17,
+    "dewp": 15,
+    "wdir": 160,
+    "wspd": 3,
+    "visib": 4.97,
+    "altim": 1011,
+    "qcField": 16,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 060950Z 16003KT 130V190 8000 -RA FEW008 SCT030 BKN070 17/15 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 800
+      },
+      {
+        "cover": "SCT",
+        "base": 3000
+      },
+      {
+        "cover": "BKN",
+        "base": 7000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T09:27:17.865Z",
+    "obsTime": 1778059500,
+    "reportTime": "2026-05-06T09:25:00.000Z",
+    "temp": 13,
+    "dewp": 6,
+    "wdir": 40,
+    "wspd": 10,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 060925Z 04010KT 350V080 9999 FEW027 SCT042 13/06 Q1009 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2700
+      },
+      {
+        "cover": "SCT",
+        "base": 4200
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T09:25:28.780Z",
+    "obsTime": 1778059200,
+    "reportTime": "2026-05-06T09:20:00.000Z",
+    "temp": 17,
+    "dewp": 14,
+    "wdir": 170,
+    "wspd": 3,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 060920Z 17003KT 140V200 9999 -RA FEW010 BKN070 17/14 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1000
+      },
+      {
+        "cover": "BKN",
+        "base": 7000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T08:57:23.166Z",
+    "obsTime": 1778057700,
+    "reportTime": "2026-05-06T09:00:00.000Z",
+    "temp": 12,
+    "dewp": 7,
+    "wdir": 50,
+    "wspd": 12,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 060855Z 05012KT 010V080 9999 FEW020 SCT034 12/07 Q1009 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2000
+      },
+      {
+        "cover": "SCT",
+        "base": 3400
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T08:55:32.071Z",
+    "obsTime": 1778057400,
+    "reportTime": "2026-05-06T09:00:00.000Z",
+    "temp": 17,
+    "dewp": 14,
+    "wdir": 170,
+    "wspd": 3,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 060850Z 17003KT 140V200 9999 -RA FEW010 BKN070 17/14 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1000
+      },
+      {
+        "cover": "BKN",
+        "base": 7000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T08:27:19.905Z",
+    "obsTime": 1778055900,
+    "reportTime": "2026-05-06T08:25:00.000Z",
+    "temp": 13,
+    "dewp": 8,
+    "wdir": 30,
+    "wspd": 12,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 060825Z 03012KT 360V070 9999 FEW020 SCT024 13/08 Q1009 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2000
+      },
+      {
+        "cover": "SCT",
+        "base": 2400
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T08:25:38.573Z",
+    "obsTime": 1778055600,
+    "reportTime": "2026-05-06T08:20:00.000Z",
+    "temp": 17,
+    "dewp": 15,
+    "wdir": 190,
+    "wspd": 5,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 060820Z 19005KT 160V220 9999 -RA FEW010 BKN070 17/15 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1000
+      },
+      {
+        "cover": "BKN",
+        "base": 7000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T07:57:22.754Z",
+    "obsTime": 1778054100,
+    "reportTime": "2026-05-06T08:00:00.000Z",
+    "temp": 13,
+    "dewp": 8,
+    "wdir": 30,
+    "wspd": 10,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 060755Z 03010KT 360V070 9999 FEW018 13/08 Q1009 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1800
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T07:55:39.427Z",
+    "obsTime": 1778053800,
+    "reportTime": "2026-05-06T08:00:00.000Z",
+    "temp": 17,
+    "dewp": 15,
+    "wdir": 160,
+    "wspd": 4,
+    "visib": 5.59,
+    "altim": 1011,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 060750Z 16004KT 140V200 9000 FEW005 SCT030 BKN070 17/15 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 500
+      },
+      {
+        "cover": "SCT",
+        "base": 3000
+      },
+      {
+        "cover": "BKN",
+        "base": 7000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T07:27:19.183Z",
+    "obsTime": 1778052300,
+    "reportTime": "2026-05-06T07:25:00.000Z",
+    "temp": 12,
+    "dewp": 7,
+    "wdir": 40,
+    "wspd": 11,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 060725Z 04011KT 360V080 9999 FEW015 SCT018 12/07 Q1009 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1500
+      },
+      {
+        "cover": "SCT",
+        "base": 1800
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T07:25:30.129Z",
+    "obsTime": 1778052000,
+    "reportTime": "2026-05-06T07:20:00.000Z",
+    "temp": 16,
+    "dewp": 16,
+    "wdir": 100,
+    "wspd": 4,
+    "visib": 4.97,
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 060720Z 10004KT 8000 FEW005 SCT020 BKN070 16/16 Q1010 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 500
+      },
+      {
+        "cover": "SCT",
+        "base": 2000
+      },
+      {
+        "cover": "BKN",
+        "base": 7000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T06:57:17.762Z",
+    "obsTime": 1778050500,
+    "reportTime": "2026-05-06T07:00:00.000Z",
+    "temp": 12,
+    "dewp": 7,
+    "wdir": 20,
+    "wspd": 10,
+    "visib": "6+",
+    "altim": 1008,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 060655Z 02010KT 340V060 9999 FEW015 SCT017 12/07 Q1008 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1500
+      },
+      {
+        "cover": "SCT",
+        "base": 1700
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T06:55:41.859Z",
+    "obsTime": 1778050200,
+    "reportTime": "2026-05-06T07:00:00.000Z",
+    "temp": 16,
+    "dewp": 16,
+    "wdir": 100,
+    "wspd": 5,
+    "visib": 2.49,
+    "altim": 1011,
+    "qcField": 16,
+    "wxString": "-RA BR",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 060650Z 10005KT 4000 -RA BR BKN005 BKN020 16/16 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 500
+      },
+      {
+        "cover": "BKN",
+        "base": 2000
+      }
+    ],
+    "fltCat": "IFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T06:27:18.728Z",
+    "obsTime": 1778048700,
+    "reportTime": "2026-05-06T06:25:00.000Z",
+    "temp": 11,
+    "dewp": 7,
+    "wdir": 20,
+    "wspd": 10,
+    "visib": "6+",
+    "altim": 1008,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 060625Z 02010KT 340V060 9999 FEW016 11/07 Q1008 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1600
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T06:25:28.833Z",
+    "obsTime": 1778048400,
+    "reportTime": "2026-05-06T06:20:00.000Z",
+    "temp": 15,
+    "dewp": 15,
+    "wdir": 60,
+    "wspd": 6,
+    "visib": 2.49,
+    "altim": 1010,
+    "qcField": 16,
+    "wxString": "-RA BR",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 060620Z 06006KT 4000 -RA BR SCT005 BKN070 15/15 Q1010 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 500
+      },
+      {
+        "cover": "BKN",
+        "base": 7000
+      }
+    ],
+    "fltCat": "IFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T05:57:11.957Z",
+    "obsTime": 1778046900,
+    "reportTime": "2026-05-06T06:00:00.000Z",
+    "temp": 11,
+    "dewp": 7,
+    "wdir": 20,
+    "wspd": 10,
+    "visib": "6+",
+    "altim": 1008,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 060555Z 02010KT 340V050 9999 FEW016 11/07 Q1008 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1600
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T05:55:31.238Z",
+    "obsTime": 1778046600,
+    "reportTime": "2026-05-06T06:00:00.000Z",
+    "temp": 15,
+    "dewp": 15,
+    "wdir": 50,
+    "wspd": 5,
+    "visib": 2.49,
+    "altim": 1010,
+    "qcField": 16,
+    "wxString": "-RA BR",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 060550Z 05005KT 4000 -RA BR FEW010 BKN070 15/15 Q1010 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1000
+      },
+      {
+        "cover": "BKN",
+        "base": 7000
+      }
+    ],
+    "fltCat": "IFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T05:27:18.398Z",
+    "obsTime": 1778045100,
+    "reportTime": "2026-05-06T05:25:00.000Z",
+    "temp": 10,
+    "dewp": 6,
+    "wdir": 20,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1008,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 060525Z 02008KT 340V050 9999 FEW037 10/06 Q1008 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3700
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T05:25:37.351Z",
+    "obsTime": 1778044800,
+    "reportTime": "2026-05-06T05:20:00.000Z",
+    "temp": 15,
+    "dewp": 14,
+    "wdir": 60,
+    "wspd": 5,
+    "visib": 3.73,
+    "altim": 1011,
+    "qcField": 16,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 060520Z 06005KT 6000 -RA FEW010 SCT040 BKN070 15/14 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1000
+      },
+      {
+        "cover": "SCT",
+        "base": 4000
+      },
+      {
+        "cover": "BKN",
+        "base": 7000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T05:07:54.637Z",
+    "obsTime": 1778043300,
+    "reportTime": "2026-05-06T05:00:00.000Z",
+    "temp": 10,
+    "dewp": 6,
+    "wdir": 20,
+    "wspd": 11,
+    "visib": "6+",
+    "altim": 1008,
+    "qcField": 17,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 060455Z COR 02011KT 350V050 9999 FEW016 10/06 Q1008 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1600
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T04:55:24.543Z",
+    "obsTime": 1778043000,
+    "reportTime": "2026-05-06T05:00:00.000Z",
+    "temp": 14,
+    "dewp": 14,
+    "wdir": 50,
+    "wspd": 6,
+    "visib": 3.73,
+    "altim": 1011,
+    "qcField": 16,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 060450Z 05006KT 6000 -RA SCT040 BKN070 14/14 Q1011 RESHRA NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 4000
+      },
+      {
+        "cover": "BKN",
+        "base": 7000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T04:27:15.010Z",
+    "obsTime": 1778041500,
+    "reportTime": "2026-05-06T04:25:00.000Z",
+    "temp": 10,
+    "dewp": 6,
+    "wdir": 20,
+    "wspd": 9,
+    "visib": "6+",
+    "altim": 1008,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 060425Z 02009KT 350V070 9999 FEW016 SCT034 10/06 Q1008 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1600
+      },
+      {
+        "cover": "SCT",
+        "base": 3400
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T04:25:21.651Z",
+    "obsTime": 1778041200,
+    "reportTime": "2026-05-06T04:20:00.000Z",
+    "temp": 14,
+    "dewp": 14,
+    "wdir": 40,
+    "wspd": 5,
+    "visib": 2.49,
+    "altim": 1010,
+    "qcField": 16,
+    "wxString": "SHRA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 060420Z 04005KT 4000 SHRA BKN008 BKN020 14/14 Q1010 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 800
+      },
+      {
+        "cover": "BKN",
+        "base": 2000
+      }
+    ],
+    "fltCat": "IFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T03:57:18.726Z",
+    "obsTime": 1778039700,
+    "reportTime": "2026-05-06T04:00:00.000Z",
+    "temp": 10,
+    "dewp": 6,
+    "wdir": 10,
+    "wspd": 9,
+    "visib": "6+",
+    "altim": 1008,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 060355Z 01009KT 330V050 9999 FEW017 SCT023 BKN031 10/06 Q1008 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1700
+      },
+      {
+        "cover": "SCT",
+        "base": 2300
+      },
+      {
+        "cover": "BKN",
+        "base": 3100
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T03:56:06.480Z",
+    "obsTime": 1778039400,
+    "reportTime": "2026-05-06T04:00:00.000Z",
+    "temp": 14,
+    "dewp": 13,
+    "wdir": 40,
+    "wspd": 5,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 0,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 060350Z 04005KT 9999 -RA BKN040 14/13 Q1011 TEMPO 4000 SHRA",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 4000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T03:27:14.578Z",
+    "obsTime": 1778037900,
+    "reportTime": "2026-05-06T03:25:00.000Z",
+    "temp": 10,
+    "dewp": 6,
+    "wdir": 10,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 060325Z 01008KT 330V050 9999 FEW019 SCT023 BKN030 10/06 Q1009 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1900
+      },
+      {
+        "cover": "SCT",
+        "base": 2300
+      },
+      {
+        "cover": "BKN",
+        "base": 3000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T03:25:19.260Z",
+    "obsTime": 1778037600,
+    "reportTime": "2026-05-06T03:20:00.000Z",
+    "temp": 14,
+    "dewp": 13,
+    "wdir": 20,
+    "wspd": 7,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 060320Z 02007KT 9999 -RA SCT040 14/13 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 4000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T02:57:20.229Z",
+    "obsTime": 1778036100,
+    "reportTime": "2026-05-06T03:00:00.000Z",
+    "temp": 10,
+    "dewp": 6,
+    "wdir": 10,
+    "wspd": 7,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 060255Z 01007KT 330V050 9999 FEW021 SCT024 BKN031 10/06 Q1009 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2100
+      },
+      {
+        "cover": "SCT",
+        "base": 2400
+      },
+      {
+        "cover": "BKN",
+        "base": 3100
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T02:55:28.391Z",
+    "obsTime": 1778035800,
+    "reportTime": "2026-05-06T03:00:00.000Z",
+    "temp": 14,
+    "dewp": 13,
+    "wdir": 30,
+    "wspd": 7,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 060250Z 03007KT 9999 SCT040 14/13 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 4000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T02:27:16.321Z",
+    "obsTime": 1778034300,
+    "reportTime": "2026-05-06T02:25:00.000Z",
+    "temp": 10,
+    "dewp": 6,
+    "wdir": 20,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 060225Z 02008KT 340V060 9999 SCT027 SCT034 10/06 Q1009 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 2700
+      },
+      {
+        "cover": "SCT",
+        "base": 3400
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T02:25:16.401Z",
+    "obsTime": 1778034000,
+    "reportTime": "2026-05-06T02:20:00.000Z",
+    "temp": 14,
+    "dewp": 13,
+    "wdir": 30,
+    "wspd": 6,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 060220Z 03006KT 9999 SCT020 14/13 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 2000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T01:57:15.589Z",
+    "obsTime": 1778032500,
+    "reportTime": "2026-05-06T02:00:00.000Z",
+    "temp": 10,
+    "dewp": 6,
+    "wdir": 10,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 060155Z 01008KT 330V070 9999 FEW026 BKN029 10/06 Q1009 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2600
+      },
+      {
+        "cover": "BKN",
+        "base": 2900
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T01:55:21.989Z",
+    "obsTime": 1778032200,
+    "reportTime": "2026-05-06T02:00:00.000Z",
+    "temp": 14,
+    "dewp": 13,
+    "wdir": 20,
+    "wspd": 7,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 060150Z 02007KT 9999 BKN014 14/13 Q1011 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 1400
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T01:27:16.625Z",
+    "obsTime": 1778030700,
+    "reportTime": "2026-05-06T01:25:00.000Z",
+    "temp": 10,
+    "dewp": 6,
+    "wdir": 20,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 060125Z 02008KT 340V050 9999 FEW026 BKN028 10/06 Q1009 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2600
+      },
+      {
+        "cover": "BKN",
+        "base": 2800
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T01:25:17.226Z",
+    "obsTime": 1778030400,
+    "reportTime": "2026-05-06T01:20:00.000Z",
+    "temp": 14,
+    "dewp": 13,
+    "wdir": 10,
+    "wspd": 6,
+    "visib": "6+",
+    "altim": 1012,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 060120Z 01006KT 9999 BKN015 14/13 Q1012 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 1500
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T00:57:10.401Z",
+    "obsTime": 1778028900,
+    "reportTime": "2026-05-06T01:00:00.000Z",
+    "temp": 10,
+    "dewp": 6,
+    "wdir": 20,
+    "wspd": 7,
+    "visib": "6+",
+    "altim": 1009,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 060055Z 02007KT 340V050 9999 FEW027 BKN031 10/06 Q1009 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2700
+      },
+      {
+        "cover": "BKN",
+        "base": 3100
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T00:55:31.029Z",
+    "obsTime": 1778028600,
+    "reportTime": "2026-05-06T01:00:00.000Z",
+    "temp": 14,
+    "dewp": 13,
+    "wdir": 20,
+    "wspd": 6,
+    "visib": "6+",
+    "altim": 1012,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 060050Z 02006KT 9999 BKN015 14/13 Q1012 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 1500
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-06T00:27:45.734Z",
+    "obsTime": 1778027100,
+    "reportTime": "2026-05-06T00:25:00.000Z",
+    "temp": 10,
+    "dewp": 6,
+    "wdir": 20,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 060025Z 02008KT 330V050 9999 FEW028 BKN031 10/06 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2800
+      },
+      {
+        "cover": "BKN",
+        "base": 3100
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-06T00:26:37.764Z",
+    "obsTime": 1778026800,
+    "reportTime": "2026-05-06T00:20:00.000Z",
+    "temp": 14,
+    "dewp": 13,
+    "wdir": 20,
+    "wspd": 6,
+    "visib": "6+",
+    "altim": 1012,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 060020Z 02006KT 9999 BKN015 14/13 Q1012 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 1500
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T23:57:16.136Z",
+    "obsTime": 1778025300,
+    "reportTime": "2026-05-06T00:00:00.000Z",
+    "temp": 10,
+    "dewp": 6,
+    "wdir": 10,
+    "wspd": 9,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 052355Z 01009KT 340V050 9999 FEW028 BKN031 10/06 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2800
+      },
+      {
+        "cover": "BKN",
+        "base": 3100
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T23:55:21.933Z",
+    "obsTime": 1778025000,
+    "reportTime": "2026-05-06T00:00:00.000Z",
+    "temp": 14,
+    "dewp": 13,
+    "wdir": 20,
+    "wspd": 7,
+    "visib": "6+",
+    "altim": 1012,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 052350Z 02007KT 9999 BKN010 14/13 Q1012 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 1000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T23:27:18.283Z",
+    "obsTime": 1778023500,
+    "reportTime": "2026-05-05T23:25:00.000Z",
+    "temp": 10,
+    "dewp": 6,
+    "wdir": 20,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 052325Z 02008KT 350V060 9999 FEW028 10/06 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2800
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T23:25:35.428Z",
+    "obsTime": 1778023200,
+    "reportTime": "2026-05-05T23:20:00.000Z",
+    "temp": 14,
+    "dewp": 13,
+    "wdir": 20,
+    "wspd": 7,
+    "visib": "6+",
+    "altim": 1012,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 052320Z 02007KT 9999 BKN008 14/13 Q1012 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 800
+      }
+    ],
+    "fltCat": "IFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T22:57:13.075Z",
+    "obsTime": 1778021700,
+    "reportTime": "2026-05-05T23:00:00.000Z",
+    "temp": 9,
+    "dewp": 5,
+    "wdir": 10,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 052255Z 01008KT 330V040 9999 FEW031 09/05 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3100
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T22:55:26.167Z",
+    "obsTime": 1778021400,
+    "reportTime": "2026-05-05T23:00:00.000Z",
+    "temp": 14,
+    "dewp": 13,
+    "wdir": 20,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1012,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 052250Z 02008KT 9999 BKN010 14/13 Q1012 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 1000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T22:27:18.279Z",
+    "obsTime": 1778019900,
+    "reportTime": "2026-05-05T22:25:00.000Z",
+    "temp": 10,
+    "dewp": 5,
+    "wdir": 20,
+    "wspd": 9,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 052225Z 02009KT 340V060 9999 FEW028 10/05 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2800
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T22:25:19.272Z",
+    "obsTime": 1778019600,
+    "reportTime": "2026-05-05T22:20:00.000Z",
+    "temp": 14,
+    "dewp": 13,
+    "wdir": 10,
+    "wspd": 7,
+    "visib": "6+",
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 052220Z 01007KT 9999 BKN020 14/13 Q1013 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 2000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T21:57:22.302Z",
+    "obsTime": 1778018100,
+    "reportTime": "2026-05-05T22:00:00.000Z",
+    "temp": 10,
+    "dewp": 4,
+    "wdir": 20,
+    "wspd": 10,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 052155Z 02010KT 330V050 9999 FEW028 10/04 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2800
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T21:55:37.245Z",
+    "obsTime": 1778017800,
+    "reportTime": "2026-05-05T22:00:00.000Z",
+    "temp": 14,
+    "dewp": 13,
+    "wdir": 20,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 052150Z 02008KT 9999 BKN012 14/13 Q1013 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 1200
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T21:27:08.005Z",
+    "obsTime": 1778016300,
+    "reportTime": "2026-05-05T21:25:00.000Z",
+    "temp": 10,
+    "dewp": 4,
+    "wdir": 20,
+    "wspd": 10,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 052125Z 02010KT 350V050 9999 FEW026 10/04 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2600
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T21:25:21.124Z",
+    "obsTime": 1778016000,
+    "reportTime": "2026-05-05T21:20:00.000Z",
+    "temp": 14,
+    "dewp": 13,
+    "wdir": 30,
+    "wspd": 9,
+    "visib": "6+",
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 052120Z 03009KT 9999 SCT010 BKN020 14/13 Q1013 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 1000
+      },
+      {
+        "cover": "BKN",
+        "base": 2000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T20:57:25.541Z",
+    "obsTime": 1778014500,
+    "reportTime": "2026-05-05T21:00:00.000Z",
+    "temp": 10,
+    "dewp": 4,
+    "wdir": 30,
+    "wspd": 11,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 052055Z 03011KT 350V060 9999 FEW026 10/04 Q1011 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2600
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T20:55:20.949Z",
+    "obsTime": 1778014200,
+    "reportTime": "2026-05-05T21:00:00.000Z",
+    "temp": 14,
+    "dewp": 13,
+    "wdir": 10,
+    "wspd": 9,
+    "visib": 4.97,
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 052050Z 01009KT 8000 SCT007 BKN010 14/13 Q1013 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 700
+      },
+      {
+        "cover": "BKN",
+        "base": 1000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T20:27:11.402Z",
+    "obsTime": 1778012700,
+    "reportTime": "2026-05-05T20:25:00.000Z",
+    "temp": 10,
+    "dewp": 5,
+    "wdir": 30,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 052025Z 03008KT 330V060 9999 FEW026 10/05 Q1011 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2600
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T20:25:26.319Z",
+    "obsTime": 1778012400,
+    "reportTime": "2026-05-05T20:20:00.000Z",
+    "temp": 14,
+    "dewp": 13,
+    "wdir": 10,
+    "wspd": 9,
+    "visib": 4.97,
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 052020Z 01009KT 8000 SCT007 BKN010 14/13 Q1013 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 700
+      },
+      {
+        "cover": "BKN",
+        "base": 1000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T19:57:18.370Z",
+    "obsTime": 1778010900,
+    "reportTime": "2026-05-05T20:00:00.000Z",
+    "temp": 10,
+    "dewp": 5,
+    "wdir": 20,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 051955Z 02008KT 340V070 9999 FEW027 10/05 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2700
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T19:55:20.105Z",
+    "obsTime": 1778010600,
+    "reportTime": "2026-05-05T20:00:00.000Z",
+    "temp": 14,
+    "dewp": 13,
+    "wdir": 20,
+    "wspd": 8,
+    "visib": 4.97,
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 051950Z 02008KT 8000 SCT007 BKN010 14/13 Q1013 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 700
+      },
+      {
+        "cover": "BKN",
+        "base": 1000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T19:31:11.925Z",
+    "obsTime": 1778009100,
+    "reportTime": "2026-05-05T19:25:00.000Z",
+    "temp": 11,
+    "dewp": 5,
+    "wdir": 20,
+    "wspd": 9,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 051925Z 02009KT 340V070 9999 FEW027 11/05 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2700
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T19:25:15.447Z",
+    "obsTime": 1778008800,
+    "reportTime": "2026-05-05T19:20:00.000Z",
+    "temp": 14,
+    "dewp": 14,
+    "wdir": 40,
+    "wspd": 6,
+    "visib": 4.97,
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 051920Z 04006KT 8000 SCT007 BKN010 14/14 Q1013 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 700
+      },
+      {
+        "cover": "BKN",
+        "base": 1000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T18:57:16.724Z",
+    "obsTime": 1778007300,
+    "reportTime": "2026-05-05T19:00:00.000Z",
+    "temp": 11,
+    "dewp": 5,
+    "wdir": 10,
+    "wspd": 10,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 051855Z 01010KT 330V070 9999 FEW025 11/05 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2500
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T18:55:21.776Z",
+    "obsTime": 1778007000,
+    "reportTime": "2026-05-05T19:00:00.000Z",
+    "temp": 15,
+    "dewp": 14,
+    "wdir": 40,
+    "wspd": 7,
+    "visib": 5.59,
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 051850Z 04007KT 9000 SCT006 BKN010 15/14 Q1013 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 600
+      },
+      {
+        "cover": "BKN",
+        "base": 1000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T18:27:13.132Z",
+    "obsTime": 1778005500,
+    "reportTime": "2026-05-05T18:25:00.000Z",
+    "temp": 11,
+    "dewp": 6,
+    "wdir": 30,
+    "wspd": 11,
+    "wgst": 21,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 051825Z 03011G21KT 350V070 9999 FEW025 11/06 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2500
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T18:25:12.251Z",
+    "obsTime": 1778005200,
+    "reportTime": "2026-05-05T18:20:00.000Z",
+    "temp": 15,
+    "dewp": 14,
+    "wdir": 40,
+    "wspd": 7,
+    "visib": 5.59,
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 051820Z 04007KT 9000 SCT006 BKN010 15/14 Q1013 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 600
+      },
+      {
+        "cover": "BKN",
+        "base": 1000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T17:57:22.837Z",
+    "obsTime": 1778003700,
+    "reportTime": "2026-05-05T18:00:00.000Z",
+    "temp": 12,
+    "dewp": 6,
+    "wdir": 10,
+    "wspd": 11,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 051755Z 01011KT 340V040 9999 FEW025 12/06 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2500
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T17:55:19.372Z",
+    "obsTime": 1778003400,
+    "reportTime": "2026-05-05T18:00:00.000Z",
+    "temp": 15,
+    "dewp": 14,
+    "wdir": 30,
+    "wspd": 7,
+    "visib": "6+",
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 051750Z 03007KT 9999 SCT006 BKN010 15/14 Q1013 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 600
+      },
+      {
+        "cover": "BKN",
+        "base": 1000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T17:27:09.329Z",
+    "obsTime": 1778001900,
+    "reportTime": "2026-05-05T17:25:00.000Z",
+    "temp": 13,
+    "dewp": 6,
+    "wdir": 20,
+    "wspd": 12,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 051725Z 02012KT 340V080 9999 FEW028 13/06 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2800
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T17:25:36.531Z",
+    "obsTime": 1778001600,
+    "reportTime": "2026-05-05T17:20:00.000Z",
+    "temp": 15,
+    "dewp": 14,
+    "wdir": 40,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 051720Z 04008KT 9999 SCT006 BKN010 15/14 Q1013 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 600
+      },
+      {
+        "cover": "BKN",
+        "base": 1000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T16:57:15.775Z",
+    "obsTime": 1778000100,
+    "reportTime": "2026-05-05T17:00:00.000Z",
+    "temp": 13,
+    "dewp": 7,
+    "wdir": 30,
+    "wspd": 13,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 051655Z 03013KT 340V080 9999 FEW028 13/07 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2800
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T16:55:19.242Z",
+    "obsTime": 1777999800,
+    "reportTime": "2026-05-05T17:00:00.000Z",
+    "temp": 15,
+    "dewp": 14,
+    "wdir": 40,
+    "wspd": 7,
+    "visib": 5.59,
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 051650Z 04007KT 9000 SCT006 BKN010 15/14 Q1013 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 600
+      },
+      {
+        "cover": "BKN",
+        "base": 1000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T16:27:08.899Z",
+    "obsTime": 1777998300,
+    "reportTime": "2026-05-05T16:25:00.000Z",
+    "temp": 13,
+    "dewp": 6,
+    "wdir": 40,
+    "wspd": 11,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 051625Z 04011KT 340V070 9999 FEW029 13/06 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2900
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T16:26:05.866Z",
+    "obsTime": 1777998000,
+    "reportTime": "2026-05-05T16:20:00.000Z",
+    "temp": 14,
+    "dewp": 13,
+    "wdir": 40,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 051620Z 04008KT 9999 4000N SCT006 BKN010 14/13 Q1013 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 600
+      },
+      {
+        "cover": "BKN",
+        "base": 1000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T15:57:17.443Z",
+    "obsTime": 1777996500,
+    "reportTime": "2026-05-05T16:00:00.000Z",
+    "temp": 14,
+    "dewp": 6,
+    "wdir": 30,
+    "wspd": 11,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 051555Z 03011KT 340V070 9999 FEW029 14/06 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2900
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T15:56:21.978Z",
+    "obsTime": 1777996200,
+    "reportTime": "2026-05-05T16:00:00.000Z",
+    "temp": 14,
+    "dewp": 13,
+    "wdir": 30,
+    "wspd": 7,
+    "visib": "6+",
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 051550Z 03007KT 9999 4000N SCT006 BKN010 14/13 Q1013 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 600
+      },
+      {
+        "cover": "BKN",
+        "base": 1000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T15:27:08.789Z",
+    "obsTime": 1777994700,
+    "reportTime": "2026-05-05T15:25:00.000Z",
+    "temp": 14,
+    "dewp": 7,
+    "wdir": 20,
+    "wspd": 11,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 051525Z 02011KT 340V080 9999 FEW029 14/07 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2900
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T15:26:06.918Z",
+    "obsTime": 1777994400,
+    "reportTime": "2026-05-05T15:20:00.000Z",
+    "temp": 15,
+    "dewp": 14,
+    "wdir": 70,
+    "wspd": 9,
+    "visib": "6+",
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 051520Z 07009KT 9999 3500N SCT006 BKN010 15/14 Q1013 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 600
+      },
+      {
+        "cover": "BKN",
+        "base": 1000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T14:57:14.102Z",
+    "obsTime": 1777992900,
+    "reportTime": "2026-05-05T15:00:00.000Z",
+    "temp": 13,
+    "dewp": 6,
+    "wdir": 50,
+    "wspd": 10,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 051455Z 05010KT 9999 FEW030 13/06 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T14:55:32.978Z",
+    "obsTime": 1777992600,
+    "reportTime": "2026-05-05T15:00:00.000Z",
+    "temp": 16,
+    "dewp": 14,
+    "wdir": 90,
+    "wspd": 9,
+    "visib": "6+",
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 051450Z 09009KT 9999 SCT007 BKN015 16/14 Q1013 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 700
+      },
+      {
+        "cover": "BKN",
+        "base": 1500
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T14:27:18.127Z",
+    "obsTime": 1777991100,
+    "reportTime": "2026-05-05T14:25:00.000Z",
+    "temp": 14,
+    "dewp": 6,
+    "wdir": 50,
+    "wspd": 11,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 051425Z 05011KT 010V090 9999 FEW030 14/06 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T14:25:34.150Z",
+    "obsTime": 1777990800,
+    "reportTime": "2026-05-05T14:20:00.000Z",
+    "temp": 16,
+    "dewp": 14,
+    "wdir": 80,
+    "wspd": 7,
+    "visib": "6+",
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 051420Z 08007KT 9999 SCT007 BKN015 16/14 Q1013 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 700
+      },
+      {
+        "cover": "BKN",
+        "base": 1500
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T13:57:15.331Z",
+    "obsTime": 1777989300,
+    "reportTime": "2026-05-05T14:00:00.000Z",
+    "temp": 14,
+    "dewp": 6,
+    "wdir": 50,
+    "wspd": 12,
+    "visib": "6+",
+    "altim": 1010,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 051355Z 05012KT 020V090 9999 FEW030 14/06 Q1010 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T13:55:14.880Z",
+    "obsTime": 1777989000,
+    "reportTime": "2026-05-05T14:00:00.000Z",
+    "temp": 16,
+    "dewp": 14,
+    "wdir": 90,
+    "wspd": 6,
+    "visib": "6+",
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 051350Z 09006KT 9999 SCT007 BKN015 16/14 Q1013 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "SCT",
+        "base": 700
+      },
+      {
+        "cover": "BKN",
+        "base": 1500
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T13:27:17.561Z",
+    "obsTime": 1777987500,
+    "reportTime": "2026-05-05T13:25:00.000Z",
+    "temp": 14,
+    "dewp": 6,
+    "wdir": 50,
+    "wspd": 12,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 051325Z 05012KT 020V120 9999 FEW030 14/06 Q1011 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T13:25:40.252Z",
+    "obsTime": 1777987200,
+    "reportTime": "2026-05-05T13:20:00.000Z",
+    "temp": 16,
+    "dewp": 14,
+    "wdir": 110,
+    "wspd": 7,
+    "visib": "6+",
+    "altim": 1014,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 051320Z 11007KT 9999 FEW007 BKN015 16/14 Q1014 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 700
+      },
+      {
+        "cover": "BKN",
+        "base": 1500
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T12:57:17.135Z",
+    "obsTime": 1777985700,
+    "reportTime": "2026-05-05T13:00:00.000Z",
+    "temp": 14,
+    "dewp": 6,
+    "wdir": 50,
+    "wspd": 13,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 051255Z 05013KT 020V080 9999 FEW030 14/06 Q1011 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 3000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T12:55:18.596Z",
+    "obsTime": 1777985400,
+    "reportTime": "2026-05-05T13:00:00.000Z",
+    "temp": 15,
+    "dewp": 13,
+    "wdir": 110,
+    "wspd": 5,
+    "visib": "6+",
+    "altim": 1014,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 051250Z 11005KT 9999 BKN015 15/13 Q1014 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 1500
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T12:27:15.432Z",
+    "obsTime": 1777983900,
+    "reportTime": "2026-05-05T12:25:00.000Z",
+    "temp": 14,
+    "dewp": 7,
+    "wdir": 50,
+    "wspd": 11,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 051225Z 05011KT 010V110 9999 FEW029 14/07 Q1011 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2900
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T12:25:26.787Z",
+    "obsTime": 1777983600,
+    "reportTime": "2026-05-05T12:20:00.000Z",
+    "temp": 15,
+    "dewp": 13,
+    "wdir": 130,
+    "wspd": 7,
+    "visib": "6+",
+    "altim": 1014,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 051220Z 13007KT 9999 FEW020 BKN035 15/13 Q1014 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2000
+      },
+      {
+        "cover": "BKN",
+        "base": 3500
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T11:57:13.264Z",
+    "obsTime": 1777982100,
+    "reportTime": "2026-05-05T12:00:00.000Z",
+    "temp": 14,
+    "dewp": 7,
+    "wdir": 50,
+    "wspd": 10,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 051155Z 05010KT 010V090 9999 FEW028 14/07 Q1011 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2800
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T11:55:36.301Z",
+    "obsTime": 1777981800,
+    "reportTime": "2026-05-05T12:00:00.000Z",
+    "temp": 15,
+    "dewp": 13,
+    "wdir": 150,
+    "wspd": 7,
+    "visib": "6+",
+    "altim": 1014,
+    "qcField": 16,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 051150Z 15007KT 9999 -RA BKN030 15/13 Q1014 RERA NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 3000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T11:27:13.202Z",
+    "obsTime": 1777980300,
+    "reportTime": "2026-05-05T11:25:00.000Z",
+    "temp": 14,
+    "dewp": 7,
+    "wdir": 40,
+    "wspd": 13,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 051125Z 04013KT 010V080 9999 FEW028 14/07 Q1011 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2800
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T11:26:04.128Z",
+    "obsTime": 1777980000,
+    "reportTime": "2026-05-05T11:20:00.000Z",
+    "temp": 14,
+    "dewp": 13,
+    "wdir": 150,
+    "wspd": 12,
+    "visib": "6+",
+    "altim": 1014,
+    "qcField": 16,
+    "wxString": "RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 051120Z 15012KT 9999 4000N RA FEW006 BKN020 14/13 Q1014 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 600
+      },
+      {
+        "cover": "BKN",
+        "base": 2000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T10:57:17.984Z",
+    "obsTime": 1777978500,
+    "reportTime": "2026-05-05T11:00:00.000Z",
+    "temp": 13,
+    "dewp": 7,
+    "wdir": 50,
+    "wspd": 12,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 051055Z 05012KT 020V090 9999 FEW027 13/07 Q1011 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2700
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T10:56:14.631Z",
+    "obsTime": 1777978200,
+    "reportTime": "2026-05-05T11:00:00.000Z",
+    "temp": 15,
+    "dewp": 13,
+    "wdir": 110,
+    "wspd": 4,
+    "visib": 1.86,
+    "altim": 1014,
+    "qcField": 0,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 051050Z 11004KT 070V140 3000 -RA BKN020 15/13 Q1014 TEMPO RA",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 2000
+      }
+    ],
+    "fltCat": "IFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T10:27:11.602Z",
+    "obsTime": 1777976700,
+    "reportTime": "2026-05-05T10:25:00.000Z",
+    "temp": 14,
+    "dewp": 7,
+    "wdir": 40,
+    "wspd": 11,
+    "visib": "6+",
+    "altim": 1012,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 051025Z 04011KT 360V090 9999 FEW025 14/07 Q1012 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2500
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T10:25:34.284Z",
+    "obsTime": 1777976400,
+    "reportTime": "2026-05-05T10:20:00.000Z",
+    "temp": 16,
+    "dewp": 12,
+    "wdir": 80,
+    "wspd": 3,
+    "visib": "6+",
+    "altim": 1014,
+    "qcField": 16,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 051020Z 08003KT 9999 -RA BKN030 16/12 Q1014 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 3000
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T09:57:16.250Z",
+    "obsTime": 1777974900,
+    "reportTime": "2026-05-05T10:00:00.000Z",
+    "temp": 13,
+    "dewp": 7,
+    "wdir": 40,
+    "wspd": 11,
+    "visib": "6+",
+    "altim": 1012,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 050955Z 04011KT 010V090 9999 FEW026 13/07 Q1012 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2600
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T09:55:33.404Z",
+    "obsTime": 1777974600,
+    "reportTime": "2026-05-05T10:00:00.000Z",
+    "temp": 17,
+    "dewp": 12,
+    "wdir": 90,
+    "wspd": 3,
+    "visib": "6+",
+    "altim": 1014,
+    "qcField": 16,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 050950Z 09003KT 9999 -RA BKN045 17/12 Q1014 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 4500
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T09:27:11.116Z",
+    "obsTime": 1777973100,
+    "reportTime": "2026-05-05T09:25:00.000Z",
+    "temp": 13,
+    "dewp": 6,
+    "wdir": 60,
+    "wspd": 14,
+    "visib": "6+",
+    "altim": 1012,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 050925Z 06014KT 020V090 9999 FEW026 13/06 Q1012 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2600
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T09:25:30.227Z",
+    "obsTime": 1777972800,
+    "reportTime": "2026-05-05T09:20:00.000Z",
+    "temp": 17,
+    "dewp": 12,
+    "wdir": "VRB",
+    "wspd": 2,
+    "visib": "6+",
+    "altim": 1014,
+    "qcField": 16,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 050920Z VRB02KT 9999 -RA BKN050 17/12 Q1014 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 5000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T08:57:25.602Z",
+    "obsTime": 1777971300,
+    "reportTime": "2026-05-05T09:00:00.000Z",
+    "temp": 12,
+    "dewp": 6,
+    "wdir": 40,
+    "wspd": 11,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 050855Z 04011KT 360V080 9999 FEW025 12/06 Q1011 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2500
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T08:55:31.663Z",
+    "obsTime": 1777971000,
+    "reportTime": "2026-05-05T09:00:00.000Z",
+    "temp": 17,
+    "dewp": 11,
+    "wdir": 350,
+    "wspd": 3,
+    "visib": "6+",
+    "altim": 1014,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 050850Z 35003KT 310V010 9999 BKN060 17/11 Q1014 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 6000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T08:27:11.361Z",
+    "obsTime": 1777969500,
+    "reportTime": "2026-05-05T08:25:00.000Z",
+    "temp": 12,
+    "dewp": 6,
+    "wdir": 30,
+    "wspd": 12,
+    "visib": "6+",
+    "altim": 1011,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 050825Z 03012KT 350V060 9999 FEW022 12/06 Q1011 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 2200
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T08:25:32.020Z",
+    "obsTime": 1777969200,
+    "reportTime": "2026-05-05T08:20:00.000Z",
+    "temp": 17,
+    "dewp": 12,
+    "wdir": 250,
+    "wspd": 4,
+    "visib": "6+",
+    "altim": 1014,
+    "qcField": 16,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 050820Z 25004KT 220V290 9999 -RA BKN070 17/12 Q1014 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 7000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T07:57:23.568Z",
+    "obsTime": 1777967700,
+    "reportTime": "2026-05-05T08:00:00.000Z",
+    "temp": 12,
+    "dewp": 6,
+    "wdir": 30,
+    "wspd": 10,
+    "visib": "6+",
+    "altim": 1012,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 050755Z 03010KT 340V130 9999 FEW019 SCT022 12/06 Q1012 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "SCT",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1900
+      },
+      {
+        "cover": "SCT",
+        "base": 2200
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T07:55:41.121Z",
+    "obsTime": 1777967400,
+    "reportTime": "2026-05-05T08:00:00.000Z",
+    "temp": 17,
+    "dewp": 11,
+    "wdir": 230,
+    "wspd": 6,
+    "visib": "6+",
+    "altim": 1014,
+    "qcField": 16,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 050750Z 23006KT 9999 -RA BKN070 17/11 Q1014 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 7000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T07:27:11.518Z",
+    "obsTime": 1777965900,
+    "reportTime": "2026-05-05T07:25:00.000Z",
+    "temp": 11,
+    "dewp": 6,
+    "wdir": 20,
+    "wspd": 11,
+    "visib": "6+",
+    "altim": 1012,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 050725Z 02011KT 330V100 9999 FEW015 BKN023 11/06 Q1012 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1500
+      },
+      {
+        "cover": "BKN",
+        "base": 2300
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T07:25:19.754Z",
+    "obsTime": 1777965600,
+    "reportTime": "2026-05-05T07:20:00.000Z",
+    "temp": 18,
+    "dewp": 11,
+    "wdir": 210,
+    "wspd": 6,
+    "visib": "6+",
+    "altim": 1014,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 050720Z 21006KT 9999 BKN070 18/11 Q1014 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 7000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T06:57:18.195Z",
+    "obsTime": 1777964100,
+    "reportTime": "2026-05-05T07:00:00.000Z",
+    "temp": 11,
+    "dewp": 7,
+    "wdir": 30,
+    "wspd": 7,
+    "visib": "6+",
+    "altim": 1012,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 050655Z 03007KT 310V090 9999 FEW014 BKN021 11/07 Q1012 NOSIG",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1400
+      },
+      {
+        "cover": "BKN",
+        "base": 2100
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T06:55:29.676Z",
+    "obsTime": 1777963800,
+    "reportTime": "2026-05-05T07:00:00.000Z",
+    "temp": 17,
+    "dewp": 12,
+    "wdir": 190,
+    "wspd": 4,
+    "visib": "6+",
+    "altim": 1014,
+    "qcField": 16,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 050650Z 19004KT 9999 -RA BKN070 17/12 Q1014 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "BKN",
+        "base": 7000
+      }
+    ],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T06:28:04.405Z",
+    "obsTime": 1777962300,
+    "reportTime": "2026-05-05T06:25:00.000Z",
+    "temp": 10,
+    "dewp": 7,
+    "wdir": 40,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1012,
+    "qcField": 0,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 050625Z 04008KT 360V090 9999 FEW015 BKN018 10/07 Q1012 BECMG BKN021",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1500
+      },
+      {
+        "cover": "BKN",
+        "base": 1800
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T06:25:21.676Z",
+    "obsTime": 1777962000,
+    "reportTime": "2026-05-05T06:20:00.000Z",
+    "temp": 16,
+    "dewp": 14,
+    "wdir": 70,
+    "wspd": 4,
+    "visib": "6+",
+    "altim": 1014,
+    "qcField": 16,
+    "wxString": "-RA",
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 050620Z 07004KT 040V120 9999 -RA NSC 16/14 Q1014 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "CLR",
+    "clouds": [],
+    "fltCat": "VFR"
+  },
+  {
+    "icaoId": "EHAM",
+    "receiptTime": "2026-05-05T05:58:16.285Z",
+    "obsTime": 1777960500,
+    "reportTime": "2026-05-05T06:00:00.000Z",
+    "temp": 10,
+    "dewp": 6,
+    "wdir": 30,
+    "wspd": 8,
+    "visib": "6+",
+    "altim": 1012,
+    "qcField": 0,
+    "metarType": "METAR",
+    "rawOb": "METAR EHAM 050555Z 03008KT 360V080 9999 FEW014 BKN017 10/06 Q1012 BECMG BKN021",
+    "lat": 52.315,
+    "lon": 4.79,
+    "elev": -2,
+    "name": "Amsterdam/Schiphol Arpt, NH, NL",
+    "cover": "BKN",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1400
+      },
+      {
+        "cover": "BKN",
+        "base": 1700
+      }
+    ],
+    "fltCat": "MVFR"
+  },
+  {
+    "icaoId": "LIPZ",
+    "receiptTime": "2026-05-05T05:55:27.410Z",
+    "obsTime": 1777960200,
+    "reportTime": "2026-05-05T06:00:00.000Z",
+    "temp": 16,
+    "dewp": 14,
+    "wdir": 60,
+    "wspd": 7,
+    "visib": "6+",
+    "altim": 1013,
+    "qcField": 16,
+    "metarType": "METAR",
+    "rawOb": "METAR LIPZ 050550Z 06007KT 9999 FEW010 16/14 Q1013 NOSIG",
+    "lat": 45.505,
+    "lon": 12.352,
+    "elev": 3,
+    "name": "Venice/Polo Arpt, VE, IT",
+    "cover": "FEW",
+    "clouds": [
+      {
+        "cover": "FEW",
+        "base": 1000
+      }
+    ],
+    "fltCat": "VFR"
+  }
+]
