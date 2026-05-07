@@ -14,8 +14,11 @@ Case study: **easyJet U27815, AMS → VCE, 6 May 2026** — see
 | `fr24_analyze.py` | Resolves a flight number on a date to an FR24 record, fetches the full track, runs phase / level-off / go-around / lateral-deviation detection. |
 | `weather.py` | Pulls METARs for two ICAOs (last 48 h window) and parses out wind, visibility and significant phenomena (TS, CB, WS, etc). |
 | `correlate.py` | Joins the FR24 track to the METAR timeline and produces a stdout report plus `data/timeline.json`. |
-| `report.md` | Human-readable narrative for U27815. |
-| `data/` | Raw API responses + derived JSON. Not committed (see `.gitignore`). |
+| `descent_profile.py` | Renders an ASCII altitude profile of the descent + approach phases (saved to `data/descent_profile.txt`). |
+| `report.md` | Human-readable narrative for U27815 (English, technical). |
+| `descent-analysis.md` | Drill-down analysis of the 75-minute descent, level-offs, microburst signature, hold geometry. |
+| `report-it.md` | Plain-language Italian report for non-technical readers. |
+| `data/` | Raw API responses + derived JSON + ASCII profile. |
 
 ## Running
 

@@ -1,0 +1,46 @@
+{
+  "segments": [
+    {
+      "phase": "top_of_cruise",
+      "time": "2026-05-06T12:28:33Z",
+      "alt": 39000,
+      "gs": 436
+    },
+    {
+      "phase": "top_of_descent",
+      "time": "2026-05-06T12:48:52Z",
+      "alt": 38950,
+      "gs": 440
+    },
+    {
+      "phase": "level_at_FL370",
+      "start": "2026-05-06T12:51:32Z",
+      "end": "2026-05-06T12:57:45Z",
+      "duration_s": 373
+    },
+    {
+      "phase": "level_at_FL290",
+      "start": "2026-05-06T13:02:54Z",
+      "end": "2026-05-06T13:08:22Z",
+      "duration_s": 328
+    },
+    {
+      "phase": "level_at_8000ft",
+      "start": "2026-05-06T13:28:41Z",
+      "end": "2026-05-06T13:33:08Z",
+      "duration_s": 267
+    },
+    {
+      "phase": "level_at_6100ft (post-GA)",
+      "start": "2026-05-06T13:43:15Z",
+      "end": "2026-05-06T13:46:35Z",
+      "duration_s": 200
+    },
+    {
+      "phase": "level_at_4100ft (vector)",
+      "start": "2026-05-06T13:55:46Z",
+      "end": "2026-05-06T13:59:24Z",
+      "duration_s": 218
+    }
+  ]
+}
