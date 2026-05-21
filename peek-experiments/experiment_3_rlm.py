@@ -29,9 +29,9 @@ import argparse
 
 from peek import CachePolicy
 
-from claude_code_client import ClaudeCodeClient
+from claude_code_client import ClaudeCodeClient, ClaudeCodeError
 from corpus import build_corpus
-from rlm_agent import RLMAgent
+from rlm_agent import RLMAgent, RLMResult
 
 # Facts use deliberately non-standard values (19 weeks, 23 days, $685, 13) so
 # the agent cannot shortcut with a plausible guess -- it must read the corpus.
@@ -71,6 +71,17 @@ def correct(answer: str, expect: str) -> bool:
     return expect.lower() in answer.lower()
 
 
+def safe_run(agent: RLMAgent, question: str, context: str, context_map: str) -> RLMResult:
+    """Run the agent, turning a persistent CLI failure into a sentinel result
+    so one flaky call cannot abort the whole comparison."""
+    try:
+        return agent.run(question=question, context=context, context_map=context_map)
+    except ClaudeCodeError as e:
+        print(f"      !! agent run failed after retries: {e}")
+        return RLMResult(answer="(failed)", trajectory="", iterations=0,
+                         turns=0, stopped="error")
+
+
 def main(*, n_questions: int, model: str | None, max_iters: int) -> None:
     questions = QUESTIONS[:n_questions]
     corpus = build_corpus()
@@ -91,7 +102,7 @@ def main(*, n_questions: int, model: str | None, max_iters: int) -> None:
     baseline = []
     for idx, item in enumerate(questions, start=1):
         print(f"\n  Q{idx}: {item['q']}")
-        res = agent.run(question=item["q"], context=corpus, context_map="")
+        res = safe_run(agent, item["q"], corpus, context_map="")
         ok = correct(res.answer, item["expect"])
         print(f"      -> {res.turns} turns, answer={res.answer[:80]!r}  [{'OK' if ok else 'WRONG'}]")
         baseline.append((res, ok))
@@ -110,11 +121,15 @@ def main(*, n_questions: int, model: str | None, max_iters: int) -> None:
         print(f"\n  Q{idx}: {item['q']}")
         print(f"      map in : {items_before} items, "
               f"{policy.token_counter(map_text)} tokens")
-        res = agent.run(question=item["q"], context=corpus, context_map=map_text)
+        res = safe_run(agent, item["q"], corpus, context_map=map_text)
         ok = correct(res.answer, item["expect"])
         print(f"      -> {res.turns} turns, answer={res.answer[:80]!r}  [{'OK' if ok else 'WRONG'}]")
-        print("      distilling trajectory into the map (Distiller + Cartographer)...")
-        policy.update(trajectory=res.trajectory, question=item["q"])
+        if res.stopped != "error" and res.trajectory:
+            print("      distilling trajectory into the map (Distiller + Cartographer)...")
+            try:
+                policy.update(trajectory=res.trajectory, question=item["q"])
+            except ClaudeCodeError as e:
+                print(f"      !! distillation failed after retries: {e}")
         peek.append((res, ok, items_before, len(policy.cmap.items())))
 
     # ----- comparison -------------------------------------------------------
@@ -122,25 +137,34 @@ def main(*, n_questions: int, model: str | None, max_iters: int) -> None:
     print(f"{'#':<3}{'question':<30}{'BASELINE':>18}{'PEEK':>18}{'map':>12}")
     print(f"{'':<3}{'':<30}{'turns  answer':>18}{'turns  answer':>18}{'items':>12}")
     print("-" * 81)
-    b_turns = p_turns = 0
+    b_turns = p_turns = comparable = 0
     for idx, item in enumerate(questions):
         (b_res, b_ok) = baseline[idx]
         (p_res, p_ok, m_before, m_after) = peek[idx]
-        b_turns += b_res.turns
-        p_turns += p_res.turns
+        both_ran = b_res.stopped != "error" and p_res.stopped != "error"
+        if both_ran:
+            b_turns += b_res.turns
+            p_turns += p_res.turns
+            comparable += 1
+        b_cell = "n/a" if b_res.stopped == "error" else str(b_res.turns)
+        p_cell = "n/a" if p_res.stopped == "error" else str(p_res.turns)
         print(
             f"{idx + 1:<3}{item['label']:<30}"
-            f"{b_res.turns:>6}  {'ok' if b_ok else 'WRONG':<9}"
-            f"{p_res.turns:>6}  {'ok' if p_ok else 'WRONG':<9}"
+            f"{b_cell:>6}  {'ok' if b_ok else 'WRONG':<9}"
+            f"{p_cell:>6}  {'ok' if p_ok else 'WRONG':<9}"
             f"{m_before:>5}->{m_after:<5}"
         )
     print("-" * 81)
-    print(f"{'':<3}{'TOTAL turns':<30}{b_turns:>6}{'':<11}{p_turns:>6}")
-    if b_turns:
+    if comparable:
+        print(f"{'':<3}{'TOTAL turns (' + str(comparable) + ' comparable Qs)':<30}"
+              f"{b_turns:>6}{'':<11}{p_turns:>6}")
         delta = b_turns - p_turns
-        pct = 100.0 * delta / b_turns
+        pct = 100.0 * delta / b_turns if b_turns else 0.0
         print(f"\n  PEEK used {p_turns} turns vs baseline {b_turns} "
-              f"-- {delta:+d} turns ({pct:+.0f}%).")
+              f"-- {delta:+d} turns ({pct:+.0f}%) over {comparable} question(s) "
+              "that completed in both conditions.")
+    else:
+        print("  No question completed in both conditions -- nothing to compare.")
     b_correct = sum(ok for _, ok in baseline)
     p_correct = sum(ok for _, ok, _, _ in peek)
     print(f"  Answers correct: baseline {b_correct}/{len(questions)}, "

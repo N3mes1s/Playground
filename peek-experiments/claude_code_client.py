@@ -25,6 +25,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 
 from peek.core.types import Usage
 
@@ -48,6 +49,10 @@ class ClaudeCodeClient:
         ``"sonnet"``). ``None`` uses the CLI's default model.
     timeout:
         Per-call subprocess timeout, in seconds.
+    retries:
+        Number of extra attempts if a call times out or errors. The `claude`
+        CLI occasionally hangs or returns a transient error; a fresh process
+        usually succeeds.
     system_prompt:
         Replaces Claude Code's default (coding-agent) system prompt.
     claude_bin:
@@ -60,7 +65,8 @@ class ClaudeCodeClient:
         self,
         model: str | None = None,
         *,
-        timeout: float = 300.0,
+        timeout: float = 150.0,
+        retries: int = 2,
         system_prompt: str = _DEFAULT_SYSTEM_PROMPT,
         claude_bin: str = "claude",
         verbose: bool = False,
@@ -80,6 +86,7 @@ class ClaudeCodeClient:
         os.makedirs(self._workdir, exist_ok=True)
         self.model = model
         self.timeout = timeout
+        self.retries = retries
         self.system_prompt = system_prompt
         self.verbose = verbose
         self.calls = 0
@@ -105,6 +112,20 @@ class ClaudeCodeClient:
         if self.verbose:
             print(f"    [claude-code call #{self.calls}: {len(prompt)} prompt chars ...]")
 
+        last_err: ClaudeCodeError | None = None
+        for attempt in range(self.retries + 1):
+            try:
+                return self._invoke(prompt)
+            except ClaudeCodeError as e:
+                last_err = e
+                if attempt < self.retries:
+                    if self.verbose:
+                        print(f"    [attempt {attempt + 1} failed ({e}); retrying ...]")
+                    time.sleep(2 * (attempt + 1))
+        assert last_err is not None
+        raise last_err
+
+    def _invoke(self, prompt: str) -> str:
         try:
             proc = subprocess.run(
                 self._argv(),
