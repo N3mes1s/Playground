@@ -86,8 +86,10 @@ class RLMAgent:
         if context_map.strip():
             map_block = (
                 "\nYou also have a CONTEXT MAP: orientation knowledge cached from "
-                "earlier tasks on this SAME context. Trust it to navigate faster "
-                "instead of rediscovering structure.\n"
+                "earlier tasks on this SAME context. Use it to jump straight to the "
+                "right region instead of rediscovering structure. The map is a "
+                "navigation aid only -- it may be incomplete or mistaken, so always "
+                "confirm the actual answer by reading `context` itself.\n"
                 "<<<CONTEXT MAP>>>\n"
                 f"{context_map.strip()}\n"
                 "<<<END CONTEXT MAP>>>\n"
@@ -113,8 +115,10 @@ class RLMAgent:
             "typical real-world policy. You MUST locate the answer inside "
             "`context` and verify it before answering -- never answer from prior "
             "knowledge, memory, or assumption.\n"
-            "- When you have verified the answer in `context`, reply with NO code "
-            "block and a single line:\n"
+            "- You MUST run at least one code block and see real REPL output from "
+            "`context` before you may answer. Never emit FINAL on your first turn.\n"
+            "- When (and only when) you have verified the answer in `context`, "
+            "reply with NO code block and a single line:\n"
             "  FINAL: <your answer>\n"
             "- Be efficient: use as few turns as possible.\n\n"
             f"QUESTION: {question}\n"
@@ -130,6 +134,17 @@ class RLMAgent:
         system = self._system(question, len(context), context_map)
         transcript: list[str] = []
         turns = 0
+        execs = 0      # code blocks actually run against `context`
+        nudges = 0     # premature-FINAL rejections (capped, to avoid a loop)
+
+        def _result(answer: str, stopped: str) -> RLMResult:
+            return RLMResult(
+                answer=answer,
+                trajectory=f"QUESTION: {question}\n\n" + "\n\n".join(transcript),
+                iterations=execs,
+                turns=turns,
+                stopped=stopped,
+            )
 
         for i in range(1, self.max_iterations + 1):
             prompt = system
@@ -142,33 +157,33 @@ class RLMAgent:
 
             code_match = _CODE_BLOCK.search(reply)
             if not code_match:
-                # No code block => this turn is the final answer.
                 final = _FINAL.search(reply)
                 answer = (final.group(1) if final else reply).strip()
+                # An RLM must read its external context. Reject an answer given
+                # before any search -- otherwise the model just guesses (and a
+                # prepended context map makes that far more tempting).
+                if execs == 0 and nudges < 2:
+                    nudges += 1
+                    if self.verbose:
+                        print(f"      turn {i}: premature FINAL rejected (no search yet)")
+                    transcript.append(
+                        f"[Turn {i}] You answered without running any code:\n{answer}\n"
+                        "REJECTED: you have not inspected `context` yet. Run at least "
+                        "one code block that searches `context` and base your answer "
+                        "strictly on the real output."
+                    )
+                    continue
                 if self.verbose:
                     print(f"      turn {i}: FINAL")
                 transcript.append(f"[FINAL]\n{answer}")
-                return RLMResult(
-                    answer=answer,
-                    trajectory=f"QUESTION: {question}\n\n" + "\n\n".join(transcript),
-                    iterations=i - 1,
-                    turns=turns,
-                    stopped="final",
-                )
+                return _result(answer, "final")
 
             code = code_match.group(1).strip()
             output = self._truncate(_run_code(code, namespace, self.exec_timeout_s))
+            execs += 1
             if self.verbose:
                 first = code.splitlines()[0] if code.splitlines() else ""
                 print(f"      turn {i}: exec  | {first[:70]}")
-            transcript.append(
-                f"[Turn {i}]\nCODE:\n{code}\nREPL OUTPUT:\n{output}"
-            )
+            transcript.append(f"[Turn {i}]\nCODE:\n{code}\nREPL OUTPUT:\n{output}")
 
-        return RLMResult(
-            answer="(no answer - hit max iterations)",
-            trajectory=f"QUESTION: {question}\n\n" + "\n\n".join(transcript),
-            iterations=self.max_iterations,
-            turns=turns,
-            stopped="max_iters",
-        )
+        return _result("(no answer - hit max iterations)", "max_iters")
