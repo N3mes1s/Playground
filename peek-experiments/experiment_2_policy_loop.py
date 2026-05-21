@@ -12,15 +12,23 @@ external context -- a fictional ~41k-char "ACME Corp 2026 Employee Handbook".
 Watch the context map bootstrap itself from empty, self-correct a misleading
 entry, and then get squeezed by the token budget.
 
-Run:  python experiment_2_policy_loop.py
+Two backends:
+  python experiment_2_policy_loop.py            # offline scripted LM (default)
+  python experiment_2_policy_loop.py --live     # real LM via the `claude` CLI
+
+In --live mode the canned scripts below are ignored: the Distiller and
+Cartographer are driven by an actual model through ClaudeCodeClient, so the
+diagnoses, tags, and edits are genuine (and non-deterministic).
 """
 
 from __future__ import annotations
 
-import json
+import argparse
 
 from peek import CachePolicy
+from peek._io import extract_json
 
+from claude_code_client import ClaudeCodeClient
 from scripted_client import ScriptedLMClient, id_of, tags_for
 
 TOKEN_BUDGET = 440
@@ -272,10 +280,18 @@ def banner(text: str) -> None:
     print("=" * 74)
 
 
-def main() -> None:
-    banner("PEEK CACHE-POLICY LOOP  --  scripted LM, real PEEK control flow")
+def main(*, live: bool = False, model: str | None = None) -> None:
+    if live:
+        banner("PEEK CACHE-POLICY LOOP  --  live LM via the `claude` CLI")
+        client: ScriptedLMClient | ClaudeCodeClient = ClaudeCodeClient(
+            model=model, verbose=True
+        )
+        backend = f"live (Claude Code CLI{', model=' + model if model else ''})"
+    else:
+        banner("PEEK CACHE-POLICY LOOP  --  scripted LM, real PEEK control flow")
+        client = ScriptedLMClient(DISTILLER_SCRIPT, CARTOGRAPHER_SCRIPT)
+        backend = "scripted (offline stub)"
 
-    client = ScriptedLMClient(DISTILLER_SCRIPT, CARTOGRAPHER_SCRIPT)
     policy = CachePolicy(
         client=client,
         token_budget=TOKEN_BUDGET,
@@ -284,6 +300,7 @@ def main() -> None:
     tok = policy.token_counter
     assert tok is not None
 
+    print(f"backend = {backend}")
     print(f"token_budget = {TOKEN_BUDGET}    evolve_steps = {EVOLVE_STEPS}")
     print(f"initial map: {len(policy.cmap.items())} items, {tok(policy.current_map_text)} tokens")
 
@@ -306,8 +323,17 @@ def main() -> None:
             continue
 
         ids_after = policy.cmap.item_ids()
-        cart = json.loads(result.cartographer_raw)
-        deleted = {o["item_id"] for o in cart["operations"] if o["type"] == "DELETE"}
+        # cartographer_raw is the model's raw text -- pure JSON from the scripted
+        # stub, but often fenced/prefaced by a live model. extract_json (PEEK's
+        # own helper) copes with both, so eviction and Cartographer DELETEs can
+        # be told apart for the per-step report.
+        cart = extract_json(result.cartographer_raw)
+        cart_ops = cart.get("operations", []) if isinstance(cart, dict) else []
+        deleted = {
+            o["item_id"]
+            for o in cart_ops
+            if isinstance(o, dict) and o.get("type") == "DELETE" and o.get("item_id")
+        }
         removed = set(ids_before) - set(ids_after)
         evicted = removed - deleted
         total_in += result.usage.input_tokens
@@ -331,7 +357,8 @@ def main() -> None:
     banner("RUN SUMMARY")
     print(f"LM calls            : {client.calls} "
           f"(2 per evolving step x {EVOLVE_STEPS} steps)")
-    print(f"scripted token usage: {total_in} in / {total_out} out")
+    usage_label = "real token usage" if live else "scripted token usage"
+    print(f"{usage_label:20s}: {total_in} in / {total_out} out")
     print(f"final map           : {len(policy.cmap.items())} items, "
           f"{tok(policy.current_map_text)}/{TOKEN_BUDGET} tokens")
     print(f"final scores        : {policy.scores}")
@@ -352,4 +379,18 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="drive the Distiller/Cartographer with a real model via the "
+        "`claude` CLI instead of the offline scripted stub",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="model alias/name for --live mode (e.g. 'opus', 'sonnet'); "
+        "defaults to the claude CLI's default model",
+    )
+    args = parser.parse_args()
+    main(live=args.live, model=args.model)

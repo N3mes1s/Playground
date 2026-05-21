@@ -45,34 +45,80 @@ policy.save("maps/my-corpus.peek.json")
 
 ## The experiments
 
-PEEK needs an LLM for the Distiller and Cartographer, and this sandbox has no
-API key. So `scripted_client.py` provides a **`ScriptedLMClient`** — a stub
-that satisfies `LMClient` and replays pre-programmed Distiller/Cartographer
-JSON. PEEK's README explicitly endorses "a local stub" as a valid client.
-Everything *except* the model is the genuine PEEK code: JSON extraction,
-`ContextMap.apply`, scoring, the Evictor, the freeze, `save`/`load`.
+PEEK needs an LLM behind the `LMClient` protocol for the Distiller and
+Cartographer. This directory provides **two** ways to satisfy it, neither of
+which needs a PEEK-managed API key:
+
+- **`ScriptedLMClient`** (`scripted_client.py`) — an offline stub that replays
+  pre-programmed Distiller/Cartographer JSON. Deterministic; the run is the
+  same every time. PEEK's README explicitly endorses "a local stub".
+- **`ClaudeCodeClient`** (`claude_code_client.py`) — routes each completion
+  through the local **`claude` CLI** (Claude Code) in non-interactive print
+  mode. A real model does the distilling and cartography; no API key of its
+  own — it reuses whatever auth the Claude Code install already has.
+
+Either way, everything *except* the model is the genuine PEEK code: JSON
+extraction, `ContextMap.apply`, scoring, the Evictor, the freeze, `save`/`load`.
 
 | File | What it does |
 |------|--------------|
 | `scripted_client.py` | The offline `LMClient` stub + small helpers (`map_ids`, `id_of`, `tags_for`). |
+| `claude_code_client.py` | A live `LMClient` that shells out to the `claude` CLI. Run it directly for a one-call self-test. |
 | `experiment_1_mechanics.py` | The **deterministic layer**, no LLM: `ContextMap` ADD/REPLACE/DELETE, stable IDs, the scoring convention, and a narrated priority-eviction run. |
-| `experiment_2_policy_loop.py` | The **full `CachePolicy` loop** driven by the scripted LM: an RLM agent answers 5 questions about a fictional ~41k-char employee handbook; the map bootstraps from empty, self-corrects, hits the budget, then freezes. |
+| `experiment_2_policy_loop.py` | The **full `CachePolicy` loop**: an RLM agent answers 5 questions about a fictional ~41k-char employee handbook; the map bootstraps from empty, self-corrects, hits the budget, then freezes. Runs against either backend. |
 
 ## Run it
 
 ```bash
 pip install -r requirements.txt          # installs peek-ai from GitHub + tiktoken
 cd peek-experiments
-python experiment_1_mechanics.py
-python experiment_2_policy_loop.py        # writes output/acme-handbook.peek.json
+
+python experiment_1_mechanics.py          # deterministic layer, no LLM
+
+python experiment_2_policy_loop.py        # offline scripted LM (default, instant)
+python experiment_2_policy_loop.py --live # real LM via the `claude` CLI
+python experiment_2_policy_loop.py --live --model opus   # pick the model
+
+python claude_code_client.py              # one-call self-test of the live client
 
 # (optional) PEEK's own test suite — 10 tests, all green
 pip install peek-ai[test] && pytest --pyargs peek   # or: pytest tests/ in a peek checkout
 ```
 
+### Live mode — using this Claude Code instance as the LLM
+
+`ClaudeCodeClient` makes PEEK run with no API key by treating the local
+`claude` binary as the model endpoint. Each `completion()` call runs:
+
+```
+claude -p --output-format json --tools "" --no-session-persistence \
+       --strict-mcp-config --system-prompt "<minimal>"
+```
+
+feeding the prompt on stdin and reading the `result` + `usage` fields back out
+of the JSON envelope. Built-in tools are disabled and the coding-agent system
+prompt is replaced, so the call behaves as a plain text completion.
+
+Two practical wrinkles the client handles:
+
+- **It runs the subprocess from an empty, non-git temp directory.** Project
+  `CLAUDE.md`, settings, and *Stop hooks* are discovered from the cwd; the web
+  harness's "uncommitted work" Stop hook would otherwise fire and overwrite the
+  completion with git advice.
+- **It does not use `--bare`.** `--bare` skips hooks (which would also fix the
+  above) but forces API-key auth — broken in environments that authenticate
+  another way. Running from a neutral cwd isolates hooks without touching auth.
+
+`--live` runs are real: ~8 model calls per run, non-deterministic, and they
+cost tokens. The map that emerges will differ from the scripted narrative
+below — e.g. a real Cartographer tends to favour compact `REPLACE`s and may
+never hit the token budget.
+
 ## What the experiments show
 
-Experiment 2 walks a context map through its whole life cycle:
+Experiment 2 (default **scripted** backend) walks a context map through its
+whole life cycle — the scripted run is deterministic, so these numbers are
+exact every time:
 
 ```
 STEP 1  bootstrap     map empty -> Cartographer ADDs 3 roadmap items   (104 -> 214 tok)
@@ -108,6 +154,13 @@ Three behaviours worth calling out:
 
 See the script output for the full per-step trace and the final context map.
 
+Running the same experiment with `--live` confirms the loop behaves the same
+way with a real model in the seat: the map still bootstraps from empty,
+self-corrects the misleading Ch.9 pointer, and freezes after `evolve_steps` —
+but the exact items, tags, and token counts differ run to run, and a real
+Cartographer tends to keep the map compact enough that the Evictor never
+triggers.
+
 ## Notes
 
 - PEEK's Distiller prompt is written for **RLM** (Recursive Language Model)
@@ -116,4 +169,6 @@ See the script output for the full per-step trace and the final context map.
   not actually tied to that agent shape.
 - `peek-ai` is not on PyPI yet; `requirements.txt` installs it from the Git
   repo. The package is small (core depends only on `tiktoken`).
+- `--live` mode needs the `claude` CLI on `PATH` (it is, inside Claude Code on
+  the web). It is unrelated to the `peek-ai` install and needs no extra deps.
 - `output/` is git-ignored — it only holds the regenerated saved map.
