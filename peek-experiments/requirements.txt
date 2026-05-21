@@ -1,0 +1,6 @@
+# PEEK ("peek-ai") is not on PyPI yet -- install it straight from the repo.
+# This pulls in tiktoken (the default token counter) transitively.
+peek-ai @ git+https://github.com/zhuohangu/peek.git
+
+# Optional: only needed to run PEEK's own unit test suite.
+pytest>=8.0.0
