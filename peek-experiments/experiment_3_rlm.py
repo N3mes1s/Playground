@@ -1,31 +1,32 @@
-"""Experiment 3 -- PEEK end to end with a real RLM agent (the missing half).
+"""Experiment 3 -- PEEK end to end with a real RLM agent, measured over N runs.
 
-Experiments 1 and 2 exercise PEEK's machinery but feed it *canned* trajectories.
-This one closes the loop. A real RLM agent (``rlm_agent.RLMAgent``) actually
-explores a real ~71k-char long context (``corpus.build_corpus``) by running code
-in a REPL, and PEEK's ``CachePolicy`` distills each genuine trajectory into the
-context map.
+Experiments 1 and 2 exercise PEEK's machinery on *canned* trajectories. This
+one closes the loop: a real RLM agent (``rlm_agent.RLMAgent``) actually explores
+a real ~72k-char long context (``corpus.build_corpus``) by running code in a
+REPL, and PEEK's ``CachePolicy`` distills each genuine trajectory into the map.
 
-It answers the same question stream twice and compares:
+Each run answers the same question stream twice:
 
   * BASELINE -- every question answered with NO context map.
   * PEEK     -- the map evolves across questions and is prepended to each run.
 
-Headline metric: model turns per question. PEEK should cut the orientation
-turns once the chapter index has been distilled into the map. Answers are
-checked against known facts so a turn saving is only meaningful if the agent
-still gets the answer right.
+Because a real model is non-deterministic, a single run is just noise. This
+script repeats the whole baseline/PEEK comparison ``--runs`` times and reports
+per-question means and a paired (PEEK - baseline) total delta with its spread,
+so the comparison is something you can actually read a signal off of (n
+permitting).
 
-Needs the `claude` CLI (a real model). This makes dozens of model calls.
+Needs the `claude` CLI. This makes a LOT of model calls -- roughly 33 per run.
 
-  python experiment_3_rlm.py                 # all 4 questions, both conditions
-  python experiment_3_rlm.py --questions 2   # shorter / cheaper smoke run
-  python experiment_3_rlm.py --model opus
+  python experiment_3_rlm.py                    # 3 runs, 4 questions
+  python experiment_3_rlm.py --runs 5           # more runs = tighter estimate
+  python experiment_3_rlm.py --runs 1 --questions 2   # quick smoke check
 """
 
 from __future__ import annotations
 
 import argparse
+import statistics
 
 from peek import CachePolicy
 
@@ -73,117 +74,152 @@ def correct(answer: str, expect: str) -> bool:
 
 def safe_run(agent: RLMAgent, question: str, context: str, context_map: str) -> RLMResult:
     """Run the agent, turning a persistent CLI failure into a sentinel result
-    so one flaky call cannot abort the whole comparison."""
+    so one flaky call cannot abort the whole multi-run comparison."""
     try:
         return agent.run(question=question, context=context, context_map=context_map)
     except ClaudeCodeError as e:
-        print(f"      !! agent run failed after retries: {e}")
+        print(f"        !! agent run failed after retries: {e}")
         return RLMResult(answer="(failed)", trajectory="", iterations=0,
                          turns=0, stopped="error")
 
 
-def main(*, n_questions: int, model: str | None, max_iters: int) -> None:
+def one_pass(
+    agent: RLMAgent,
+    questions: list[dict],
+    corpus: str,
+    policy: CachePolicy | None,
+    *,
+    tag: str,
+) -> list[tuple[RLMResult, bool]]:
+    """One sweep over every question. ``policy=None`` is the baseline (no map);
+    otherwise the map is prepended and updated from each trajectory."""
+    rows: list[tuple[RLMResult, bool]] = []
+    for idx, item in enumerate(questions, start=1):
+        map_text = policy.current_map_text if policy is not None else ""
+        map_note = f" (map: {len(policy.cmap.items())} items)" if policy is not None else ""
+        print(f"    {tag} Q{idx}{map_note}")
+        res = safe_run(agent, item["q"], corpus, map_text)
+        ok = correct(res.answer, item["expect"])
+        flag = "FAILED" if res.stopped == "error" else ("ok" if ok else "WRONG")
+        print(f"        -> {res.turns} turns [{flag}]  answer={res.answer[:60]!r}")
+        if policy is not None and res.stopped != "error" and res.trajectory:
+            try:
+                policy.update(trajectory=res.trajectory, question=item["q"])
+            except ClaudeCodeError as e:
+                print(f"        !! distillation failed after retries: {e}")
+        rows.append((res, ok))
+    return rows
+
+
+def _fmt(values: list[int]) -> str:
+    """mean and range of a list of turn counts, for the aggregate table."""
+    if not values:
+        return "n/a"
+    mean = statistics.mean(values)
+    if min(values) == max(values):
+        return f"{mean:>4.1f}  ({min(values)})"
+    return f"{mean:>4.1f}  ({min(values)}-{max(values)})"
+
+
+def main(*, n_questions: int, runs: int, model: str | None, max_iters: int) -> None:
     questions = QUESTIONS[:n_questions]
     corpus = build_corpus()
 
     banner("EXPERIMENT 3 -- PEEK end to end with a real RLM agent")
     print(f"corpus      : {len(corpus):,} chars, 9 chapters")
-    print(f"questions   : {len(questions)}")
+    print(f"questions   : {len(questions)}   runs: {runs}")
     print(f"agent model : {model or 'claude CLI default'}   max_iterations={max_iters}")
 
-    agent = RLMAgent(
-        ClaudeCodeClient(model=model),
-        max_iterations=max_iters,
-        verbose=True,
-    )
+    agent_client = ClaudeCodeClient(model=model)
+    peek_client = ClaudeCodeClient(model=model)
+    agent = RLMAgent(agent_client, max_iterations=max_iters, verbose=True)
 
-    # ----- BASELINE: no context map, ever -----------------------------------
-    banner("CONDITION A -- BASELINE (no context map)")
-    baseline = []
-    for idx, item in enumerate(questions, start=1):
-        print(f"\n  Q{idx}: {item['q']}")
-        res = safe_run(agent, item["q"], corpus, context_map="")
-        ok = correct(res.answer, item["expect"])
-        print(f"      -> {res.turns} turns, answer={res.answer[:80]!r}  [{'OK' if ok else 'WRONG'}]")
-        baseline.append((res, ok))
+    # all_baseline[run][question] = (RLMResult, ok); same shape for all_peek.
+    all_baseline: list[list[tuple[RLMResult, bool]]] = []
+    all_peek: list[list[tuple[RLMResult, bool]]] = []
+    last_policy: CachePolicy | None = None
 
-    # ----- PEEK: the map evolves across the question stream -----------------
-    banner("CONDITION B -- PEEK (context map evolves across questions)")
-    policy = CachePolicy(
-        client=ClaudeCodeClient(model=model),
-        token_budget=TOKEN_BUDGET,
-        evolve_steps=None,  # evolve on every question
-    )
-    peek = []
-    for idx, item in enumerate(questions, start=1):
-        items_before = len(policy.cmap.items())
-        map_text = policy.current_map_text
-        print(f"\n  Q{idx}: {item['q']}")
-        print(f"      map in : {items_before} items, "
-              f"{policy.token_counter(map_text)} tokens")
-        res = safe_run(agent, item["q"], corpus, context_map=map_text)
-        ok = correct(res.answer, item["expect"])
-        print(f"      -> {res.turns} turns, answer={res.answer[:80]!r}  [{'OK' if ok else 'WRONG'}]")
-        if res.stopped != "error" and res.trajectory:
-            print("      distilling trajectory into the map (Distiller + Cartographer)...")
-            try:
-                policy.update(trajectory=res.trajectory, question=item["q"])
-            except ClaudeCodeError as e:
-                print(f"      !! distillation failed after retries: {e}")
-        peek.append((res, ok, items_before, len(policy.cmap.items())))
+    for r in range(1, runs + 1):
+        banner(f"RUN {r}/{runs}")
+        print("  condition A -- baseline (no context map)")
+        all_baseline.append(one_pass(agent, questions, corpus, None, tag="base"))
 
-    # ----- comparison -------------------------------------------------------
-    banner("RESULTS -- model turns per question (baseline vs PEEK)")
-    print(f"{'#':<3}{'question':<30}{'BASELINE':>18}{'PEEK':>18}{'map':>12}")
-    print(f"{'':<3}{'':<30}{'turns  answer':>18}{'turns  answer':>18}{'items':>12}")
-    print("-" * 81)
-    b_turns = p_turns = comparable = 0
-    for idx, item in enumerate(questions):
-        (b_res, b_ok) = baseline[idx]
-        (p_res, p_ok, m_before, m_after) = peek[idx]
-        both_ran = b_res.stopped != "error" and p_res.stopped != "error"
-        if both_ran:
-            b_turns += b_res.turns
-            p_turns += p_res.turns
-            comparable += 1
-        b_cell = "n/a" if b_res.stopped == "error" else str(b_res.turns)
-        p_cell = "n/a" if p_res.stopped == "error" else str(p_res.turns)
-        print(
-            f"{idx + 1:<3}{item['label']:<30}"
-            f"{b_cell:>6}  {'ok' if b_ok else 'WRONG':<9}"
-            f"{p_cell:>6}  {'ok' if p_ok else 'WRONG':<9}"
-            f"{m_before:>5}->{m_after:<5}"
+        print("\n  condition B -- PEEK (map evolves across the question stream)")
+        policy = CachePolicy(
+            client=peek_client, token_budget=TOKEN_BUDGET, evolve_steps=None
         )
-    print("-" * 81)
-    if comparable:
-        print(f"{'':<3}{'TOTAL turns (' + str(comparable) + ' comparable Qs)':<30}"
-              f"{b_turns:>6}{'':<11}{p_turns:>6}")
-        delta = b_turns - p_turns
-        pct = 100.0 * delta / b_turns if b_turns else 0.0
-        print(f"\n  PEEK used {p_turns} turns vs baseline {b_turns} "
-              f"-- {delta:+d} turns ({pct:+.0f}%) over {comparable} question(s) "
-              "that completed in both conditions.")
+        all_peek.append(one_pass(agent, questions, corpus, policy, tag="peek"))
+        last_policy = policy
+
+    # ---- aggregate ---------------------------------------------------------
+    banner(f"AGGREGATE -- model turns per question, averaged over {runs} run(s)")
+    print(f"{'#':<3}{'question':<28}{'BASELINE':>18}{'PEEK':>18}")
+    print(f"{'':<31}{'mean  (range)':>18}{'mean  (range)':>18}")
+    print("-" * 67)
+    for i, item in enumerate(questions):
+        b = [all_baseline[r][i][0].turns for r in range(runs)
+             if all_baseline[r][i][0].stopped != "error"]
+        p = [all_peek[r][i][0].turns for r in range(runs)
+             if all_peek[r][i][0].stopped != "error"]
+        print(f"{i + 1:<3}{item['label']:<28}{_fmt(b):>18}{_fmt(p):>18}")
+    print("-" * 67)
+
+    # Paired per-run totals -- only runs where every question completed in
+    # both conditions are comparable.
+    deltas: list[int] = []
+    b_totals: list[int] = []
+    p_totals: list[int] = []
+    for r in range(runs):
+        b_ok = all(res.stopped != "error" for res, _ in all_baseline[r])
+        p_ok = all(res.stopped != "error" for res, _ in all_peek[r])
+        if b_ok and p_ok:
+            bt = sum(res.turns for res, _ in all_baseline[r])
+            pt = sum(res.turns for res, _ in all_peek[r])
+            b_totals.append(bt)
+            p_totals.append(pt)
+            deltas.append(pt - bt)
+
+    banner("PAIRED COMPARISON -- total turns per run (PEEK vs baseline)")
+    if not deltas:
+        print("  No run completed every question in both conditions -- cannot compare.")
     else:
-        print("  No question completed in both conditions -- nothing to compare.")
-    b_correct = sum(ok for _, ok in baseline)
-    p_correct = sum(ok for _, ok, _, _ in peek)
-    print(f"  Answers correct: baseline {b_correct}/{len(questions)}, "
-          f"PEEK {p_correct}/{len(questions)}.")
+        for idx, (bt, pt) in enumerate(zip(b_totals, p_totals), start=1):
+            print(f"  run {idx}: baseline {bt:>3}  |  PEEK {pt:>3}  |  delta {pt - bt:+d}")
+        mean_d = statistics.mean(deltas)
+        print(f"\n  baseline mean total : {statistics.mean(b_totals):.1f} turns")
+        print(f"  PEEK     mean total : {statistics.mean(p_totals):.1f} turns")
+        if len(deltas) >= 2:
+            sd = statistics.stdev(deltas)
+            print(f"  paired delta (PEEK - baseline): {mean_d:+.1f} +/- {sd:.1f} turns "
+                  f"(n={len(deltas)})")
+            verdict = (
+                "within run-to-run noise -- no measurable effect at this sample size"
+                if abs(mean_d) <= sd
+                else ("PEEK faster" if mean_d < 0 else "PEEK slower")
+            )
+            print(f"  verdict: {verdict}")
+        else:
+            print(f"  paired delta (PEEK - baseline): {mean_d:+.1f} turns "
+                  f"(n=1 -- not enough runs for a spread)")
 
-    banner("FINAL CONTEXT MAP (distilled from the real trajectories)")
-    print(policy.current_map_text.rstrip())
+    total_q = len(questions) * runs
+    b_correct = sum(ok for run in all_baseline for _, ok in run)
+    p_correct = sum(ok for run in all_peek for _, ok in run)
+    print(f"\n  answers correct: baseline {b_correct}/{total_q}, PEEK {p_correct}/{total_q}")
+    print(f"  total model calls: agent {agent_client.calls}, "
+          f"PEEK Distiller/Cartographer {peek_client.calls}")
 
-    policy.save("output/acme-handbook-rlm.peek.json")
-    print("\nsaved evolved map -> output/acme-handbook-rlm.peek.json")
-    print(
-        "\nNote: Q1 sees an empty map (nothing cached yet), so it is the fair "
-        "baseline\nfor the PEEK column; the gain, if any, shows up on Q2+ once "
-        "the chapter\nindex and section pointers have been distilled in."
-    )
+    if last_policy is not None:
+        banner("FINAL CONTEXT MAP (from the last run's evolved map)")
+        print(last_policy.current_map_text.rstrip())
+        last_policy.save("output/acme-handbook-rlm.peek.json")
+        print("\nsaved last-run map -> output/acme-handbook-rlm.peek.json")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--runs", type=int, default=3,
+                        help="how many times to repeat the baseline/PEEK comparison")
     parser.add_argument("--questions", type=int, default=len(QUESTIONS),
                         help="how many questions from the stream to run")
     parser.add_argument("--model", default=None,
@@ -193,6 +229,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     main(
         n_questions=max(1, min(args.questions, len(QUESTIONS))),
+        runs=max(1, args.runs),
         model=args.model,
         max_iters=args.max_iters,
     )
