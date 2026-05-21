@@ -87,8 +87,9 @@ python experiment_2_policy_loop.py        # offline scripted LM (default, instan
 python experiment_2_policy_loop.py --live # real LM via the `claude` CLI
 python experiment_2_policy_loop.py --live --model opus   # pick the model
 
-python experiment_3_rlm.py                # end to end: real agent + real corpus (live, slow)
-python experiment_3_rlm.py --questions 2  # shorter / cheaper run
+python experiment_3_rlm.py                # end to end: 3 runs, real agent + corpus (live, slow)
+python experiment_3_rlm.py --runs 5       # more runs = tighter estimate
+python experiment_3_rlm.py --runs 1 --questions 2   # quick smoke check
 
 python claude_code_client.py              # one-call self-test of the live client
 
@@ -172,54 +173,68 @@ but the exact items, tags, and token counts differ run to run, and a real
 Cartographer tends to keep the map compact enough that the Evictor never
 triggers.
 
-## Experiment 3 — does the cache actually pay off?
+## Experiment 3 — does the cache measurably pay off?
 
 Experiment 3 is the honest test: a real agent, a real 72k-char corpus, real
-trajectories. One representative run (4 questions, `claude` CLI default model):
+trajectories. Because a live model is non-deterministic, it runs the whole
+baseline/PEEK comparison `--runs` times (default 3) and reports a *paired*
+per-run total delta with its spread. Validating it took two passes — and the
+first pass is the most instructive part.
+
+### First pass — a confound, not a result
+
+The initial multi-run looked like a PEEK win: −4.0 turns on average. It wasn't.
+Correctness told the real story — **baseline 11/12 answers right, PEEK only
+7/12** — and every wrong PEEK answer was a *1-turn* answer with **zero REPL
+searches**. A context map sitting in the prompt tempts the model to answer
+immediately from the map (or to guess) instead of reading the corpus. The
+"speed-up" was mostly the agent failing faster. Comparing turns across runs
+with different accuracy is meaningless.
+
+Fix: an RLM is *defined* by reading its external context, so the agent now
+rejects a `FINAL` issued before any search has run, and is told the map is a
+navigation aid to confirm against `context` (see `rlm_agent.py`).
+
+### Second pass — the validated measurement
+
+Re-run, 3 runs × 4 questions, `claude` CLI default model:
 
 ```
-#  question                     BASELINE   PEEK     map items
-1  parental leave (weeks)          3 ok     3 ok      0 -> 3
-2  vacation days at 5 yrs          3 ok     6 ok      3 -> 4
-3  home-office setup stipend       3 ok     2 ok      4 -> 5
-4  paid company holidays           3 ok     2 ok      5 -> 6
-   TOTAL model turns              12       13
+#  question                BASELINE        PEEK
+                           mean (range)    mean (range)
+1  parental leave (weeks)   3.7 (3-4)       3.0 (2-4)
+2  vacation days at 5 yrs   3.3 (3-4)       5.0 (4-6)
+3  home-office stipend      3.3 (2-4)       2.7 (2-3)
+4  paid company holidays    4.3 (2-6)       4.0 (3-5)
+
+paired total delta (PEEK − baseline):  +0.0 ± 4.2 turns   (n = 2 valid runs)
+answers correct:  baseline 12/12,  PEEK 11/12  (the 1 miss was a CLI timeout,
+                  not a wrong answer)
 ```
 
-All 8 answers were correct. The headline is *not* a clean win — PEEK spent 13
-turns to the baseline's 12. But the per-question shape is the real story, and
-it matches PEEK's theory closely:
+**The validated result: no measurable effect.** With the accuracy confound
+removed, PEEK neither helps nor hurts here — the paired delta is 0.0 turns with
+a ±4.2 spread that completely swamps it. Accuracy is back to parity. PEEK did
+not make the agent faster on this corpus.
 
-- **Q1 — tie.** The map starts empty, so the first question can't benefit. Its
-  trajectory is what *seeds* the map.
-- **Q2 — PEEK loses (6 vs 3).** After Q1 the map is only half-built: it had
-  distilled a pointer to the §1.2 "How to Use This Handbook" section — which is
-  exactly the *decoy* table-of-contents. With an immature map quoting a decoy,
-  the agent chased the phrase "vacation accrual" and wandered. **An immature
-  cache can mislead.**
-- **Q3, Q4 — PEEK wins (2 vs 3 each).** By now the Cartographer has distilled a
-  full section-by-section char-offset index. On Q4 the agent's first line of
-  code is literally `i = 40333` — the exact offset of §6.1 lifted straight from
-  the map — and it answers in 2 turns instead of 3.
+Why no signal — and this is the honest part:
 
-Takeaways from the real run:
+1. **The corpus is too easy.** A competent agent greps it in 3–4 turns flat, so
+   there is almost no orientation cost for a cache to amortise. PEEK is designed
+   for contexts where orientation is genuinely expensive.
+2. **The question stream is too short.** PEEK's benefit is back-loaded (the map
+   must mature first); 4 questions barely reaches the payoff zone.
+3. **n is tiny.** One CLI timeout knocked a run out of the paired set, leaving
+   n = 2. A ±4.2 spread over 2 runs is not a measurement — it is a hint that
+   far more runs are needed.
 
-1. **The cache has to mature before it helps.** Empty (Q1) → misleading (Q2) →
-   genuinely useful (Q3–Q4). PEEK's benefit is back-loaded; a 4-question run
-   barely reaches the payoff zone. The win compounds over a longer stream
-   against the now-mature, frozen map.
-2. **PEEK's value scales with orientation cost.** Here the baseline is already
-   fast — a competent agent greps this corpus in 3 turns flat — so there is
-   little rediscovery to amortise. PEEK helps most when orientation is genuinely
-   expensive (deeper structure, weaker search, costlier tools).
-3. **The final map is excellent even though the run netted even.** It ends with
-   a complete offset index and every exact fact (see the script's printed
-   FINAL CONTEXT MAP). The artefact is real and reusable; the 4-question budget
-   just wasn't long enough to cash it in.
-
-So: the full loop works end to end and the measurement is honest — PEEK neither
-magically wins nor fails here; it pays off precisely when and where its design
-predicts, and a short run on an easy corpus lands near break-even.
+What *is* solid: the full loop runs end to end, the agent produces genuine
+trajectories, and PEEK distills a genuinely good map — the final map (printed
+by the script) carries accurate char offsets and every exact domain constant.
+The artefact works; this experiment's regime simply does not reward it. A real
+benchmark would need a corpus where orientation costs many turns, longer
+question streams, and many more runs — that is the honest next step, not a
+claim of speed-up from this setup.
 
 ## Notes
 
