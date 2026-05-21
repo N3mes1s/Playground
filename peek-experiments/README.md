@@ -64,8 +64,16 @@ extraction, `ContextMap.apply`, scoring, the Evictor, the freeze, `save`/`load`.
 |------|--------------|
 | `scripted_client.py` | The offline `LMClient` stub + small helpers (`map_ids`, `id_of`, `tags_for`). |
 | `claude_code_client.py` | A live `LMClient` that shells out to the `claude` CLI. Run it directly for a one-call self-test. |
+| `corpus.py` | Generates a deterministic ~72k-char synthetic "ACME handbook" — the real long context experiment 3 navigates. |
+| `rlm_agent.py` | A real RLM agent: answers a question by running code in a persistent Python REPL over a long context until it emits `FINAL:`. |
 | `experiment_1_mechanics.py` | The **deterministic layer**, no LLM: `ContextMap` ADD/REPLACE/DELETE, stable IDs, the scoring convention, and a narrated priority-eviction run. |
-| `experiment_2_policy_loop.py` | The **full `CachePolicy` loop**: an RLM agent answers 5 questions about a fictional ~41k-char employee handbook; the map bootstraps from empty, self-corrects, hits the budget, then freezes. Runs against either backend. |
+| `experiment_2_policy_loop.py` | The **`CachePolicy` loop** over *canned* trajectories: the map bootstraps from empty, self-corrects, hits the budget, then freezes. Runs against either backend. |
+| `experiment_3_rlm.py` | **End to end**: a real RLM agent explores a real corpus; PEEK distills its genuine trajectories. Measures model turns per question, baseline vs PEEK. |
+
+The three experiments form a ladder: #1 is the deterministic core with no model,
+#2 adds the real `CachePolicy` loop but with scripted/curated trajectories, and
+#3 removes the last piece of scaffolding — the trajectories are produced by an
+actual agent doing actual work, so it can *measure* whether the cache helps.
 
 ## Run it
 
@@ -78,6 +86,9 @@ python experiment_1_mechanics.py          # deterministic layer, no LLM
 python experiment_2_policy_loop.py        # offline scripted LM (default, instant)
 python experiment_2_policy_loop.py --live # real LM via the `claude` CLI
 python experiment_2_policy_loop.py --live --model opus   # pick the model
+
+python experiment_3_rlm.py                # end to end: real agent + real corpus (live, slow)
+python experiment_3_rlm.py --questions 2  # shorter / cheaper run
 
 python claude_code_client.py              # one-call self-test of the live client
 
