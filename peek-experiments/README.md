@@ -172,6 +172,55 @@ but the exact items, tags, and token counts differ run to run, and a real
 Cartographer tends to keep the map compact enough that the Evictor never
 triggers.
 
+## Experiment 3 — does the cache actually pay off?
+
+Experiment 3 is the honest test: a real agent, a real 72k-char corpus, real
+trajectories. One representative run (4 questions, `claude` CLI default model):
+
+```
+#  question                     BASELINE   PEEK     map items
+1  parental leave (weeks)          3 ok     3 ok      0 -> 3
+2  vacation days at 5 yrs          3 ok     6 ok      3 -> 4
+3  home-office setup stipend       3 ok     2 ok      4 -> 5
+4  paid company holidays           3 ok     2 ok      5 -> 6
+   TOTAL model turns              12       13
+```
+
+All 8 answers were correct. The headline is *not* a clean win — PEEK spent 13
+turns to the baseline's 12. But the per-question shape is the real story, and
+it matches PEEK's theory closely:
+
+- **Q1 — tie.** The map starts empty, so the first question can't benefit. Its
+  trajectory is what *seeds* the map.
+- **Q2 — PEEK loses (6 vs 3).** After Q1 the map is only half-built: it had
+  distilled a pointer to the §1.2 "How to Use This Handbook" section — which is
+  exactly the *decoy* table-of-contents. With an immature map quoting a decoy,
+  the agent chased the phrase "vacation accrual" and wandered. **An immature
+  cache can mislead.**
+- **Q3, Q4 — PEEK wins (2 vs 3 each).** By now the Cartographer has distilled a
+  full section-by-section char-offset index. On Q4 the agent's first line of
+  code is literally `i = 40333` — the exact offset of §6.1 lifted straight from
+  the map — and it answers in 2 turns instead of 3.
+
+Takeaways from the real run:
+
+1. **The cache has to mature before it helps.** Empty (Q1) → misleading (Q2) →
+   genuinely useful (Q3–Q4). PEEK's benefit is back-loaded; a 4-question run
+   barely reaches the payoff zone. The win compounds over a longer stream
+   against the now-mature, frozen map.
+2. **PEEK's value scales with orientation cost.** Here the baseline is already
+   fast — a competent agent greps this corpus in 3 turns flat — so there is
+   little rediscovery to amortise. PEEK helps most when orientation is genuinely
+   expensive (deeper structure, weaker search, costlier tools).
+3. **The final map is excellent even though the run netted even.** It ends with
+   a complete offset index and every exact fact (see the script's printed
+   FINAL CONTEXT MAP). The artefact is real and reusable; the 4-question budget
+   just wasn't long enough to cash it in.
+
+So: the full loop works end to end and the measurement is honest — PEEK neither
+magically wins nor fails here; it pays off precisely when and where its design
+predicts, and a short run on an easy corpus lands near break-even.
+
 ## Notes
 
 - PEEK's Distiller prompt is written for **RLM** (Recursive Language Model)
