@@ -1,8 +1,24 @@
 """Deterministic synthetic long context for the end-to-end RLM experiment.
 
-``build_corpus()`` returns a ~70k-character fictional "ACME Corp 2026 Employee
-Handbook": nine delimited chapters with sections, padded with filler so the
-document is far too large to drop into a prompt -- a real agent must search it.
+``build_corpus()`` returns a ~115k-character fictional "ACME Corp 2026 Employee
+Handbook": thirteen delimited chapters, each with several sections, padded with
+filler so the document is far too large to drop into a prompt -- a real agent
+must search it.
+
+The handbook is deliberately *orientation-hostile*, so that finding a fact
+genuinely costs navigation turns (which is the cost PEEK's context map is meant
+to amortise):
+
+* **Chapter titles name the owning function, not the topic.** A question asks
+  "how many paid holidays?"; the answer lives in a chapter called
+  "ABSENCE & SCHEDULING PROVISIONS". The agent cannot read the table of
+  contents and jump -- it has to open chapters and skim.
+* **Every fact is shadowed by decoys.** Each answer-bearing sentence sits in a
+  3k-char section next to two or three *decoy* sentences elsewhere in the
+  corpus that mention the same topic by keyword but give no figure ("the exact
+  amount appears in the dedicated section"). A naive keyword search lands on a
+  decoy first, so each fact costs several turns to pin down.
+
 A handful of exact facts are embedded at known locations so the experiment's
 questions have unambiguous, checkable answers.
 
@@ -16,19 +32,19 @@ from __future__ import annotations
 import random
 
 # Generic HR-handbook filler. Deliberately free of the answer keywords
-# ("parental", "vacation", "stipend", "holiday", ...) so keyword search stays
-# meaningful.
+# ("parental", "vacation", "stipend", "holiday", "probation", "sabbatical",
+# "notice", "development", ...) so keyword search stays meaningful.
 _FILLER: tuple[str, ...] = (
-    "All team members are expected to maintain a professional and respectful demeanor in every workplace interaction.",
+    "All team members are expected to maintain a courteous and respectful demeanor in every workplace interaction.",
     "Managers should schedule regular one-on-one meetings to discuss progress, priorities, and any concerns.",
     "Company equipment must be used responsibly and kept secure at all times.",
     "Questions about any policy in this handbook may be directed to the People Operations team.",
     "ACME Corp is committed to fostering an inclusive environment where every individual can contribute fully.",
     "Confidential business information must never be shared with parties outside the organization.",
-    "Employees are encouraged to pursue continuous learning and to share knowledge with their colleagues.",
+    "Employees are encouraged to pursue ongoing learning and to share knowledge with their colleagues.",
     "Workplace disagreements should be resolved promptly, constructively, and with mutual respect.",
     "Each department maintains its own onboarding checklist to help new joiners become productive quickly.",
-    "Business travel must be approved in advance by the relevant department lead.",
+    "Approved business travel must be arranged in advance with the relevant department lead.",
     "Records and documentation should be stored in the designated company systems, not on personal devices.",
     "Feedback is most useful when it is specific, timely, and focused on observable behavior.",
     "Safety procedures are reviewed periodically and all staff are expected to stay familiar with them.",
@@ -45,27 +61,35 @@ _FILLER: tuple[str, ...] = (
     "Constructive collaboration is considered a core expectation of every role at the company.",
 )
 
-# (chapter title, [(section title, [embedded fact lines]), ...]).
+# (chapter title, [(section title, [embedded fact / decoy lines]), ...]).
+#
+# Chapter titles deliberately describe the *owning function*, not the topic a
+# question asks about, so the table of contents is not a shortcut. Sections
+# whose lines are decoys mention a topic by keyword but withhold the figure.
 _CHAPTERS: tuple[tuple[str, tuple[tuple[str, tuple[str, ...]], ...]], ...] = (
     (
-        "INTRODUCTION & COMPANY VALUES",
+        "CHARTER, MISSION & GOVERNING PRINCIPLES",
         (
             ("Welcome and Mission", ()),
             (
                 "How to Use This Handbook",
                 (
-                    # Decoy: names every topic keyword but gives no numbers, so a
-                    # naive first keyword search lands here, not on the real fact.
-                    "Later chapters cover, among other topics, the company holiday "
-                    "schedule, paid parental leave, vacation accrual, and the "
-                    "home-office stipend for remote staff; consult the relevant "
-                    "chapter for the specific figures.",
+                    # Master decoy: names every topic keyword but gives no
+                    # numbers, so a naive first keyword search lands here.
+                    "Later parts of this handbook address, among many other "
+                    "matters, the schedule of observed company holidays, paid "
+                    "parental leave, the accrual of annual vacation, the "
+                    "home-office setup stipend, the new-hire probationary "
+                    "period, the professional-development budget, sabbatical "
+                    "eligibility, and the notice expected on resignation. In "
+                    "every case the binding figure appears only in the "
+                    "dedicated section, never in this overview.",
                 ),
             ),
         ),
     ),
     (
-        "CODE OF CONDUCT",
+        "STANDARDS OF BUSINESS CONDUCT",
         (
             ("Professional Behavior", ()),
             ("Conflicts of Interest", ()),
@@ -73,39 +97,93 @@ _CHAPTERS: tuple[tuple[str, tuple[tuple[str, tuple[str, ...]], ...]], ...] = (
         ),
     ),
     (
-        "WORKPLACE POLICIES",
+        "THE EMPLOYMENT RELATIONSHIP",
+        (
+            (
+                "Offer and Onboarding",
+                (
+                    # Decoy: mentions the probationary period, defers the count.
+                    "Onboarding concludes with the start of the probationary "
+                    "period; its exact duration is fixed in the section that "
+                    "follows and is not restated in this overview.",
+                ),
+            ),
+            (
+                "Probationary Period",
+                (
+                    "Every new employee at ACME serves an initial probationary "
+                    "period of 75 calendar days, measured from the official "
+                    "start date.",
+                    "During the 75-day probationary period either party may end "
+                    "the employment relationship with shortened notice.",
+                ),
+            ),
+            ("Employment Categories", ()),
+        ),
+    ),
+    (
+        "WORKING ARRANGEMENTS & FACILITIES",
         (
             (
                 "Working Hours and Attendance",
                 (
-                    # Decoy mention of "holiday" with no count.
-                    "The office is closed on each company holiday; the complete "
-                    "holiday schedule is published in the Time Off chapter.",
+                    # Decoy: mentions holidays with no count.
+                    "On every observed company holiday the office is closed; "
+                    "the full list and the exact count of holidays are "
+                    "published in the Absence & Scheduling chapter, not here.",
                 ),
             ),
-            ("Use of Company Systems", ()),
-            ("Data Privacy and Security", ()),
+            ("Use of Company Facilities", ()),
         ),
     ),
     (
-        "PERFORMANCE & DEVELOPMENT",
+        "PEOPLE DEVELOPMENT & PERFORMANCE",
         (
-            ("Review Cycles", ()),
-            ("Learning and Career Growth", ()),
+            (
+                "Review Cycles",
+                (
+                    # Decoy: mentions the development budget, defers the amount.
+                    "Each development plan is funded from the employee's "
+                    "professional-development budget, the amount of which is "
+                    "stated in the Professional Development section below.",
+                ),
+            ),
+            (
+                "Professional Development",
+                (
+                    "Each employee is allocated an annual "
+                    "professional-development budget of $1,650, which may be "
+                    "spent on courses, conferences, books, and certifications.",
+                    "The $1,650 professional-development budget does not roll "
+                    "over; any unused balance is forfeited at the end of the "
+                    "calendar year.",
+                ),
+            ),
+            ("Career Growth", ()),
         ),
     ),
     (
-        "HEALTH & SAFETY",
+        "HEALTH, SAFETY & WELLBEING",
         (
             ("Workplace Safety", ()),
             ("Emergency Procedures", ()),
+            ("Wellbeing Programs", ()),
         ),
     ),
     (
-        "TIME OFF & HOLIDAYS",
+        "ABSENCE & SCHEDULING PROVISIONS",
         (
             (
-                "Holiday Schedule",
+                "Scheduling Overview",
+                (
+                    # Decoy: mentions holidays, defers the count.
+                    "Scheduling spans observed holidays, discretionary days, "
+                    "and shift patterns; the precise count of paid holidays is "
+                    "given in the Observed Holidays section that follows.",
+                ),
+            ),
+            (
+                "Observed Holidays",
                 (
                     "ACME Corp observes exactly 13 paid company holidays during each calendar year.",
                     "The 13 observed holidays are: New Year's Day, Martin Luther King Jr. Day, "
@@ -115,7 +193,7 @@ _CHAPTERS: tuple[tuple[str, tuple[tuple[str, tuple[str, ...]], ...]], ...] = (
                 ),
             ),
             (
-                "Floating Holidays",
+                "Discretionary Days",
                 (
                     "In addition to the 13 fixed company holidays, every employee is granted "
                     "2 floating holidays per year, which may be used at the employee's discretion.",
@@ -124,19 +202,20 @@ _CHAPTERS: tuple[tuple[str, tuple[tuple[str, tuple[str, ...]], ...]], ...] = (
         ),
     ),
     (
-        "EMPLOYEE BENEFITS",
+        "FAMILY & LIFE-EVENT SUPPORT",
         (
             (
-                "Health and Insurance Plans",
+                "Life-Event Overview",
                 (
-                    # Decoy: names parental leave and vacation, no figures.
-                    "Beyond health and insurance coverage, this chapter also "
-                    "describes paid parental leave and vacation entitlements in "
-                    "the dedicated sections that follow.",
+                    # Decoy: names parental leave, withholds the figure.
+                    "This chapter covers parental leave alongside bereavement "
+                    "and caregiver leave; the specific parental-leave "
+                    "entitlement, in weeks, is stated only in the Parental "
+                    "Leave Provisions section.",
                 ),
             ),
             (
-                "Parental Leave",
+                "Parental Leave Provisions",
                 (
                     "ACME provides 19 weeks of fully paid parental leave to every eligible "
                     "employee following the birth or adoption of a child.",
@@ -144,24 +223,49 @@ _CHAPTERS: tuple[tuple[str, tuple[tuple[str, tuple[str, ...]], ...]], ...] = (
                     "or adoption and may be taken in up to three separate blocks.",
                 ),
             ),
+            ("Bereavement and Caregiver Leave", ()),
+        ),
+    ),
+    (
+        "SERVICE-BASED ENTITLEMENTS",
+        (
             (
-                "Paid Time Off and Vacation Tiers",
+                "Length-of-Service Overview",
                 (
-                    "Vacation days are granted according to length of service and accrue monthly.",
+                    # Decoy: names vacation and sabbatical, defers both figures.
+                    "Length of service governs both annual vacation accrual "
+                    "and sabbatical eligibility; the precise vacation tiers and "
+                    "the sabbatical service threshold appear in the two "
+                    "sections that follow this overview.",
+                ),
+            ),
+            (
+                "Annual Leave Accrual Tiers",
+                (
+                    "Annual vacation is granted according to length of service and accrues monthly.",
                     "Employees with less than 1 year of service receive 8 vacation days per year.",
                     "Employees with 1 to 4 years of service receive 14 vacation days per year.",
                     "Employees with 5 to 9 years of service receive 23 vacation days per year.",
                     "Employees with 10 or more years of service receive 29 vacation days per year.",
                 ),
             ),
+            (
+                "Sabbatical Eligibility",
+                (
+                    "Employees who reach 12 years of continuous service become eligible for a "
+                    "one-time paid sabbatical of 6 weeks.",
+                    "The 12-year sabbatical may be scheduled at any point after the eligibility "
+                    "date, subject to manager approval.",
+                ),
+            ),
         ),
     ),
     (
-        "COMPENSATION",
+        "TOTAL COMPENSATION & ALLOWANCES",
         (
             ("Salary Bands and Reviews", ()),
             (
-                "Home-Office Stipend",
+                "Remote-Work Allowances",
                 (
                     "Remote and hybrid employees are eligible for a one-time home-office "
                     "setup stipend of $685, paid with the first full paycheck.",
@@ -169,21 +273,45 @@ _CHAPTERS: tuple[tuple[str, tuple[tuple[str, tuple[str, ...]], ...]], ...] = (
                     "to offset internet and utility costs.",
                 ),
             ),
+            ("Recognition and Referrals", ()),
         ),
     ),
     (
-        "REMOTE WORK POLICY",
+        "DISTRIBUTED & HYBRID WORK",
         (
             (
                 "Eligibility and Approval",
                 (
-                    # Decoy: mentions the stipend but defers the amount to Ch.8.
-                    "Remote and hybrid staff may also qualify for a home-office "
-                    "stipend; the exact stipend amounts are defined in the "
-                    "Compensation chapter, not in this section.",
+                    # Decoy: mentions the stipend but defers the amount.
+                    "Approved remote and hybrid staff may claim the "
+                    "home-office stipend; the exact stipend amounts are "
+                    "defined in the Total Compensation chapter, not in this "
+                    "section.",
                 ),
             ),
             ("Equipment and Reimbursement", ()),
+        ),
+    ),
+    (
+        "TECHNOLOGY & INFORMATION SECURITY",
+        (
+            ("Acceptable Use", ()),
+            ("Data Protection", ()),
+        ),
+    ),
+    (
+        "SEPARATION & TRANSITIONS",
+        (
+            (
+                "Resignation and Notice",
+                (
+                    "An employee resigning from ACME is asked to provide 21 calendar days of "
+                    "written notice to their manager.",
+                    "The 21-day notice period may be waived only by mutual written agreement "
+                    "between the employee and ACME.",
+                ),
+            ),
+            ("Offboarding Checklist", ()),
         ),
     ),
 )

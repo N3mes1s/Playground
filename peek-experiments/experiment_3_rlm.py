@@ -2,7 +2,7 @@
 
 Experiments 1 and 2 exercise PEEK's machinery on *canned* trajectories. This
 one closes the loop: a real RLM agent (``rlm_agent.RLMAgent``) actually explores
-a real ~72k-char long context (``corpus.build_corpus``) by running code in a
+a real ~115k-char long context (``corpus.build_corpus``) by running code in a
 REPL, and PEEK's ``CachePolicy`` distills each genuine trajectory into the map.
 
 Each run answers the same question stream twice:
@@ -16,11 +16,11 @@ per-question means and a paired (PEEK - baseline) total delta with its spread,
 so the comparison is something you can actually read a signal off of (n
 permitting).
 
-Needs the `claude` CLI. This makes a LOT of model calls -- roughly 33 per run.
+Needs the `claude` CLI. This makes a LOT of model calls -- well over 100 per run.
 
-  python experiment_3_rlm.py                    # 3 runs, 4 questions
+  python experiment_3_rlm.py                    # 3 runs, 8 questions
   python experiment_3_rlm.py --runs 5           # more runs = tighter estimate
-  python experiment_3_rlm.py --runs 1 --questions 2   # quick smoke check
+  python experiment_3_rlm.py --runs 1 --questions 3   # quick smoke check
 """
 
 from __future__ import annotations
@@ -34,9 +34,18 @@ from claude_code_client import ClaudeCodeClient, ClaudeCodeError
 from corpus import build_corpus
 from rlm_agent import RLMAgent, RLMResult
 
-# Facts use deliberately non-standard values (19 weeks, 23 days, $685, 13) so
+# Facts use deliberately non-standard values (13 holidays, 19 weeks, 23 days,
+# $685, 75-day probation, $1,650 budget, 12-year sabbatical, 21-day notice) so
 # the agent cannot shortcut with a plausible guess -- it must read the corpus.
+# The 8 questions span 7 chapters spread across the handbook, so the context
+# map has to accumulate orientation knowledge corpus-wide rather than for one
+# region.
 QUESTIONS = [
+    {
+        "label": "paid company holidays",
+        "q": "How many paid company holidays does ACME observe each year?",
+        "expect": "13",
+    },
     {
         "label": "parental leave (weeks)",
         "q": "How many weeks of paid parental leave does ACME provide?",
@@ -48,18 +57,33 @@ QUESTIONS = [
         "expect": "23",
     },
     {
-        "label": "home-office setup stipend",
+        "label": "home-office stipend ($)",
         "q": "What is the dollar amount of the one-time home-office setup stipend?",
         "expect": "685",
     },
     {
-        "label": "paid company holidays",
-        "q": "How many paid company holidays does ACME observe each year?",
-        "expect": "13",
+        "label": "probation period (days)",
+        "q": "How many calendar days is the initial probationary period for a new employee?",
+        "expect": "75",
+    },
+    {
+        "label": "prof.-dev. budget ($)",
+        "q": "What is the annual professional-development budget per employee, in dollars?",
+        "expect": "1650",
+    },
+    {
+        "label": "sabbatical service (yrs)",
+        "q": "After how many years of continuous service does an employee become eligible for a sabbatical?",
+        "expect": "12",
+    },
+    {
+        "label": "resignation notice (days)",
+        "q": "How many calendar days of written notice should a resigning employee provide?",
+        "expect": "21",
     },
 ]
 
-TOKEN_BUDGET = 800
+TOKEN_BUDGET = 1200
 
 
 def banner(text: str) -> None:
@@ -69,7 +93,9 @@ def banner(text: str) -> None:
 
 
 def correct(answer: str, expect: str) -> bool:
-    return expect.lower() in answer.lower()
+    # Comma-insensitive substring match, so an answer of "$1,650" still
+    # satisfies an expected token of "1650".
+    return expect.replace(",", "").lower() in answer.replace(",", "").lower()
 
 
 def safe_run(agent: RLMAgent, question: str, context: str, context_map: str) -> RLMResult:
@@ -126,7 +152,8 @@ def main(*, n_questions: int, runs: int, model: str | None, max_iters: int) -> N
     corpus = build_corpus()
 
     banner("EXPERIMENT 3 -- PEEK end to end with a real RLM agent")
-    print(f"corpus      : {len(corpus):,} chars, 9 chapters")
+    n_chapters = corpus.count("=== CHAPTER ")
+    print(f"corpus      : {len(corpus):,} chars, {n_chapters} chapters")
     print(f"questions   : {len(questions)}   runs: {runs}")
     print(f"agent model : {model or 'claude CLI default'}   max_iterations={max_iters}")
 
@@ -224,7 +251,7 @@ if __name__ == "__main__":
                         help="how many questions from the stream to run")
     parser.add_argument("--model", default=None,
                         help="model alias/name for the `claude` CLI (e.g. 'opus')")
-    parser.add_argument("--max-iters", type=int, default=8,
+    parser.add_argument("--max-iters", type=int, default=12,
                         help="max REPL turns per question before giving up")
     args = parser.parse_args()
     main(
