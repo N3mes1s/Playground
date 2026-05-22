@@ -200,17 +200,37 @@ match the CPU reference (the tensor-core path is TF32, so the error floor is
 == Scaled-up GPU training (A100-80GB, --scale big) ==
     ~6.74B params (Llama-7B class: d_model 4096, 32 layers, d_ff 11008, seq 512)
     60 steps in ~181s (~3.0 s/step), loss 10.45 -> 6.02
+
+== A real pretrained model: OpenLLaMA-3B inference (modal/run_llm.py) ==
+    the 3.4B-parameter OpenLLaMA-3B checkpoint, converted to the CODA layout
+    and run on the CUDA backend. The CUDA forward is verified against a
+    genuine HuggingFace forward:
+        next-token argmax : CUDA 260  ==  HuggingFace 260
+        logits correlation with HuggingFace : 1.00000   (conversion VERIFIED)
+    generated continuation of "The history of computing began":
+        "...with the invention of the first mechanical computing device, the
+         abacus. The abacus was invented in China around the 9th century BC,
+         and is the ancestor of all other computing devices. Computers, by
+         contrast, were invented in the 20th century..."
 ```
 
-The language-model test is a genuine (small) trained model: a char-level GPT
-is trained on the GPU over ~1.1 MB of public-domain Shakespeare by stochastic
-windowed training — each Adam step accumulates the gradient over a mini-batch
-of random windows — until cross-entropy/char drops to ~1.35 (random is 4.17).
-It then **generates novel text** the corpus never contained: it has learned
-real character names, the play-script layout, and mostly-real English words.
-It is small, so the output is locally rough — but it genuinely *learned the
-data distribution* rather than memorizing, and the CODA kernels run the whole
-forward + backward + Adam.
+The CODA backend implements the LLaMA architecture, so a **real pretrained
+model runs on it directly**: `modal/run_llm.py` converts the 3.4B-parameter
+OpenLLaMA-3B checkpoint into the CODA layout (q/k/v concatenated, gate/up
+interleaved for SwiGLU, q/k un-permuted from HuggingFace's rotate-half RoPE to
+the adjacent-pair convention) and runs inference through the CUDA
+GEMM-plus-epilogue kernels. The forward is **bit-verified against HuggingFace**
+— logits correlation 1.00000 — and the model generates coherent, factual
+English. (Generation is currently slow, ~17 s/token, because each token
+re-uploads the 13.7 GB of fp32 weights; a device-resident KV-cached generate
+would fix that.)
+
+The from-scratch Shakespeare model is a genuine (small) *trained* model: a
+char-level GPT is trained on the GPU over ~1.1 MB of public-domain Shakespeare
+by stochastic windowed training — each Adam step accumulates the gradient over
+a mini-batch of random windows — until cross-entropy/char drops to ~1.35
+(random is 4.17). It generates novel text with learned character names and
+play-script layout. The CODA kernels run the whole forward + backward + Adam.
 
 So a **~6.7-billion-parameter Transformer trains end-to-end on a single
 A100-80GB** — the full forward + backward + optimizer step, with the weights
