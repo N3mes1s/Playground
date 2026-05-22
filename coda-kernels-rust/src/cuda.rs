@@ -139,7 +139,7 @@ extern "C" {
         gf: *mut f32, wgu: *mut f32, wd: *mut f32, gfin: *mut f32, lm: *mut f32,
         cos: *const f32, sin: *const f32,
         corpus: *const c_int, corpus_len: c_int,
-        window_starts: *const c_int, n_steps: c_int, lr: f32,
+        window_starts: *const c_int, n_steps: c_int, batch: c_int, lr: f32,
         loss_curve: *mut f32,
     ) -> c_int;
 }
@@ -581,6 +581,7 @@ pub fn train_corpus(
     corpus: &[usize],
     t_window: usize,
     n_steps: usize,
+    batch: usize,
     lr: f32,
     seed: u64,
 ) -> (Model, Vec<f32>) {
@@ -591,10 +592,11 @@ pub fn train_corpus(
     let mut w = flatten_weights(model);
     let (cos, sin) = crate::model::rope_tables(cfg, t_window);
 
-    // Random window start per step (kept in bounds for input + shifted target).
+    // One random window start per (step, batch element); kept in bounds for
+    // the input and the shifted target.
     let mut rng = crate::model::Rng::new(seed);
     let span = (corpus.len() - t_window - 1) as u32;
-    let starts: Vec<c_int> = (0..n_steps)
+    let starts: Vec<c_int> = (0..n_steps * batch)
         .map(|_| ((rng.uniform() * span as f32) as u32 % span) as c_int)
         .collect();
     let corpus_i: Vec<c_int> = corpus.iter().map(|&x| x as c_int).collect();
@@ -625,6 +627,7 @@ pub fn train_corpus(
             corpus_i.len() as c_int,
             starts.as_ptr(),
             n_steps as c_int,
+            batch as c_int,
             lr,
             loss_curve.as_mut_ptr(),
         )

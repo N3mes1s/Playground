@@ -1461,7 +1461,7 @@ int coda_cuda_train_corpus(
     float* embed, float* ga, float* wqkv, float* wo, float* gf, float* wgu,
     float* wd, float* gfin, float* lm, const float* cosT, const float* sinT,
     const int* corpus, int corpus_len, const int* window_starts,
-    int n_steps, float lr, float* loss_curve) {
+    int n_steps, int batch, float lr, float* loss_curve) {
 
     Net n;
     n.T = T; n.d = d; n.nl = nl; n.nh = nh; n.hd = hd; n.dff = dff;
@@ -1490,24 +1490,42 @@ int coda_cuda_train_corpus(
         {n.gfin, n.g_gfin, n.m_gfin, n.v_gfin, (size_t)d},
         {n.lm, n.g_lm, n.m_lm, n.v_lm, (size_t)d * vocab},
     };
+    // Per-tensor gradient accumulators: one Adam step uses the gradient summed
+    // over `batch` windows, which cuts the batch-1 gradient noise that would
+    // otherwise stall convergence on a real (non-memorized) corpus.
+    float* acc[9];
+    for (int i = 0; i < 9; ++i) acc[i] = up(0, wts[i].n);
     for (WT& w : wts) {
         cudaMemset(w.m, 0, w.n * sizeof(float));
         cudaMemset(w.v, 0, w.n * sizeof(float));
     }
 
     for (int step = 0; step < n_steps; ++step) {
-        int s = window_starts[step];
-        cudaMemcpyAsync(n.tokens, dCorpus + s, (size_t)T * sizeof(int),
-                        cudaMemcpyDeviceToDevice, 0);
-        cudaMemcpyAsync(n.targets, dCorpus + s + 1, (size_t)T * sizeof(int),
-                        cudaMemcpyDeviceToDevice, 0);
-        loss_curve[step] = fwd_bwd(&n);
-        for (WT& w : wts) {
-            int blocks = (int)((w.n + 255) / 256);
-            k_adam<<<blocks, 256>>>(
-                w.p, w.g, w.m, w.v, (long)w.n, lr, 0.9f, 0.999f, 1e-8f, step + 1);
+        for (int i = 0; i < 9; ++i)
+            cudaMemsetAsync(acc[i], 0, wts[i].n * sizeof(float), 0);
+        float lsum = 0.0f;
+        for (int b = 0; b < batch; ++b) {
+            int s = window_starts[step * batch + b];
+            cudaMemcpyAsync(n.tokens, dCorpus + s, (size_t)T * sizeof(int),
+                            cudaMemcpyDeviceToDevice, 0);
+            cudaMemcpyAsync(n.targets, dCorpus + s + 1, (size_t)T * sizeof(int),
+                            cudaMemcpyDeviceToDevice, 0);
+            lsum += fwd_bwd(&n);
+            for (int i = 0; i < 9; ++i) {
+                int blk = (int)((wts[i].n + 255) / 256);
+                k_add<<<blk, 256>>>(acc[i], wts[i].g, (int)wts[i].n);
+            }
+        }
+        loss_curve[step] = lsum / (float)batch;
+        // Adam is ~invariant to gradient scale (m / sqrt(v)), so the summed
+        // accumulator works directly as the mini-batch gradient.
+        for (int i = 0; i < 9; ++i) {
+            int blk = (int)((wts[i].n + 255) / 256);
+            k_adam<<<blk, 256>>>(wts[i].p, acc[i], wts[i].m, wts[i].v,
+                                 (long)wts[i].n, lr, 0.9f, 0.999f, 1e-8f, step + 1);
         }
     }
+    for (int i = 0; i < 9; ++i) cudaFree(acc[i]);
     cudaDeviceSynchronize();
     int err = cuda_check("coda_cuda_train_corpus");
 

@@ -402,20 +402,23 @@ fn main() {
                 tokens.len(), vocab.len(), params as f64 / 1e6, cfg.d_model, cfg.n_layers
             );
 
-            // Stochastic windowed training on the GPU.
+            // Stochastic windowed training on the GPU, with a mini-batch of
+            // windows accumulated per Adam step (cuts the batch-1 noise).
             let t_window = 256;
-            let steps = 50000;
+            let steps = 4000;
+            let batch = 16;
             let t0 = Instant::now();
             let (trained, curve) =
-                cuda::train_corpus(&model, &tokens, t_window, steps, 5e-3, 42);
-            let tail: f32 = curve[steps - 300..].iter().sum::<f32>() / 300.0;
+                cuda::train_corpus(&model, &tokens, t_window, steps, batch, 3e-3, 42);
+            let tail: f32 = curve[steps - 200..].iter().sum::<f32>() / 200.0;
             println!(
-                "    trained on the GPU: {steps} windowed steps in {:.0}s",
+                "    trained on the GPU: {steps} steps x batch {batch} = {} windows in {:.0}s",
+                steps * batch,
                 t0.elapsed().as_secs_f64()
             );
             println!(
-                "    loss (cross-entropy per char): {:.3} -> {:.3}  (random would be {:.2})",
-                curve[0], tail, (vocab.len() as f32).ln()
+                "    loss (cross-entropy per char): {:.3} -> {:.3} -> {:.3}  (random {:.2})",
+                curve[0], curve[steps / 2], tail, (vocab.len() as f32).ln()
             );
 
             // Generate NOVEL text by temperature sampling (not greedy reproduction).
