@@ -358,8 +358,12 @@ fn main() {
         }
     }
 
-    // ---- A real language model: GPU-trained on text, then generating ----
-    println!("\n== Real language model: trained on the GPU, then generating ==");
+    // ---- End-to-end GPU training check: overfit a sentence, then generate ----
+    // This is NOT a model that learned language - it is a correctness check of
+    // the full GPU training pipeline: a small GPT is overfit to one short
+    // sentence until the loss reaches zero, and greedy generation then has to
+    // reproduce that exact sentence.
+    println!("\n== GPU training end-to-end: overfit a sentence, then generate ==");
     {
         let corpus = "coda trains a small language model on the gpu by fusing the epilogue into each matrix multiply.";
         // Character-level vocabulary.
@@ -439,8 +443,8 @@ fn main() {
         );
         println!("    prompt    : \"{prompt}\"");
         println!("    generated : \"{decoded}\"");
-        println!("    --> {:.0}% of the generated text matches the training corpus", frac * 100.0);
-        ok &= line("GPU-trained LM reproduces its training text", 1.0 - frac, 0.15);
+        println!("    --> {:.0}% of the generated text matches the memorized sentence", frac * 100.0);
+        ok &= line("GPU training overfits the sentence to ~0 loss + reproduces it", 1.0 - frac, 0.15);
     }
 
     println!();

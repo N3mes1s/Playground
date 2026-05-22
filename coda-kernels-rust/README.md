@@ -179,9 +179,10 @@ match the CPU reference (the tensor-core path is TF32, so the error floor is
 == GPU training: device-resident loop vs CPU ==
     GPU loss 3.27 -> 0.0011 ;  CPU from identical init -> 0.0011
 
-== Real language model (GPU-trained, then generating) ==
-    a 3.4M-parameter char-level GPT, trained on the GPU (10k steps, loss
-    3.45 -> 0.000); greedy generation from a 12-character prompt:
+== GPU training end-to-end (overfit a sentence, then generate) ==
+    a 3.4M-parameter char-level GPT is *overfit* to one 95-character
+    sentence on the GPU (10k steps, loss 3.45 -> 0.000); greedy generation
+    from a 12-character prefix then reproduces that exact sentence:
       prompt    : "coda trains "
       generated : "coda trains a small language model on the gpu by fusing
                    the epilogue into each matrix multiply."
@@ -191,9 +192,14 @@ match the CPU reference (the tensor-core path is TF32, so the error floor is
     60 steps in ~181s (~3.0 s/step), loss 10.45 -> 6.02
 ```
 
-A real GPT, trained entirely on the GPU — device-resident forward, backward,
-and Adam — learns a sentence and **generates it back coherently** from a short
-prompt. The CODA GEMM-plus-epilogue kernels run the whole thing.
+The sentence test is **not** a trained-on-real-data language model — it is an
+end-to-end correctness check of the GPU training pipeline. A small model is
+*overfit* to a single sentence until the loss reaches zero, and generation
+must then reproduce it. It verifies that the device-resident forward, backward
+and Adam — all built from the CODA kernels — drive a model to a correct
+optimum. A model that actually *learned language* (generating novel coherent
+text) would need a real corpus and far more data and compute; that is out of
+scope here.
 
 So a **~6.7-billion-parameter Transformer trains end-to-end on a single
 A100-80GB** — the full forward + backward + optimizer step, with the weights
