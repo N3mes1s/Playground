@@ -9,6 +9,7 @@
 
 use crate::model::Model;
 use crate::tensor::Mat;
+use crate::train::{Grads, LayerGrad};
 use std::os::raw::{c_char, c_int};
 
 extern "C" {
@@ -100,6 +101,59 @@ extern "C" {
         lm_head: *const f32,
         logits: *mut f32,
     ) -> c_int;
+    #[allow(clippy::too_many_arguments)]
+    fn coda_cuda_grads(
+        t: c_int, d: c_int, nl: c_int, nh: c_int, hd: c_int, dff: c_int,
+        vocab: c_int, eps: f32,
+        embed: *const f32, ga: *const f32, wqkv: *const f32, wo: *const f32,
+        gf: *const f32, wgu: *const f32, wd: *const f32, gfin: *const f32,
+        lm: *const f32, cos: *const f32, sin: *const f32,
+        tokens: *const c_int, targets: *const c_int,
+        g_embed: *mut f32, g_ga: *mut f32, g_wqkv: *mut f32, g_wo: *mut f32,
+        g_gf: *mut f32, g_wgu: *mut f32, g_wd: *mut f32, g_gfin: *mut f32,
+        g_lm: *mut f32, loss: *mut f32,
+    ) -> c_int;
+    #[allow(clippy::too_many_arguments)]
+    fn coda_cuda_train(
+        t: c_int, d: c_int, nl: c_int, nh: c_int, hd: c_int, dff: c_int,
+        vocab: c_int, eps: f32,
+        embed: *mut f32, ga: *mut f32, wqkv: *mut f32, wo: *mut f32,
+        gf: *mut f32, wgu: *mut f32, wd: *mut f32, gfin: *mut f32, lm: *mut f32,
+        cos: *const f32, sin: *const f32,
+        tokens: *const c_int, targets: *const c_int,
+        n_steps: c_int, lr: f32, loss_curve: *mut f32,
+    ) -> c_int;
+}
+
+/// The nine weight tensors flattened into contiguous `[n_layers, ...]` buffers,
+/// in the order the CUDA training entry points expect.
+struct FlatWeights {
+    embed: Vec<f32>,
+    ga: Vec<f32>,
+    wqkv: Vec<f32>,
+    wo: Vec<f32>,
+    gf: Vec<f32>,
+    wgu: Vec<f32>,
+    wd: Vec<f32>,
+    gfin: Vec<f32>,
+    lm: Vec<f32>,
+}
+
+fn flatten_weights(model: &Model) -> FlatWeights {
+    let cat = |f: &dyn Fn(&crate::model::Layer) -> Vec<f32>| -> Vec<f32> {
+        model.layers.iter().flat_map(|l| f(l)).collect()
+    };
+    FlatWeights {
+        embed: model.embed.data.clone(),
+        ga: cat(&|l| l.gamma_attn.clone()),
+        wqkv: cat(&|l| l.wqkv.data.clone()),
+        wo: cat(&|l| l.wo.data.clone()),
+        gf: cat(&|l| l.gamma_ffn.clone()),
+        wgu: cat(&|l| l.wgu.data.clone()),
+        wd: cat(&|l| l.wdown.data.clone()),
+        gfin: model.gamma_final.clone(),
+        lm: model.lm_head.data.clone(),
+    }
 }
 
 /// Number of visible CUDA devices (0 if none / no driver).
@@ -343,4 +397,110 @@ pub fn model_forward(model: &Model, tokens: &[usize]) -> Mat {
     };
     check(s, "model_forward");
     logits
+}
+
+/// Run **one forward + backward on the GPU** and return the gradients.
+///
+/// The GPU computes the same canonical computation graph as the CPU
+/// [`crate::train::backward`]; comparing the two is the correctness check for
+/// the device-resident training path.
+pub fn grads(model: &Model, tokens: &[usize], targets: &[usize]) -> (Grads, f32) {
+    let cfg = &model.cfg;
+    let (t, d, nl, dff, v) = (tokens.len(), cfg.d_model, cfg.n_layers, cfg.d_ff, cfg.vocab);
+    let w = flatten_weights(model);
+    let (cos, sin) = model.rope_tables(t);
+    let tok: Vec<c_int> = tokens.iter().map(|&x| x as c_int).collect();
+    let tgt: Vec<c_int> = targets.iter().map(|&x| x as c_int).collect();
+
+    let mut g_embed = vec![0.0f32; v * d];
+    let mut g_ga = vec![0.0f32; nl * d];
+    let mut g_wqkv = vec![0.0f32; nl * d * 3 * d];
+    let mut g_wo = vec![0.0f32; nl * d * d];
+    let mut g_gf = vec![0.0f32; nl * d];
+    let mut g_wgu = vec![0.0f32; nl * d * 2 * dff];
+    let mut g_wd = vec![0.0f32; nl * dff * d];
+    let mut g_gfin = vec![0.0f32; d];
+    let mut g_lm = vec![0.0f32; d * v];
+    let mut loss = 0.0f32;
+
+    let s = unsafe {
+        coda_cuda_grads(
+            t as c_int, d as c_int, nl as c_int, cfg.n_heads as c_int,
+            cfg.head_dim as c_int, dff as c_int, v as c_int, cfg.eps,
+            w.embed.as_ptr(), w.ga.as_ptr(), w.wqkv.as_ptr(), w.wo.as_ptr(),
+            w.gf.as_ptr(), w.wgu.as_ptr(), w.wd.as_ptr(), w.gfin.as_ptr(),
+            w.lm.as_ptr(), cos.data.as_ptr(), sin.data.as_ptr(),
+            tok.as_ptr(), tgt.as_ptr(),
+            g_embed.as_mut_ptr(), g_ga.as_mut_ptr(), g_wqkv.as_mut_ptr(),
+            g_wo.as_mut_ptr(), g_gf.as_mut_ptr(), g_wgu.as_mut_ptr(),
+            g_wd.as_mut_ptr(), g_gfin.as_mut_ptr(), g_lm.as_mut_ptr(), &mut loss,
+        )
+    };
+    check(s, "grads");
+
+    let layers = (0..nl)
+        .map(|l| LayerGrad {
+            d_gamma_attn: g_ga[l * d..(l + 1) * d].to_vec(),
+            d_wqkv: Mat::from_vec(d, 3 * d, g_wqkv[l * d * 3 * d..(l + 1) * d * 3 * d].to_vec()),
+            d_wo: Mat::from_vec(d, d, g_wo[l * d * d..(l + 1) * d * d].to_vec()),
+            d_gamma_ffn: g_gf[l * d..(l + 1) * d].to_vec(),
+            d_wgu: Mat::from_vec(d, 2 * dff, g_wgu[l * d * 2 * dff..(l + 1) * d * 2 * dff].to_vec()),
+            d_wdown: Mat::from_vec(dff, d, g_wd[l * dff * d..(l + 1) * dff * d].to_vec()),
+        })
+        .collect();
+
+    let grads = Grads {
+        d_embed: Mat::from_vec(v, d, g_embed),
+        layers,
+        d_gamma_final: g_gfin,
+        d_lm_head: Mat::from_vec(d, v, g_lm),
+    };
+    (grads, loss)
+}
+
+/// Train the model **entirely on the GPU**: weights and Adam state stay
+/// device-resident for all `n_steps`. Returns the trained model and the
+/// per-step loss curve.
+pub fn train(
+    model: &Model,
+    tokens: &[usize],
+    targets: &[usize],
+    n_steps: usize,
+    lr: f32,
+) -> (Model, Vec<f32>) {
+    let cfg = &model.cfg;
+    let (t, d, nl, dff, v) = (tokens.len(), cfg.d_model, cfg.n_layers, cfg.d_ff, cfg.vocab);
+    let mut w = flatten_weights(model);
+    let (cos, sin) = model.rope_tables(t);
+    let tok: Vec<c_int> = tokens.iter().map(|&x| x as c_int).collect();
+    let tgt: Vec<c_int> = targets.iter().map(|&x| x as c_int).collect();
+    let mut loss_curve = vec![0.0f32; n_steps];
+
+    let s = unsafe {
+        coda_cuda_train(
+            t as c_int, d as c_int, nl as c_int, cfg.n_heads as c_int,
+            cfg.head_dim as c_int, dff as c_int, v as c_int, cfg.eps,
+            w.embed.as_mut_ptr(), w.ga.as_mut_ptr(), w.wqkv.as_mut_ptr(),
+            w.wo.as_mut_ptr(), w.gf.as_mut_ptr(), w.wgu.as_mut_ptr(),
+            w.wd.as_mut_ptr(), w.gfin.as_mut_ptr(), w.lm.as_mut_ptr(),
+            cos.data.as_ptr(), sin.data.as_ptr(), tok.as_ptr(), tgt.as_ptr(),
+            n_steps as c_int, lr, loss_curve.as_mut_ptr(),
+        )
+    };
+    check(s, "train");
+
+    // Write the trained flat weights back into a fresh model.
+    let mut m = model.clone();
+    m.embed.data = w.embed;
+    m.gamma_final = w.gfin;
+    m.lm_head.data = w.lm;
+    for l in 0..nl {
+        m.layers[l].gamma_attn = w.ga[l * d..(l + 1) * d].to_vec();
+        m.layers[l].wqkv.data = w.wqkv[l * d * 3 * d..(l + 1) * d * 3 * d].to_vec();
+        m.layers[l].wo.data = w.wo[l * d * d..(l + 1) * d * d].to_vec();
+        m.layers[l].gamma_ffn = w.gf[l * d..(l + 1) * d].to_vec();
+        m.layers[l].wgu.data = w.wgu[l * d * 2 * dff..(l + 1) * d * 2 * dff].to_vec();
+        m.layers[l].wdown.data = w.wd[l * dff * d..(l + 1) * dff * d].to_vec();
+    }
+    (m, loss_curve)
 }

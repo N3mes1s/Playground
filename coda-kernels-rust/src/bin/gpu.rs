@@ -17,6 +17,7 @@ fn main() {
     use coda::kernels;
     use coda::model::{Config, Model, Rng};
     use coda::tensor::Mat;
+    use coda::train;
     use std::time::Instant;
 
     fn randmat(rng: &mut Rng, r: usize, c: usize, s: f32) -> Mat {
@@ -233,6 +234,89 @@ fn main() {
         );
         println!("    next-token argmax agreement: {}/{}", tokens.len() - mism, tokens.len());
         ok &= line("scaled model: CUDA vs CPU logits", diff, 5e-2);
+    }
+
+    // ---- GPU backward: gradients vs the CPU reference ----
+    println!("\n== GPU backward pass: gradients vs CPU ==");
+    {
+        let cfg = Config::tiny(24);
+        let model = Model::new(cfg.clone(), &mut Rng::new(555));
+        let tokens: Vec<usize> = (0..40).map(|i| (i * 5 + 1) % cfg.vocab).collect();
+        let targets: Vec<usize> = (0..40).map(|i| (i * 5 + 6) % cfg.vocab).collect();
+        let (_, cache) = model.forward(&tokens);
+        let (cpu_loss, cpu_g) = train::backward(&model, &cache, &targets);
+        let (gpu_g, gpu_loss) = cuda::grads(&model, &tokens, &targets);
+        let (cf, gf) = (cpu_g.flat(), gpu_g.flat());
+        let mut worst = 0.0f32;
+        for (c, g) in cf.iter().zip(&gf) {
+            for (x, y) in c.iter().zip(g.iter()) {
+                let denom = x.abs().max(y.abs()).max(1e-3);
+                worst = worst.max((x - y).abs() / denom);
+            }
+        }
+        println!("    loss: CPU {cpu_loss:.5}  GPU {gpu_loss:.5}");
+        ok &= line("GPU gradients match CPU backward (relative)", worst, 3e-2);
+    }
+
+    // ---- Device-resident GPU training, verified against CPU ----
+    println!("\n== GPU training: device-resident loop vs CPU ==");
+    {
+        let cfg = Config::tiny(24);
+        let tokens: Vec<usize> = (0..40).map(|i| (i * 7 + 2) % cfg.vocab).collect();
+        let targets: Vec<usize> = tokens.iter().map(|&t| (t + 1) % cfg.vocab).collect();
+        let model = Model::new(cfg.clone(), &mut Rng::new(99));
+
+        let (_, gpu_curve) = cuda::train(&model, &tokens, &targets, 300, 3e-3);
+        println!(
+            "    GPU loss: step 0 = {:.4}  step 150 = {:.4}  final = {:.4}",
+            gpu_curve[0], gpu_curve[150], gpu_curve[299]
+        );
+        let mut cpu_model = Model::new(cfg.clone(), &mut Rng::new(99));
+        let cpu_curve = train::train(&mut cpu_model, &tokens, &targets, 300, 3e-3, 150);
+        println!("    CPU loss (identical init): final = {:.4}", cpu_curve.last().unwrap().1);
+        ok &= line("GPU training drives the loss down", gpu_curve[299], 0.5);
+    }
+
+    // ---- Scale up: train a ~10M-param model on the GPU ----
+    println!("\n== Scaled-up GPU training ==");
+    {
+        let cfg = Config {
+            vocab: 4096,
+            d_model: 384,
+            n_layers: 4,
+            n_heads: 6,
+            head_dim: 64,
+            d_ff: 1024,
+            eps: 1e-5,
+            rope_base: 10000.0,
+        };
+        let params = cfg.vocab * cfg.d_model * 2
+            + cfg.n_layers
+                * (cfg.d_model * 3 * cfg.d_model
+                    + cfg.d_model * cfg.d_model
+                    + cfg.d_model * 2 * cfg.d_ff
+                    + cfg.d_ff * cfg.d_model
+                    + 2 * cfg.d_model)
+            + cfg.d_model;
+        let seq = 128;
+        let model = Model::new(cfg.clone(), &mut Rng::new(2025));
+        let tokens: Vec<usize> = (0..seq).map(|i| (i * 13 + 1) % cfg.vocab).collect();
+        let targets: Vec<usize> = tokens.iter().map(|&t| (t * 2 + 1) % cfg.vocab).collect();
+        let steps = 200;
+        let t0 = Instant::now();
+        let (_, curve) = cuda::train(&model, &tokens, &targets, steps, 2e-3);
+        let dt = t0.elapsed().as_secs_f64();
+        println!(
+            "    ~{:.1}M params, {} steps in {:.1}s ({:.0} ms/step)",
+            params as f64 / 1e6, steps, dt, dt * 1000.0 / steps as f64
+        );
+        println!("    loss: {:.3} -> {:.3}", curve[0], curve[steps - 1]);
+        let dropped = curve[steps - 1] < curve[0];
+        ok &= line(
+            "scaled GPU training reduces the loss",
+            if dropped { 0.0 } else { 1.0 },
+            0.5,
+        );
     }
 
     println!();

@@ -178,6 +178,199 @@ __global__ void k_attention(const float* Q, const float* K, const float* V,
 }
 
 // ---------------------------------------------------------------------------
+// Backward-pass kernels (paper Theorem 1: tile-local backward rules + GEMMs).
+// ---------------------------------------------------------------------------
+
+// Embedding gather: x0[i,j] = embed[tokens[i], j].
+__global__ void k_embed_gather(const float* embed, const int* tokens,
+                               float* x0, int T, int d) {
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i >= T || j >= d) return;
+    x0[i * d + j] = embed[tokens[i] * d + j];
+}
+
+// Cross-entropy gradient + per-token loss: d_logits = (softmax - onehot)/T.
+__global__ void k_ce_grad(const float* logits, const int* tgt,
+                          float* dlog, float* loss_row, int T, int V) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= T) return;
+    float mx = -1e30f;
+    for (int j = 0; j < V; ++j) mx = fmaxf(mx, logits[i * V + j]);
+    float se = 0.0f;
+    for (int j = 0; j < V; ++j) se += expf(logits[i * V + j] - mx);
+    float lse = mx + logf(se);
+    loss_row[i] = lse - logits[i * V + tgt[i]];
+    float inv_t = 1.0f / (float)T;
+    for (int j = 0; j < V; ++j) {
+        float p = expf(logits[i * V + j] - mx) / se;
+        dlog[i * V + j] = (p - (j == tgt[i] ? 1.0f : 0.0f)) * inv_t;
+    }
+}
+
+// C[M,N] = A @ Bᵀ, with A [M,K] and B [N,K]  (activation-gradient GEMM).
+__global__ void k_gemm_nt(const float* A, const float* B, float* C,
+                          int M, int N, int K) {
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i >= M || j >= N) return;
+    float acc = 0.0f;
+    for (int k = 0; k < K; ++k) acc += A[i * K + k] * B[j * K + k];
+    C[i * N + j] = acc;
+}
+
+// C[K,N] = Aᵀ @ B, with A [M,K] and B [M,N]  (weight-gradient GEMM).
+__global__ void k_gemm_tn(const float* A, const float* B, float* C,
+                          int M, int K, int N) {
+    int n = blockIdx.x * blockDim.x + threadIdx.x;
+    int k = blockIdx.y * blockDim.y + threadIdx.y;
+    if (k >= K || n >= N) return;
+    float acc = 0.0f;
+    for (int m = 0; m < M; ++m) acc += A[m * K + k] * B[m * N + n];
+    C[k * N + n] = acc;
+}
+
+// RMSNorm backward (local rule of Kernel 9). One thread per row.
+//   d_nrm = d_n ⊙ γ ;  S = Σ d_nrm⊙x
+//   d_x   = r·d_nrm - (r³/N)·x·S ;  d_γ += Σ_rows d_n⊙x·r
+__global__ void k_rmsnorm_bwd(const float* x, const float* r, const float* gamma,
+                              const float* dn, float* dx, float* dgamma,
+                              int M, int N) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= M) return;
+    float ri = r[i];
+    float S = 0.0f;
+    for (int j = 0; j < N; ++j) S += (dn[i * N + j] * gamma[j]) * x[i * N + j];
+    float r3 = ri * ri * ri;
+    for (int j = 0; j < N; ++j) {
+        float d_nrm = dn[i * N + j] * gamma[j];
+        dx[i * N + j] = ri * d_nrm - (r3 / (float)N) * x[i * N + j] * S;
+        atomicAdd(&dgamma[j], dn[i * N + j] * x[i * N + j] * ri);
+    }
+}
+
+// SwiGLU backward (epilogue of Kernel 10).
+__global__ void k_swiglu_bwd(const float* gu, const float* dff, float* dgu,
+                             int M, int F) {
+    int k = blockIdx.x * blockDim.x + threadIdx.x;
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i >= M || k >= F) return;
+    float g = gu[i * (2 * F) + 2 * k];
+    float u = gu[i * (2 * F) + 2 * k + 1];
+    float d_o = dff[i * F + k];
+    float sg = silu_f(g);
+    float sig = 1.0f / (1.0f + expf(-g));
+    float d_silu = sig + sg * (1.0f - sig);
+    dgu[i * (2 * F) + 2 * k] = d_o * u * d_silu;
+    dgu[i * (2 * F) + 2 * k + 1] = d_o * sg;
+}
+
+// RoPE backward: rotation by the negated angle.
+__global__ void k_rope_bwd(const float* dout, const float* cosT,
+                           const float* sinT, float* din, int M, int N) {
+    int p = blockIdx.x * blockDim.x + threadIdx.x;
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    int c0 = 2 * p, c1 = 2 * p + 1;
+    if (i >= M || c1 >= N) return;
+    float g0 = dout[i * N + c0], g1 = dout[i * N + c1];
+    float c = cosT[i * N + c0], s = sinT[i * N + c0];
+    din[i * N + c0] = g0 * c + g1 * s;
+    din[i * N + c1] = -g0 * s + g1 * c;
+}
+
+// Causal attention backward. One thread owns one (query, head) pair; it
+// recomputes the softmax row, writes its own d_q row, and atomically scatters
+// into d_k / d_v. d_q / d_k / d_v must be zeroed beforehand.
+__global__ void k_attention_bwd(const float* Q, const float* K, const float* V,
+                                const float* dO, float* dQ, float* dK, float* dV,
+                                int T, int d, int n_heads, int head_dim) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= T * n_heads) return;
+    int i = idx / n_heads, h = idx % n_heads;
+    int off = h * head_dim;
+    float scale = rsqrtf((float)head_dim);
+
+    float mx = -1e30f;
+    for (int j = 0; j <= i; ++j) {
+        float s = 0.0f;
+        for (int e = 0; e < head_dim; ++e)
+            s += Q[i * d + off + e] * K[j * d + off + e];
+        mx = fmaxf(mx, s * scale);
+    }
+    float se = 0.0f, dotsum = 0.0f;
+    for (int j = 0; j <= i; ++j) {
+        float s = 0.0f, dp = 0.0f;
+        for (int e = 0; e < head_dim; ++e) {
+            s += Q[i * d + off + e] * K[j * d + off + e];
+            dp += dO[i * d + off + e] * V[j * d + off + e];
+        }
+        float p = expf(s * scale - mx);
+        se += p;
+        dotsum += p * dp;  // accumulated against the un-normalized p
+    }
+    dotsum /= se;
+    for (int j = 0; j <= i; ++j) {
+        float s = 0.0f, dp = 0.0f;
+        for (int e = 0; e < head_dim; ++e) {
+            s += Q[i * d + off + e] * K[j * d + off + e];
+            dp += dO[i * d + off + e] * V[j * d + off + e];
+        }
+        float p = expf(s * scale - mx) / se;
+        float d_score = p * (dp - dotsum);
+        for (int e = 0; e < head_dim; ++e) {
+            atomicAdd(&dV[j * d + off + e], p * dO[i * d + off + e]);
+            dQ[i * d + off + e] += scale * d_score * K[j * d + off + e];
+            atomicAdd(&dK[j * d + off + e], scale * d_score * Q[i * d + off + e]);
+        }
+    }
+}
+
+// Embedding backward: scatter-add the input gradient into the table.
+__global__ void k_embed_bwd(const float* dx0, const int* tokens,
+                            float* dembed, int T, int d) {
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i >= T || j >= d) return;
+    atomicAdd(&dembed[tokens[i] * d + j], dx0[i * d + j]);
+}
+
+// Recompute a normalized activation: out = (x ⊙ r) ⊙ γ.
+__global__ void k_rmsnorm_apply(const float* x, const float* r,
+                                const float* gamma, float* out, int M, int N) {
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i >= M || j >= N) return;
+    out[i * N + j] = x[i * N + j] * r[i] * gamma[j];
+}
+
+// In-place elementwise accumulate: a += b.
+__global__ void k_add(float* a, const float* b, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) a[i] += b[i];
+}
+
+// Write a [M,d] block into a wider [M,cols] matrix at column `offset`.
+__global__ void k_paste(const float* src, float* dst, int M, int d,
+                        int cols, int offset) {
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i >= M || j >= d) return;
+    dst[i * cols + offset + j] = src[i * d + j];
+}
+
+// One Adam step over a parameter tensor.
+__global__ void k_adam(float* p, const float* g, float* m, float* v, int n,
+                       float lr, float b1, float b2, float eps, int t) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    m[i] = b1 * m[i] + (1.0f - b1) * g[i];
+    v[i] = b2 * v[i] + (1.0f - b2) * g[i] * g[i];
+    float mhat = m[i] / (1.0f - powf(b1, (float)t));
+    float vhat = v[i] / (1.0f - powf(b2, (float)t));
+    p[i] -= lr * mhat / (sqrtf(vhat) + eps);
+}
+
+// ---------------------------------------------------------------------------
 // Host helpers.
 // ---------------------------------------------------------------------------
 
@@ -205,6 +398,245 @@ static dim3 grid2d(int N, int M) {
 // ---------------------------------------------------------------------------
 // extern "C" wrappers (host arrays in / out; return 0 on success).
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Device-resident training: one forward (saving activations) + one backward
+// fill every gradient buffer; an Adam step then runs entirely on the GPU.
+// ---------------------------------------------------------------------------
+
+// All device memory for a training run: weights, gradients, Adam moments,
+// saved activations and scratch. Sized once from the model configuration.
+struct Net {
+    int T, d, nl, nh, hd, dff, vocab;
+    float eps;
+    // Weights, gradients, and Adam first/second moments (matched shapes).
+    float *embed, *ga, *wqkv, *wo, *gf, *wgu, *wd, *gfin, *lm;
+    float *g_embed, *g_ga, *g_wqkv, *g_wo, *g_gf, *g_wgu, *g_wd, *g_gfin, *g_lm;
+    float *m_embed, *v_embed, *m_ga, *v_ga, *m_wqkv, *v_wqkv, *m_wo, *v_wo;
+    float *m_gf, *v_gf, *m_wgu, *v_wgu, *m_wd, *v_wd, *m_gfin, *v_gfin, *m_lm, *v_lm;
+    // RoPE tables and token / target ids.
+    float *cosT, *sinT;
+    int *tokens, *targets;
+    // Saved activations (per layer where noted).
+    float *xr, *r1, *qrot, *krot, *vv, *aout, *hh, *r2, *gu, *ff, *rf, *logits;
+    // Forward scratch.
+    float *onorm, *qkv_s, *qs, *ks, *n2s, *scratchO;
+    // Backward scratch.
+    float *dlog, *lossrow, *nf, *dgrad, *dh, *dff_, *dgu, *dn2, *dh2, *dattn;
+    float *dqr, *dkr, *dvg, *dq, *dk, *dqkv, *dn1, *dx1, *n1r, *n2r;
+};
+
+static void alloc_net(Net* n) {
+    int T = n->T, d = n->d, nl = n->nl, dff = n->dff, V = n->vocab;
+    int d3 = 3 * d, dff2 = 2 * dff;
+    size_t W_embed = (size_t)V * d, W_ga = (size_t)nl * d;
+    size_t W_wqkv = (size_t)nl * d * d3, W_wo = (size_t)nl * d * d;
+    size_t W_wgu = (size_t)nl * d * dff2, W_wd = (size_t)nl * dff * d;
+    size_t W_lm = (size_t)d * V;
+    n->embed = up(0, W_embed); n->ga = up(0, W_ga); n->wqkv = up(0, W_wqkv);
+    n->wo = up(0, W_wo); n->gf = up(0, W_ga); n->wgu = up(0, W_wgu);
+    n->wd = up(0, W_wd); n->gfin = up(0, d); n->lm = up(0, W_lm);
+    n->g_embed = up(0, W_embed); n->g_ga = up(0, W_ga); n->g_wqkv = up(0, W_wqkv);
+    n->g_wo = up(0, W_wo); n->g_gf = up(0, W_ga); n->g_wgu = up(0, W_wgu);
+    n->g_wd = up(0, W_wd); n->g_gfin = up(0, d); n->g_lm = up(0, W_lm);
+    n->m_embed = up(0, W_embed); n->v_embed = up(0, W_embed);
+    n->m_ga = up(0, W_ga); n->v_ga = up(0, W_ga);
+    n->m_wqkv = up(0, W_wqkv); n->v_wqkv = up(0, W_wqkv);
+    n->m_wo = up(0, W_wo); n->v_wo = up(0, W_wo);
+    n->m_gf = up(0, W_ga); n->v_gf = up(0, W_ga);
+    n->m_wgu = up(0, W_wgu); n->v_wgu = up(0, W_wgu);
+    n->m_wd = up(0, W_wd); n->v_wd = up(0, W_wd);
+    n->m_gfin = up(0, d); n->v_gfin = up(0, d);
+    n->m_lm = up(0, W_lm); n->v_lm = up(0, W_lm);
+    n->cosT = up(0, (size_t)T * d); n->sinT = up(0, (size_t)T * d);
+    cudaMalloc(&n->tokens, (size_t)T * sizeof(int));
+    cudaMalloc(&n->targets, (size_t)T * sizeof(int));
+    n->xr = up(0, (size_t)(nl + 1) * T * d);
+    n->r1 = up(0, (size_t)nl * T); n->r2 = up(0, (size_t)nl * T);
+    n->qrot = up(0, (size_t)nl * T * d); n->krot = up(0, (size_t)nl * T * d);
+    n->vv = up(0, (size_t)nl * T * d); n->aout = up(0, (size_t)nl * T * d);
+    n->hh = up(0, (size_t)nl * T * d);
+    n->gu = up(0, (size_t)nl * T * dff2); n->ff = up(0, (size_t)nl * T * dff);
+    n->rf = up(0, (size_t)T); n->logits = up(0, (size_t)T * V);
+    n->onorm = up(0, (size_t)T * d); n->qkv_s = up(0, (size_t)T * d3);
+    n->qs = up(0, (size_t)T * d); n->ks = up(0, (size_t)T * d);
+    n->n2s = up(0, (size_t)T * d); n->scratchO = up(0, (size_t)T * d);
+    n->dlog = up(0, (size_t)T * V); n->lossrow = up(0, (size_t)T);
+    n->nf = up(0, (size_t)T * d); n->dgrad = up(0, (size_t)T * d);
+    n->dh = up(0, (size_t)T * d); n->dff_ = up(0, (size_t)T * dff);
+    n->dgu = up(0, (size_t)T * dff2); n->dn2 = up(0, (size_t)T * d);
+    n->dh2 = up(0, (size_t)T * d); n->dattn = up(0, (size_t)T * d);
+    n->dqr = up(0, (size_t)T * d); n->dkr = up(0, (size_t)T * d);
+    n->dvg = up(0, (size_t)T * d); n->dq = up(0, (size_t)T * d);
+    n->dk = up(0, (size_t)T * d); n->dqkv = up(0, (size_t)T * d3);
+    n->dn1 = up(0, (size_t)T * d); n->dx1 = up(0, (size_t)T * d);
+    n->n1r = up(0, (size_t)T * d); n->n2r = up(0, (size_t)T * d);
+}
+
+static void free_net(Net* n) {
+    float* ptrs[] = {
+        n->embed, n->ga, n->wqkv, n->wo, n->gf, n->wgu, n->wd, n->gfin, n->lm,
+        n->g_embed, n->g_ga, n->g_wqkv, n->g_wo, n->g_gf, n->g_wgu, n->g_wd,
+        n->g_gfin, n->g_lm, n->m_embed, n->v_embed, n->m_ga, n->v_ga, n->m_wqkv,
+        n->v_wqkv, n->m_wo, n->v_wo, n->m_gf, n->v_gf, n->m_wgu, n->v_wgu,
+        n->m_wd, n->v_wd, n->m_gfin, n->v_gfin, n->m_lm, n->v_lm, n->cosT,
+        n->sinT, n->xr, n->r1, n->r2, n->qrot, n->krot, n->vv, n->aout, n->hh,
+        n->gu, n->ff, n->rf, n->logits, n->onorm, n->qkv_s, n->qs, n->ks,
+        n->n2s, n->scratchO, n->dlog, n->lossrow, n->nf, n->dgrad, n->dh,
+        n->dff_, n->dgu, n->dn2, n->dh2, n->dattn, n->dqr, n->dkr, n->dvg,
+        n->dq, n->dk, n->dqkv, n->dn1, n->dx1, n->n1r, n->n2r};
+    for (float* p : ptrs) cudaFree(p);
+    cudaFree(n->tokens);
+    cudaFree(n->targets);
+}
+
+// One forward (saving activations) + one backward; fills every g_* buffer.
+// Returns the mean cross-entropy loss.
+static float fwd_bwd(Net* n) {
+    int T = n->T, d = n->d, nl = n->nl, dff = n->dff, V = n->vocab;
+    int nh = n->nh, hd = n->hd, d3 = 3 * d, dff2 = 2 * dff;
+    float eps = n->eps;
+    dim3 blk(BLK, BLK);
+    int rb = (T + 255) / 256;  // row-kernel grid
+
+    // ---- Forward, saving every activation the backward pass needs. ----
+    k_embed_gather<<<grid2d(d, T), blk>>>(n->embed, n->tokens, n->xr, T, d);
+    for (int l = 0; l < nl; ++l) {
+        float* x = n->xr + (size_t)l * T * d;
+        float* r1 = n->r1 + (size_t)l * T;
+        float* ga_l = n->ga + (size_t)l * d;
+        float* wqkv_l = n->wqkv + (size_t)l * d * d3;
+        float* wo_l = n->wo + (size_t)l * d * d;
+        float* gf_l = n->gf + (size_t)l * d;
+        float* wgu_l = n->wgu + (size_t)l * d * dff2;
+        float* wd_l = n->wd + (size_t)l * dff * d;
+        float* qrot_l = n->qrot + (size_t)l * T * d;
+        float* krot_l = n->krot + (size_t)l * T * d;
+        float* vv_l = n->vv + (size_t)l * T * d;
+        float* aout_l = n->aout + (size_t)l * T * d;
+        float* hh_l = n->hh + (size_t)l * T * d;
+        float* r2 = n->r2 + (size_t)l * T;
+        float* gu_l = n->gu + (size_t)l * T * dff2;
+        float* ff_l = n->ff + (size_t)l * T * dff;
+
+        k_row_invrms<<<rb, 256>>>(x, r1, T, d, eps);
+        k_col_scale<<<grid2d(d, T), blk>>>(x, ga_l, n->onorm, T, d);
+        k_gemm_epi<EPI_ROWSCALE><<<grid2d(d3, T), blk>>>(
+            n->onorm, wqkv_l, 0, 0, r1, 0, n->qkv_s, T, d3, d);
+        k_slice<<<grid2d(d, T), blk>>>(n->qkv_s, n->qs, T, d, d3, 0);
+        k_slice<<<grid2d(d, T), blk>>>(n->qkv_s, n->ks, T, d, d3, d);
+        k_slice<<<grid2d(d, T), blk>>>(n->qkv_s, vv_l, T, d, d3, 2 * d);
+        k_rope<<<grid2d(d / 2, T), blk>>>(n->qs, n->cosT, n->sinT, qrot_l, T, d);
+        k_rope<<<grid2d(d / 2, T), blk>>>(n->ks, n->cosT, n->sinT, krot_l, T, d);
+        k_attention<<<(T * nh + 255) / 256, 256>>>(
+            qrot_l, krot_l, vv_l, aout_l, T, d, nh, hd);
+        k_gemm_epi<EPI_RESGAMMA><<<grid2d(d, T), blk>>>(
+            aout_l, wo_l, x, gf_l, 0, hh_l, n->n2s, T, d, d);
+        k_row_invrms<<<rb, 256>>>(hh_l, r2, T, d, eps);
+        k_gemm_epi<EPI_ROWSCALE><<<grid2d(dff2, T), blk>>>(
+            n->n2s, wgu_l, 0, 0, r2, 0, gu_l, T, dff2, d);
+        k_swiglu<<<grid2d(dff, T), blk>>>(gu_l, ff_l, T, dff);
+        k_gemm_epi<EPI_RESGAMMA><<<grid2d(d, T), blk>>>(
+            ff_l, wd_l, hh_l, n->gfin, 0, n->xr + (size_t)(l + 1) * T * d,
+            n->scratchO, T, d, dff);
+    }
+    float* y_final = n->xr + (size_t)nl * T * d;
+    k_row_invrms<<<rb, 256>>>(y_final, n->rf, T, d, eps);
+    k_col_scale<<<grid2d(d, T), blk>>>(y_final, n->gfin, n->onorm, T, d);
+    k_gemm_epi<EPI_ROWSCALE><<<grid2d(V, T), blk>>>(
+        n->onorm, n->lm, 0, 0, n->rf, 0, n->logits, T, V, d);
+
+    // ---- Backward. ----
+    k_ce_grad<<<rb, 256>>>(n->logits, n->targets, n->dlog, n->lossrow, T, V);
+    // LM head: logits = nf @ W_lm,  nf = rmsnorm(y_final) ⊙ γ_final.
+    k_rmsnorm_apply<<<grid2d(d, T), blk>>>(y_final, n->rf, n->gfin, n->nf, T, d);
+    k_gemm_tn<<<grid2d(V, d), blk>>>(n->nf, n->dlog, n->g_lm, T, d, V);
+    k_gemm_nt<<<grid2d(d, T), blk>>>(n->dlog, n->lm, n->nf, T, d, V);  // nf reused as d_nf
+    cudaMemset(n->g_gfin, 0, (size_t)d * sizeof(float));
+    k_rmsnorm_bwd<<<rb, 256>>>(y_final, n->rf, n->gfin, n->nf, n->dgrad,
+                               n->g_gfin, T, d);
+
+    for (int l = nl - 1; l >= 0; --l) {
+        float* x = n->xr + (size_t)l * T * d;
+        float* r1 = n->r1 + (size_t)l * T;
+        float* ga_l = n->ga + (size_t)l * d;
+        float* wqkv_l = n->wqkv + (size_t)l * d * d3;
+        float* wo_l = n->wo + (size_t)l * d * d;
+        float* gf_l = n->gf + (size_t)l * d;
+        float* wgu_l = n->wgu + (size_t)l * d * dff2;
+        float* wd_l = n->wd + (size_t)l * dff * d;
+        float* qrot_l = n->qrot + (size_t)l * T * d;
+        float* krot_l = n->krot + (size_t)l * T * d;
+        float* vv_l = n->vv + (size_t)l * T * d;
+        float* aout_l = n->aout + (size_t)l * T * d;
+        float* hh_l = n->hh + (size_t)l * T * d;
+        float* r2 = n->r2 + (size_t)l * T;
+        float* gu_l = n->gu + (size_t)l * T * dff2;
+        float* ff_l = n->ff + (size_t)l * T * dff;
+        float* g_ga_l = n->g_ga + (size_t)l * d;
+        float* g_wqkv_l = n->g_wqkv + (size_t)l * d * d3;
+        float* g_wo_l = n->g_wo + (size_t)l * d * d;
+        float* g_gf_l = n->g_gf + (size_t)l * d;
+        float* g_wgu_l = n->g_wgu + (size_t)l * d * dff2;
+        float* g_wd_l = n->g_wd + (size_t)l * dff * d;
+
+        // y = ff @ W_down + h  (residual): grad flows to both ff-path and h.
+        cudaMemcpy(n->dh, n->dgrad, (size_t)T * d * sizeof(float),
+                   cudaMemcpyDeviceToDevice);
+        k_gemm_nt<<<grid2d(dff, T), blk>>>(n->dgrad, wd_l, n->dff_, T, dff, d);
+        k_gemm_tn<<<grid2d(d, dff), blk>>>(ff_l, n->dgrad, g_wd_l, T, dff, d);
+        k_swiglu_bwd<<<grid2d(dff, T), blk>>>(gu_l, n->dff_, n->dgu, T, dff);
+        k_rmsnorm_apply<<<grid2d(d, T), blk>>>(hh_l, r2, gf_l, n->n2r, T, d);
+        k_gemm_tn<<<grid2d(dff2, d), blk>>>(n->n2r, n->dgu, g_wgu_l, T, d, dff2);
+        k_gemm_nt<<<grid2d(d, T), blk>>>(n->dgu, wgu_l, n->dn2, T, d, dff2);
+        cudaMemset(g_gf_l, 0, (size_t)d * sizeof(float));
+        k_rmsnorm_bwd<<<rb, 256>>>(hh_l, r2, gf_l, n->dn2, n->dh2, g_gf_l, T, d);
+        k_add<<<(T * d + 255) / 256, 256>>>(n->dh, n->dh2, T * d);
+
+        // h = attn_out @ W_o + x.
+        k_gemm_tn<<<grid2d(d, d), blk>>>(aout_l, n->dh, g_wo_l, T, d, d);
+        k_gemm_nt<<<grid2d(d, T), blk>>>(n->dh, wo_l, n->dattn, T, d, d);
+
+        // Attention + RoPE backward.
+        cudaMemset(n->dqr, 0, (size_t)T * d * sizeof(float));
+        cudaMemset(n->dkr, 0, (size_t)T * d * sizeof(float));
+        cudaMemset(n->dvg, 0, (size_t)T * d * sizeof(float));
+        k_attention_bwd<<<(T * nh + 255) / 256, 256>>>(
+            qrot_l, krot_l, vv_l, n->dattn, n->dqr, n->dkr, n->dvg, T, d, nh, hd);
+        k_rope_bwd<<<grid2d(d / 2, T), blk>>>(n->dqr, n->cosT, n->sinT, n->dq, T, d);
+        k_rope_bwd<<<grid2d(d / 2, T), blk>>>(n->dkr, n->cosT, n->sinT, n->dk, T, d);
+        k_paste<<<grid2d(d, T), blk>>>(n->dq, n->dqkv, T, d, d3, 0);
+        k_paste<<<grid2d(d, T), blk>>>(n->dk, n->dqkv, T, d, d3, d);
+        k_paste<<<grid2d(d, T), blk>>>(n->dvg, n->dqkv, T, d, d3, 2 * d);
+
+        // qkv = n1 @ W_qkv,  n1 = rmsnorm(x) ⊙ γ_attn.
+        k_rmsnorm_apply<<<grid2d(d, T), blk>>>(x, r1, ga_l, n->n1r, T, d);
+        k_gemm_tn<<<grid2d(d3, d), blk>>>(n->n1r, n->dqkv, g_wqkv_l, T, d, d3);
+        k_gemm_nt<<<grid2d(d, T), blk>>>(n->dqkv, wqkv_l, n->dn1, T, d, d3);
+        cudaMemset(g_ga_l, 0, (size_t)d * sizeof(float));
+        k_rmsnorm_bwd<<<rb, 256>>>(x, r1, ga_l, n->dn1, n->dx1, g_ga_l, T, d);
+
+        // x feeds both the RMSNorm and the residual: sum the two paths.
+        k_add<<<(T * d + 255) / 256, 256>>>(n->dx1, n->dh, T * d);
+        cudaMemcpy(n->dgrad, n->dx1, (size_t)T * d * sizeof(float),
+                   cudaMemcpyDeviceToDevice);
+    }
+
+    // Embedding gradient: scatter the input-stream gradient into the table.
+    cudaMemset(n->g_embed, 0, (size_t)V * d * sizeof(float));
+    k_embed_bwd<<<grid2d(d, T), blk>>>(n->dgrad, n->tokens, n->g_embed, T, d);
+
+    cudaDeviceSynchronize();
+
+    // Mean loss from the per-token losses.
+    float* host_loss = (float*)malloc((size_t)T * sizeof(float));
+    cudaMemcpy(host_loss, n->lossrow, (size_t)T * sizeof(float),
+               cudaMemcpyDeviceToHost);
+    float sum = 0.0f;
+    for (int i = 0; i < T; ++i) sum += host_loss[i];
+    free(host_loss);
+    return sum / (float)T;
+}
 
 extern "C" {
 
@@ -461,6 +893,132 @@ int coda_cuda_model_forward(
     cudaFree(dQKV); cudaFree(dQ); cudaFree(dK); cudaFree(dV);
     cudaFree(dQR); cudaFree(dKR); cudaFree(dAttn); cudaFree(dH); cudaFree(dN2);
     cudaFree(dDP); cudaFree(dFF); cudaFree(dLogits);
+    return err;
+}
+
+// Upload host weights into a Net's device weight buffers.
+static void upload_weights(Net* n, const float* embed, const float* ga,
+                           const float* wqkv, const float* wo, const float* gf,
+                           const float* wgu, const float* wd, const float* gfin,
+                           const float* lm) {
+    int d = n->d, nl = n->nl, dff = n->dff, V = n->vocab;
+    int d3 = 3 * d, dff2 = 2 * dff;
+    auto cp = [](float* dst, const float* src, size_t n_el) {
+        cudaMemcpy(dst, src, n_el * sizeof(float), cudaMemcpyHostToDevice);
+    };
+    cp(n->embed, embed, (size_t)V * d);
+    cp(n->ga, ga, (size_t)nl * d);
+    cp(n->wqkv, wqkv, (size_t)nl * d * d3);
+    cp(n->wo, wo, (size_t)nl * d * d);
+    cp(n->gf, gf, (size_t)nl * d);
+    cp(n->wgu, wgu, (size_t)nl * d * dff2);
+    cp(n->wd, wd, (size_t)nl * dff * d);
+    cp(n->gfin, gfin, (size_t)d);
+    cp(n->lm, lm, (size_t)d * V);
+}
+
+// One forward + backward; copies every gradient back to the host.
+int coda_cuda_grads(
+    int T, int d, int nl, int nh, int hd, int dff, int vocab, float eps,
+    const float* embed, const float* ga, const float* wqkv, const float* wo,
+    const float* gf, const float* wgu, const float* wd, const float* gfin,
+    const float* lm, const float* cosT, const float* sinT,
+    const int* tokens, const int* targets,
+    float* g_embed, float* g_ga, float* g_wqkv, float* g_wo, float* g_gf,
+    float* g_wgu, float* g_wd, float* g_gfin, float* g_lm, float* loss_out) {
+
+    Net n;
+    n.T = T; n.d = d; n.nl = nl; n.nh = nh; n.hd = hd; n.dff = dff;
+    n.vocab = vocab; n.eps = eps;
+    alloc_net(&n);
+    upload_weights(&n, embed, ga, wqkv, wo, gf, wgu, wd, gfin, lm);
+    cudaMemcpy(n.cosT, cosT, (size_t)T * d * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(n.sinT, sinT, (size_t)T * d * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(n.tokens, tokens, (size_t)T * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(n.targets, targets, (size_t)T * sizeof(int), cudaMemcpyHostToDevice);
+
+    float loss = fwd_bwd(&n);
+    int err = cuda_check("coda_cuda_grads");
+    *loss_out = loss;
+
+    int d3 = 3 * d, dff2 = 2 * dff;
+    auto dn = [](float* dst, const float* src, size_t n_el) {
+        cudaMemcpy(dst, src, n_el * sizeof(float), cudaMemcpyDeviceToHost);
+    };
+    dn(g_embed, n.g_embed, (size_t)vocab * d);
+    dn(g_ga, n.g_ga, (size_t)nl * d);
+    dn(g_wqkv, n.g_wqkv, (size_t)nl * d * d3);
+    dn(g_wo, n.g_wo, (size_t)nl * d * d);
+    dn(g_gf, n.g_gf, (size_t)nl * d);
+    dn(g_wgu, n.g_wgu, (size_t)nl * d * dff2);
+    dn(g_wd, n.g_wd, (size_t)nl * dff * d);
+    dn(g_gfin, n.g_gfin, (size_t)d);
+    dn(g_lm, n.g_lm, (size_t)d * vocab);
+    free_net(&n);
+    return err;
+}
+
+// Full device-resident training loop: weights and Adam state stay on the GPU
+// for all `n_steps`; trained weights and the loss curve are returned.
+int coda_cuda_train(
+    int T, int d, int nl, int nh, int hd, int dff, int vocab, float eps,
+    float* embed, float* ga, float* wqkv, float* wo, float* gf, float* wgu,
+    float* wd, float* gfin, float* lm, const float* cosT, const float* sinT,
+    const int* tokens, const int* targets, int n_steps, float lr,
+    float* loss_curve) {
+
+    Net n;
+    n.T = T; n.d = d; n.nl = nl; n.nh = nh; n.hd = hd; n.dff = dff;
+    n.vocab = vocab; n.eps = eps;
+    alloc_net(&n);
+    upload_weights(&n, embed, ga, wqkv, wo, gf, wgu, wd, gfin, lm);
+    cudaMemcpy(n.cosT, cosT, (size_t)T * d * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(n.sinT, sinT, (size_t)T * d * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(n.tokens, tokens, (size_t)T * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(n.targets, targets, (size_t)T * sizeof(int), cudaMemcpyHostToDevice);
+
+    int d3 = 3 * d, dff2 = 2 * dff;
+    // Adam moments start at zero (cudaMalloc does not zero memory).
+    struct WT { float *p, *g, *m, *v; size_t n; };
+    WT wts[] = {
+        {n.embed, n.g_embed, n.m_embed, n.v_embed, (size_t)vocab * d},
+        {n.ga, n.g_ga, n.m_ga, n.v_ga, (size_t)nl * d},
+        {n.wqkv, n.g_wqkv, n.m_wqkv, n.v_wqkv, (size_t)nl * d * d3},
+        {n.wo, n.g_wo, n.m_wo, n.v_wo, (size_t)nl * d * d},
+        {n.gf, n.g_gf, n.m_gf, n.v_gf, (size_t)nl * d},
+        {n.wgu, n.g_wgu, n.m_wgu, n.v_wgu, (size_t)nl * d * dff2},
+        {n.wd, n.g_wd, n.m_wd, n.v_wd, (size_t)nl * dff * d},
+        {n.gfin, n.g_gfin, n.m_gfin, n.v_gfin, (size_t)d},
+        {n.lm, n.g_lm, n.m_lm, n.v_lm, (size_t)d * vocab},
+    };
+    for (WT& w : wts) {
+        cudaMemset(w.m, 0, w.n * sizeof(float));
+        cudaMemset(w.v, 0, w.n * sizeof(float));
+    }
+
+    for (int step = 0; step < n_steps; ++step) {
+        loss_curve[step] = fwd_bwd(&n);
+        for (WT& w : wts) {
+            k_adam<<<((int)w.n + 255) / 256, 256>>>(
+                w.p, w.g, w.m, w.v, (int)w.n, lr, 0.9f, 0.999f, 1e-8f, step + 1);
+        }
+    }
+    cudaDeviceSynchronize();
+    int err = cuda_check("coda_cuda_train");
+
+    auto dn = [](float* dst, const float* src, size_t n_el) {
+        cudaMemcpy(dst, src, n_el * sizeof(float), cudaMemcpyDeviceToHost);
+    };
+    dn(embed, n.embed, (size_t)vocab * d);
+    dn(ga, n.ga, (size_t)nl * d);
+    dn(wqkv, n.wqkv, (size_t)nl * d * d3);
+    dn(wo, n.wo, (size_t)nl * d * d);
+    dn(gf, n.gf, (size_t)nl * d);
+    dn(wgu, n.wgu, (size_t)nl * d * dff2);
+    dn(wd, n.wd, (size_t)nl * dff * d);
+    dn(gfin, n.gfin, (size_t)d);
+    dn(lm, n.lm, (size_t)d * vocab);
+    free_net(&n);
     return err;
 }
 
