@@ -207,7 +207,7 @@ match the CPU reference (the tensor-core path is TF32, so the error floor is
     forward is verified against a genuine HuggingFace forward:
         next-token argmax : CUDA 3681  ==  HuggingFace 3681
         logits correlation with HuggingFace : 1.00000   (conversion VERIFIED)
-    device-resident greedy decode: 80 tokens in 49.5s (0.62 s/token)
+    KV-cached greedy decode: 200 tokens in 46.0s (0.23 s/token)
     chat prompt "Explain what a transformer neural network is, in two
     sentences." -> generated:
         "Of course! Here's a brief explanation of what a transformer neural
@@ -215,7 +215,9 @@ match the CPU reference (the tensor-core path is TF32, so the error floor is
          architecture that's particularly well-suited for natural language
          processing tasks, such as language translation, language modeling,
          and text classification. It was introduced in 2017 and has since
-         become a widely-used and influential ..."
+         become a widely-used and influential model in the field, known for
+         its ability to process input sequences of arbitrary length and its
+         efficient use of computational resources."
 ```
 
 The CODA backend implements the LLaMA architecture, so a **real pretrained
@@ -226,11 +228,15 @@ HuggingFace's rotate-half RoPE to the adjacent-pair convention) and runs
 inference through the CUDA GEMM-plus-epilogue kernels. The forward is
 **bit-verified against HuggingFace** — logits correlation 1.00000 — and the
 chat model follows instructions, generating a coherent answer to a prompt
-posed in the Llama-2 `[INST]` format. Decoding is **device-resident**:
-`coda_cuda_generate` uploads the 27 GB fp32 weight set to the GPU once and
-then runs the whole greedy decode loop on the resident weights, so only the
-new token id crosses the PCIe bus between steps — **0.62 s/token**, versus the
-~17 s/token a naive re-upload-per-token loop costs.
+posed in the Llama-2 `[INST]` format. Decoding is **device-resident and
+KV-cached**: `coda_cuda_generate` uploads the 27 GB fp32 weight set to the GPU
+once, a prefill pass fills a per-layer key/value cache, and each decode step
+then processes only the one new token — its projections become matrix-vector
+products and it attends against the cache instead of recomputing every earlier
+position. Decode cost is therefore constant per token rather than growing with
+sequence length — **0.23 s/token**. (The remaining cost is the GEMV kernel,
+which is latency-bound at low occupancy; a split-K GEMV or fp16 weights are the
+next lever.)
 
 The from-scratch Shakespeare model is a genuine (small) *trained* model: a
 char-level GPT is trained on the GPU over ~1.1 MB of public-domain Shakespeare
