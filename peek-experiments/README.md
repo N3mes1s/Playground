@@ -64,7 +64,7 @@ extraction, `ContextMap.apply`, scoring, the Evictor, the freeze, `save`/`load`.
 |------|--------------|
 | `scripted_client.py` | The offline `LMClient` stub + small helpers (`map_ids`, `id_of`, `tags_for`). |
 | `claude_code_client.py` | A live `LMClient` that shells out to the `claude` CLI. Run it directly for a one-call self-test. |
-| `corpus.py` | Generates a deterministic ~72k-char synthetic "ACME handbook" — the real long context experiment 3 navigates. |
+| `corpus.py` | Generates a deterministic ~116k-char synthetic "ACME handbook" — the long context experiment 3 navigates. Built *orientation-hostile*: function-named chapters and keyword decoys, so finding a fact costs real navigation. |
 | `rlm_agent.py` | A real RLM agent: answers a question by running code in a persistent Python REPL over a long context until it emits `FINAL:`. |
 | `experiment_1_mechanics.py` | The **deterministic layer**, no LLM: `ContextMap` ADD/REPLACE/DELETE, stable IDs, the scoring convention, and a narrated priority-eviction run. |
 | `experiment_2_policy_loop.py` | The **`CachePolicy` loop** over *canned* trajectories: the map bootstraps from empty, self-corrects, hits the budget, then freezes. Runs against either backend. |
@@ -87,9 +87,9 @@ python experiment_2_policy_loop.py        # offline scripted LM (default, instan
 python experiment_2_policy_loop.py --live # real LM via the `claude` CLI
 python experiment_2_policy_loop.py --live --model opus   # pick the model
 
-python experiment_3_rlm.py                # end to end: 3 runs, real agent + corpus (live, slow)
+python experiment_3_rlm.py                # end to end: 3 runs x 8 questions, real agent (live, slow)
 python experiment_3_rlm.py --runs 5       # more runs = tighter estimate
-python experiment_3_rlm.py --runs 1 --questions 2   # quick smoke check
+python experiment_3_rlm.py --runs 1 --questions 3   # quick smoke check
 
 python claude_code_client.py              # one-call self-test of the live client
 
@@ -175,11 +175,11 @@ triggers.
 
 ## Experiment 3 — does the cache measurably pay off?
 
-Experiment 3 is the honest test: a real agent, a real 72k-char corpus, real
+Experiment 3 is the honest test: a real agent, a real long corpus, real
 trajectories. Because a live model is non-deterministic, it runs the whole
 baseline/PEEK comparison `--runs` times (default 3) and reports a *paired*
-per-run total delta with its spread. Validating it took two passes — and the
-first pass is the most instructive part.
+per-question turn delta with its spread. Getting a number worth trusting took
+three passes — and the dead ends along the way are the instructive part.
 
 ### First pass — a confound, not a result
 
@@ -195,46 +195,78 @@ Fix: an RLM is *defined* by reading its external context, so the agent now
 rejects a `FINAL` issued before any search has run, and is told the map is a
 navigation aid to confirm against `context` (see `rlm_agent.py`).
 
-### Second pass — the validated measurement
+### Second pass — no signal, and three reasons why
 
-Re-run, 3 runs × 4 questions, `claude` CLI default model:
+With the confound removed, a 3 runs × 4 questions re-run came back flat: a
+paired delta of +0.0 turns, accuracy back at parity. No measurable effect — and
+the writeup named three fixable causes. The **corpus was too easy**: a 72k-char
+handbook with topically-named chapters ("EMPLOYEE BENEFITS") lets a competent
+agent grep any fact in 3–4 turns flat, so there is almost no orientation cost to
+amortise. The **question stream was too short** for the map to mature. And **n
+was tiny** — a single CLI timeout had knocked a whole run out of the paired set,
+leaving n = 2.
+
+### Third pass — strengthen the setup, then re-measure
+
+This pass acts on all three:
+
+- **A harder corpus** (`corpus.py`, 72k → 116k chars, 9 → 13 chapters). Chapter
+  titles now name the *owning function* — "ABSENCE & SCHEDULING PROVISIONS", not
+  "holidays" — so the table of contents is no longer a shortcut; and every fact
+  is shadowed by two or three keyword *decoys* elsewhere that name the topic but
+  defer the figure. Finding a fact now costs genuine navigation.
+- **A longer stream** — 8 questions spanning 7 chapters across the handbook, so
+  the map has to accumulate orientation corpus-wide, not for one region.
+- **A robust estimator** — the paired delta is now computed per *question*
+  rather than per run, so one CLI timeout costs a single data point instead of a
+  whole run. 3 runs × 8 questions gives up to n = 24.
+
+Re-run, 3 runs × 8 questions, `claude` CLI default model (the `delta` column is
+PEEK − baseline; this run dropped nothing — 242 model calls, no timeouts):
 
 ```
-#  question                BASELINE        PEEK
-                           mean (range)    mean (range)
-1  parental leave (weeks)   3.7 (3-4)       3.0 (2-4)
-2  vacation days at 5 yrs   3.3 (3-4)       5.0 (4-6)
-3  home-office stipend      3.3 (2-4)       2.7 (2-3)
-4  paid company holidays    4.3 (2-6)       4.0 (3-5)
+#  question                   BASELINE       PEEK           delta
+                               mean (range)   mean (range)
+1  paid company holidays       6.7 (4-10)     3.7 (3-4)      −3.0
+2  parental leave (weeks)      5.7 (4-7)      5.7 (5-6)       0.0
+3  vacation days at 5 yrs      3.3 (2-4)      4.3 (3-7)      +1.0
+4  home-office stipend ($)     3.0 (2-4)      3.3 (3-4)      +0.3
+5  probation period (days)     2.0 (2)        4.0 (3-5)      +2.0
+6  prof.-dev. budget ($)       2.7 (2-3)      5.3 (4-6)      +2.6
+7  sabbatical service (yrs)    4.3 (3-5)      3.0 (3)        −1.3
+8  resignation notice (days)   3.0 (3)        4.7 (4-5)      +1.7
 
-paired total delta (PEEK − baseline):  +0.0 ± 4.2 turns   (n = 2 valid runs)
-answers correct:  baseline 12/12,  PEEK 11/12  (the 1 miss was a CLI timeout,
-                  not a wrong answer)
+paired delta (PEEK − baseline):  +0.42 ± 2.28 turns/question   (n = 24, 0 dropped)
+answers correct:  baseline 24/24,  PEEK 24/24
 ```
 
-**The validated result: no measurable effect.** With the accuracy confound
-removed, PEEK neither helps nor hurts here — the paired delta is 0.0 turns with
-a ±4.2 spread that completely swamps it. Accuracy is back to parity. PEEK did
-not make the agent faster on this corpus.
+**The headline is still "no net effect"** — +0.42 turns/question sits well
+inside the ±2.28 spread. But the per-question column is not noise, and it is the
+actual result: PEEK's sign tracks how hard the *baseline* found each question.
 
-Why no signal — and this is the honest part:
+- Where baseline orientation was **expensive, PEEK paid off.** Holidays cost the
+  baseline 6.7 turns — the worst question on the board, range 4–10 — and the map
+  cut it to 3.7, a 3.0-turn saving. Sabbatical: 4.3 → 3.0.
+- Where baseline orientation was **cheap, PEEK was a tax.** Probation (a flat
+  baseline 2.0 turns), the dev budget (2.7) and notice (3.0) all ran *slower*
+  with the map: +2.0, +2.6, +1.7. When a fact is one grep away, reading a
+  context map and then — as the agent is told to — re-confirming the answer
+  against `context` is pure overhead.
 
-1. **The corpus is too easy.** A competent agent greps it in 3–4 turns flat, so
-   there is almost no orientation cost for a cache to amortise. PEEK is designed
-   for contexts where orientation is genuinely expensive.
-2. **The question stream is too short.** PEEK's benefit is back-loaded (the map
-   must mature first); 4 questions barely reaches the payoff zone.
-3. **n is tiny.** One CLI timeout knocked a run out of the paired set, leaving
-   n = 2. A ±4.2 spread over 2 runs is not a measurement — it is a hint that
-   far more runs are needed.
+(The lone exception is parental leave: slow for the baseline at 5.7 turns, yet
+unchanged under PEEK. The pattern is a tendency, not a law.)
 
-What *is* solid: the full loop runs end to end, the agent produces genuine
-trajectories, and PEEK distills a genuinely good map — the final map (printed
-by the script) carries accurate char offsets and every exact domain constant.
-The artefact works; this experiment's regime simply does not reward it. A real
-benchmark would need a corpus where orientation costs many turns, longer
-question streams, and many more runs — that is the honest next step, not a
-claim of speed-up from this setup.
+So PEEK's value here is real but **conditional**: it amortises orientation only
+when orientation actually costs something. This corpus mixes genuinely buried
+facts with trivially greppable ones, and the mix averages to zero. The map is
+not the weak link — the final map the script prints at the end of each run
+carries accurate char offsets and every exact domain constant; the agent simply
+does not need it for the easy half of the stream.
+
+The honest next step is now sharper than "more runs": a corpus where *no* fact
+is cheaply greppable, so every query pays the orientation cost PEEK is built to
+cache. Until then, easy and hard questions mixed in one stream will keep washing
+the average back out to zero.
 
 ## Notes
 

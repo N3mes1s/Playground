@@ -16,7 +16,8 @@ per-question means and a paired (PEEK - baseline) total delta with its spread,
 so the comparison is something you can actually read a signal off of (n
 permitting).
 
-Needs the `claude` CLI. This makes a LOT of model calls -- well over 100 per run.
+Needs the `claude` CLI. This makes a LOT of model calls -- on the order of
+80-100 per run (8 questions x both conditions, plus PEEK's two calls per step).
 
   python experiment_3_rlm.py                    # 3 runs, 8 questions
   python experiment_3_rlm.py --runs 5           # more runs = tighter estimate
