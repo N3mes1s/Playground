@@ -275,21 +275,22 @@ fn main() {
         ok &= line("GPU training drives the loss down", gpu_curve[299], 0.5);
     }
 
-    // ---- Scale up: train a larger model on the GPU ----
-    // CODA_SCALE=big selects a ~100M-parameter config (for an A100); the
-    // default is a ~10M-parameter config that runs comfortably on a T4.
+    // ---- Scale up: train a large model on the GPU ----
+    // CODA_SCALE=big selects a ~6.7B-parameter (Llama-7B-class) config whose
+    // weights are generated and kept entirely on the GPU and optimized with
+    // SGD - Adam's moment tensors would not fit. The default is a ~10M model.
     println!("\n== Scaled-up GPU training ==");
     {
         let big = std::env::var("CODA_SCALE").map(|s| s == "big").unwrap_or(false);
         let cfg = if big {
-            // ~2.7B parameters - GPT-3-2.7B class (needs an 80GB A100).
+            // ~6.7B parameters - Llama-7B class (needs an 80GB A100).
             Config {
                 vocab: 32000,
-                d_model: 2560,
+                d_model: 4096,
                 n_layers: 32,
-                n_heads: 40,
-                head_dim: 64,
-                d_ff: 6912,
+                n_heads: 32,
+                head_dim: 128,
+                d_ff: 11008,
                 eps: 1e-5,
                 rope_base: 10000.0,
             }
@@ -314,24 +315,47 @@ fn main() {
                     + 2 * cfg.d_model)
             + cfg.d_model;
         let seq = if big { 512 } else { 128 };
-        let model = Model::new(cfg.clone(), &mut Rng::new(2025));
         let tokens: Vec<usize> = (0..seq).map(|i| (i * 13 + 1) % cfg.vocab).collect();
         let targets: Vec<usize> = tokens.iter().map(|&t| (t * 2 + 1) % cfg.vocab).collect();
-        let steps = 200;
-        let t0 = Instant::now();
-        let (_, curve) = cuda::train(&model, &tokens, &targets, steps, 2e-3);
-        let dt = t0.elapsed().as_secs_f64();
         println!(
-            "    ~{:.1}M params, {} steps in {:.1}s ({:.0} ms/step)",
-            params as f64 / 1e6, steps, dt, dt * 1000.0 / steps as f64
+            "    d_model={}, layers={}, heads={}, d_ff={}, vocab={}, seq={}  (~{:.2}B params)",
+            cfg.d_model, cfg.n_layers, cfg.n_heads, cfg.d_ff, cfg.vocab, seq,
+            params as f64 / 1e9
         );
-        println!("    loss: {:.3} -> {:.3}", curve[0], curve[steps - 1]);
-        let dropped = curve[steps - 1] < curve[0];
-        ok &= line(
-            "scaled GPU training reduces the loss",
-            if dropped { 0.0 } else { 1.0 },
-            0.5,
-        );
+
+        if big {
+            // Weights generated + kept on the GPU; plain-SGD optimizer.
+            let steps = 60;
+            let t0 = Instant::now();
+            let curve = cuda::train_random(&cfg, &tokens, &targets, steps, 0.05, 2025);
+            let dt = t0.elapsed().as_secs_f64();
+            println!(
+                "    {} steps in {:.1}s ({:.0} ms/step)  [GPU-resident weights, SGD]",
+                steps, dt, dt * 1000.0 / steps as f64
+            );
+            println!("    loss: {:.3} -> {:.3}", curve[0], curve[steps - 1]);
+            ok &= line(
+                "scaled GPU training reduces the loss",
+                if curve[steps - 1] < curve[0] { 0.0 } else { 1.0 },
+                0.5,
+            );
+        } else {
+            let model = Model::new(cfg.clone(), &mut Rng::new(2025));
+            let steps = 200;
+            let t0 = Instant::now();
+            let (_, curve) = cuda::train(&model, &tokens, &targets, steps, 2e-3);
+            let dt = t0.elapsed().as_secs_f64();
+            println!(
+                "    {} steps in {:.1}s ({:.0} ms/step)",
+                steps, dt, dt * 1000.0 / steps as f64
+            );
+            println!("    loss: {:.3} -> {:.3}", curve[0], curve[steps - 1]);
+            ok &= line(
+                "scaled GPU training reduces the loss",
+                if curve[steps - 1] < curve[0] { 0.0 } else { 1.0 },
+                0.5,
+            );
+        }
     }
 
     println!();

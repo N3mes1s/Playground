@@ -145,6 +145,10 @@ data-movement story as the CPU port, now on hardware.
   (transposed-GEMM weight/activation gradients, RMSNorm/SwiGLU/RoPE/attention
   backward, embedding scatter — paper Theorem 1), and an Adam step, with
   weights and optimizer state resident on the device across all steps.
+* **Multi-billion-parameter path** — `coda_cuda_train_random` generates the
+  weights *on the GPU* with a hash RNG (the host never holds a copy) and
+  optimizes with plain SGD, so a model far larger than host RAM — and larger
+  than Adam's 4×-memory footprint would allow — still trains on one GPU.
 
 `build.rs` compiles the kernels with `nvcc` when `--features cuda` is set;
 `src/cuda.rs` is the Rust FFI; `src/bin/gpu.rs` (`coda-gpu`) verifies every
@@ -176,14 +180,17 @@ match the CPU reference (the tensor-core path is TF32, so the error floor is
     GPU loss 3.27 -> 0.0011 ;  CPU from identical init -> 0.0011
 
 == Scaled-up GPU training (A100-80GB, --scale big) ==
-    ~2.7B params (d_model 2560, 32 layers, 40 heads, d_ff 6912, seq 512)
-    200 steps in ~322s (~1.6 s/step), loss 10.47 -> 4.33
+    ~6.74B params (Llama-7B class: d_model 4096, 32 layers, d_ff 11008, seq 512)
+    60 steps in ~181s (~3.0 s/step), loss 10.45 -> 6.02
 ```
 
-So a **~2.7-billion-parameter Transformer trains end-to-end on a single
-A100-80GB** — the full forward + backward + Adam, device-resident — every GPU
-result verified against the CPU reference. (The default `--scale` runs a
-~100M model in ~20s on a 40GB A100; `--scale big` is the 2.7B run above.)
+So a **~6.7-billion-parameter Transformer trains end-to-end on a single
+A100-80GB** — the full forward + backward + optimizer step, with the weights
+generated and resident entirely on the GPU. The smaller `--scale` runs (10M /
+100M) are still verified gradient-for-gradient against the CPU reference; at
+6.7B the CPU can't hold the model, so that run is a scale demonstration
+(SGD optimizer, since Adam's moment tensors would not fit). All ten kernels
+and the gradient check still run and pass on every deploy.
 
 **Performance journey.** The 100M-parameter training step was optimized in
 measured steps, each verified to stay bit-correct against the CPU:

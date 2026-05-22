@@ -663,16 +663,49 @@ __global__ void k_paste(const float* src, float* dst, int M, int d,
     dst[i * cols + offset + j] = src[i * d + j];
 }
 
-// One Adam step over a parameter tensor.
-__global__ void k_adam(float* p, const float* g, float* m, float* v, int n,
+// One Adam step over a parameter tensor (64-bit element count: tensors of a
+// multi-billion-parameter model exceed 2^31 elements).
+__global__ void k_adam(float* p, const float* g, float* m, float* v, long n,
                        float lr, float b1, float b2, float eps, int t) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    long i = (long)blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
     m[i] = b1 * m[i] + (1.0f - b1) * g[i];
     v[i] = b2 * v[i] + (1.0f - b2) * g[i] * g[i];
     float mhat = m[i] / (1.0f - powf(b1, (float)t));
     float vhat = v[i] / (1.0f - powf(b2, (float)t));
     p[i] -= lr * mhat / (sqrtf(vhat) + eps);
+}
+
+// One plain-SGD step. Used instead of Adam for multi-billion-parameter models,
+// where Adam's two extra moment tensors would not fit in GPU memory.
+__global__ void k_sgd(float* p, const float* g, long n, float lr) {
+    long i = (long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) p[i] -= lr * g[i];
+}
+
+// Fill a tensor with a constant (used for the RMSNorm weights, initialized 1).
+__global__ void k_fill(float* w, long n, float v) {
+    long i = (long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) w[i] = v;
+}
+
+// Integer hash -> uniform [0,1); used for on-GPU weight initialization so a
+// multi-billion-parameter model never has to be materialized on the host.
+__device__ __forceinline__ float hashu(unsigned int x) {
+    x ^= x >> 16; x *= 0x7feb352du;
+    x ^= x >> 15; x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return (float)(x >> 8) * (1.0f / 16777216.0f);
+}
+
+// Initialize a weight tensor in place: approx-normal (sum of 6 uniforms) * scale.
+__global__ void k_init(float* w, long n, unsigned int seed, float scale) {
+    long i = (long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    float a = 0.0f;
+    for (int k = 0; k < 6; ++k)
+        a += hashu(seed + (unsigned int)i * 2654435761u + (unsigned int)k * 40503u);
+    w[i] = (a - 3.0f) * 0.7071f * scale;
 }
 
 // ---------------------------------------------------------------------------
@@ -714,6 +747,7 @@ static dim3 grid2d(int N, int M) {
 struct Net {
     int T, d, nl, nh, hd, dff, vocab;
     float eps;
+    int use_adam;  // 1: allocate + use Adam moments; 0: SGD (no m/v buffers).
     // Weights, gradients, and Adam first/second moments (matched shapes).
     float *embed, *ga, *wqkv, *wo, *gf, *wgu, *wd, *gfin, *lm;
     float *g_embed, *g_ga, *g_wqkv, *g_wo, *g_gf, *g_wgu, *g_wd, *g_gfin, *g_lm;
@@ -746,15 +780,23 @@ static void alloc_net(Net* n) {
     n->g_embed = up(0, W_embed); n->g_ga = up(0, W_ga); n->g_wqkv = up(0, W_wqkv);
     n->g_wo = up(0, W_wo); n->g_gf = up(0, W_ga); n->g_wgu = up(0, W_wgu);
     n->g_wd = up(0, W_wd); n->g_gfin = up(0, d); n->g_lm = up(0, W_lm);
-    n->m_embed = up(0, W_embed); n->v_embed = up(0, W_embed);
-    n->m_ga = up(0, W_ga); n->v_ga = up(0, W_ga);
-    n->m_wqkv = up(0, W_wqkv); n->v_wqkv = up(0, W_wqkv);
-    n->m_wo = up(0, W_wo); n->v_wo = up(0, W_wo);
-    n->m_gf = up(0, W_ga); n->v_gf = up(0, W_ga);
-    n->m_wgu = up(0, W_wgu); n->v_wgu = up(0, W_wgu);
-    n->m_wd = up(0, W_wd); n->v_wd = up(0, W_wd);
-    n->m_gfin = up(0, d); n->v_gfin = up(0, d);
-    n->m_lm = up(0, W_lm); n->v_lm = up(0, W_lm);
+    // Adam moments double the optimizer memory; skip them entirely for SGD
+    // (multi-billion-parameter models would otherwise not fit).
+    if (n->use_adam) {
+        n->m_embed = up(0, W_embed); n->v_embed = up(0, W_embed);
+        n->m_ga = up(0, W_ga); n->v_ga = up(0, W_ga);
+        n->m_wqkv = up(0, W_wqkv); n->v_wqkv = up(0, W_wqkv);
+        n->m_wo = up(0, W_wo); n->v_wo = up(0, W_wo);
+        n->m_gf = up(0, W_ga); n->v_gf = up(0, W_ga);
+        n->m_wgu = up(0, W_wgu); n->v_wgu = up(0, W_wgu);
+        n->m_wd = up(0, W_wd); n->v_wd = up(0, W_wd);
+        n->m_gfin = up(0, d); n->v_gfin = up(0, d);
+        n->m_lm = up(0, W_lm); n->v_lm = up(0, W_lm);
+    } else {
+        n->m_embed = n->v_embed = n->m_ga = n->v_ga = n->m_wqkv = n->v_wqkv = 0;
+        n->m_wo = n->v_wo = n->m_gf = n->v_gf = n->m_wgu = n->v_wgu = 0;
+        n->m_wd = n->v_wd = n->m_gfin = n->v_gfin = n->m_lm = n->v_lm = 0;
+    }
     n->cosT = up(0, (size_t)T * d); n->sinT = up(0, (size_t)T * d);
     cudaMalloc(&n->tokens, (size_t)T * sizeof(int));
     cudaMalloc(&n->targets, (size_t)T * sizeof(int));
@@ -1245,6 +1287,7 @@ int coda_cuda_grads(
     Net n;
     n.T = T; n.d = d; n.nl = nl; n.nh = nh; n.hd = hd; n.dff = dff;
     n.vocab = vocab; n.eps = eps;
+    n.use_adam = 0;  // no optimizer state needed for a gradient query
     alloc_net(&n);
     upload_weights(&n, embed, ga, wqkv, wo, gf, wgu, wd, gfin, lm);
     cudaMemcpy(n.cosT, cosT, (size_t)T * d * sizeof(float), cudaMemcpyHostToDevice);
@@ -1285,6 +1328,7 @@ int coda_cuda_train(
     Net n;
     n.T = T; n.d = d; n.nl = nl; n.nh = nh; n.hd = hd; n.dff = dff;
     n.vocab = vocab; n.eps = eps;
+    n.use_adam = 1;
     alloc_net(&n);
     upload_weights(&n, embed, ga, wqkv, wo, gf, wgu, wd, gfin, lm);
     cudaMemcpy(n.cosT, cosT, (size_t)T * d * sizeof(float), cudaMemcpyHostToDevice);
@@ -1314,8 +1358,9 @@ int coda_cuda_train(
     for (int step = 0; step < n_steps; ++step) {
         loss_curve[step] = fwd_bwd(&n);
         for (WT& w : wts) {
-            k_adam<<<((int)w.n + 255) / 256, 256>>>(
-                w.p, w.g, w.m, w.v, (int)w.n, lr, 0.9f, 0.999f, 1e-8f, step + 1);
+            int blocks = (int)((w.n + 255) / 256);
+            k_adam<<<blocks, 256>>>(
+                w.p, w.g, w.m, w.v, (long)w.n, lr, 0.9f, 0.999f, 1e-8f, step + 1);
         }
     }
     cudaDeviceSynchronize();
@@ -1333,6 +1378,73 @@ int coda_cuda_train(
     dn(wd, n.wd, (size_t)nl * dff * d);
     dn(gfin, n.gfin, (size_t)d);
     dn(lm, n.lm, (size_t)d * vocab);
+    free_net(&n);
+    return err;
+}
+
+// Train a model whose weights are generated and kept entirely on the GPU.
+//
+// For a multi-billion-parameter model the host can neither hold the weights
+// nor afford Adam's two extra moment tensors. This entry point initializes the
+// weights in place with an on-GPU hash RNG, never materializes them on the
+// host, and optimizes with plain SGD. Only the per-step loss is returned.
+int coda_cuda_train_random(
+    int T, int d, int nl, int nh, int hd, int dff, int vocab, float eps,
+    const float* cosT, const float* sinT, const int* tokens, const int* targets,
+    int n_steps, float lr, unsigned int seed, float* loss_curve) {
+
+    Net n;
+    n.T = T; n.d = d; n.nl = nl; n.nh = nh; n.hd = hd; n.dff = dff;
+    n.vocab = vocab; n.eps = eps;
+    n.use_adam = 0;  // SGD: Adam moments would not fit a multi-billion-param model
+    alloc_net(&n);
+
+    int d3 = 3 * d, dff2 = 2 * dff;
+    float si = 1.0f / sqrtf((float)d), sf = 1.0f / sqrtf((float)dff);
+    auto init = [seed](float* w, size_t cnt, unsigned int salt, float sc) {
+        int blocks = (int)((cnt + 255) / 256);
+        k_init<<<blocks, 256>>>(w, (long)cnt, seed + salt, sc);
+    };
+    auto fill1 = [](float* w, size_t cnt) {
+        int blocks = (int)((cnt + 255) / 256);
+        k_fill<<<blocks, 256>>>(w, (long)cnt, 1.0f);
+    };
+    init(n.embed, (size_t)vocab * d, 1u, 0.08f);
+    init(n.wqkv, (size_t)nl * d * d3, 2u, si);
+    init(n.wo, (size_t)nl * d * d, 3u, si);
+    init(n.wgu, (size_t)nl * d * dff2, 4u, si);
+    init(n.wd, (size_t)nl * dff * d, 5u, sf);
+    init(n.lm, (size_t)d * vocab, 6u, si);
+    fill1(n.ga, (size_t)nl * d);
+    fill1(n.gf, (size_t)nl * d);
+    fill1(n.gfin, (size_t)d);
+
+    cudaMemcpy(n.cosT, cosT, (size_t)T * d * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(n.sinT, sinT, (size_t)T * d * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(n.tokens, tokens, (size_t)T * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(n.targets, targets, (size_t)T * sizeof(int), cudaMemcpyHostToDevice);
+
+    struct WT { float* p; float* g; size_t n; };
+    WT wts[] = {
+        {n.embed, n.g_embed, (size_t)vocab * d},
+        {n.ga, n.g_ga, (size_t)nl * d},
+        {n.wqkv, n.g_wqkv, (size_t)nl * d * d3},
+        {n.wo, n.g_wo, (size_t)nl * d * d},
+        {n.gf, n.g_gf, (size_t)nl * d},
+        {n.wgu, n.g_wgu, (size_t)nl * d * dff2},
+        {n.wd, n.g_wd, (size_t)nl * dff * d},
+        {n.gfin, n.g_gfin, (size_t)d},
+        {n.lm, n.g_lm, (size_t)d * vocab},
+    };
+    for (int step = 0; step < n_steps; ++step) {
+        loss_curve[step] = fwd_bwd(&n);
+        for (WT& w : wts) {
+            int blocks = (int)((w.n + 255) / 256);
+            k_sgd<<<blocks, 256>>>(w.p, w.g, (long)w.n, lr);
+        }
+    }
+    cudaDeviceSynchronize();
+    int err = cuda_check("coda_cuda_train_random");
     free_net(&n);
     return err;
 }

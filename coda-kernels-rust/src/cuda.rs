@@ -7,7 +7,7 @@
 //! memory; these wrappers just marshal [`Mat`] buffers across the FFI
 //! boundary and panic with the kernel name if CUDA reports an error.
 
-use crate::model::Model;
+use crate::model::{Config, Model};
 use crate::tensor::Mat;
 use crate::train::{Grads, LayerGrad};
 use std::os::raw::{c_char, c_int};
@@ -122,6 +122,14 @@ extern "C" {
         cos: *const f32, sin: *const f32,
         tokens: *const c_int, targets: *const c_int,
         n_steps: c_int, lr: f32, loss_curve: *mut f32,
+    ) -> c_int;
+    #[allow(clippy::too_many_arguments)]
+    fn coda_cuda_train_random(
+        t: c_int, d: c_int, nl: c_int, nh: c_int, hd: c_int, dff: c_int,
+        vocab: c_int, eps: f32,
+        cos: *const f32, sin: *const f32,
+        tokens: *const c_int, targets: *const c_int,
+        n_steps: c_int, lr: f32, seed: u32, loss_curve: *mut f32,
     ) -> c_int;
 }
 
@@ -503,4 +511,50 @@ pub fn train(
         m.layers[l].wdown.data = w.wd[l * dff * d..(l + 1) * dff * d].to_vec();
     }
     (m, loss_curve)
+}
+
+/// Train a model **whose weights are generated and kept entirely on the GPU**.
+///
+/// For a multi-billion-parameter model the host cannot hold the weights, and
+/// Adam's two moment tensors would not fit in GPU memory either. This entry
+/// point initializes the weights in place on the device, optimizes with plain
+/// SGD, and returns only the per-step loss curve - the model never touches
+/// host memory. Used for the `--scale big` run.
+pub fn train_random(
+    cfg: &Config,
+    tokens: &[usize],
+    targets: &[usize],
+    n_steps: usize,
+    lr: f32,
+    seed: u32,
+) -> Vec<f32> {
+    let t = tokens.len();
+    assert!(t <= 1024, "CUDA attention supports T <= 1024");
+    assert_eq!(cfg.n_heads * cfg.head_dim, cfg.d_model);
+    let (cos, sin) = crate::model::rope_tables(cfg, t);
+    let tok: Vec<c_int> = tokens.iter().map(|&x| x as c_int).collect();
+    let tgt: Vec<c_int> = targets.iter().map(|&x| x as c_int).collect();
+    let mut loss_curve = vec![0.0f32; n_steps];
+    let s = unsafe {
+        coda_cuda_train_random(
+            t as c_int,
+            cfg.d_model as c_int,
+            cfg.n_layers as c_int,
+            cfg.n_heads as c_int,
+            cfg.head_dim as c_int,
+            cfg.d_ff as c_int,
+            cfg.vocab as c_int,
+            cfg.eps,
+            cos.data.as_ptr(),
+            sin.data.as_ptr(),
+            tok.as_ptr(),
+            tgt.as_ptr(),
+            n_steps as c_int,
+            lr,
+            seed,
+            loss_curve.as_mut_ptr(),
+        )
+    };
+    check(s, "train_random");
+    loss_curve
 }

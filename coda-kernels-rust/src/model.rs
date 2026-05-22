@@ -188,25 +188,31 @@ impl Model {
 
     /// Precompute the RoPE `cos` / `sin` tables of shape `[T, d_model]`.
     pub fn rope_tables(&self, t: usize) -> (Mat, Mat) {
-        let (d, hd, nh) = (self.cfg.d_model, self.cfg.head_dim, self.cfg.n_heads);
-        let mut cos = Mat::zeros(t, d);
-        let mut sin = Mat::zeros(t, d);
-        for pos in 0..t {
-            for h in 0..nh {
-                for p in 0..hd / 2 {
-                    let freq = self.cfg.rope_base.powf(-2.0 * p as f32 / hd as f32);
-                    let ang = pos as f32 * freq;
-                    let (c, s) = (ang.cos(), ang.sin());
-                    let base = h * hd + 2 * p;
-                    cos.set(pos, base, c);
-                    cos.set(pos, base + 1, c);
-                    sin.set(pos, base, s);
-                    sin.set(pos, base + 1, s);
-                }
+        rope_tables(&self.cfg, t)
+    }
+}
+
+/// Precompute the RoPE `cos` / `sin` tables `[T, d_model]` for a config,
+/// without needing a materialized [`Model`] (used for the on-GPU big runs).
+pub fn rope_tables(cfg: &Config, t: usize) -> (Mat, Mat) {
+    let (d, hd, nh) = (cfg.d_model, cfg.head_dim, cfg.n_heads);
+    let mut cos = Mat::zeros(t, d);
+    let mut sin = Mat::zeros(t, d);
+    for pos in 0..t {
+        for h in 0..nh {
+            for p in 0..hd / 2 {
+                let freq = cfg.rope_base.powf(-2.0 * p as f32 / hd as f32);
+                let ang = pos as f32 * freq;
+                let (c, s) = (ang.cos(), ang.sin());
+                let base = h * hd + 2 * p;
+                cos.set(pos, base, c);
+                cos.set(pos, base + 1, c);
+                sin.set(pos, base, s);
+                sin.set(pos, base + 1, s);
             }
         }
-        (cos, sin)
     }
+    (cos, sin)
 }
 
 /// Row-wise RMS normalization factor `r[i] = 1 / sqrt(mean(x[i]^2) + eps)`.
