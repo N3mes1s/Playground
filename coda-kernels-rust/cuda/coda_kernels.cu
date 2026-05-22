@@ -267,25 +267,117 @@ __global__ void k_ce_grad(const float* logits, const int* tgt,
 }
 
 // C[M,N] = A @ Bᵀ, with A [M,K] and B [N,K]  (activation-gradient GEMM).
+// Register-blocked, same scheme as k_gemm_epi; only the B load is transposed.
 __global__ void k_gemm_nt(const float* A, const float* B, float* C,
                           int M, int N, int K) {
-    int j = blockIdx.x * blockDim.x + threadIdx.x;
-    int i = blockIdx.y * blockDim.y + threadIdx.y;
-    if (i >= M || j >= N) return;
-    float acc = 0.0f;
-    for (int k = 0; k < K; ++k) acc += A[i * K + k] * B[j * K + k];
-    C[i * N + j] = acc;
+    __shared__ float As[BK * BM];
+    __shared__ float Bs[BK * BN];
+    int c_row = blockIdx.y, c_col = blockIdx.x;
+    int tid = threadIdx.x;
+    int t_row = tid / (BN / TN), t_col = tid % (BN / TN);
+    float acc[TM * TN];
+#pragma unroll
+    for (int i = 0; i < TM * TN; ++i) acc[i] = 0.0f;
+    float a_reg[TM], b_reg[TN];
+    for (int k0 = 0; k0 < K; k0 += BK) {
+        for (int ld = 0; ld < (BM * BK) / GEMM_THREADS; ++ld) {
+            int idx = tid + ld * GEMM_THREADS;
+            int m = idx / BK, k = idx % BK;
+            int gm = c_row * BM + m, gk = k0 + k;
+            As[k * BM + m] = (gm < M && gk < K) ? A[gm * K + gk] : 0.0f;
+        }
+        for (int ld = 0; ld < (BK * BN) / GEMM_THREADS; ++ld) {
+            int idx = tid + ld * GEMM_THREADS;
+            int k = idx / BN, n = idx % BN;
+            int gk = k0 + k, gn = c_col * BN + n;
+            Bs[k * BN + n] = (gk < K && gn < N) ? B[gn * K + gk] : 0.0f;
+        }
+        __syncthreads();
+#pragma unroll
+        for (int kk = 0; kk < BK; ++kk) {
+#pragma unroll
+            for (int i = 0; i < TM; ++i) a_reg[i] = As[kk * BM + t_row * TM + i];
+#pragma unroll
+            for (int j = 0; j < TN; ++j) b_reg[j] = Bs[kk * BN + t_col * TN + j];
+#pragma unroll
+            for (int i = 0; i < TM; ++i)
+#pragma unroll
+                for (int j = 0; j < TN; ++j)
+                    acc[i * TN + j] += a_reg[i] * b_reg[j];
+        }
+        __syncthreads();
+    }
+    for (int i = 0; i < TM; ++i) {
+        int row = c_row * BM + t_row * TM + i;
+        if (row >= M) continue;
+        for (int j = 0; j < TN; ++j) {
+            int col = c_col * BN + t_col * TN + j;
+            if (col < N) C[row * N + col] = acc[i * TN + j];
+        }
+    }
+}
+
+static void launch_gemm_nt(const float* A, const float* B, float* C,
+                           int M, int N, int K) {
+    dim3 grid((N + BN - 1) / BN, (M + BM - 1) / BM);
+    k_gemm_nt<<<grid, GEMM_THREADS>>>(A, B, C, M, N, K);
 }
 
 // C[K,N] = Aᵀ @ B, with A [M,K] and B [M,N]  (weight-gradient GEMM).
+// Register-blocked; the output is [K,N] and the contraction runs over M.
 __global__ void k_gemm_tn(const float* A, const float* B, float* C,
                           int M, int K, int N) {
-    int n = blockIdx.x * blockDim.x + threadIdx.x;
-    int k = blockIdx.y * blockDim.y + threadIdx.y;
-    if (k >= K || n >= N) return;
-    float acc = 0.0f;
-    for (int m = 0; m < M; ++m) acc += A[m * K + k] * B[m * N + n];
-    C[k * N + n] = acc;
+    __shared__ float As[BK * BM];  // As[slab][r], r over output rows (K)
+    __shared__ float Bs[BK * BN];  // Bs[slab][c], c over output cols (N)
+    int c_row = blockIdx.y, c_col = blockIdx.x;
+    int tid = threadIdx.x;
+    int t_row = tid / (BN / TN), t_col = tid % (BN / TN);
+    float acc[TM * TN];
+#pragma unroll
+    for (int i = 0; i < TM * TN; ++i) acc[i] = 0.0f;
+    float a_reg[TM], b_reg[TN];
+    for (int m0 = 0; m0 < M; m0 += BK) {
+        for (int ld = 0; ld < (BM * BK) / GEMM_THREADS; ++ld) {
+            int idx = tid + ld * GEMM_THREADS;
+            int r = idx / BK, k = idx % BK;
+            int gr = c_row * BM + r, gm = m0 + k;
+            As[k * BM + r] = (gr < K && gm < M) ? A[gm * K + gr] : 0.0f;
+        }
+        for (int ld = 0; ld < (BK * BN) / GEMM_THREADS; ++ld) {
+            int idx = tid + ld * GEMM_THREADS;
+            int k = idx / BN, c = idx % BN;
+            int gm = m0 + k, gc = c_col * BN + c;
+            Bs[k * BN + c] = (gm < M && gc < N) ? B[gm * N + gc] : 0.0f;
+        }
+        __syncthreads();
+#pragma unroll
+        for (int kk = 0; kk < BK; ++kk) {
+#pragma unroll
+            for (int i = 0; i < TM; ++i) a_reg[i] = As[kk * BM + t_row * TM + i];
+#pragma unroll
+            for (int j = 0; j < TN; ++j) b_reg[j] = Bs[kk * BN + t_col * TN + j];
+#pragma unroll
+            for (int i = 0; i < TM; ++i)
+#pragma unroll
+                for (int j = 0; j < TN; ++j)
+                    acc[i * TN + j] += a_reg[i] * b_reg[j];
+        }
+        __syncthreads();
+    }
+    for (int i = 0; i < TM; ++i) {
+        int row = c_row * BM + t_row * TM + i;
+        if (row >= K) continue;
+        for (int j = 0; j < TN; ++j) {
+            int col = c_col * BN + t_col * TN + j;
+            if (col < N) C[row * N + col] = acc[i * TN + j];
+        }
+    }
+}
+
+static void launch_gemm_tn(const float* A, const float* B, float* C,
+                           int M, int K, int N) {
+    dim3 grid((N + BN - 1) / BN, (K + BM - 1) / BM);
+    k_gemm_tn<<<grid, GEMM_THREADS>>>(A, B, C, M, K, N);
 }
 
 // RMSNorm backward (local rule of Kernel 9). One thread per row.
@@ -608,9 +700,9 @@ static float fwd_bwd(Net* n) {
     k_ce_grad<<<rb, 256>>>(n->logits, n->targets, n->dlog, n->lossrow, T, V);
     // LM head: logits = nf @ W_lm,  nf = rmsnorm(y_final) ⊙ γ_final.
     k_rmsnorm_apply<<<grid2d(d, T), blk>>>(y_final, n->rf, n->gfin, n->nf, T, d);
-    k_gemm_tn<<<grid2d(V, d), blk>>>(n->nf, n->dlog, n->g_lm, T, d, V);
-    k_gemm_nt<<<grid2d(d, T), blk>>>(n->dlog, n->lm, n->nf, T, d, V);  // nf reused as d_nf
-    cudaMemset(n->g_gfin, 0, (size_t)d * sizeof(float));
+    launch_gemm_tn(n->nf, n->dlog, n->g_lm, T, d, V);
+    launch_gemm_nt(n->dlog, n->lm, n->nf, T, d, V);  // nf reused as d_nf
+    cudaMemsetAsync(n->g_gfin, 0, (size_t)d * sizeof(float), 0);
     k_rmsnorm_bwd<<<rb, 256>>>(y_final, n->rf, n->gfin, n->nf, n->dgrad,
                                n->g_gfin, T, d);
 
@@ -639,26 +731,26 @@ static float fwd_bwd(Net* n) {
         float* g_wd_l = n->g_wd + (size_t)l * dff * d;
 
         // y = ff @ W_down + h  (residual): grad flows to both ff-path and h.
-        cudaMemcpy(n->dh, n->dgrad, (size_t)T * d * sizeof(float),
-                   cudaMemcpyDeviceToDevice);
-        k_gemm_nt<<<grid2d(dff, T), blk>>>(n->dgrad, wd_l, n->dff_, T, dff, d);
-        k_gemm_tn<<<grid2d(d, dff), blk>>>(ff_l, n->dgrad, g_wd_l, T, dff, d);
+        cudaMemcpyAsync(n->dh, n->dgrad, (size_t)T * d * sizeof(float),
+                        cudaMemcpyDeviceToDevice, 0);
+        launch_gemm_nt(n->dgrad, wd_l, n->dff_, T, dff, d);
+        launch_gemm_tn(ff_l, n->dgrad, g_wd_l, T, dff, d);
         k_swiglu_bwd<<<grid2d(dff, T), blk>>>(gu_l, n->dff_, n->dgu, T, dff);
         k_rmsnorm_apply<<<grid2d(d, T), blk>>>(hh_l, r2, gf_l, n->n2r, T, d);
-        k_gemm_tn<<<grid2d(dff2, d), blk>>>(n->n2r, n->dgu, g_wgu_l, T, d, dff2);
-        k_gemm_nt<<<grid2d(d, T), blk>>>(n->dgu, wgu_l, n->dn2, T, d, dff2);
-        cudaMemset(g_gf_l, 0, (size_t)d * sizeof(float));
+        launch_gemm_tn(n->n2r, n->dgu, g_wgu_l, T, d, dff2);
+        launch_gemm_nt(n->dgu, wgu_l, n->dn2, T, d, dff2);
+        cudaMemsetAsync(g_gf_l, 0, (size_t)d * sizeof(float), 0);
         k_rmsnorm_bwd<<<rb, 256>>>(hh_l, r2, gf_l, n->dn2, n->dh2, g_gf_l, T, d);
         k_add<<<(T * d + 255) / 256, 256>>>(n->dh, n->dh2, T * d);
 
         // h = attn_out @ W_o + x.
-        k_gemm_tn<<<grid2d(d, d), blk>>>(aout_l, n->dh, g_wo_l, T, d, d);
-        k_gemm_nt<<<grid2d(d, T), blk>>>(n->dh, wo_l, n->dattn, T, d, d);
+        launch_gemm_tn(aout_l, n->dh, g_wo_l, T, d, d);
+        launch_gemm_nt(n->dh, wo_l, n->dattn, T, d, d);
 
         // Attention + RoPE backward.
-        cudaMemset(n->dqr, 0, (size_t)T * d * sizeof(float));
-        cudaMemset(n->dkr, 0, (size_t)T * d * sizeof(float));
-        cudaMemset(n->dvg, 0, (size_t)T * d * sizeof(float));
+        cudaMemsetAsync(n->dqr, 0, (size_t)T * d * sizeof(float), 0);
+        cudaMemsetAsync(n->dkr, 0, (size_t)T * d * sizeof(float), 0);
+        cudaMemsetAsync(n->dvg, 0, (size_t)T * d * sizeof(float), 0);
         k_attention_bwd<<<(T * nh + 255) / 256, 256>>>(
             qrot_l, krot_l, vv_l, n->dattn, n->dqr, n->dkr, n->dvg, T, d, nh, hd);
         k_rope_bwd<<<grid2d(d / 2, T), blk>>>(n->dqr, n->cosT, n->sinT, n->dq, T, d);
@@ -669,19 +761,19 @@ static float fwd_bwd(Net* n) {
 
         // qkv = n1 @ W_qkv,  n1 = rmsnorm(x) ⊙ γ_attn.
         k_rmsnorm_apply<<<grid2d(d, T), blk>>>(x, r1, ga_l, n->n1r, T, d);
-        k_gemm_tn<<<grid2d(d3, d), blk>>>(n->n1r, n->dqkv, g_wqkv_l, T, d, d3);
-        k_gemm_nt<<<grid2d(d, T), blk>>>(n->dqkv, wqkv_l, n->dn1, T, d, d3);
-        cudaMemset(g_ga_l, 0, (size_t)d * sizeof(float));
+        launch_gemm_tn(n->n1r, n->dqkv, g_wqkv_l, T, d, d3);
+        launch_gemm_nt(n->dqkv, wqkv_l, n->dn1, T, d, d3);
+        cudaMemsetAsync(g_ga_l, 0, (size_t)d * sizeof(float), 0);
         k_rmsnorm_bwd<<<rb, 256>>>(x, r1, ga_l, n->dn1, n->dx1, g_ga_l, T, d);
 
         // x feeds both the RMSNorm and the residual: sum the two paths.
         k_add<<<(T * d + 255) / 256, 256>>>(n->dx1, n->dh, T * d);
-        cudaMemcpy(n->dgrad, n->dx1, (size_t)T * d * sizeof(float),
-                   cudaMemcpyDeviceToDevice);
+        cudaMemcpyAsync(n->dgrad, n->dx1, (size_t)T * d * sizeof(float),
+                        cudaMemcpyDeviceToDevice, 0);
     }
 
     // Embedding gradient: scatter the input-stream gradient into the table.
-    cudaMemset(n->g_embed, 0, (size_t)V * d * sizeof(float));
+    cudaMemsetAsync(n->g_embed, 0, (size_t)V * d * sizeof(float), 0);
     k_embed_bwd<<<grid2d(d, T), blk>>>(n->dgrad, n->tokens, n->g_embed, T, d);
 
     cudaDeviceSynchronize();
