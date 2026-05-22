@@ -175,12 +175,14 @@ match the CPU reference (the tensor-core path is TF32, so the error floor is
 == GPU training: device-resident loop vs CPU ==
     GPU loss 3.27 -> 0.0011 ;  CPU from identical init -> 0.0011
 
-== Scaled-up GPU training (A100) ==
-    ~97.5M params, 200 steps in ~20s (~101 ms/step), loss 9.10 -> 0.001
+== Scaled-up GPU training (A100, --scale big) ==
+    ~778M params (GPT-2-Large class: d_model 1536, 24 layers, seq 512)
+    200 steps in ~125s (~627 ms/step), loss 10.49 -> 0.96
 ```
 
-So a ~100M-parameter Transformer trains end-to-end on a single A100 in ~20
-seconds for 200 steps, every GPU result verified against the CPU reference.
+So a **~778M-parameter Transformer trains end-to-end on a single A100**, every
+GPU result verified against the CPU reference. (The default `--scale` runs a
+~100M model in ~20s; `--scale big` is the 778M run above.)
 
 **Performance journey.** The 100M-parameter training step was optimized in
 measured steps, each verified to stay bit-correct against the CPU:

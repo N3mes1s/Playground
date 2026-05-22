@@ -282,13 +282,14 @@ fn main() {
     {
         let big = std::env::var("CODA_SCALE").map(|s| s == "big").unwrap_or(false);
         let cfg = if big {
+            // ~780M parameters - GPT-2-Large class.
             Config {
-                vocab: 8192,
-                d_model: 768,
-                n_layers: 12,
-                n_heads: 12,
+                vocab: 32000,
+                d_model: 1536,
+                n_layers: 24,
+                n_heads: 24,
                 head_dim: 64,
-                d_ff: 2048,
+                d_ff: 4096,
                 eps: 1e-5,
                 rope_base: 10000.0,
             }
@@ -312,7 +313,7 @@ fn main() {
                     + cfg.d_ff * cfg.d_model
                     + 2 * cfg.d_model)
             + cfg.d_model;
-        let seq = if big { 256 } else { 128 };
+        let seq = if big { 512 } else { 128 };
         let model = Model::new(cfg.clone(), &mut Rng::new(2025));
         let tokens: Vec<usize> = (0..seq).map(|i| (i * 13 + 1) % cfg.vocab).collect();
         let targets: Vec<usize> = tokens.iter().map(|&t| (t * 2 + 1) % cfg.vocab).collect();
