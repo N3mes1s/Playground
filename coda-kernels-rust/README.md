@@ -201,29 +201,36 @@ match the CPU reference (the tensor-core path is TF32, so the error floor is
     ~6.74B params (Llama-7B class: d_model 4096, 32 layers, d_ff 11008, seq 512)
     60 steps in ~181s (~3.0 s/step), loss 10.45 -> 6.02
 
-== A real pretrained model: OpenLLaMA-3B inference (modal/run_llm.py) ==
-    the 3.4B-parameter OpenLLaMA-3B checkpoint, converted to the CODA layout
-    and run on the CUDA backend. The CUDA forward is verified against a
-    genuine HuggingFace forward:
-        next-token argmax : CUDA 260  ==  HuggingFace 260
+== A real pretrained model: Llama-2-7B-chat inference (modal/run_llm.py) ==
+    the 6.7B-parameter instruction-tuned Llama-2-7B-chat checkpoint, converted
+    to the CODA layout and run on the CUDA backend (A100-80GB). The CUDA
+    forward is verified against a genuine HuggingFace forward:
+        next-token argmax : CUDA 3681  ==  HuggingFace 3681
         logits correlation with HuggingFace : 1.00000   (conversion VERIFIED)
-    generated continuation of "The history of computing began":
-        "...with the invention of the first mechanical computing device, the
-         abacus. The abacus was invented in China around the 9th century BC,
-         and is the ancestor of all other computing devices. Computers, by
-         contrast, were invented in the 20th century..."
+    device-resident greedy decode: 80 tokens in 49.5s (0.62 s/token)
+    chat prompt "Explain what a transformer neural network is, in two
+    sentences." -> generated:
+        "Of course! Here's a brief explanation of what a transformer neural
+         network is:  A transformer neural network is a type of deep learning
+         architecture that's particularly well-suited for natural language
+         processing tasks, such as language translation, language modeling,
+         and text classification. It was introduced in 2017 and has since
+         become a widely-used and influential ..."
 ```
 
 The CODA backend implements the LLaMA architecture, so a **real pretrained
-model runs on it directly**: `modal/run_llm.py` converts the 3.4B-parameter
-OpenLLaMA-3B checkpoint into the CODA layout (q/k/v concatenated, gate/up
-interleaved for SwiGLU, q/k un-permuted from HuggingFace's rotate-half RoPE to
-the adjacent-pair convention) and runs inference through the CUDA
-GEMM-plus-epilogue kernels. The forward is **bit-verified against HuggingFace**
-— logits correlation 1.00000 — and the model generates coherent, factual
-English. (Generation is currently slow, ~17 s/token, because each token
-re-uploads the 13.7 GB of fp32 weights; a device-resident KV-cached generate
-would fix that.)
+model runs on it directly**: `modal/run_llm.py` converts the 6.7B-parameter
+instruction-tuned **Llama-2-7B-chat** checkpoint into the CODA layout (q/k/v
+concatenated, gate/up interleaved for SwiGLU, q/k un-permuted from
+HuggingFace's rotate-half RoPE to the adjacent-pair convention) and runs
+inference through the CUDA GEMM-plus-epilogue kernels. The forward is
+**bit-verified against HuggingFace** — logits correlation 1.00000 — and the
+chat model follows instructions, generating a coherent answer to a prompt
+posed in the Llama-2 `[INST]` format. Decoding is **device-resident**:
+`coda_cuda_generate` uploads the 27 GB fp32 weight set to the GPU once and
+then runs the whole greedy decode loop on the resident weights, so only the
+new token id crosses the PCIe bus between steps — **0.62 s/token**, versus the
+~17 s/token a naive re-upload-per-token loop costs.
 
 The from-scratch Shakespeare model is a genuine (small) *trained* model: a
 char-level GPT is trained on the GPU over ~1.1 MB of public-domain Shakespeare
