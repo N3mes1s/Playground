@@ -124,13 +124,101 @@ __global__ void k_gemm_epi(const float* A, const float* B, const float* C,
     }
 }
 
-// Launch the register-blocked GEMM with the correct grid / block geometry.
+// ---------------------------------------------------------------------------
+// Tensor-core mainloop: a TF32 WMMA GEMM with the same fused epilogue.
+//
+// On Ampere+ (sm_80) each warp computes a 16x16 output tile with the TF32
+// tensor cores (16x16x8 fragments, fp32 accumulate). TF32 keeps ~10 mantissa
+// bits, so results stay within ~1e-3 of fp32 - well inside the verification
+// tolerances - while running on the tensor-core datapath. The accumulator is
+// staged through shared memory so the *same* fused epilogue runs before the
+// global store. Compiled out below sm_80; the host dispatch never calls it
+// there. Used only when M,N are multiples of 16 and K of 8 (the model's GEMM
+// shapes); ragged shapes fall back to the register-blocked kernel.
+// ---------------------------------------------------------------------------
+#include <mma.h>
+
+#define TC_WARPS 8  // warps per block
+
+template <int MODE>
+__global__ void k_gemm_tc(const float* A, const float* B, const float* C,
+                          const float* gamma, const float* r,
+                          float* D, float* O, int M, int N, int K) {
+#if __CUDA_ARCH__ >= 800
+    using namespace nvcuda;
+    int warp = (blockIdx.x * blockDim.x + threadIdx.x) / 32;
+    int lane = threadIdx.x & 31;
+    int tiles_n = N / 16;
+    int tile_m = warp / tiles_n;
+    int tile_n = warp % tiles_n;
+    if (tile_m * 16 >= M) return;
+
+    wmma::fragment<wmma::accumulator, 16, 16, 8, float> acc;
+    wmma::fill_fragment(acc, 0.0f);
+    for (int k0 = 0; k0 < K; k0 += 8) {
+        wmma::fragment<wmma::matrix_a, 16, 16, 8, wmma::precision::tf32,
+                       wmma::row_major> af;
+        wmma::fragment<wmma::matrix_b, 16, 16, 8, wmma::precision::tf32,
+                       wmma::row_major> bf;
+        wmma::load_matrix_sync(af, A + (tile_m * 16) * K + k0, K);
+        wmma::load_matrix_sync(bf, B + k0 * N + tile_n * 16, N);
+#pragma unroll
+        for (int i = 0; i < af.num_elements; ++i)
+            af.x[i] = wmma::__float_to_tf32(af.x[i]);
+#pragma unroll
+        for (int i = 0; i < bf.num_elements; ++i)
+            bf.x[i] = wmma::__float_to_tf32(bf.x[i]);
+        wmma::mma_sync(acc, af, bf, acc);
+    }
+
+    // Stage the 16x16 tile in shared memory, then run the fused epilogue.
+    extern __shared__ float sh[];
+    float* tile = sh + (threadIdx.x / 32) * 256;
+    wmma::store_matrix_sync(tile, acc, 16, wmma::mem_row_major);
+    for (int idx = lane; idx < 256; idx += 32) {
+        int row = tile_m * 16 + idx / 16;
+        int col = tile_n * 16 + idx % 16;
+        float a = tile[idx];
+        if (MODE == EPI_PLAIN) {
+            D[row * N + col] = a;
+        } else if (MODE == EPI_RESGAMMA) {
+            float d = a + C[row * N + col];
+            D[row * N + col] = d;
+            O[row * N + col] = d * gamma[col];
+        } else if (MODE == EPI_ROWSCALE) {
+            O[row * N + col] = a * r[row];
+        }
+    }
+#endif
+}
+
+// True when device 0 has tensor cores (compute capability >= 8.0).
+static bool tensor_cores_available() {
+    static int cached = -1;
+    if (cached < 0) {
+        cudaDeviceProp p;
+        cached = (cudaGetDeviceProperties(&p, 0) == cudaSuccess && p.major >= 8)
+                     ? 1 : 0;
+    }
+    return cached == 1;
+}
+
+// Launch the GEMM: TF32 tensor cores on Ampere+ for aligned shapes, otherwise
+// the register-blocked kernel. Both apply the same fused epilogue.
 template <int MODE>
 static void launch_gemm(const float* A, const float* B, const float* C,
                         const float* gamma, const float* r, float* D, float* O,
                         int M, int N, int K) {
-    dim3 grid((N + BN - 1) / BN, (M + BM - 1) / BM);
-    k_gemm_epi<MODE><<<grid, GEMM_THREADS>>>(A, B, C, gamma, r, D, O, M, N, K);
+    if (tensor_cores_available() && M % 16 == 0 && N % 16 == 0 && K % 8 == 0) {
+        int total_warps = (M / 16) * (N / 16);
+        int blocks = (total_warps + TC_WARPS - 1) / TC_WARPS;
+        size_t shmem = (size_t)TC_WARPS * 256 * sizeof(float);
+        k_gemm_tc<MODE><<<blocks, TC_WARPS * 32, shmem>>>(
+            A, B, C, gamma, r, D, O, M, N, K);
+    } else {
+        dim3 grid((N + BN - 1) / BN, (M + BM - 1) / BM);
+        k_gemm_epi<MODE><<<grid, GEMM_THREADS>>>(A, B, C, gamma, r, D, O, M, N, K);
+    }
 }
 
 // ---------------------------------------------------------------------------

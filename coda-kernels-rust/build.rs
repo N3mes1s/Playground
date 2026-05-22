@@ -40,9 +40,9 @@ fn main() {
         return;
     };
 
-    // Compile the kernels to a relocatable object. compute_70 PTX is embedded,
-    // so the driver JITs for any GPU of compute capability >= 7.0 (T4, A10,
-    // A100, L4, H100, ...).
+    // Compile the kernels. compute_70 PTX is embedded for forward
+    // compatibility (JITs on any GPU >= 7.0); sm_80 SASS is generated so the
+    // TF32 tensor-core path is available natively on Ampere (A100 / A10 / L4).
     let status = Command::new(nvcc)
         .args([
             "-O3",
@@ -51,6 +51,8 @@ fn main() {
             "-fPIC",
             "-gencode",
             "arch=compute_70,code=compute_70",
+            "-gencode",
+            "arch=compute_80,code=sm_80",
             "-c",
             "cuda/coda_kernels.cu",
             "-o",

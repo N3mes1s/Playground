@@ -126,10 +126,13 @@ in registers and applies the fused epilogue (residual, RMSNorm scale, SwiGLU,
 RoPE, cross-entropy) *before* the single global-memory write — the same
 data-movement story as the CPU port, now on hardware.
 
-* **Register-blocked mainloop** — the GEMM (`k_gemm_epi`) is a register-blocked
-  shared-memory kernel: a thread block streams `BM×BK`/`BK×BN` slabs through
-  shared memory and each thread keeps a `TM×TN` micro-tile in registers. It is
-  templated on the epilogue mode — one fixed mainloop, programmable epilogue.
+* **Tensor-core mainloop** — on Ampere+ the GEMM uses a **TF32 WMMA**
+  tensor-core kernel (`k_gemm_tc`); each warp computes a 16×16 tile on the
+  tensor cores and the accumulator is staged through shared memory so the
+  *same fused epilogue* still runs before the store. A register-blocked
+  shared-memory kernel (`k_gemm_epi`) is the fallback for pre-Ampere GPUs and
+  ragged shapes. Both are templated on the epilogue mode — one fixed mainloop,
+  programmable epilogue.
 * **Whole-model forward** — `coda_cuda_model_forward` runs every layer
   device-resident; weights upload once, only logits come back.
 * **Device-resident training** — `coda_cuda_train` runs the full training loop
@@ -152,13 +155,14 @@ modal run coda-kernels-rust/modal/run_gpu.py --gpu A100 --scale big  # ~100M par
 ```
 
 Verified results — all 10 kernels, the full forward, *and* the backward pass
-are bit-faithful to the CPU reference:
+match the CPU reference (the tensor-core path is TF32, so the error floor is
+~1e-3 rather than ~1e-7 — well inside every tolerance):
 
 ```
-== Kernel correctness: CUDA vs CPU ==     all 10 kernels PASS (max-err ~1e-7)
+== Kernel correctness: CUDA vs CPU ==     all 10 kernels PASS (TF32 err ~6e-4)
 
 == Full Transformer forward (~27.4M params), A100 ==
-    GPU 0.21-0.46s | CPU ~10s | ~20-24x   logits max-err 3.1e-6   argmax 256/256
+    GPU ~0.23s | CPU ~7.5s | ~33x   logits max-err 2e-3   argmax 256/256
 
 == GPU backward: gradients vs CPU ==
     GPU gradients match CPU backward to ~8e-5 (relative); loss CPU == GPU
@@ -167,22 +171,27 @@ are bit-faithful to the CPU reference:
     GPU loss 3.27 -> 0.0011 ;  CPU from identical init -> 0.0011
 
 == Scaled-up GPU training (A100) ==
-    ~97.5M params, 200 steps in ~165s (~820 ms/step), loss 9.10 -> 0.001
+    ~97.5M params, 200 steps in ~146s (~728 ms/step), loss 9.10 -> 0.002
 ```
 
-So a ~100M-parameter Transformer trains end-to-end on a single A100, with the
-GPU backward verified gradient-for-gradient against the CPU reference.
+So a ~100M-parameter Transformer trains end-to-end on a single A100, every GPU
+result verified against the CPU reference.
 
-**Honest performance note.** Both the forward *and* backward GEMMs are
-register-blocked, and `fwd_bwd` queues its work asynchronously (one host sync
-per step). With those structural levers pulled, a ~100M-parameter training
-step holds at ~0.73 s on an A100 — the workload is bound by the throughput of
-the hand-written fp32 kernels, not by pipeline stalls. Closing the gap to a
-library-grade GEMM needs **fp16/bf16 tensor cores (WGMMA)** — the precision
-trade-off the paper accepts on Hopper — and a profiler-guided tuning pass
-(Nsight), neither of which is reachable from this CPU-only sandbox. What *is*
-delivered and verified: the GEMM-plus-epilogue abstraction, the full forward
-and backward, and bit-faithful device-resident training of a 100M-parameter
+**Honest performance note.** The mainloop went through three implementations —
+naive tiled → register-blocked → TF32 tensor cores — and the backward GEMMs are
+register-blocked, with an async-queued step. Across all of that, the
+~100M-parameter training step stayed at ~0.73 s: each measurement showed the
+change was *correct* but moved end-to-end wall-clock by <15%. The conclusion is
+empirical and clear — **this workload is not GEMM-bound.** The cost is in the
+attention kernels (`k_attention` / `k_attention_bwd`), which are parallelized
+one thread per (query, head) — only ~3 000 threads, a fraction of an A100 —
+and in the long tail of small elementwise/reduction kernels. Fixing that means
+a flash-attention-style rewrite (block-per-query with cooperative reductions,
+attention backward as GEMMs) and op fusion to collapse the elementwise tail.
+That is the genuine next step; pinpointing it precisely really wants a GPU
+profiler (Nsight), which a CPU-only sandbox cannot run. What *is* delivered and
+verified: the GEMM-plus-epilogue abstraction with a tensor-core mainloop, the
+full forward and backward, and device-resident training of a 100M-parameter
 model — every GPU result checked against the CPU reference.
 
 ## File map
