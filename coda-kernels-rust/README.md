@@ -179,27 +179,38 @@ match the CPU reference (the tensor-core path is TF32, so the error floor is
 == GPU training: device-resident loop vs CPU ==
     GPU loss 3.27 -> 0.0011 ;  CPU from identical init -> 0.0011
 
-== GPU training end-to-end (overfit a sentence, then generate) ==
-    a 3.4M-parameter char-level GPT is *overfit* to one 95-character
-    sentence on the GPU (10k steps, loss 3.45 -> 0.000); greedy generation
-    from a 12-character prefix then reproduces that exact sentence:
-      prompt    : "coda trains "
-      generated : "coda trains a small language model on the gpu by fusing
-                   the epilogue into each matrix multiply."
+== Real language model: trained on ~1.1 MB of Shakespeare, then generating ==
+    a ~3M-parameter char-level GPT, trained on the GPU by stochastic windowed
+    training (4000 steps x batch 16 = 64k windows, ~10 min):
+      cross-entropy/char  4.32 -> 1.35   (random would be 4.17)
+    novel text it then generates (temperature 0.8, NOT in the corpus):
+
+      First Citizen:
+      Before we proceed, disple, what but death,
+      To talk, let me when but Lewzt the adonguis slaugher
+      To friars the pleasure than our cousin.
+
+      LUCIO:
+      Now says shave may come. His woman,
+      Servants are carpet me former past by my satisfied.
+
+      HASTINGS:
+      Now not I take the round of all his stay.
 
 == Scaled-up GPU training (A100-80GB, --scale big) ==
     ~6.74B params (Llama-7B class: d_model 4096, 32 layers, d_ff 11008, seq 512)
     60 steps in ~181s (~3.0 s/step), loss 10.45 -> 6.02
 ```
 
-The sentence test is **not** a trained-on-real-data language model — it is an
-end-to-end correctness check of the GPU training pipeline. A small model is
-*overfit* to a single sentence until the loss reaches zero, and generation
-must then reproduce it. It verifies that the device-resident forward, backward
-and Adam — all built from the CODA kernels — drive a model to a correct
-optimum. A model that actually *learned language* (generating novel coherent
-text) would need a real corpus and far more data and compute; that is out of
-scope here.
+The language-model test is a genuine (small) trained model: a char-level GPT
+is trained on the GPU over ~1.1 MB of public-domain Shakespeare by stochastic
+windowed training — each Adam step accumulates the gradient over a mini-batch
+of random windows — until cross-entropy/char drops to ~1.35 (random is 4.17).
+It then **generates novel text** the corpus never contained: it has learned
+real character names, the play-script layout, and mostly-real English words.
+It is small, so the output is locally rough — but it genuinely *learned the
+data distribution* rather than memorizing, and the CODA kernels run the whole
+forward + backward + Adam.
 
 So a **~6.7-billion-parameter Transformer trains end-to-end on a single
 A100-80GB** — the full forward + backward + optimizer step, with the weights
