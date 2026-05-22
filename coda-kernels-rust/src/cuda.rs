@@ -7,6 +7,7 @@
 //! memory; these wrappers just marshal [`Mat`] buffers across the FFI
 //! boundary and panic with the kernel name if CUDA reports an error.
 
+use crate::model::Model;
 use crate::tensor::Mat;
 use std::os::raw::{c_char, c_int};
 
@@ -75,6 +76,29 @@ extern "C" {
         m: c_int,
         n: c_int,
         k: c_int,
+    ) -> c_int;
+    #[allow(clippy::too_many_arguments)]
+    fn coda_cuda_model_forward(
+        x0: *const f32,
+        cos: *const f32,
+        sin: *const f32,
+        t: c_int,
+        d: c_int,
+        n_layers: c_int,
+        n_heads: c_int,
+        head_dim: c_int,
+        d_ff: c_int,
+        vocab: c_int,
+        eps: f32,
+        gamma_attn: *const f32,
+        wqkv: *const f32,
+        wo: *const f32,
+        gamma_ffn: *const f32,
+        wgu: *const f32,
+        wdown: *const f32,
+        gamma_final: *const f32,
+        lm_head: *const f32,
+        logits: *mut f32,
     ) -> c_int;
 }
 
@@ -259,4 +283,64 @@ pub fn gemm_rmsnorm_ce(a: &Mat, b: &Mat, r: &[f32], targets: &[usize]) -> (Vec<f
     };
     check(s, "gemm_rmsnorm_ce");
     (lse, loss)
+}
+
+/// Run the **entire Transformer forward pass on the GPU**.
+///
+/// Embeds the tokens and builds the RoPE tables on the host, uploads the
+/// weights once, and runs every layer device-resident (the GEMM-Residual-
+/// RMSNorm-GEMM chain plus attention) - only the logits come back. This is
+/// the GPU counterpart of [`Model::forward`].
+pub fn model_forward(model: &Model, tokens: &[usize]) -> Mat {
+    let cfg = &model.cfg;
+    let t = tokens.len();
+    let d = cfg.d_model;
+    assert!(cfg.head_dim <= 256, "CUDA attention caps head_dim at 256");
+    assert_eq!(cfg.n_heads * cfg.head_dim, d, "n_heads * head_dim must equal d_model");
+
+    // Embedding gather + RoPE tables on the host (cheap, embedding-excluded).
+    let mut x0 = Mat::zeros(t, d);
+    for (i, &tok) in tokens.iter().enumerate() {
+        x0.row_mut(i).copy_from_slice(model.embed.row(tok));
+    }
+    let (cos, sin) = model.rope_tables(t);
+
+    // Flatten the per-layer weights into contiguous [n_layers, ...] buffers.
+    let cat = |f: &dyn Fn(&crate::model::Layer) -> Vec<f32>| -> Vec<f32> {
+        model.layers.iter().flat_map(|l| f(l)).collect()
+    };
+    let gamma_attn = cat(&|l| l.gamma_attn.clone());
+    let wqkv = cat(&|l| l.wqkv.data.clone());
+    let wo = cat(&|l| l.wo.data.clone());
+    let gamma_ffn = cat(&|l| l.gamma_ffn.clone());
+    let wgu = cat(&|l| l.wgu.data.clone());
+    let wdown = cat(&|l| l.wdown.data.clone());
+
+    let mut logits = Mat::zeros(t, cfg.vocab);
+    let s = unsafe {
+        coda_cuda_model_forward(
+            x0.data.as_ptr(),
+            cos.data.as_ptr(),
+            sin.data.as_ptr(),
+            t as c_int,
+            d as c_int,
+            cfg.n_layers as c_int,
+            cfg.n_heads as c_int,
+            cfg.head_dim as c_int,
+            cfg.d_ff as c_int,
+            cfg.vocab as c_int,
+            cfg.eps,
+            gamma_attn.as_ptr(),
+            wqkv.as_ptr(),
+            wo.as_ptr(),
+            gamma_ffn.as_ptr(),
+            wgu.as_ptr(),
+            wdown.as_ptr(),
+            model.gamma_final.as_ptr(),
+            model.lm_head.data.as_ptr(),
+            logits.data.as_mut_ptr(),
+        )
+    };
+    check(s, "model_forward");
+    logits
 }

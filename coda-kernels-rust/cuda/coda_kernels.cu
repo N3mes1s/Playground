@@ -117,6 +117,62 @@ __global__ void k_row_ce(const float* Z, const int* tgt,
     loss[i] = -Z[i * N + tgt[i]] + l;
 }
 
+// Per-column scale: O[i,j] = X[i,j] * gamma[j]  (embedding-side RMSNorm weight).
+__global__ void k_col_scale(const float* X, const float* gamma, float* O,
+                            int M, int N) {
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i >= M || j >= N) return;
+    O[i * N + j] = X[i * N + j] * gamma[j];
+}
+
+// Extract a contiguous [M,d] block from [M,cols] starting at column `offset`
+// (used to split a fused QKV projection into Q, K, V).
+__global__ void k_slice(const float* in, float* out, int M, int d,
+                        int cols, int offset) {
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i >= M || j >= d) return;
+    out[i * d + j] = in[i * cols + offset + j];
+}
+
+#define MAX_HEAD_DIM 256
+
+// Causal multi-head self-attention. One thread owns one (query, head) pair and
+// walks the causal prefix twice (max, then sum-exp + weighted V). Outside
+// CODA's scope, but needed so the whole model forward runs on the GPU.
+__global__ void k_attention(const float* Q, const float* K, const float* V,
+                            float* O, int T, int d, int n_heads, int head_dim) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= T * n_heads) return;
+    int i = idx / n_heads;          // query position
+    int h = idx % n_heads;          // head
+    int off = h * head_dim;
+    float scale = rsqrtf((float)head_dim);
+
+    float mx = -1e30f;
+    for (int j = 0; j <= i; ++j) {
+        float s = 0.0f;
+        for (int e = 0; e < head_dim; ++e)
+            s += Q[i * d + off + e] * K[j * d + off + e];
+        mx = fmaxf(mx, s * scale);
+    }
+    float acc[MAX_HEAD_DIM];
+    for (int e = 0; e < head_dim; ++e) acc[e] = 0.0f;
+    float se = 0.0f;
+    for (int j = 0; j <= i; ++j) {
+        float s = 0.0f;
+        for (int e = 0; e < head_dim; ++e)
+            s += Q[i * d + off + e] * K[j * d + off + e];
+        float ex = expf(s * scale - mx);
+        se += ex;
+        for (int e = 0; e < head_dim; ++e)
+            acc[e] += ex * V[j * d + off + e];
+    }
+    for (int e = 0; e < head_dim; ++e)
+        O[i * d + off + e] = acc[e] / se;
+}
+
 // ---------------------------------------------------------------------------
 // Host helpers.
 // ---------------------------------------------------------------------------
@@ -285,6 +341,118 @@ int coda_cuda_gemm_rmsnorm_ce(const float* A, const float* B, const float* r,
     cudaMemcpy(loss, dLoss, (size_t)M * sizeof(float), cudaMemcpyDeviceToHost);
     cudaFree(dA); cudaFree(dB); cudaFree(dR); cudaFree(dZ);
     cudaFree(dT); cudaFree(dL); cudaFree(dLoss);
+    return err;
+}
+
+// Full LLaMA-style Transformer forward pass, entirely on the GPU.
+//
+// Weights and the embedded input are uploaded once; every activation stays
+// resident on the device across all layers (no host round-trips), and only
+// the logits are copied back. The non-attention computation is the fused
+// GEMM-Residual-RMSNorm-GEMM chain - Kernel 5 for QKV, Kernel 4 for the two
+// projection+residual+norm joins, Kernel 6 for the SwiGLU MLP - exactly the
+// reparameterization of paper section 3.2.1.
+int coda_cuda_model_forward(
+    const float* x0, const float* cosT, const float* sinT,
+    int T, int d, int n_layers, int n_heads, int head_dim, int d_ff,
+    int vocab, float eps,
+    const float* gamma_attn, const float* wqkv, const float* wo,
+    const float* gamma_ffn, const float* wgu, const float* wdown,
+    const float* gamma_final, const float* lm_head,
+    float* logits) {
+
+    int d3 = 3 * d;
+    int dff2 = 2 * d_ff;
+
+    // Upload weights + the embedded input once.
+    float* dGA = up(gamma_attn, (size_t)n_layers * d);
+    float* dWQKV = up(wqkv, (size_t)n_layers * d * d3);
+    float* dWO = up(wo, (size_t)n_layers * d * d);
+    float* dGF = up(gamma_ffn, (size_t)n_layers * d);
+    float* dWGU = up(wgu, (size_t)n_layers * d * dff2);
+    float* dWD = up(wdown, (size_t)n_layers * d_ff * d);
+    float* dGFinal = up(gamma_final, (size_t)d);
+    float* dLM = up(lm_head, (size_t)d * vocab);
+    float* dCos = up(cosT, (size_t)T * d);
+    float* dSin = up(sinT, (size_t)T * d);
+
+    // Device-resident activation buffers.
+    float* dX = up(x0, (size_t)T * d);
+    float* dY = up(NULL, (size_t)T * d);
+    float* dOnorm = up(NULL, (size_t)T * d);
+    float* dR = up(NULL, (size_t)T);
+    float* dR2 = up(NULL, (size_t)T);
+    float* dQKV = up(NULL, (size_t)T * d3);
+    float* dQ = up(NULL, (size_t)T * d);
+    float* dK = up(NULL, (size_t)T * d);
+    float* dV = up(NULL, (size_t)T * d);
+    float* dQR = up(NULL, (size_t)T * d);
+    float* dKR = up(NULL, (size_t)T * d);
+    float* dAttn = up(NULL, (size_t)T * d);
+    float* dH = up(NULL, (size_t)T * d);
+    float* dN2 = up(NULL, (size_t)T * d);
+    float* dDP = up(NULL, (size_t)T * dff2);
+    float* dFF = up(NULL, (size_t)T * d_ff);
+    float* dLogits = up(NULL, (size_t)T * vocab);
+
+    dim3 blk(BLK, BLK);
+
+    // Embedding-side RMSNorm (the only normalization not fused into a GEMM).
+    k_row_invrms<<<(T + 255) / 256, 256>>>(dX, dR, T, d, eps);
+    k_col_scale<<<grid2d(d, T), blk>>>(dX, dGA, dOnorm, T, d);
+
+    for (int l = 0; l < n_layers; ++l) {
+        const float* wqkv_l = dWQKV + (size_t)l * d * d3;
+        const float* wo_l = dWO + (size_t)l * d * d;
+        const float* gf_l = dGF + (size_t)l * d;
+        const float* wgu_l = dWGU + (size_t)l * d * dff2;
+        const float* wd_l = dWD + (size_t)l * d_ff * d;
+
+        // QKV projection with the delayed RMSNorm scale (Kernel 5).
+        k_gemm_rowscale<<<grid2d(d3, T), blk>>>(dOnorm, wqkv_l, dR, dQKV, T, d3, d);
+        k_slice<<<grid2d(d, T), blk>>>(dQKV, dQ, T, d, d3, 0);
+        k_slice<<<grid2d(d, T), blk>>>(dQKV, dK, T, d, d3, d);
+        k_slice<<<grid2d(d, T), blk>>>(dQKV, dV, T, d, d3, 2 * d);
+        k_rope<<<grid2d(d / 2, T), blk>>>(dQ, dCos, dSin, dQR, T, d);
+        k_rope<<<grid2d(d / 2, T), blk>>>(dK, dCos, dSin, dKR, T, d);
+        k_attention<<<(T * n_heads + 255) / 256, 256>>>(
+            dQR, dKR, dV, dAttn, T, d, n_heads, head_dim);
+
+        // Output proj + residual + FFN-norm (Kernel 4).
+        k_gemm_residual_gamma<<<grid2d(d, T), blk>>>(
+            dAttn, wo_l, dX, gf_l, dH, dN2, T, d, d);
+        k_row_invrms<<<(T + 255) / 256, 256>>>(dH, dR2, T, d, eps);
+
+        // Gate/Up projection + SwiGLU (Kernel 6).
+        k_gemm_rowscale<<<grid2d(dff2, T), blk>>>(dN2, wgu_l, dR2, dDP, T, dff2, d);
+        k_swiglu<<<grid2d(d_ff, T), blk>>>(dDP, dFF, T, d_ff);
+
+        // Down proj + residual + next sublayer's norm (Kernel 4).
+        const float* next_gamma =
+            (l + 1 < n_layers) ? (dGA + (size_t)(l + 1) * d) : dGFinal;
+        k_gemm_residual_gamma<<<grid2d(d, T), blk>>>(
+            dFF, wd_l, dH, next_gamma, dY, dOnorm, T, d, d_ff);
+        k_row_invrms<<<(T + 255) / 256, 256>>>(dY, dR, T, d, eps);
+
+        // The new residual stream becomes the next layer's input.
+        float* tmp = dX; dX = dY; dY = tmp;
+    }
+
+    // LM head: logits = (final-normed residual @ W_lm) ⊙ r  (Kernel 5).
+    k_gemm_rowscale<<<grid2d(vocab, T), blk>>>(dOnorm, dLM, dR, dLogits, T, vocab, d);
+
+    cudaDeviceSynchronize();
+    int err = cuda_check("coda_cuda_model_forward");
+    cudaMemcpy(logits, dLogits, (size_t)T * vocab * sizeof(float),
+               cudaMemcpyDeviceToHost);
+
+    cudaFree(dGA); cudaFree(dWQKV); cudaFree(dWO); cudaFree(dGF);
+    cudaFree(dWGU); cudaFree(dWD); cudaFree(dGFinal); cudaFree(dLM);
+    cudaFree(dCos); cudaFree(dSin);
+    cudaFree(dX); cudaFree(dY); cudaFree(dOnorm); cudaFree(dR); cudaFree(dR2);
+    cudaFree(dQKV); cudaFree(dQ); cudaFree(dK); cudaFree(dV);
+    cudaFree(dQR); cudaFree(dKR); cudaFree(dAttn); cudaFree(dH); cudaFree(dN2);
+    cudaFree(dDP); cudaFree(dFF); cudaFree(dLogits);
     return err;
 }
 

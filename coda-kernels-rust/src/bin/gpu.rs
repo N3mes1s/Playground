@@ -15,7 +15,7 @@ fn main() {
 fn main() {
     use coda::cuda;
     use coda::kernels;
-    use coda::model::Rng;
+    use coda::model::{Config, Model, Rng};
     use coda::tensor::Mat;
     use std::time::Instant;
 
@@ -158,6 +158,81 @@ fn main() {
             gpu,
             2.0 * (d as f64).powi(3) / gpu / 1e9
         );
+    }
+
+    // ---- Whole-model forward on the GPU ----
+    println!("\n== Full Transformer forward on GPU: CUDA vs CPU ==");
+    let argmax = |m: &Mat, row: usize| -> usize {
+        (0..m.cols)
+            .max_by(|&x, &y| m.get(row, x).partial_cmp(&m.get(row, y)).unwrap())
+            .unwrap()
+    };
+    {
+        // Correctness at the tiny config from the CPU demo.
+        let cfg = Config::tiny(32);
+        let model = Model::new(cfg.clone(), &mut Rng::new(2024));
+        let tokens: Vec<usize> = (0..48).map(|i| (i * 5 + 1) % cfg.vocab).collect();
+        let (cpu_logits, _) = model.forward(&tokens);
+        let gpu_logits = cuda::model_forward(&model, &tokens);
+        ok &= line(
+            "model_forward (tiny): CUDA vs CPU logits",
+            cpu_logits.max_abs_diff(&gpu_logits),
+            2e-2,
+        );
+        let mism = (0..tokens.len())
+            .filter(|&r| argmax(&cpu_logits, r) != argmax(&gpu_logits, r))
+            .count();
+        println!("           next-token argmax agreement: {}/{}", tokens.len() - mism, tokens.len());
+    }
+
+    // ---- Scale up: a ~27M-parameter model, GPU vs CPU ----
+    println!("\n== Scaled-up model: full forward, GPU vs CPU ==");
+    {
+        let cfg = Config {
+            vocab: 8192,
+            d_model: 512,
+            n_layers: 6,
+            n_heads: 8,
+            head_dim: 64,
+            d_ff: 1376,
+            eps: 1e-5,
+            rope_base: 10000.0,
+        };
+        let params = cfg.vocab * cfg.d_model * 2
+            + cfg.n_layers
+                * (cfg.d_model * 3 * cfg.d_model
+                    + cfg.d_model * cfg.d_model
+                    + cfg.d_model * 2 * cfg.d_ff
+                    + cfg.d_ff * cfg.d_model
+                    + 2 * cfg.d_model)
+            + cfg.d_model;
+        let seq = 256;
+        println!(
+            "    d_model={}, layers={}, heads={}, d_ff={}, vocab={}, seq={}  (~{:.1}M params)",
+            cfg.d_model, cfg.n_layers, cfg.n_heads, cfg.d_ff, cfg.vocab, seq,
+            params as f64 / 1e6
+        );
+        let model = Model::new(cfg.clone(), &mut Rng::new(7));
+        let tokens: Vec<usize> = (0..seq).map(|i| (i * 11 + 5) % cfg.vocab).collect();
+
+        let t0 = Instant::now();
+        let gpu_logits = cuda::model_forward(&model, &tokens);
+        let gpu_t = t0.elapsed().as_secs_f64();
+
+        let t0 = Instant::now();
+        let (cpu_logits, _) = model.forward(&tokens);
+        let cpu_t = t0.elapsed().as_secs_f64();
+
+        let diff = cpu_logits.max_abs_diff(&gpu_logits);
+        let mism = (0..tokens.len())
+            .filter(|&r| argmax(&cpu_logits, r) != argmax(&gpu_logits, r))
+            .count();
+        println!(
+            "    GPU forward {:.4}s  |  CPU forward {:.3}s  |  {:.0}x speedup",
+            gpu_t, cpu_t, cpu_t / gpu_t
+        );
+        println!("    next-token argmax agreement: {}/{}", tokens.len() - mism, tokens.len());
+        ok &= line("scaled model: CUDA vs CPU logits", diff, 5e-2);
     }
 
     println!();

@@ -140,22 +140,36 @@ modal token set --token-id <id> --token-secret <secret>
 modal run coda-kernels-rust/modal/run_gpu.py
 ```
 
-Verified result on an NVIDIA T4 (all 10 kernels bit-faithful to the CPU
-reference, max error ~1e-7):
+The whole Transformer forward also runs on the GPU as a single device-resident
+pass (`coda_cuda_model_forward` / `cuda::model_forward`): weights are uploaded
+once, every activation stays on the device across all layers, and only the
+logits come back.
+
+Verified result on an NVIDIA T4 — all 10 kernels *and* the full model are
+bit-faithful to the CPU reference:
 
 ```
 == Kernel correctness: CUDA vs CPU reference ==
-    [PASS] gemm_residual_partial_rms (D)   max-err = 3.6e-7  (tol 1e-2)
-    [PASS] gemm_rmsnorm_swiglu (O)         max-err = 4.8e-7  (tol 1e-2)
-    ... all 10 kernels PASS ...
+    [PASS] gemm_residual_partial_rms (D)   max-err = 3.6e-7   ... all 10 PASS
+
 == Benchmark: gemm_residual_partial_rms (Kernel 4) ==
-     768^3 : CPU 0.769s (1.2 GFLOP/s) | GPU 0.069s (13 GFLOP/s) | 11.1x
-    2048^3 : GPU 0.136s (127 GFLOP/s) [CPU too slow]
+     768^3 : CPU 0.50s (1.8 GFLOP/s) | GPU 0.012s (73 GFLOP/s) | 40x
+    2048^3 : GPU 0.146s (118 GFLOP/s) [CPU too slow]
+
+== Full Transformer forward on GPU: CUDA vs CPU ==
+    [PASS] model_forward (tiny): CUDA vs CPU logits  max-err = 8.3e-7
+           next-token argmax agreement: 48/48
+
+== Scaled-up model: full forward, GPU vs CPU ==
+    d_model=512, layers=6, heads=8, d_ff=1376, vocab=8192, seq=256 (~27.4M params)
+    GPU forward 0.32s | CPU forward 7.34s | 23x speedup
+    next-token argmax agreement: 256/256   logits max-err = 3.1e-6
 ```
 
-**Next step:** run the full reparameterized Transformer (not just isolated
-kernels) on the GPU, and scale the model up — larger `d_model`, more layers,
-longer sequences — on a dedicated A100/H100 Modal GPU.
+**Next step:** the GEMM mainloop is still a naive one-thread-per-element loop;
+swapping in a tiled / tensor-core mainloop (the part CODA keeps fixed) and
+training on the GPU are the remaining optimizations. Larger models scale on a
+dedicated A100/H100 Modal GPU by editing the config in `src/bin/gpu.rs`.
 
 ## File map
 
