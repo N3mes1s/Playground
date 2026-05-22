@@ -222,23 +222,48 @@ static void launch_gemm(const float* A, const float* B, const float* C,
 }
 
 // ---------------------------------------------------------------------------
-// GEMV: the M = 1 case of the fused-epilogue GEMM, for autoregressive decode.
+// Split-K GEMV: the M = 1 case of the fused-epilogue GEMM, for decode.
 //
-// A cached decode step processes exactly one new token, so the projection
-// "GEMMs" are matrix-vector products. The tiled GEMM would still compute a
-// full BM x BN tile and discard 63/64 of it; this kernel instead assigns one
-// output column per thread and streams the weight matrix exactly once, so a
-// decode step costs O(K*N) rather than O(BM*K*N). The epilogue matches
-// `k_gemm_epi` row 0: the input row A is [1, K], B is [K, N] row-major.
+// A cached decode step processes one new token, so the projection "GEMMs" are
+// matrix-vector products. A one-thread-per-column GEMV reads the weight matrix
+// exactly once but launches only N/256 blocks - too few to fill the SMs or
+// hide HBM latency, so it stalls at a fraction of peak bandwidth.
+//
+// This is a split-K GEMV instead. The contraction dimension is cut into
+// `n_split` slices (chosen so the phase-1 grid is large enough to saturate the
+// GPU); phase 1 runs one block per (column-tile, K-slice) and writes a partial
+// sum, and phase 2 sums the `n_split` partials per column and applies the
+// fused epilogue. The weight matrix is still streamed exactly once - the split
+// only adds parallelism - and the epilogue matches `k_gemm_epi` row 0 (the
+// input row A is [1, K], B is [K, N] row-major).
 // ---------------------------------------------------------------------------
-template <int MODE>
-__global__ void k_gemv_epi(const float* A, const float* B, const float* C,
-                           const float* gamma, const float* r,
-                           float* D, float* O, int N, int K) {
+#define GEMV_BN 256        // output columns (threads) per block
+#define GEMV_TARGET 512    // phase-1 block count to aim for
+#define GEMV_MIN_CHUNK 64  // smallest worthwhile K-slice per block
+
+// Phase 1: block (column-tile, K-slice) -> partial dot product.
+__global__ void k_gemv_splitk(const float* A, const float* B, float* partials,
+                              int N, int K, int n_split) {
     int n = blockIdx.x * blockDim.x + threadIdx.x;  // output column
+    int ks = blockIdx.y;                            // K-slice index
+    if (n >= N) return;
+    int chunk = (K + n_split - 1) / n_split;
+    int k0 = ks * chunk;
+    int k1 = min(k0 + chunk, K);
+    float acc = 0.0f;
+    for (int k = k0; k < k1; ++k) acc += A[k] * B[(size_t)k * N + n];
+    partials[(size_t)ks * N + n] = acc;
+}
+
+// Phase 2: sum the per-column partials, then apply the fused epilogue.
+template <int MODE>
+__global__ void k_gemv_epilogue(const float* partials, const float* C,
+                                const float* gamma, const float* r,
+                                float* D, float* O, int N, int n_split) {
+    int n = blockIdx.x * blockDim.x + threadIdx.x;
     if (n >= N) return;
     float acc = 0.0f;
-    for (int k = 0; k < K; ++k) acc += A[k] * B[(size_t)k * N + n];
+    for (int s = 0; s < n_split; ++s) acc += partials[(size_t)s * N + n];
     if (MODE == EPI_PLAIN) {
         D[n] = acc;
     } else if (MODE == EPI_RESGAMMA) {
@@ -250,14 +275,29 @@ __global__ void k_gemv_epi(const float* A, const float* B, const float* C,
     }
 }
 
-// Launch the GEMV with the same fused epilogue selection as `launch_gemm`.
+// Choose the K-split for an N-wide, K-deep GEMV: enough phase-1 blocks to fill
+// the GPU, but each block's K-slice no smaller than GEMV_MIN_CHUNK.
+static int gemv_split(int N, int K) {
+    int col_blocks = (N + GEMV_BN - 1) / GEMV_BN;
+    int n_split = GEMV_TARGET / (col_blocks > 0 ? col_blocks : 1);
+    int max_split = (K + GEMV_MIN_CHUNK - 1) / GEMV_MIN_CHUNK;
+    if (n_split > max_split) n_split = max_split;
+    if (n_split < 1) n_split = 1;
+    return n_split;
+}
+
+// Launch the split-K GEMV. `partials` is caller-owned scratch, sized for at
+// least `gemv_split(N, K) * N` floats. Epilogue selection matches `launch_gemm`.
 template <int MODE>
 static void launch_gemv(const float* A, const float* B, const float* C,
                         const float* gamma, const float* r, float* D, float* O,
-                        int N, int K) {
-    int threads = 256;
-    int blocks = (N + threads - 1) / threads;
-    k_gemv_epi<MODE><<<blocks, threads>>>(A, B, C, gamma, r, D, O, N, K);
+                        int N, int K, float* partials) {
+    int col_blocks = (N + GEMV_BN - 1) / GEMV_BN;
+    int n_split = gemv_split(N, K);
+    k_gemv_splitk<<<dim3(col_blocks, n_split), GEMV_BN>>>(
+        A, B, partials, N, K, n_split);
+    k_gemv_epilogue<MODE><<<col_blocks, GEMV_BN>>>(
+        partials, C, gamma, r, D, O, N, n_split);
 }
 
 // ---------------------------------------------------------------------------
@@ -1432,6 +1472,16 @@ int coda_cuda_generate(
     float* dFF = up(NULL, (size_t)Tmax * d_ff);
     float* dLogits = up(NULL, (size_t)Tmax * vocab);
 
+    // Split-K GEMV partial-sum scratch: sized for n_split * N of the widest
+    // decode GEMV (the projections wqkv/wo/wgu/wd and the LM head).
+    size_t part_max = (size_t)gemv_split(d3, d) * d3;
+    size_t cand;
+    cand = (size_t)gemv_split(d, d) * d;          if (cand > part_max) part_max = cand;
+    cand = (size_t)gemv_split(dff2, d) * dff2;    if (cand > part_max) part_max = cand;
+    cand = (size_t)gemv_split(d, d_ff) * d;       if (cand > part_max) part_max = cand;
+    cand = (size_t)gemv_split(vocab, d) * vocab;  if (cand > part_max) part_max = cand;
+    float* dPartials = up(NULL, part_max);
+
     dim3 blk(BLK, BLK);
     float* row = (float*)malloc((size_t)vocab * sizeof(float));
     int err = 0;
@@ -1529,7 +1579,8 @@ int coda_cuda_generate(
 
             // QKV as a matrix-vector product; rotated K and V append to cache[p].
             launch_gemv<EPI_ROWSCALE>(
-                dOnorm, wqkv_l, nullptr, nullptr, dR, nullptr, dQKV, d3, d);
+                dOnorm, wqkv_l, nullptr, nullptr, dR, nullptr, dQKV, d3, d,
+                dPartials);
             k_slice<<<grid2d(d, 1), blk>>>(dQKV, dQ, 1, d, d3, 0);
             k_slice<<<grid2d(d, 1), blk>>>(dQKV, dK, 1, d, d3, d);
             k_slice<<<grid2d(d, 1), blk>>>(
@@ -1542,19 +1593,21 @@ int coda_cuda_generate(
 
             // Output proj + residual + FFN-norm (Kernel 4).
             launch_gemv<EPI_RESGAMMA>(
-                dAttn, wo_l, X, gf_l, nullptr, dH, dN2, d, d);
+                dAttn, wo_l, X, gf_l, nullptr, dH, dN2, d, d, dPartials);
             k_row_invrms<<<1, 256>>>(dH, dR2, 1, d, eps);
 
             // Gate/Up projection + SwiGLU (Kernel 6).
             launch_gemv<EPI_ROWSCALE>(
-                dN2, wgu_l, nullptr, nullptr, dR2, nullptr, dDP, dff2, d);
+                dN2, wgu_l, nullptr, nullptr, dR2, nullptr, dDP, dff2, d,
+                dPartials);
             k_swiglu<<<grid2d(d_ff, 1), blk>>>(dDP, dFF, 1, d_ff);
 
             // Down proj + residual + next sublayer's norm (Kernel 4).
             const float* next_gamma =
                 (l + 1 < n_layers) ? (dGA + (size_t)(l + 1) * d) : dGFinal;
             launch_gemv<EPI_RESGAMMA>(
-                dFF, wd_l, dH, next_gamma, nullptr, Y, dOnorm, d, d_ff);
+                dFF, wd_l, dH, next_gamma, nullptr, Y, dOnorm, d, d_ff,
+                dPartials);
             k_row_invrms<<<1, 256>>>(Y, dR, 1, d, eps);
 
             float* tmp = X; X = Y; Y = tmp;
@@ -1562,7 +1615,8 @@ int coda_cuda_generate(
 
         // LM head: logits = (final-normed residual @ W_lm) * r  (Kernel 5).
         launch_gemv<EPI_ROWSCALE>(
-            dOnorm, dLM, nullptr, nullptr, dR, nullptr, dLogits, vocab, d);
+            dOnorm, dLM, nullptr, nullptr, dR, nullptr, dLogits, vocab, d,
+            dPartials);
         cudaDeviceSynchronize();
         err = cuda_check("coda_cuda_generate (decode)");
         if (err) break;
@@ -1588,7 +1642,7 @@ int coda_cuda_generate(
     cudaFree(dX); cudaFree(dY); cudaFree(dOnorm); cudaFree(dR); cudaFree(dR2);
     cudaFree(dQKV); cudaFree(dQ); cudaFree(dK); cudaFree(dQR);
     cudaFree(dAttn); cudaFree(dH); cudaFree(dN2);
-    cudaFree(dDP); cudaFree(dFF); cudaFree(dLogits);
+    cudaFree(dDP); cudaFree(dFF); cudaFree(dLogits); cudaFree(dPartials);
     return err;
 }
 
