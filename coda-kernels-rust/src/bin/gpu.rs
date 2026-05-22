@@ -118,47 +118,45 @@ fn main() {
     ok &= line("gemm_rmsnorm_ce (loss)", maxdiff(&g_loss, &c_loss), tol);
 
     // ---- Benchmark: GEMM-Residual-RMSNorm, GPU vs CPU ----
+    // Real random inputs; the GPU side is warmed up (one untimed call, to
+    // absorb PTX JIT) and averaged over 5 runs so the number is trustworthy.
     println!("\n== Benchmark: gemm_residual_partial_rms (Kernel 4) ==");
-    for &d in &[256usize, 768] {
-        let ba = randmat(&mut rng, d, d, 0.1);
-        let bb = randmat(&mut rng, d, d, 0.1);
-        let bc = randmat(&mut rng, d, d, 0.1);
-        let bg: Vec<f32> = vec![1.0; d];
+    for &d in &[768usize, 2048] {
+        let mut r = Rng::new(0xBE0 + d as u64);
+        let mut mk = || {
+            let mut m = Mat::zeros(d, d);
+            for v in m.data.iter_mut() {
+                *v = r.normal() * 0.08;
+            }
+            m
+        };
+        let (ba, bb, bc) = (mk(), mk(), mk());
+        let bg = vec![1.0f32; d];
         let flop = 2.0 * (d as f64).powi(3);
 
+        let _ = cuda::gemm_residual_partial_rms(&ba, &bb, &bc, &bg, eps); // warmup
         let t = Instant::now();
-        let _ = kernels::gemm_residual_partial_rms(&ba, &bb, &bc, &bg, eps);
-        let cpu = t.elapsed().as_secs_f64();
+        for _ in 0..5 {
+            let _ = cuda::gemm_residual_partial_rms(&ba, &bb, &bc, &bg, eps);
+        }
+        let gpu = t.elapsed().as_secs_f64() / 5.0;
 
-        let t = Instant::now();
-        let _ = cuda::gemm_residual_partial_rms(&ba, &bb, &bc, &bg, eps);
-        let gpu = t.elapsed().as_secs_f64();
-
-        println!(
-            "    {:>4}^3 : CPU {:>8.3}s ({:>6.2} GFLOP/s) | GPU {:>8.4}s ({:>7.1} GFLOP/s) | {:>6.1}x",
-            d,
-            cpu,
-            flop / cpu / 1e9,
-            gpu,
-            flop / gpu / 1e9,
-            cpu / gpu
-        );
-    }
-    // GPU-only at a larger size the naive CPU path would be too slow for.
-    for &d in &[2048usize] {
-        let ba = randmat(&mut rng, d, d, 0.05);
-        let bb = randmat(&mut rng, d, d, 0.05);
-        let bc = randmat(&mut rng, d, d, 0.05);
-        let bg: Vec<f32> = vec![1.0; d];
-        let t = Instant::now();
-        let _ = cuda::gemm_residual_partial_rms(&ba, &bb, &bc, &bg, eps);
-        let gpu = t.elapsed().as_secs_f64();
-        println!(
-            "    {:>4}^3 : GPU {:>8.4}s ({:>7.1} GFLOP/s)  [CPU skipped - too slow]",
-            d,
-            gpu,
-            2.0 * (d as f64).powi(3) / gpu / 1e9
-        );
+        if d <= 768 {
+            let t = Instant::now();
+            let _ = kernels::gemm_residual_partial_rms(&ba, &bb, &bc, &bg, eps);
+            let cpu = t.elapsed().as_secs_f64();
+            println!(
+                "    {d:>4}^3 : CPU {cpu:>7.3}s ({:>6.2} GF/s) | GPU {gpu:>8.4}s ({:>7.1} GF/s) | {:>5.0}x",
+                flop / cpu / 1e9,
+                flop / gpu / 1e9,
+                cpu / gpu
+            );
+        } else {
+            println!(
+                "    {d:>4}^3 : GPU {gpu:>8.4}s ({:>7.1} GF/s)  [CPU too slow]",
+                flop / gpu / 1e9
+            );
+        }
     }
 
     // ---- Whole-model forward on the GPU ----

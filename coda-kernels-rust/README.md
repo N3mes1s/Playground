@@ -126,8 +126,10 @@ in registers and applies the fused epilogue (residual, RMSNorm scale, SwiGLU,
 RoPE, cross-entropy) *before* the single global-memory write — the same
 data-movement story as the CPU port, now on hardware.
 
-* **Tiled mainloop** — the GEMM is a shared-memory tiled kernel (`k_gemm_epi`),
-  templated on the epilogue mode: one fixed mainloop, programmable epilogue.
+* **Register-blocked mainloop** — the GEMM (`k_gemm_epi`) is a register-blocked
+  shared-memory kernel: a thread block streams `BM×BK`/`BK×BN` slabs through
+  shared memory and each thread keeps a `TM×TN` micro-tile in registers. It is
+  templated on the epilogue mode — one fixed mainloop, programmable epilogue.
 * **Whole-model forward** — `coda_cuda_model_forward` runs every layer
   device-resident; weights upload once, only logits come back.
 * **Device-resident training** — `coda_cuda_train` runs the full training loop
@@ -155,28 +157,30 @@ are bit-faithful to the CPU reference:
 ```
 == Kernel correctness: CUDA vs CPU ==     all 10 kernels PASS (max-err ~1e-7)
 
-== Benchmark: gemm_residual_partial_rms (Kernel 4), A100 ==
-    2048^3 : GPU 0.022s (791 GFLOP/s)  [CPU too slow]
-
-== Full Transformer forward (~27.4M params) ==
-    GPU 0.25s | CPU 4.99s | 20x   logits max-err 3.1e-6   argmax 256/256
+== Full Transformer forward (~27.4M params), A100 ==
+    GPU 0.21-0.46s | CPU ~10s | ~20-24x   logits max-err 3.1e-6   argmax 256/256
 
 == GPU backward: gradients vs CPU ==
-    GPU gradients match CPU backward to 7.5e-5 (relative)
+    GPU gradients match CPU backward to ~8e-5 (relative); loss CPU == GPU
 
 == GPU training: device-resident loop vs CPU ==
     GPU loss 3.27 -> 0.0011 ;  CPU from identical init -> 0.0011
 
 == Scaled-up GPU training (A100) ==
-    ~97.5M params, 200 steps in 164s (820 ms/step), loss 9.10 -> 0.002
+    ~97.5M params, 200 steps in ~165s (~820 ms/step), loss 9.10 -> 0.001
 ```
 
 So a ~100M-parameter Transformer trains end-to-end on a single A100, with the
 GPU backward verified gradient-for-gradient against the CPU reference.
 
-**Next step:** the tiled mainloop is still fp32 with one element per thread;
-a register-blocked / tensor-core (WGMMA) mainloop — the part CODA deliberately
-keeps fixed — is the remaining performance lever.
+**Honest performance note.** The CUDA backend mirrors the CPU code op-by-op, so
+a training step issues dozens of small kernel launches per layer; at the scales
+tested wall-clock is bound by launch overhead and memory traffic, not by the
+GEMM mainloop. The register-blocked mainloop is the right *kernel* design (it is
+verified correct and has 4× the arithmetic intensity of the naive tiled one),
+but moving end-to-end wall-clock further needs **op fusion / fewer launches**
+and **fp16/bf16 tensor cores (WGMMA)** — the latter being the precision
+trade-off the paper accepts on Hopper. Those are the genuine next levers.
 
 ## File map
 

@@ -4,13 +4,13 @@
 // `src/epilogue.rs`: a GEMM mainloop whose output tile is transformed by a
 // fused epilogue *before* it is written to global memory.
 //
-// The mainloop is a shared-memory **tiled** GEMM (`k_gemm_epi`): each thread
-// block stages BLK x BLK tiles of A and B through shared memory and every
-// thread accumulates one output element. The epilogue is selected by a
-// compile-time template parameter, so the same fixed mainloop serves the
-// plain GEMM, the residual+RMSNorm-weight join (Kernel 4) and the delayed
-// RMSNorm scale (Kernels 5/6/8) - CODA's "fixed mainloop, programmable
-// epilogue" design.
+// The mainloop is a **register-blocked** shared-memory GEMM (`k_gemm_epi`):
+// each thread block stages BM x BK / BK x BN slabs through shared memory and
+// every thread keeps a TM x TN micro-tile of the result in registers. The
+// epilogue is selected by a compile-time template parameter, so the same
+// fixed mainloop serves the plain GEMM, the residual+RMSNorm-weight join
+// (Kernel 4) and the delayed RMSNorm scale (Kernels 5/6/8) - CODA's "fixed
+// mainloop, programmable epilogue" design.
 //
 // The `extern "C"` host wrappers own device memory: host arrays in, host
 // arrays out. Each returns 0 on success, non-zero on a CUDA error.
@@ -31,7 +31,15 @@ __device__ __forceinline__ float silu_f(float x) {
 enum { EPI_PLAIN = 0, EPI_RESGAMMA = 1, EPI_ROWSCALE = 2 };
 
 // ---------------------------------------------------------------------------
-// The fixed GEMM mainloop: a shared-memory tiled GEMM with a fused epilogue.
+// The fixed GEMM mainloop: a **register-blocked** shared-memory tiled GEMM
+// with a fused epilogue.
+//
+// A thread block computes a BM x BN output tile; the K dimension is streamed
+// in BK-deep slabs through shared memory, and each of the 256 threads keeps a
+// TM x TN micro-tile of the result in registers (an outer-product update per
+// k step). This is the standard high-arithmetic-intensity SGEMM; the epilogue
+// (selected by the compile-time MODE) is applied to the register accumulators
+// before the single global-memory store, exactly as in the CPU port.
 //
 //   EPI_PLAIN    : D = A @ B
 //   EPI_RESGAMMA : D = A@B + C ;  O = D * gamma[col]      (Kernel 4)
@@ -40,39 +48,89 @@ enum { EPI_PLAIN = 0, EPI_RESGAMMA = 1, EPI_ROWSCALE = 2 };
 // Unused epilogue operands are passed as nullptr; the dead template branches
 // are eliminated at compile time.
 // ---------------------------------------------------------------------------
+#define BM 64
+#define BN 64
+#define BK 8
+#define TM 4
+#define TN 4
+#define GEMM_THREADS 256  // (BM/TM) * (BN/TN)
+
 template <int MODE>
 __global__ void k_gemm_epi(const float* A, const float* B, const float* C,
                            const float* gamma, const float* r,
                            float* D, float* O, int M, int N, int K) {
-    __shared__ float As[BLK][BLK];
-    __shared__ float Bs[BLK][BLK];
-    int tx = threadIdx.x, ty = threadIdx.y;
-    int col = blockIdx.x * BLK + tx;
-    int row = blockIdx.y * BLK + ty;
+    __shared__ float As[BK * BM];  // As[k*BM + m]
+    __shared__ float Bs[BK * BN];  // Bs[k*BN + n]
 
-    float acc = 0.0f;
-    int n_tiles = (K + BLK - 1) / BLK;
-    for (int t = 0; t < n_tiles; ++t) {
-        int a_col = t * BLK + tx;
-        int b_row = t * BLK + ty;
-        As[ty][tx] = (row < M && a_col < K) ? A[row * K + a_col] : 0.0f;
-        Bs[ty][tx] = (b_row < K && col < N) ? B[b_row * N + col] : 0.0f;
+    int c_row = blockIdx.y;  // output tile row (along M)
+    int c_col = blockIdx.x;  // output tile col (along N)
+    int tid = threadIdx.x;   // 0 .. 255
+    int t_row = tid / (BN / TN);  // 0 .. 15
+    int t_col = tid % (BN / TN);  // 0 .. 15
+
+    float acc[TM * TN];
+#pragma unroll
+    for (int i = 0; i < TM * TN; ++i) acc[i] = 0.0f;
+    float a_reg[TM], b_reg[TN];
+
+    for (int k0 = 0; k0 < K; k0 += BK) {
+        // Cooperatively stage the BM x BK slab of A and BK x BN slab of B.
+        for (int ld = 0; ld < (BM * BK) / GEMM_THREADS; ++ld) {
+            int idx = tid + ld * GEMM_THREADS;  // 0 .. BM*BK-1
+            int m = idx / BK, k = idx % BK;
+            int gm = c_row * BM + m, gk = k0 + k;
+            As[k * BM + m] = (gm < M && gk < K) ? A[gm * K + gk] : 0.0f;
+        }
+        for (int ld = 0; ld < (BK * BN) / GEMM_THREADS; ++ld) {
+            int idx = tid + ld * GEMM_THREADS;  // 0 .. BK*BN-1
+            int k = idx / BN, n = idx % BN;
+            int gk = k0 + k, gn = c_col * BN + n;
+            Bs[k * BN + n] = (gk < K && gn < N) ? B[gk * N + gn] : 0.0f;
+        }
         __syncthreads();
 #pragma unroll
-        for (int kk = 0; kk < BLK; ++kk) acc += As[ty][kk] * Bs[kk][tx];
+        for (int kk = 0; kk < BK; ++kk) {
+#pragma unroll
+            for (int i = 0; i < TM; ++i) a_reg[i] = As[kk * BM + t_row * TM + i];
+#pragma unroll
+            for (int j = 0; j < TN; ++j) b_reg[j] = Bs[kk * BN + t_col * TN + j];
+#pragma unroll
+            for (int i = 0; i < TM; ++i)
+#pragma unroll
+                for (int j = 0; j < TN; ++j)
+                    acc[i * TN + j] += a_reg[i] * b_reg[j];
+        }
         __syncthreads();
     }
-    if (row >= M || col >= N) return;
 
-    if (MODE == EPI_PLAIN) {
-        D[row * N + col] = acc;
-    } else if (MODE == EPI_RESGAMMA) {
-        float d = acc + C[row * N + col];
-        D[row * N + col] = d;
-        O[row * N + col] = d * gamma[col];
-    } else if (MODE == EPI_ROWSCALE) {
-        O[row * N + col] = acc * r[row];
+    // Fused epilogue on the register accumulators, then a single store.
+    for (int i = 0; i < TM; ++i) {
+        int row = c_row * BM + t_row * TM + i;
+        if (row >= M) continue;
+        for (int j = 0; j < TN; ++j) {
+            int col = c_col * BN + t_col * TN + j;
+            if (col >= N) continue;
+            float a = acc[i * TN + j];
+            if (MODE == EPI_PLAIN) {
+                D[row * N + col] = a;
+            } else if (MODE == EPI_RESGAMMA) {
+                float d = a + C[row * N + col];
+                D[row * N + col] = d;
+                O[row * N + col] = d * gamma[col];
+            } else if (MODE == EPI_ROWSCALE) {
+                O[row * N + col] = a * r[row];
+            }
+        }
     }
+}
+
+// Launch the register-blocked GEMM with the correct grid / block geometry.
+template <int MODE>
+static void launch_gemm(const float* A, const float* B, const float* C,
+                        const float* gamma, const float* r, float* D, float* O,
+                        int M, int N, int K) {
+    dim3 grid((N + BN - 1) / BN, (M + BM - 1) / BM);
+    k_gemm_epi<MODE><<<grid, GEMM_THREADS>>>(A, B, C, gamma, r, D, O, M, N, K);
 }
 
 // ---------------------------------------------------------------------------
@@ -521,7 +579,7 @@ static float fwd_bwd(Net* n) {
 
         k_row_invrms<<<rb, 256>>>(x, r1, T, d, eps);
         k_col_scale<<<grid2d(d, T), blk>>>(x, ga_l, n->onorm, T, d);
-        k_gemm_epi<EPI_ROWSCALE><<<grid2d(d3, T), blk>>>(
+        launch_gemm<EPI_ROWSCALE>(
             n->onorm, wqkv_l, 0, 0, r1, 0, n->qkv_s, T, d3, d);
         k_slice<<<grid2d(d, T), blk>>>(n->qkv_s, n->qs, T, d, d3, 0);
         k_slice<<<grid2d(d, T), blk>>>(n->qkv_s, n->ks, T, d, d3, d);
@@ -530,20 +588,20 @@ static float fwd_bwd(Net* n) {
         k_rope<<<grid2d(d / 2, T), blk>>>(n->ks, n->cosT, n->sinT, krot_l, T, d);
         k_attention<<<(T * nh + 255) / 256, 256>>>(
             qrot_l, krot_l, vv_l, aout_l, T, d, nh, hd);
-        k_gemm_epi<EPI_RESGAMMA><<<grid2d(d, T), blk>>>(
+        launch_gemm<EPI_RESGAMMA>(
             aout_l, wo_l, x, gf_l, 0, hh_l, n->n2s, T, d, d);
         k_row_invrms<<<rb, 256>>>(hh_l, r2, T, d, eps);
-        k_gemm_epi<EPI_ROWSCALE><<<grid2d(dff2, T), blk>>>(
+        launch_gemm<EPI_ROWSCALE>(
             n->n2s, wgu_l, 0, 0, r2, 0, gu_l, T, dff2, d);
         k_swiglu<<<grid2d(dff, T), blk>>>(gu_l, ff_l, T, dff);
-        k_gemm_epi<EPI_RESGAMMA><<<grid2d(d, T), blk>>>(
+        launch_gemm<EPI_RESGAMMA>(
             ff_l, wd_l, hh_l, n->gfin, 0, n->xr + (size_t)(l + 1) * T * d,
             n->scratchO, T, d, dff);
     }
     float* y_final = n->xr + (size_t)nl * T * d;
     k_row_invrms<<<rb, 256>>>(y_final, n->rf, T, d, eps);
     k_col_scale<<<grid2d(d, T), blk>>>(y_final, n->gfin, n->onorm, T, d);
-    k_gemm_epi<EPI_ROWSCALE><<<grid2d(V, T), blk>>>(
+    launch_gemm<EPI_ROWSCALE>(
         n->onorm, n->lm, 0, 0, n->rf, 0, n->logits, T, V, d);
 
     // ---- Backward. ----
@@ -662,7 +720,7 @@ int coda_cuda_gemm(const float* A, const float* B, float* D,
     float *dA = up(A, (size_t)M * K), *dB = up(B, (size_t)K * N);
     float *dD = up(nullptr, (size_t)M * N);
     dim3 blk(BLK, BLK);
-    k_gemm_epi<EPI_PLAIN><<<grid2d(N, M), blk>>>(
+    launch_gemm<EPI_PLAIN>(
         dA, dB, nullptr, nullptr, nullptr, dD, nullptr, M, N, K);
     cudaDeviceSynchronize();
     int err = cuda_check("coda_cuda_gemm");
@@ -681,7 +739,7 @@ int coda_cuda_gemm_residual_partial_rms(const float* A, const float* B,
     float *dD = up(nullptr, (size_t)M * N), *dO = up(nullptr, (size_t)M * N);
     float *dR = up(nullptr, (size_t)M);
     dim3 blk(BLK, BLK);
-    k_gemm_epi<EPI_RESGAMMA><<<grid2d(N, M), blk>>>(
+    launch_gemm<EPI_RESGAMMA>(
         dA, dB, dC, dG, nullptr, dD, dO, M, N, K);
     k_row_invrms<<<(M + 255) / 256, 256>>>(dD, dR, M, N, eps);
     cudaDeviceSynchronize();
@@ -700,7 +758,7 @@ int coda_cuda_gemm_rmsnorm(const float* A, const float* B, const float* r,
     float *dA = up(A, (size_t)M * K), *dB = up(B, (size_t)K * N);
     float *dR = up(r, (size_t)M), *dO = up(nullptr, (size_t)M * N);
     dim3 blk(BLK, BLK);
-    k_gemm_epi<EPI_ROWSCALE><<<grid2d(N, M), blk>>>(
+    launch_gemm<EPI_ROWSCALE>(
         dA, dB, nullptr, nullptr, dR, nullptr, dO, M, N, K);
     cudaDeviceSynchronize();
     int err = cuda_check("coda_cuda_gemm_rmsnorm");
@@ -717,7 +775,7 @@ int coda_cuda_gemm_rmsnorm_swiglu(const float* A, const float* B, const float* r
     float *dR = up(r, (size_t)M);
     float *dDp = up(nullptr, (size_t)M * N), *dO = up(nullptr, (size_t)M * Nh);
     dim3 blk(BLK, BLK);
-    k_gemm_epi<EPI_ROWSCALE><<<grid2d(N, M), blk>>>(
+    launch_gemm<EPI_ROWSCALE>(
         dA, dB, nullptr, nullptr, dR, nullptr, dDp, M, N, K);
     k_swiglu<<<grid2d(Nh, M), blk>>>(dDp, dO, M, Nh);
     cudaDeviceSynchronize();
@@ -736,7 +794,7 @@ int coda_cuda_gemm_rope(const float* A, const float* B,
     float *dC = up(cosT, (size_t)M * N), *dS = up(sinT, (size_t)M * N);
     float *dD = up(nullptr, (size_t)M * N), *dO = up(nullptr, (size_t)M * N);
     dim3 blk(BLK, BLK);
-    k_gemm_epi<EPI_PLAIN><<<grid2d(N, M), blk>>>(
+    launch_gemm<EPI_PLAIN>(
         dA, dB, nullptr, nullptr, nullptr, dD, nullptr, M, N, K);
     k_rope<<<grid2d(N / 2, M), blk>>>(dD, dC, dS, dO, M, N);
     cudaDeviceSynchronize();
@@ -754,7 +812,7 @@ int coda_cuda_gemm_swiglu(const float* A, const float* B, float* O,
     float *dA = up(A, (size_t)M * K), *dB = up(B, (size_t)K * N);
     float *dD = up(nullptr, (size_t)M * N), *dO = up(nullptr, (size_t)M * Nh);
     dim3 blk(BLK, BLK);
-    k_gemm_epi<EPI_PLAIN><<<grid2d(N, M), blk>>>(
+    launch_gemm<EPI_PLAIN>(
         dA, dB, nullptr, nullptr, nullptr, dD, nullptr, M, N, K);
     k_swiglu<<<grid2d(Nh, M), blk>>>(dD, dO, M, Nh);
     cudaDeviceSynchronize();
@@ -775,7 +833,7 @@ int coda_cuda_gemm_rmsnorm_ce(const float* A, const float* B, const float* r,
     cudaMemcpy(dT, tgt, (size_t)M * sizeof(int), cudaMemcpyHostToDevice);
     float *dL = up(nullptr, (size_t)M), *dLoss = up(nullptr, (size_t)M);
     dim3 blk(BLK, BLK);
-    k_gemm_epi<EPI_ROWSCALE><<<grid2d(N, M), blk>>>(
+    launch_gemm<EPI_ROWSCALE>(
         dA, dB, nullptr, nullptr, dR, nullptr, dZ, M, N, K);
     k_row_ce<<<(M + 255) / 256, 256>>>(dZ, dT, dL, dLoss, M, N);
     cudaDeviceSynchronize();
@@ -847,7 +905,7 @@ int coda_cuda_model_forward(
         const float* wd_l = dWD + (size_t)l * d_ff * d;
 
         // QKV projection with the delayed RMSNorm scale (Kernel 5).
-        k_gemm_epi<EPI_ROWSCALE><<<grid2d(d3, T), blk>>>(
+        launch_gemm<EPI_ROWSCALE>(
             dOnorm, wqkv_l, nullptr, nullptr, dR, nullptr, dQKV, T, d3, d);
         k_slice<<<grid2d(d, T), blk>>>(dQKV, dQ, T, d, d3, 0);
         k_slice<<<grid2d(d, T), blk>>>(dQKV, dK, T, d, d3, d);
@@ -858,19 +916,19 @@ int coda_cuda_model_forward(
             dQR, dKR, dV, dAttn, T, d, n_heads, head_dim);
 
         // Output proj + residual + FFN-norm (Kernel 4).
-        k_gemm_epi<EPI_RESGAMMA><<<grid2d(d, T), blk>>>(
+        launch_gemm<EPI_RESGAMMA>(
             dAttn, wo_l, dX, gf_l, nullptr, dH, dN2, T, d, d);
         k_row_invrms<<<(T + 255) / 256, 256>>>(dH, dR2, T, d, eps);
 
         // Gate/Up projection + SwiGLU (Kernel 6).
-        k_gemm_epi<EPI_ROWSCALE><<<grid2d(dff2, T), blk>>>(
+        launch_gemm<EPI_ROWSCALE>(
             dN2, wgu_l, nullptr, nullptr, dR2, nullptr, dDP, T, dff2, d);
         k_swiglu<<<grid2d(d_ff, T), blk>>>(dDP, dFF, T, d_ff);
 
         // Down proj + residual + next sublayer's norm (Kernel 4).
         const float* next_gamma =
             (l + 1 < n_layers) ? (dGA + (size_t)(l + 1) * d) : dGFinal;
-        k_gemm_epi<EPI_RESGAMMA><<<grid2d(d, T), blk>>>(
+        launch_gemm<EPI_RESGAMMA>(
             dFF, wd_l, dH, next_gamma, nullptr, dY, dOnorm, T, d, d_ff);
         k_row_invrms<<<(T + 255) / 256, 256>>>(dY, dR, T, d, eps);
 
@@ -878,7 +936,7 @@ int coda_cuda_model_forward(
     }
 
     // LM head: logits = (final-normed residual @ W_lm) ⊙ r  (Kernel 5).
-    k_gemm_epi<EPI_ROWSCALE><<<grid2d(vocab, T), blk>>>(
+    launch_gemm<EPI_ROWSCALE>(
         dOnorm, dLM, nullptr, nullptr, dR, nullptr, dLogits, T, vocab, d);
 
     cudaDeviceSynchronize();
