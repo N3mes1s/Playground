@@ -133,6 +133,11 @@ data-movement story as the CPU port, now on hardware.
   shared-memory kernel (`k_gemm_epi`) is the fallback for pre-Ampere GPUs and
   ragged shapes. Both are templated on the epilogue mode — one fixed mainloop,
   programmable epilogue.
+* **Block-parallel attention** — `k_attention` runs one thread *block* per
+  (query, head) with cooperative shared-memory reductions, and saves the
+  softmax matrix. The backward is atomic-free: it materializes the
+  score-gradient and computes `dQ`/`dK`/`dV` as independent block-per-position
+  reductions (no `atomicAdd` contention).
 * **Whole-model forward** — `coda_cuda_model_forward` runs every layer
   device-resident; weights upload once, only logits come back.
 * **Device-resident training** — `coda_cuda_train` runs the full training loop
@@ -171,28 +176,30 @@ match the CPU reference (the tensor-core path is TF32, so the error floor is
     GPU loss 3.27 -> 0.0011 ;  CPU from identical init -> 0.0011
 
 == Scaled-up GPU training (A100) ==
-    ~97.5M params, 200 steps in ~146s (~728 ms/step), loss 9.10 -> 0.002
+    ~97.5M params, 200 steps in ~20s (~101 ms/step), loss 9.10 -> 0.001
 ```
 
-So a ~100M-parameter Transformer trains end-to-end on a single A100, every GPU
-result verified against the CPU reference.
+So a ~100M-parameter Transformer trains end-to-end on a single A100 in ~20
+seconds for 200 steps, every GPU result verified against the CPU reference.
 
-**Honest performance note.** The mainloop went through three implementations —
-naive tiled → register-blocked → TF32 tensor cores — and the backward GEMMs are
-register-blocked, with an async-queued step. Across all of that, the
-~100M-parameter training step stayed at ~0.73 s: each measurement showed the
-change was *correct* but moved end-to-end wall-clock by <15%. The conclusion is
-empirical and clear — **this workload is not GEMM-bound.** The cost is in the
-attention kernels (`k_attention` / `k_attention_bwd`), which are parallelized
-one thread per (query, head) — only ~3 000 threads, a fraction of an A100 —
-and in the long tail of small elementwise/reduction kernels. Fixing that means
-a flash-attention-style rewrite (block-per-query with cooperative reductions,
-attention backward as GEMMs) and op fusion to collapse the elementwise tail.
-That is the genuine next step; pinpointing it precisely really wants a GPU
-profiler (Nsight), which a CPU-only sandbox cannot run. What *is* delivered and
-verified: the GEMM-plus-epilogue abstraction with a tensor-core mainloop, the
-full forward and backward, and device-resident training of a 100M-parameter
-model — every GPU result checked against the CPU reference.
+**Performance journey.** The 100M-parameter training step was optimized in
+measured steps, each verified to stay bit-correct against the CPU:
+
+| Change | step time |
+|--------|-----------|
+| naive tiled GEMM mainloop                 | ~820 ms |
+| register-blocked forward + backward GEMMs | ~728 ms |
+| TF32 tensor-core GEMM mainloop            | ~728 ms |
+| **block-parallel, atomic-free attention** | **~101 ms** |
+
+The lesson is in that table: the GEMM rewrites were *correct* but barely moved
+wall-clock — the workload was never GEMM-bound. The real cost was the original
+attention kernels (one thread per (query,head): only ~3 000 threads on a
+108-SM GPU, plus `atomicAdd` contention in the backward). Rewriting attention
+as block-per-position with cooperative reductions and an atomic-free,
+materialized-`P` backward gave a **7.2× end-to-end speedup**. The GEMM still
+runs on tensor cores; both pieces matter, but profiling-by-measurement is what
+found the bottleneck.
 
 ## File map
 

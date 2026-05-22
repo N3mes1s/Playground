@@ -289,38 +289,78 @@ __global__ void k_slice(const float* in, float* out, int M, int d,
     out[i * d + j] = in[i * cols + offset + j];
 }
 
-// Causal multi-head self-attention. One thread owns one (query, head) pair and
-// walks the causal prefix twice (max, then sum-exp + weighted V).
+// Causal multi-head self-attention - one thread BLOCK per (query, head).
+//
+// The block's threads cooperatively compute the causal score row, reduce it
+// (max, sum-exp) through shared memory, then thread `e` writes output feature
+// `e`. This launches T*n_heads blocks (vs. that many *threads* before), so the
+// GPU is actually filled. If `P` is non-null the softmax row is also written
+// out, so the backward pass need not recompute it.
+#define ATTN_THREADS 256
+#define ATTN_TMAX 1024  // maximum supported sequence length
+
 __global__ void k_attention(const float* Q, const float* K, const float* V,
-                            float* O, int T, int d, int n_heads, int head_dim) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= T * n_heads) return;
-    int i = idx / n_heads;          // query position
-    int h = idx % n_heads;          // head
+                            float* O, float* P, int T, int d, int n_heads,
+                            int head_dim) {
+    int i = blockIdx.x / n_heads;   // query position
+    int h = blockIdx.x % n_heads;   // head
     int off = h * head_dim;
+    int t = threadIdx.x;
     float scale = rsqrtf((float)head_dim);
 
-    float mx = -1e30f;
-    for (int j = 0; j <= i; ++j) {
+    __shared__ float sc[ATTN_TMAX];   // scores -> probs for this row
+    __shared__ float red[ATTN_THREADS];
+
+    for (int j = t; j <= i; j += ATTN_THREADS) {
         float s = 0.0f;
         for (int e = 0; e < head_dim; ++e)
             s += Q[i * d + off + e] * K[j * d + off + e];
-        mx = fmaxf(mx, s * scale);
+        sc[j] = s * scale;
     }
-    float acc[MAX_HEAD_DIM];
-    for (int e = 0; e < head_dim; ++e) acc[e] = 0.0f;
-    float se = 0.0f;
-    for (int j = 0; j <= i; ++j) {
-        float s = 0.0f;
-        for (int e = 0; e < head_dim; ++e)
-            s += Q[i * d + off + e] * K[j * d + off + e];
-        float ex = expf(s * scale - mx);
-        se += ex;
-        for (int e = 0; e < head_dim; ++e)
-            acc[e] += ex * V[j * d + off + e];
+    __syncthreads();
+
+    // Row max.
+    float m = -1e30f;
+    for (int j = t; j <= i; j += ATTN_THREADS) m = fmaxf(m, sc[j]);
+    red[t] = m;
+    __syncthreads();
+    for (int s = ATTN_THREADS / 2; s > 0; s >>= 1) {
+        if (t < s) red[t] = fmaxf(red[t], red[t + s]);
+        __syncthreads();
     }
-    for (int e = 0; e < head_dim; ++e)
-        O[i * d + off + e] = acc[e] / se;
+    float mx = red[0];
+    __syncthreads();
+
+    // Exp + row sum.
+    float partial = 0.0f;
+    for (int j = t; j <= i; j += ATTN_THREADS) {
+        float e = expf(sc[j] - mx);
+        sc[j] = e;
+        partial += e;
+    }
+    red[t] = partial;
+    __syncthreads();
+    for (int s = ATTN_THREADS / 2; s > 0; s >>= 1) {
+        if (t < s) red[t] += red[t + s];
+        __syncthreads();
+    }
+    float se = red[0];
+    __syncthreads();
+
+    // Normalize to probabilities; optionally save the row for the backward pass.
+    for (int j = t; j <= i; j += ATTN_THREADS) {
+        float p = sc[j] / se;
+        sc[j] = p;
+        if (P) P[((size_t)h * T + i) * T + j] = p;
+    }
+    __syncthreads();
+
+    // Output: thread `e` reduces the weighted value column.
+    if (t < head_dim) {
+        float acc = 0.0f;
+        for (int j = 0; j <= i; ++j) acc += sc[j] * V[j * d + off + t];
+        O[i * d + off + t] = acc;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -516,51 +556,78 @@ __global__ void k_rope_bwd(const float* dout, const float* cosT,
     din[i * N + c1] = -g0 * s + g1 * c;
 }
 
-// Causal attention backward. One thread owns one (query, head) pair; it
-// recomputes the softmax row, writes its own d_q row, and atomically scatters
-// into d_k / d_v. d_q / d_k / d_v must be zeroed beforehand.
-__global__ void k_attention_bwd(const float* Q, const float* K, const float* V,
-                                const float* dO, float* dQ, float* dK, float* dV,
-                                int T, int d, int n_heads, int head_dim) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= T * n_heads) return;
-    int i = idx / n_heads, h = idx % n_heads;
+// Attention backward, atomic-free. The saved softmax matrix P makes the three
+// gradients independent reductions, each block-per-position so the GPU fills.
+//
+// 1. k_attn_dscore: block per (query i, head h) computes the score-gradient
+//    row  DS[i,j] = P[i,j]·(dP[i,j] - Σ_j P[i,j]·dP[i,j]),  dP[i,j]=dO[i]·V[j].
+__global__ void k_attn_dscore(const float* dO, const float* V, const float* P,
+                              float* DS, int T, int d, int n_heads,
+                              int head_dim) {
+    int i = blockIdx.x / n_heads;
+    int h = blockIdx.x % n_heads;
     int off = h * head_dim;
-    float scale = rsqrtf((float)head_dim);
+    int t = threadIdx.x;
+    __shared__ float dp[ATTN_TMAX];
+    __shared__ float red[ATTN_THREADS];
 
-    float mx = -1e30f;
-    for (int j = 0; j <= i; ++j) {
+    for (int j = t; j <= i; j += ATTN_THREADS) {
         float s = 0.0f;
         for (int e = 0; e < head_dim; ++e)
-            s += Q[i * d + off + e] * K[j * d + off + e];
-        mx = fmaxf(mx, s * scale);
+            s += dO[i * d + off + e] * V[j * d + off + e];
+        dp[j] = s;
     }
-    float se = 0.0f, dotsum = 0.0f;
-    for (int j = 0; j <= i; ++j) {
-        float s = 0.0f, dp = 0.0f;
-        for (int e = 0; e < head_dim; ++e) {
-            s += Q[i * d + off + e] * K[j * d + off + e];
-            dp += dO[i * d + off + e] * V[j * d + off + e];
-        }
-        float p = expf(s * scale - mx);
-        se += p;
-        dotsum += p * dp;  // accumulated against the un-normalized p
+    __syncthreads();
+    float partial = 0.0f;
+    for (int j = t; j <= i; j += ATTN_THREADS)
+        partial += P[((size_t)h * T + i) * T + j] * dp[j];
+    red[t] = partial;
+    __syncthreads();
+    for (int s = ATTN_THREADS / 2; s > 0; s >>= 1) {
+        if (t < s) red[t] += red[t + s];
+        __syncthreads();
     }
-    dotsum /= se;
-    for (int j = 0; j <= i; ++j) {
-        float s = 0.0f, dp = 0.0f;
-        for (int e = 0; e < head_dim; ++e) {
-            s += Q[i * d + off + e] * K[j * d + off + e];
-            dp += dO[i * d + off + e] * V[j * d + off + e];
-        }
-        float p = expf(s * scale - mx) / se;
-        float d_score = p * (dp - dotsum);
-        for (int e = 0; e < head_dim; ++e) {
-            atomicAdd(&dV[j * d + off + e], p * dO[i * d + off + e]);
-            dQ[i * d + off + e] += scale * d_score * K[j * d + off + e];
-            atomicAdd(&dK[j * d + off + e], scale * d_score * Q[i * d + off + e]);
-        }
+    float dotsum = red[0];
+    __syncthreads();
+    for (int j = t; j <= i; j += ATTN_THREADS) {
+        float p = P[((size_t)h * T + i) * T + j];
+        DS[((size_t)h * T + i) * T + j] = p * (dp[j] - dotsum);
     }
+}
+
+// 2. k_attn_dq: block per (query i, head h), thread `e` owns dQ[i,h,e].
+__global__ void k_attn_dq(const float* DS, const float* K, float* dQ,
+                          int T, int d, int n_heads, int head_dim) {
+    int i = blockIdx.x / n_heads;
+    int h = blockIdx.x % n_heads;
+    int off = h * head_dim;
+    int e = threadIdx.x;
+    if (e >= head_dim) return;
+    float scale = rsqrtf((float)head_dim);
+    float acc = 0.0f;
+    for (int j = 0; j <= i; ++j)
+        acc += DS[((size_t)h * T + i) * T + j] * K[j * d + off + e];
+    dQ[i * d + off + e] = scale * acc;
+}
+
+// 3. k_attn_dkv: block per (key j, head h), thread `e` owns dK[j,h,e] and
+//    dV[j,h,e]. Each is a reduction over the queries i >= j - no atomics.
+__global__ void k_attn_dkv(const float* P, const float* DS, const float* dO,
+                           const float* Q, float* dK, float* dV,
+                           int T, int d, int n_heads, int head_dim) {
+    int j = blockIdx.x / n_heads;
+    int h = blockIdx.x % n_heads;
+    int off = h * head_dim;
+    int e = threadIdx.x;
+    if (e >= head_dim) return;
+    float scale = rsqrtf((float)head_dim);
+    float dv = 0.0f, dk = 0.0f;
+    for (int i = j; i < T; ++i) {
+        dv += P[((size_t)h * T + i) * T + j] * dO[i * d + off + e];
+        dk += DS[((size_t)h * T + i) * T + j] * Q[i * d + off + e];
+    }
+    dV[j * d + off + e] = dv;
+    dK[j * d + off + e] = scale * dk;
 }
 
 // Embedding backward: scatter-add the input gradient into the table.
@@ -655,13 +722,15 @@ struct Net {
     // RoPE tables and token / target ids.
     float *cosT, *sinT;
     int *tokens, *targets;
-    // Saved activations (per layer where noted).
+    // Saved activations (per layer where noted). `probs` holds the softmax
+    // matrices [n_layers, n_heads, T, T] for the attention backward.
     float *xr, *r1, *qrot, *krot, *vv, *aout, *hh, *r2, *gu, *ff, *rf, *logits;
+    float *probs;
     // Forward scratch.
     float *onorm, *qkv_s, *qs, *ks, *n2s, *scratchO;
-    // Backward scratch.
+    // Backward scratch (`dscore` is the per-head attention score-gradient).
     float *dlog, *lossrow, *nf, *dgrad, *dh, *dff_, *dgu, *dn2, *dh2, *dattn;
-    float *dqr, *dkr, *dvg, *dq, *dk, *dqkv, *dn1, *dx1, *n1r, *n2r;
+    float *dqr, *dkr, *dvg, *dq, *dk, *dqkv, *dn1, *dx1, *n1r, *n2r, *dscore;
 };
 
 static void alloc_net(Net* n) {
@@ -696,6 +765,8 @@ static void alloc_net(Net* n) {
     n->hh = up(0, (size_t)nl * T * d);
     n->gu = up(0, (size_t)nl * T * dff2); n->ff = up(0, (size_t)nl * T * dff);
     n->rf = up(0, (size_t)T); n->logits = up(0, (size_t)T * V);
+    n->probs = up(0, (size_t)nl * n->nh * T * T);
+    n->dscore = up(0, (size_t)n->nh * T * T);
     n->onorm = up(0, (size_t)T * d); n->qkv_s = up(0, (size_t)T * d3);
     n->qs = up(0, (size_t)T * d); n->ks = up(0, (size_t)T * d);
     n->n2s = up(0, (size_t)T * d); n->scratchO = up(0, (size_t)T * d);
@@ -722,7 +793,8 @@ static void free_net(Net* n) {
         n->gu, n->ff, n->rf, n->logits, n->onorm, n->qkv_s, n->qs, n->ks,
         n->n2s, n->scratchO, n->dlog, n->lossrow, n->nf, n->dgrad, n->dh,
         n->dff_, n->dgu, n->dn2, n->dh2, n->dattn, n->dqr, n->dkr, n->dvg,
-        n->dq, n->dk, n->dqkv, n->dn1, n->dx1, n->n1r, n->n2r};
+        n->dq, n->dk, n->dqkv, n->dn1, n->dx1, n->n1r, n->n2r,
+        n->probs, n->dscore};
     for (float* p : ptrs) cudaFree(p);
     cudaFree(n->tokens);
     cudaFree(n->targets);
@@ -766,8 +838,9 @@ static float fwd_bwd(Net* n) {
         k_slice<<<grid2d(d, T), blk>>>(n->qkv_s, vv_l, T, d, d3, 2 * d);
         k_rope<<<grid2d(d / 2, T), blk>>>(n->qs, n->cosT, n->sinT, qrot_l, T, d);
         k_rope<<<grid2d(d / 2, T), blk>>>(n->ks, n->cosT, n->sinT, krot_l, T, d);
-        k_attention<<<(T * nh + 255) / 256, 256>>>(
-            qrot_l, krot_l, vv_l, aout_l, T, d, nh, hd);
+        k_attention<<<T * nh, ATTN_THREADS>>>(
+            qrot_l, krot_l, vv_l, aout_l, n->probs + (size_t)l * nh * T * T,
+            T, d, nh, hd);
         launch_gemm<EPI_RESGAMMA>(
             aout_l, wo_l, x, gf_l, 0, hh_l, n->n2s, T, d, d);
         k_row_invrms<<<rb, 256>>>(hh_l, r2, T, d, eps);
@@ -836,11 +909,15 @@ static float fwd_bwd(Net* n) {
         launch_gemm_nt(n->dh, wo_l, n->dattn, T, d, d);
 
         // Attention + RoPE backward.
-        cudaMemsetAsync(n->dqr, 0, (size_t)T * d * sizeof(float), 0);
-        cudaMemsetAsync(n->dkr, 0, (size_t)T * d * sizeof(float), 0);
-        cudaMemsetAsync(n->dvg, 0, (size_t)T * d * sizeof(float), 0);
-        k_attention_bwd<<<(T * nh + 255) / 256, 256>>>(
-            qrot_l, krot_l, vv_l, n->dattn, n->dqr, n->dkr, n->dvg, T, d, nh, hd);
+        // Atomic-free attention backward: DS = score gradients, then the
+        // three operand gradients as independent block-per-position reductions.
+        const float* probs_l = n->probs + (size_t)l * nh * T * T;
+        k_attn_dscore<<<T * nh, ATTN_THREADS>>>(
+            n->dattn, vv_l, probs_l, n->dscore, T, d, nh, hd);
+        k_attn_dq<<<T * nh, ATTN_THREADS>>>(
+            n->dscore, krot_l, n->dqr, T, d, nh, hd);
+        k_attn_dkv<<<T * nh, ATTN_THREADS>>>(
+            probs_l, n->dscore, n->dattn, qrot_l, n->dkr, n->dvg, T, d, nh, hd);
         k_rope_bwd<<<grid2d(d / 2, T), blk>>>(n->dqr, n->cosT, n->sinT, n->dq, T, d);
         k_rope_bwd<<<grid2d(d / 2, T), blk>>>(n->dkr, n->cosT, n->sinT, n->dk, T, d);
         k_paste<<<grid2d(d, T), blk>>>(n->dq, n->dqkv, T, d, d3, 0);
@@ -1092,8 +1169,8 @@ int coda_cuda_model_forward(
         k_slice<<<grid2d(d, T), blk>>>(dQKV, dV, T, d, d3, 2 * d);
         k_rope<<<grid2d(d / 2, T), blk>>>(dQ, dCos, dSin, dQR, T, d);
         k_rope<<<grid2d(d / 2, T), blk>>>(dK, dCos, dSin, dKR, T, d);
-        k_attention<<<(T * n_heads + 255) / 256, 256>>>(
-            dQR, dKR, dV, dAttn, T, d, n_heads, head_dim);
+        k_attention<<<T * n_heads, ATTN_THREADS>>>(
+            dQR, dKR, dV, dAttn, nullptr, T, d, n_heads, head_dim);
 
         // Output proj + residual + FFN-norm (Kernel 4).
         launch_gemm<EPI_RESGAMMA>(
