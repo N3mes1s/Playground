@@ -131,11 +131,12 @@ fn main() {
         if my_arg == ref_arg && corr > 0.98 { "VERIFIED" } else { "MISMATCH" }
     );
 
-    // ---- Autoregressive generation (device-resident, greedy decode). ----
+    // ---- Autoregressive generation (device-resident, KV-cached decode). ----
     let prompt = read_ids("/work/gen_ids.txt");
-    let n_gen = 80;
+    let n_gen = 200;
     println!("\n== Generating {n_gen} tokens with the GPU backend ==");
-    println!("    weights upload once, then the decode loop runs device-resident");
+    println!("    weights upload once; prefill fills the KV cache, then each");
+    println!("    decode step processes just the one new token");
     let t0 = std::time::Instant::now();
     let new_ids = cuda::generate(&model, &prompt, n_gen);
     let elapsed = t0.elapsed().as_secs_f64();

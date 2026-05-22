@@ -222,6 +222,45 @@ static void launch_gemm(const float* A, const float* B, const float* C,
 }
 
 // ---------------------------------------------------------------------------
+// GEMV: the M = 1 case of the fused-epilogue GEMM, for autoregressive decode.
+//
+// A cached decode step processes exactly one new token, so the projection
+// "GEMMs" are matrix-vector products. The tiled GEMM would still compute a
+// full BM x BN tile and discard 63/64 of it; this kernel instead assigns one
+// output column per thread and streams the weight matrix exactly once, so a
+// decode step costs O(K*N) rather than O(BM*K*N). The epilogue matches
+// `k_gemm_epi` row 0: the input row A is [1, K], B is [K, N] row-major.
+// ---------------------------------------------------------------------------
+template <int MODE>
+__global__ void k_gemv_epi(const float* A, const float* B, const float* C,
+                           const float* gamma, const float* r,
+                           float* D, float* O, int N, int K) {
+    int n = blockIdx.x * blockDim.x + threadIdx.x;  // output column
+    if (n >= N) return;
+    float acc = 0.0f;
+    for (int k = 0; k < K; ++k) acc += A[k] * B[(size_t)k * N + n];
+    if (MODE == EPI_PLAIN) {
+        D[n] = acc;
+    } else if (MODE == EPI_RESGAMMA) {
+        float dv = acc + C[n];
+        D[n] = dv;
+        O[n] = dv * gamma[n];
+    } else {  // EPI_ROWSCALE
+        O[n] = acc * r[0];
+    }
+}
+
+// Launch the GEMV with the same fused epilogue selection as `launch_gemm`.
+template <int MODE>
+static void launch_gemv(const float* A, const float* B, const float* C,
+                        const float* gamma, const float* r, float* D, float* O,
+                        int N, int K) {
+    int threads = 256;
+    int blocks = (N + threads - 1) / threads;
+    k_gemv_epi<MODE><<<blocks, threads>>>(A, B, C, gamma, r, D, O, N, K);
+}
+
+// ---------------------------------------------------------------------------
 // Auxiliary / elementwise kernels (memory-bound, no tiling needed).
 // ---------------------------------------------------------------------------
 
@@ -360,6 +399,72 @@ __global__ void k_attention(const float* Q, const float* K, const float* V,
         float acc = 0.0f;
         for (int j = 0; j <= i; ++j) acc += sc[j] * V[j * d + off + t];
         O[i * d + off + t] = acc;
+    }
+}
+
+// Causal attention for a single decode step - one thread BLOCK per head.
+//
+// The KV cache holds the rotated keys (`Kc`) and values (`Vc`) for every
+// position 0..p, so this kernel never recomputes them: the one new token's
+// rotated query row attends against the `p + 1` cached entries. Mirrors
+// `k_attention` but with a single query, the cache as the K/V source, and no
+// softmax-matrix save (inference only). `Kc` / `Vc` are [Tmax, d] row-major.
+__global__ void k_attention_decode(const float* q, const float* Kc,
+                                   const float* Vc, float* O, int p, int d,
+                                   int n_heads, int head_dim) {
+    int h = blockIdx.x;            // one block per head
+    int off = h * head_dim;
+    int t = threadIdx.x;
+    int L = p + 1;                 // cached keys/values, positions 0..p
+    float scale = rsqrtf((float)head_dim);
+
+    __shared__ float sc[ATTN_TMAX];
+    __shared__ float red[ATTN_THREADS];
+
+    for (int j = t; j < L; j += ATTN_THREADS) {
+        float s = 0.0f;
+        for (int e = 0; e < head_dim; ++e)
+            s += q[off + e] * Kc[(size_t)j * d + off + e];
+        sc[j] = s * scale;
+    }
+    __syncthreads();
+
+    // Row max.
+    float m = -1e30f;
+    for (int j = t; j < L; j += ATTN_THREADS) m = fmaxf(m, sc[j]);
+    red[t] = m;
+    __syncthreads();
+    for (int s = ATTN_THREADS / 2; s > 0; s >>= 1) {
+        if (t < s) red[t] = fmaxf(red[t], red[t + s]);
+        __syncthreads();
+    }
+    float mx = red[0];
+    __syncthreads();
+
+    // Exp + row sum.
+    float partial = 0.0f;
+    for (int j = t; j < L; j += ATTN_THREADS) {
+        float e = expf(sc[j] - mx);
+        sc[j] = e;
+        partial += e;
+    }
+    red[t] = partial;
+    __syncthreads();
+    for (int s = ATTN_THREADS / 2; s > 0; s >>= 1) {
+        if (t < s) red[t] += red[t + s];
+        __syncthreads();
+    }
+    float se = red[0];
+    __syncthreads();
+
+    for (int j = t; j < L; j += ATTN_THREADS) sc[j] /= se;
+    __syncthreads();
+
+    // Output: thread `e` reduces the weighted value column for this head.
+    if (t < head_dim) {
+        float acc = 0.0f;
+        for (int j = 0; j < L; ++j) acc += sc[j] * Vc[(size_t)j * d + off + t];
+        O[off + t] = acc;
     }
 }
 
@@ -1254,18 +1359,26 @@ int coda_cuda_model_forward(
 }
 
 // ---------------------------------------------------------------------------
-// Device-resident autoregressive generation.
+// Device-resident autoregressive generation with a KV cache.
 //
 // `coda_cuda_model_forward` re-uploads every weight on each call; for a
-// multi-billion-parameter model that 27 GB transfer would dwarf the compute
-// and make per-token decoding absurdly slow. This entry point uploads the
-// whole weight set *once*, then runs a greedy decode loop entirely on the
-// resident weights: each step is a forward at the current sequence length L,
-// and only the new token id (one int) crosses the PCIe bus between steps.
+// multi-billion-parameter model that 27 GB transfer would dwarf the compute.
+// This entry point uploads the whole weight set *once* and decodes with only
+// one int (the new token) crossing the PCIe bus per step.
 //
-// `cosT` / `sinT` are sized for `Tmax` positions; a forward at length L just
-// uses their first L rows. `out_ids` receives the `n_new` generated ids.
-// Returns 0 on success, non-zero on a CUDA error.
+// Two phases:
+//   * Prefill - one tiled forward over the whole prompt, which also fills the
+//     per-layer KV cache (rotated keys + values) for positions 0..prompt_len-1.
+//   * Decode  - each step processes exactly ONE new token: its projections are
+//     matrix-vector products (`launch_gemv`), its key/value are appended to
+//     the cache, and it attends against the cache instead of recomputing the
+//     keys and values of every earlier position. A decode step is therefore
+//     O(model) work, not O(model x sequence length) as a cache-free re-forward
+//     would be - the difference between ~0.6 s/token and tens of ms/token.
+//
+// `cosT` / `sinT` are sized for `Tmax` positions; RoPE for the decode token at
+// position `p` reads their row `p`. `out_ids` receives the `n_new` greedily
+// decoded ids. Returns 0 on success, non-zero on a CUDA error.
 // ---------------------------------------------------------------------------
 int coda_cuda_generate(
     int Tmax, int d, int n_layers, int n_heads, int head_dim, int d_ff,
@@ -1292,13 +1405,17 @@ int coda_cuda_generate(
     float* dCos = up(cosT, (size_t)Tmax * d);
     float* dSin = up(sinT, (size_t)Tmax * d);
 
+    // KV cache: rotated keys and values for every layer and position.
+    float* dKcache = up(NULL, (size_t)n_layers * Tmax * d);
+    float* dVcache = up(NULL, (size_t)n_layers * Tmax * d);
+
     // Token buffer: the prompt up front, generated ids appended in place.
     int* dTokens = nullptr;
     cudaMalloc(&dTokens, (size_t)Tmax * sizeof(int));
     cudaMemcpy(dTokens, prompt, (size_t)prompt_len * sizeof(int),
                cudaMemcpyHostToDevice);
 
-    // Forward scratch, sized for the longest sequence the decode will reach.
+    // Forward scratch, sized for the longest row count (the prompt prefill).
     float* dX = up(NULL, (size_t)Tmax * d);
     float* dY = up(NULL, (size_t)Tmax * d);
     float* dOnorm = up(NULL, (size_t)Tmax * d);
@@ -1307,9 +1424,7 @@ int coda_cuda_generate(
     float* dQKV = up(NULL, (size_t)Tmax * d3);
     float* dQ = up(NULL, (size_t)Tmax * d);
     float* dK = up(NULL, (size_t)Tmax * d);
-    float* dV = up(NULL, (size_t)Tmax * d);
     float* dQR = up(NULL, (size_t)Tmax * d);
-    float* dKR = up(NULL, (size_t)Tmax * d);
     float* dAttn = up(NULL, (size_t)Tmax * d);
     float* dH = up(NULL, (size_t)Tmax * d);
     float* dN2 = up(NULL, (size_t)Tmax * d);
@@ -1321,15 +1436,15 @@ int coda_cuda_generate(
     float* row = (float*)malloc((size_t)vocab * sizeof(float));
     int err = 0;
 
-    for (int step = 0; step < n_new && err == 0; ++step) {
-        int L = prompt_len + step;  // current sequence length
-
-        // Embed the live token stream, then the embedding-side RMSNorm.
+    // ---- Prefill: one tiled forward over the whole prompt; fills the KV
+    //      cache for positions 0 .. prompt_len-1. ----
+    {
+        int M = prompt_len;
         float* X = dX;
         float* Y = dY;
-        k_embed_gather<<<grid2d(d, L), blk>>>(dEmbed, dTokens, X, L, d);
-        k_row_invrms<<<(L + 255) / 256, 256>>>(X, dR, L, d, eps);
-        k_col_scale<<<grid2d(d, L), blk>>>(X, dGA, dOnorm, L, d);
+        k_embed_gather<<<grid2d(d, M), blk>>>(dEmbed, dTokens, X, M, d);
+        k_row_invrms<<<(M + 255) / 256, 256>>>(X, dR, M, d, eps);
+        k_col_scale<<<grid2d(d, M), blk>>>(X, dGA, dOnorm, M, d);
 
         for (int l = 0; l < n_layers; ++l) {
             const float* wqkv_l = dWQKV + (size_t)l * d * d3;
@@ -1337,55 +1452,130 @@ int coda_cuda_generate(
             const float* gf_l = dGF + (size_t)l * d;
             const float* wgu_l = dWGU + (size_t)l * d * dff2;
             const float* wd_l = dWD + (size_t)l * d_ff * d;
+            float* Kc = dKcache + (size_t)l * Tmax * d;
+            float* Vc = dVcache + (size_t)l * Tmax * d;
 
-            // QKV projection with the delayed RMSNorm scale (Kernel 5).
+            // QKV projection (Kernel 5); rotated K and V go straight to cache.
             launch_gemm<EPI_ROWSCALE>(
-                dOnorm, wqkv_l, nullptr, nullptr, dR, nullptr, dQKV, L, d3, d);
-            k_slice<<<grid2d(d, L), blk>>>(dQKV, dQ, L, d, d3, 0);
-            k_slice<<<grid2d(d, L), blk>>>(dQKV, dK, L, d, d3, d);
-            k_slice<<<grid2d(d, L), blk>>>(dQKV, dV, L, d, d3, 2 * d);
-            k_rope<<<grid2d(d / 2, L), blk>>>(dQ, dCos, dSin, dQR, L, d);
-            k_rope<<<grid2d(d / 2, L), blk>>>(dK, dCos, dSin, dKR, L, d);
-            k_attention<<<L * n_heads, ATTN_THREADS>>>(
-                dQR, dKR, dV, dAttn, nullptr, L, d, n_heads, head_dim);
+                dOnorm, wqkv_l, nullptr, nullptr, dR, nullptr, dQKV, M, d3, d);
+            k_slice<<<grid2d(d, M), blk>>>(dQKV, dQ, M, d, d3, 0);
+            k_slice<<<grid2d(d, M), blk>>>(dQKV, dK, M, d, d3, d);
+            k_slice<<<grid2d(d, M), blk>>>(dQKV, Vc, M, d, d3, 2 * d);
+            k_rope<<<grid2d(d / 2, M), blk>>>(dQ, dCos, dSin, dQR, M, d);
+            k_rope<<<grid2d(d / 2, M), blk>>>(dK, dCos, dSin, Kc, M, d);
+            k_attention<<<M * n_heads, ATTN_THREADS>>>(
+                dQR, Kc, Vc, dAttn, nullptr, M, d, n_heads, head_dim);
 
             // Output proj + residual + FFN-norm (Kernel 4).
             launch_gemm<EPI_RESGAMMA>(
-                dAttn, wo_l, X, gf_l, nullptr, dH, dN2, L, d, d);
-            k_row_invrms<<<(L + 255) / 256, 256>>>(dH, dR2, L, d, eps);
+                dAttn, wo_l, X, gf_l, nullptr, dH, dN2, M, d, d);
+            k_row_invrms<<<(M + 255) / 256, 256>>>(dH, dR2, M, d, eps);
 
             // Gate/Up projection + SwiGLU (Kernel 6).
             launch_gemm<EPI_ROWSCALE>(
-                dN2, wgu_l, nullptr, nullptr, dR2, nullptr, dDP, L, dff2, d);
-            k_swiglu<<<grid2d(d_ff, L), blk>>>(dDP, dFF, L, d_ff);
+                dN2, wgu_l, nullptr, nullptr, dR2, nullptr, dDP, M, dff2, d);
+            k_swiglu<<<grid2d(d_ff, M), blk>>>(dDP, dFF, M, d_ff);
 
             // Down proj + residual + next sublayer's norm (Kernel 4).
             const float* next_gamma =
                 (l + 1 < n_layers) ? (dGA + (size_t)(l + 1) * d) : dGFinal;
             launch_gemm<EPI_RESGAMMA>(
-                dFF, wd_l, dH, next_gamma, nullptr, Y, dOnorm, L, d, d_ff);
-            k_row_invrms<<<(L + 255) / 256, 256>>>(Y, dR, L, d, eps);
+                dFF, wd_l, dH, next_gamma, nullptr, Y, dOnorm, M, d, d_ff);
+            k_row_invrms<<<(M + 255) / 256, 256>>>(Y, dR, M, d, eps);
+
+            float* tmp = X; X = Y; Y = tmp;
+        }
+        launch_gemm<EPI_ROWSCALE>(
+            dOnorm, dLM, nullptr, nullptr, dR, nullptr, dLogits, M, vocab, d);
+        cudaDeviceSynchronize();
+        err = cuda_check("coda_cuda_generate (prefill)");
+
+        if (!err) {
+            // Logits of the last prompt row predict the first new token.
+            cudaMemcpy(row, dLogits + (size_t)(M - 1) * vocab,
+                       (size_t)vocab * sizeof(float), cudaMemcpyDeviceToHost);
+            int best = 0;
+            float bestv = row[0];
+            for (int j = 1; j < vocab; ++j)
+                if (row[j] > bestv) { bestv = row[j]; best = j; }
+            out_ids[0] = best;
+            cudaMemcpy(dTokens + M, &best, sizeof(int), cudaMemcpyHostToDevice);
+            printf("    generated token 1/%d  (id %d)\n", n_new, best);
+            fflush(stdout);
+        }
+    }
+
+    // ---- Decode: one new token per step, attending against the KV cache. ----
+    for (int step = 1; step < n_new && err == 0; ++step) {
+        int p = prompt_len + step - 1;   // absolute position of the input token
+        const float* cosP = dCos + (size_t)p * d;
+        const float* sinP = dSin + (size_t)p * d;
+        float* X = dX;
+        float* Y = dY;
+
+        // Embed the one new token (dTokens[p]), then the embedding-side norm.
+        k_embed_gather<<<grid2d(d, 1), blk>>>(dEmbed, dTokens + p, X, 1, d);
+        k_row_invrms<<<1, 256>>>(X, dR, 1, d, eps);
+        k_col_scale<<<grid2d(d, 1), blk>>>(X, dGA, dOnorm, 1, d);
+
+        for (int l = 0; l < n_layers; ++l) {
+            const float* wqkv_l = dWQKV + (size_t)l * d * d3;
+            const float* wo_l = dWO + (size_t)l * d * d;
+            const float* gf_l = dGF + (size_t)l * d;
+            const float* wgu_l = dWGU + (size_t)l * d * dff2;
+            const float* wd_l = dWD + (size_t)l * d_ff * d;
+            float* Kc = dKcache + (size_t)l * Tmax * d;
+            float* Vc = dVcache + (size_t)l * Tmax * d;
+
+            // QKV as a matrix-vector product; rotated K and V append to cache[p].
+            launch_gemv<EPI_ROWSCALE>(
+                dOnorm, wqkv_l, nullptr, nullptr, dR, nullptr, dQKV, d3, d);
+            k_slice<<<grid2d(d, 1), blk>>>(dQKV, dQ, 1, d, d3, 0);
+            k_slice<<<grid2d(d, 1), blk>>>(dQKV, dK, 1, d, d3, d);
+            k_slice<<<grid2d(d, 1), blk>>>(
+                dQKV, Vc + (size_t)p * d, 1, d, d3, 2 * d);
+            k_rope<<<grid2d(d / 2, 1), blk>>>(dQ, cosP, sinP, dQR, 1, d);
+            k_rope<<<grid2d(d / 2, 1), blk>>>(
+                dK, cosP, sinP, Kc + (size_t)p * d, 1, d);
+            k_attention_decode<<<n_heads, ATTN_THREADS>>>(
+                dQR, Kc, Vc, dAttn, p, d, n_heads, head_dim);
+
+            // Output proj + residual + FFN-norm (Kernel 4).
+            launch_gemv<EPI_RESGAMMA>(
+                dAttn, wo_l, X, gf_l, nullptr, dH, dN2, d, d);
+            k_row_invrms<<<1, 256>>>(dH, dR2, 1, d, eps);
+
+            // Gate/Up projection + SwiGLU (Kernel 6).
+            launch_gemv<EPI_ROWSCALE>(
+                dN2, wgu_l, nullptr, nullptr, dR2, nullptr, dDP, dff2, d);
+            k_swiglu<<<grid2d(d_ff, 1), blk>>>(dDP, dFF, 1, d_ff);
+
+            // Down proj + residual + next sublayer's norm (Kernel 4).
+            const float* next_gamma =
+                (l + 1 < n_layers) ? (dGA + (size_t)(l + 1) * d) : dGFinal;
+            launch_gemv<EPI_RESGAMMA>(
+                dFF, wd_l, dH, next_gamma, nullptr, Y, dOnorm, d, d_ff);
+            k_row_invrms<<<1, 256>>>(Y, dR, 1, d, eps);
 
             float* tmp = X; X = Y; Y = tmp;
         }
 
         // LM head: logits = (final-normed residual @ W_lm) * r  (Kernel 5).
-        launch_gemm<EPI_ROWSCALE>(
-            dOnorm, dLM, nullptr, nullptr, dR, nullptr, dLogits, L, vocab, d);
+        launch_gemv<EPI_ROWSCALE>(
+            dOnorm, dLM, nullptr, nullptr, dR, nullptr, dLogits, vocab, d);
         cudaDeviceSynchronize();
-        err = cuda_check("coda_cuda_generate");
+        err = cuda_check("coda_cuda_generate (decode)");
         if (err) break;
 
-        // Greedy decode: argmax of the last row of logits is the next token.
-        cudaMemcpy(row, dLogits + (size_t)(L - 1) * vocab,
-                   (size_t)vocab * sizeof(float), cudaMemcpyDeviceToHost);
+        // Greedy: argmax of the single logits row is the next token.
+        cudaMemcpy(row, dLogits, (size_t)vocab * sizeof(float),
+                   cudaMemcpyDeviceToHost);
         int best = 0;
         float bestv = row[0];
-        for (int j = 1; j < vocab; ++j) {
+        for (int j = 1; j < vocab; ++j)
             if (row[j] > bestv) { bestv = row[j]; best = j; }
-        }
         out_ids[step] = best;
-        cudaMemcpy(dTokens + L, &best, sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(dTokens + p + 1, &best, sizeof(int), cudaMemcpyHostToDevice);
         printf("    generated token %d/%d  (id %d)\n", step + 1, n_new, best);
         fflush(stdout);
     }
@@ -1393,10 +1583,11 @@ int coda_cuda_generate(
     free(row);
     cudaFree(dEmbed); cudaFree(dGA); cudaFree(dWQKV); cudaFree(dWO);
     cudaFree(dGF); cudaFree(dWGU); cudaFree(dWD); cudaFree(dGFinal);
-    cudaFree(dLM); cudaFree(dCos); cudaFree(dSin); cudaFree(dTokens);
+    cudaFree(dLM); cudaFree(dCos); cudaFree(dSin);
+    cudaFree(dKcache); cudaFree(dVcache); cudaFree(dTokens);
     cudaFree(dX); cudaFree(dY); cudaFree(dOnorm); cudaFree(dR); cudaFree(dR2);
-    cudaFree(dQKV); cudaFree(dQ); cudaFree(dK); cudaFree(dV);
-    cudaFree(dQR); cudaFree(dKR); cudaFree(dAttn); cudaFree(dH); cudaFree(dN2);
+    cudaFree(dQKV); cudaFree(dQ); cudaFree(dK); cudaFree(dQR);
+    cudaFree(dAttn); cudaFree(dH); cudaFree(dN2);
     cudaFree(dDP); cudaFree(dFF); cudaFree(dLogits);
     return err;
 }
