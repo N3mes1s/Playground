@@ -33,3 +33,8 @@ pub mod reduce;
 pub mod reference;
 pub mod model;
 pub mod train;
+
+/// GPU backend (CUDA). Present only when built with `--features cuda`; see
+/// `cuda/coda_kernels.cu` and the Modal deployment in `modal/`.
+#[cfg(feature = "cuda")]
+pub mod cuda;

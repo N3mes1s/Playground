@@ -117,12 +117,45 @@ generated : "coda fuses transformer epilogues into a gemm kernel."
 * GEMMs are plain triple loops — correctness over speed; the point is the
   epilogue abstraction, not a fast CPU GEMM.
 
-## Next step: Modal.com GPU
+## GPU backend (CUDA, via Modal.com)
 
-The abstraction, the kernel set, the reparameterized model, and the test
-harness are all in place and verified. The next step is to keep the same
-`EpilogueVisitor` structure but back the GEMM mainloop and epilogues with real
-GPU kernels, and run a larger model on a dedicated GPU via Modal.com.
+The crate has a real **CUDA backend** behind the `cuda` feature. The GPU
+realization of CODA lives in `cuda/coda_kernels.cu`: each kernel computes a
+GEMM accumulator in registers and applies the fused epilogue (residual,
+RMSNorm scale, SwiGLU, RoPE, cross-entropy) *before* the single global-memory
+write — the same data-movement story as the CPU port, now on hardware. The
+GEMM mainloop is a simple one-thread-per-output-element loop (correctness over
+peak FLOPs; a tiled / WGMMA mainloop can be slotted in later without touching
+the epilogue structure).
+
+`build.rs` compiles the kernels with `nvcc` when `--features cuda` is set;
+`src/cuda.rs` is the Rust FFI; `src/bin/gpu.rs` (`coda-gpu`) verifies every
+CUDA kernel against the CPU reference and benchmarks GPU vs CPU.
+
+Run it on a Modal GPU:
+
+```bash
+pip install modal
+modal token set --token-id <id> --token-secret <secret>
+modal run coda-kernels-rust/modal/run_gpu.py
+```
+
+Verified result on an NVIDIA T4 (all 10 kernels bit-faithful to the CPU
+reference, max error ~1e-7):
+
+```
+== Kernel correctness: CUDA vs CPU reference ==
+    [PASS] gemm_residual_partial_rms (D)   max-err = 3.6e-7  (tol 1e-2)
+    [PASS] gemm_rmsnorm_swiglu (O)         max-err = 4.8e-7  (tol 1e-2)
+    ... all 10 kernels PASS ...
+== Benchmark: gemm_residual_partial_rms (Kernel 4) ==
+     768^3 : CPU 0.769s (1.2 GFLOP/s) | GPU 0.069s (13 GFLOP/s) | 11.1x
+    2048^3 : GPU 0.136s (127 GFLOP/s) [CPU too slow]
+```
+
+**Next step:** run the full reparameterized Transformer (not just isolated
+kernels) on the GPU, and scale the model up — larger `d_model`, more layers,
+longer sequences — on a dedicated A100/H100 Modal GPU.
 
 ## File map
 
@@ -135,6 +168,11 @@ src/reduce.rs     auxiliary reductions over tile partials
 src/reference.rs  naive unfused operators (correctness + traffic baseline)
 src/model.rs      tiny LLaMA-style Transformer on CODA kernels
 src/train.rs      backward pass (Theorem 1), Adam, training, gradient check
-src/main.rs       the demonstration binary
+src/main.rs       the CPU demonstration binary
+src/cuda.rs       Rust FFI to the CUDA backend            (feature `cuda`)
+src/bin/gpu.rs    GPU verification + benchmark binary     (feature `cuda`)
+cuda/             CUDA kernels (coda_kernels.cu)
+build.rs          compiles the CUDA kernels via nvcc
+modal/run_gpu.py  Modal app: build + run the GPU backend
 tests/            integration tests
 ```

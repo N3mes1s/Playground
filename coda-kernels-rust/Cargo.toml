@@ -12,6 +12,16 @@ path = "src/lib.rs"
 name = "coda-demo"
 path = "src/main.rs"
 
+# GPU verification + benchmark binary. Build with `--features cuda`.
+[[bin]]
+name = "coda-gpu"
+path = "src/bin/gpu.rs"
+
+[features]
+# Enables the CUDA backend (`src/cuda.rs` + `cuda/coda_kernels.cu`, compiled
+# by `build.rs` via nvcc). Off by default so the crate builds with no GPU.
+cuda = []
+
 [profile.release]
 opt-level = 3
 lto = true
