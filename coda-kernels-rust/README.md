@@ -179,10 +179,21 @@ match the CPU reference (the tensor-core path is TF32, so the error floor is
 == GPU training: device-resident loop vs CPU ==
     GPU loss 3.27 -> 0.0011 ;  CPU from identical init -> 0.0011
 
+== Real language model (GPU-trained, then generating) ==
+    a 3.4M-parameter char-level GPT, trained on the GPU (10k steps, loss
+    3.45 -> 0.000); greedy generation from a 12-character prompt:
+      prompt    : "coda trains "
+      generated : "coda trains a small language model on the gpu by fusing
+                   the epilogue into each matrix multiply."
+
 == Scaled-up GPU training (A100-80GB, --scale big) ==
     ~6.74B params (Llama-7B class: d_model 4096, 32 layers, d_ff 11008, seq 512)
     60 steps in ~181s (~3.0 s/step), loss 10.45 -> 6.02
 ```
+
+A real GPT, trained entirely on the GPU — device-resident forward, backward,
+and Adam — learns a sentence and **generates it back coherently** from a short
+prompt. The CODA GEMM-plus-epilogue kernels run the whole thing.
 
 So a **~6.7-billion-parameter Transformer trains end-to-end on a single
 A100-80GB** — the full forward + backward + optimizer step, with the weights

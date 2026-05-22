@@ -358,6 +358,91 @@ fn main() {
         }
     }
 
+    // ---- A real language model: GPU-trained on text, then generating ----
+    println!("\n== Real language model: trained on the GPU, then generating ==");
+    {
+        let corpus = "coda trains a small language model on the gpu by fusing the epilogue into each matrix multiply.";
+        // Character-level vocabulary.
+        let mut vocab: Vec<char> = corpus.chars().collect();
+        vocab.sort_unstable();
+        vocab.dedup();
+        let tok: Vec<usize> = corpus
+            .chars()
+            .map(|c| vocab.iter().position(|&v| v == c).unwrap())
+            .collect();
+        let cfg = Config {
+            vocab: vocab.len(),
+            d_model: 256,
+            n_layers: 4,
+            n_heads: 4,
+            head_dim: 64,
+            d_ff: 768,
+            eps: 1e-5,
+            rope_base: 10000.0,
+        };
+        let params = cfg.vocab * cfg.d_model * 2
+            + cfg.n_layers
+                * (cfg.d_model * 3 * cfg.d_model
+                    + cfg.d_model * cfg.d_model
+                    + cfg.d_model * 2 * cfg.d_ff
+                    + cfg.d_ff * cfg.d_model
+                    + 2 * cfg.d_model)
+            + cfg.d_model;
+        let model = Model::new(cfg.clone(), &mut Rng::new(20260522));
+        let seq_in = &tok[..tok.len() - 1];
+        let targets: Vec<usize> = tok[1..].to_vec();
+        println!(
+            "    a ~{:.1}M-parameter GPT, char-level, vocab {}, {} characters of text",
+            params as f64 / 1e6,
+            vocab.len(),
+            corpus.len()
+        );
+
+        // Train it on the GPU (device-resident forward + backward + Adam).
+        let steps = 10000;
+        let t0 = Instant::now();
+        let (trained, curve) = cuda::train(&model, seq_in, &targets, steps, 5e-3);
+        println!(
+            "    trained on the GPU: {steps} steps in {:.1}s",
+            t0.elapsed().as_secs_f64()
+        );
+        println!(
+            "    loss: {:.3} -> {:.3} -> {:.3} -> {:.4}",
+            curve[0], curve[steps / 3], curve[2 * steps / 3], curve[steps - 1]
+        );
+
+        // Greedy autoregressive generation from a short prompt.
+        let prompt_len = 12;
+        let mut seq: Vec<usize> = tok[..prompt_len].to_vec();
+        let t0 = Instant::now();
+        for _ in 0..tok.len() - prompt_len {
+            let logits = cuda::model_forward(&trained, &seq);
+            let last = logits.rows - 1;
+            let mut best = 0usize;
+            let mut bv = f32::NEG_INFINITY;
+            for j in 0..logits.cols {
+                if logits.get(last, j) > bv {
+                    bv = logits.get(last, j);
+                    best = j;
+                }
+            }
+            seq.push(best);
+        }
+        let matched = seq.iter().zip(&tok).filter(|(a, b)| a == b).count();
+        let frac = matched as f32 / tok.len() as f32;
+        let prompt: String = tok[..prompt_len].iter().map(|&t| vocab[t]).collect();
+        let decoded: String = seq.iter().map(|&t| vocab[t]).collect();
+        println!(
+            "    generated {} characters on the GPU in {:.1}s",
+            seq.len() - prompt_len,
+            t0.elapsed().as_secs_f64()
+        );
+        println!("    prompt    : \"{prompt}\"");
+        println!("    generated : \"{decoded}\"");
+        println!("    --> {:.0}% of the generated text matches the training corpus", frac * 100.0);
+        ok &= line("GPU-trained LM reproduces its training text", 1.0 - frac, 0.15);
+    }
+
     println!();
     if ok {
         println!("ALL CUDA KERNELS MATCH THE CPU REFERENCE. GPU backend is live.");
