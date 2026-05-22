@@ -63,7 +63,19 @@ def build_and_run(scale: str = "small") -> None:
         ["cargo", "build", "--release", "--features", "cuda", "--bin", "coda-gpu"],
         cwd="/work",
     )
-    # CODA_SCALE=big selects the ~100M-parameter training config.
+    # Download a real public-domain training corpus (~1 MB of Shakespeare).
+    # If the fetch fails the binary just skips the language-model section.
+    corpus_url = (
+        "https://raw.githubusercontent.com/karpathy/char-rnn/master/"
+        "data/tinyshakespeare/input.txt"
+    )
+    print(f"\n$ curl {corpus_url}", flush=True)
+    subprocess.run(
+        ["curl", "-sL", "--max-time", "120", corpus_url, "-o", "/work/corpus.txt"],
+        check=False,
+    )
+    subprocess.run(["sh", "-c", "wc -c /work/corpus.txt || true"], check=False)
+    # CODA_SCALE=big selects the ~6.7B-parameter scale-up config.
     env = {**os.environ, "CODA_SCALE": scale}
     _run(["/work/target/release/coda-gpu"], env=env)
     print("\n[modal] coda-gpu finished successfully.", flush=True)

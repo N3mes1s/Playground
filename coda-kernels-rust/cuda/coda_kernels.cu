@@ -1449,4 +1449,83 @@ int coda_cuda_train_random(
     return err;
 }
 
+// Train a model on a real corpus by stochastic windowed training.
+//
+// The whole token corpus is uploaded once and stays on the GPU; each step
+// copies a different (host-chosen) length-T window into the input/target
+// buffers and runs one fwd_bwd + Adam step. Because every step sees a fresh
+// window of real text, the model learns the corpus distribution rather than
+// memorizing a single sequence. Weights are trained in place.
+int coda_cuda_train_corpus(
+    int T, int d, int nl, int nh, int hd, int dff, int vocab, float eps,
+    float* embed, float* ga, float* wqkv, float* wo, float* gf, float* wgu,
+    float* wd, float* gfin, float* lm, const float* cosT, const float* sinT,
+    const int* corpus, int corpus_len, const int* window_starts,
+    int n_steps, float lr, float* loss_curve) {
+
+    Net n;
+    n.T = T; n.d = d; n.nl = nl; n.nh = nh; n.hd = hd; n.dff = dff;
+    n.vocab = vocab; n.eps = eps;
+    n.use_adam = 1;
+    alloc_net(&n);
+    upload_weights(&n, embed, ga, wqkv, wo, gf, wgu, wd, gfin, lm);
+    cudaMemcpy(n.cosT, cosT, (size_t)T * d * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(n.sinT, sinT, (size_t)T * d * sizeof(float), cudaMemcpyHostToDevice);
+
+    int* dCorpus = nullptr;
+    cudaMalloc(&dCorpus, (size_t)corpus_len * sizeof(int));
+    cudaMemcpy(dCorpus, corpus, (size_t)corpus_len * sizeof(int),
+               cudaMemcpyHostToDevice);
+
+    int d3 = 3 * d, dff2 = 2 * dff;
+    struct WT { float* p; float* g; float* m; float* v; size_t n; };
+    WT wts[] = {
+        {n.embed, n.g_embed, n.m_embed, n.v_embed, (size_t)vocab * d},
+        {n.ga, n.g_ga, n.m_ga, n.v_ga, (size_t)nl * d},
+        {n.wqkv, n.g_wqkv, n.m_wqkv, n.v_wqkv, (size_t)nl * d * d3},
+        {n.wo, n.g_wo, n.m_wo, n.v_wo, (size_t)nl * d * d},
+        {n.gf, n.g_gf, n.m_gf, n.v_gf, (size_t)nl * d},
+        {n.wgu, n.g_wgu, n.m_wgu, n.v_wgu, (size_t)nl * d * dff2},
+        {n.wd, n.g_wd, n.m_wd, n.v_wd, (size_t)nl * dff * d},
+        {n.gfin, n.g_gfin, n.m_gfin, n.v_gfin, (size_t)d},
+        {n.lm, n.g_lm, n.m_lm, n.v_lm, (size_t)d * vocab},
+    };
+    for (WT& w : wts) {
+        cudaMemset(w.m, 0, w.n * sizeof(float));
+        cudaMemset(w.v, 0, w.n * sizeof(float));
+    }
+
+    for (int step = 0; step < n_steps; ++step) {
+        int s = window_starts[step];
+        cudaMemcpyAsync(n.tokens, dCorpus + s, (size_t)T * sizeof(int),
+                        cudaMemcpyDeviceToDevice, 0);
+        cudaMemcpyAsync(n.targets, dCorpus + s + 1, (size_t)T * sizeof(int),
+                        cudaMemcpyDeviceToDevice, 0);
+        loss_curve[step] = fwd_bwd(&n);
+        for (WT& w : wts) {
+            int blocks = (int)((w.n + 255) / 256);
+            k_adam<<<blocks, 256>>>(
+                w.p, w.g, w.m, w.v, (long)w.n, lr, 0.9f, 0.999f, 1e-8f, step + 1);
+        }
+    }
+    cudaDeviceSynchronize();
+    int err = cuda_check("coda_cuda_train_corpus");
+
+    auto dn = [](float* dst, const float* src, size_t n_el) {
+        cudaMemcpy(dst, src, n_el * sizeof(float), cudaMemcpyDeviceToHost);
+    };
+    dn(embed, n.embed, (size_t)vocab * d);
+    dn(ga, n.ga, (size_t)nl * d);
+    dn(wqkv, n.wqkv, (size_t)nl * d * d3);
+    dn(wo, n.wo, (size_t)nl * d * d);
+    dn(gf, n.gf, (size_t)nl * d);
+    dn(wgu, n.wgu, (size_t)nl * d * dff2);
+    dn(wd, n.wd, (size_t)nl * dff * d);
+    dn(gfin, n.gfin, (size_t)d);
+    dn(lm, n.lm, (size_t)d * vocab);
+    cudaFree(dCorpus);
+    free_net(&n);
+    return err;
+}
+
 }  // extern "C"

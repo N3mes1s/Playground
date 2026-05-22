@@ -358,93 +358,100 @@ fn main() {
         }
     }
 
-    // ---- End-to-end GPU training check: overfit a sentence, then generate ----
-    // This is NOT a model that learned language - it is a correctness check of
-    // the full GPU training pipeline: a small GPT is overfit to one short
-    // sentence until the loss reaches zero, and greedy generation then has to
-    // reproduce that exact sentence.
-    println!("\n== GPU training end-to-end: overfit a sentence, then generate ==");
+    // ---- Train a real language model on a real text corpus ----
+    // Stochastic windowed training over ~1 MB of real English text (Project
+    // tinyshakespeare): every step trains on a different random window, so the
+    // model learns the corpus distribution rather than memorizing a sequence.
+    println!("\n== Real language model: trained on a text corpus, then generating ==");
     {
-        let corpus = "coda trains a small language model on the gpu by fusing the epilogue into each matrix multiply.";
-        // Character-level vocabulary.
-        let mut vocab: Vec<char> = corpus.chars().collect();
-        vocab.sort_unstable();
-        vocab.dedup();
-        let tok: Vec<usize> = corpus
-            .chars()
-            .map(|c| vocab.iter().position(|&v| v == c).unwrap())
-            .collect();
-        let cfg = Config {
-            vocab: vocab.len(),
-            d_model: 256,
-            n_layers: 4,
-            n_heads: 4,
-            head_dim: 64,
-            d_ff: 768,
-            eps: 1e-5,
-            rope_base: 10000.0,
-        };
-        let params = cfg.vocab * cfg.d_model * 2
-            + cfg.n_layers
-                * (cfg.d_model * 3 * cfg.d_model
-                    + cfg.d_model * cfg.d_model
-                    + cfg.d_model * 2 * cfg.d_ff
-                    + cfg.d_ff * cfg.d_model
-                    + 2 * cfg.d_model)
-            + cfg.d_model;
-        let model = Model::new(cfg.clone(), &mut Rng::new(20260522));
-        let seq_in = &tok[..tok.len() - 1];
-        let targets: Vec<usize> = tok[1..].to_vec();
-        println!(
-            "    a ~{:.1}M-parameter GPT, char-level, vocab {}, {} characters of text",
-            params as f64 / 1e6,
-            vocab.len(),
-            corpus.len()
-        );
+        let corpus_text = std::fs::read_to_string("/work/corpus.txt").unwrap_or_default();
+        if corpus_text.len() < 50_000 {
+            println!("    (no training corpus at /work/corpus.txt - skipping)");
+        } else {
+            // Character-level tokenization.
+            let text: Vec<char> = corpus_text.chars().filter(|c| c.is_ascii()).collect();
+            let mut vocab: Vec<char> = text.clone();
+            vocab.sort_unstable();
+            vocab.dedup();
+            let idx: std::collections::HashMap<char, usize> =
+                vocab.iter().enumerate().map(|(i, &c)| (c, i)).collect();
+            let tokens: Vec<usize> = text.iter().map(|c| idx[c]).collect();
 
-        // Train it on the GPU (device-resident forward + backward + Adam).
-        let steps = 10000;
-        let t0 = Instant::now();
-        let (trained, curve) = cuda::train(&model, seq_in, &targets, steps, 5e-3);
-        println!(
-            "    trained on the GPU: {steps} steps in {:.1}s",
-            t0.elapsed().as_secs_f64()
-        );
-        println!(
-            "    loss: {:.3} -> {:.3} -> {:.3} -> {:.4}",
-            curve[0], curve[steps / 3], curve[2 * steps / 3], curve[steps - 1]
-        );
+            let cfg = Config {
+                vocab: vocab.len(),
+                d_model: 256,
+                n_layers: 4,
+                n_heads: 4,
+                head_dim: 64,
+                d_ff: 768,
+                eps: 1e-5,
+                rope_base: 10000.0,
+            };
+            let params = cfg.vocab * cfg.d_model * 2
+                + cfg.n_layers
+                    * (cfg.d_model * 3 * cfg.d_model
+                        + cfg.d_model * cfg.d_model
+                        + cfg.d_model * 2 * cfg.d_ff
+                        + cfg.d_ff * cfg.d_model
+                        + 2 * cfg.d_model)
+                + cfg.d_model;
+            let model = Model::new(cfg.clone(), &mut Rng::new(1));
+            println!(
+                "    corpus: {} characters, vocab {};  model: ~{:.0}M-parameter GPT \
+                 (d_model {}, {} layers)",
+                tokens.len(), vocab.len(), params as f64 / 1e6, cfg.d_model, cfg.n_layers
+            );
 
-        // Greedy autoregressive generation from a short prompt.
-        let prompt_len = 12;
-        let mut seq: Vec<usize> = tok[..prompt_len].to_vec();
-        let t0 = Instant::now();
-        for _ in 0..tok.len() - prompt_len {
-            let logits = cuda::model_forward(&trained, &seq);
-            let last = logits.rows - 1;
-            let mut best = 0usize;
-            let mut bv = f32::NEG_INFINITY;
-            for j in 0..logits.cols {
-                if logits.get(last, j) > bv {
-                    bv = logits.get(last, j);
-                    best = j;
+            // Stochastic windowed training on the GPU.
+            let t_window = 256;
+            let steps = 50000;
+            let t0 = Instant::now();
+            let (trained, curve) =
+                cuda::train_corpus(&model, &tokens, t_window, steps, 5e-3, 42);
+            let tail: f32 = curve[steps - 300..].iter().sum::<f32>() / 300.0;
+            println!(
+                "    trained on the GPU: {steps} windowed steps in {:.0}s",
+                t0.elapsed().as_secs_f64()
+            );
+            println!(
+                "    loss (cross-entropy per char): {:.3} -> {:.3}  (random would be {:.2})",
+                curve[0], tail, (vocab.len() as f32).ln()
+            );
+
+            // Generate NOVEL text by temperature sampling (not greedy reproduction).
+            let mut seq: Vec<usize> = tokens[..32].to_vec();
+            let mut rng = Rng::new(12345);
+            let temp = 0.8f32;
+            for _ in 0..480 {
+                let ctx = &seq[seq.len().saturating_sub(t_window)..];
+                let logits = cuda::model_forward(&trained, ctx);
+                let last = logits.rows - 1;
+                let mx = (0..logits.cols).fold(f32::NEG_INFINITY, |m, j| m.max(logits.get(last, j)));
+                let mut probs = vec![0.0f32; logits.cols];
+                let mut sum = 0.0f32;
+                for j in 0..logits.cols {
+                    let p = ((logits.get(last, j) - mx) / temp).exp();
+                    probs[j] = p;
+                    sum += p;
                 }
+                let r = rng.uniform() * sum;
+                let mut acc = 0.0f32;
+                let mut pick = logits.cols - 1;
+                for j in 0..logits.cols {
+                    acc += probs[j];
+                    if acc >= r {
+                        pick = j;
+                        break;
+                    }
+                }
+                seq.push(pick);
             }
-            seq.push(best);
+            let generated: String = seq.iter().map(|&t| vocab[t]).collect();
+            println!("    --- {} characters of novel text generated by the GPU-trained model ---", seq.len());
+            println!("{generated}");
+            println!("    --- end ---");
+            ok &= line("the model learned the corpus (loss well below random)", tail, 2.3);
         }
-        let matched = seq.iter().zip(&tok).filter(|(a, b)| a == b).count();
-        let frac = matched as f32 / tok.len() as f32;
-        let prompt: String = tok[..prompt_len].iter().map(|&t| vocab[t]).collect();
-        let decoded: String = seq.iter().map(|&t| vocab[t]).collect();
-        println!(
-            "    generated {} characters on the GPU in {:.1}s",
-            seq.len() - prompt_len,
-            t0.elapsed().as_secs_f64()
-        );
-        println!("    prompt    : \"{prompt}\"");
-        println!("    generated : \"{decoded}\"");
-        println!("    --> {:.0}% of the generated text matches the memorized sentence", frac * 100.0);
-        ok &= line("GPU training overfits the sentence to ~0 loss + reproduces it", 1.0 - frac, 0.15);
     }
 
     println!();

@@ -131,6 +131,17 @@ extern "C" {
         tokens: *const c_int, targets: *const c_int,
         n_steps: c_int, lr: f32, seed: u32, loss_curve: *mut f32,
     ) -> c_int;
+    #[allow(clippy::too_many_arguments)]
+    fn coda_cuda_train_corpus(
+        t: c_int, d: c_int, nl: c_int, nh: c_int, hd: c_int, dff: c_int,
+        vocab: c_int, eps: f32,
+        embed: *mut f32, ga: *mut f32, wqkv: *mut f32, wo: *mut f32,
+        gf: *mut f32, wgu: *mut f32, wd: *mut f32, gfin: *mut f32, lm: *mut f32,
+        cos: *const f32, sin: *const f32,
+        corpus: *const c_int, corpus_len: c_int,
+        window_starts: *const c_int, n_steps: c_int, lr: f32,
+        loss_curve: *mut f32,
+    ) -> c_int;
 }
 
 /// The nine weight tensors flattened into contiguous `[n_layers, ...]` buffers,
@@ -557,4 +568,80 @@ pub fn train_random(
     };
     check(s, "train_random");
     loss_curve
+}
+
+/// Train a model on a **real text corpus** by stochastic windowed training.
+///
+/// The corpus is uploaded to the GPU once; each of `n_steps` steps trains on a
+/// different randomly-placed length-`t_window` window of it. Because every step
+/// sees fresh text, the model learns the corpus distribution rather than
+/// memorizing one sequence. Returns the trained model and the loss curve.
+pub fn train_corpus(
+    model: &Model,
+    corpus: &[usize],
+    t_window: usize,
+    n_steps: usize,
+    lr: f32,
+    seed: u64,
+) -> (Model, Vec<f32>) {
+    let cfg = &model.cfg;
+    let (d, nl, dff, v) = (cfg.d_model, cfg.n_layers, cfg.d_ff, cfg.vocab);
+    assert!(t_window <= 1024, "CUDA attention supports T <= 1024");
+    assert!(corpus.len() > t_window + 1, "corpus shorter than the window");
+    let mut w = flatten_weights(model);
+    let (cos, sin) = crate::model::rope_tables(cfg, t_window);
+
+    // Random window start per step (kept in bounds for input + shifted target).
+    let mut rng = crate::model::Rng::new(seed);
+    let span = (corpus.len() - t_window - 1) as u32;
+    let starts: Vec<c_int> = (0..n_steps)
+        .map(|_| ((rng.uniform() * span as f32) as u32 % span) as c_int)
+        .collect();
+    let corpus_i: Vec<c_int> = corpus.iter().map(|&x| x as c_int).collect();
+    let mut loss_curve = vec![0.0f32; n_steps];
+
+    let s = unsafe {
+        coda_cuda_train_corpus(
+            t_window as c_int,
+            d as c_int,
+            nl as c_int,
+            cfg.n_heads as c_int,
+            cfg.head_dim as c_int,
+            dff as c_int,
+            v as c_int,
+            cfg.eps,
+            w.embed.as_mut_ptr(),
+            w.ga.as_mut_ptr(),
+            w.wqkv.as_mut_ptr(),
+            w.wo.as_mut_ptr(),
+            w.gf.as_mut_ptr(),
+            w.wgu.as_mut_ptr(),
+            w.wd.as_mut_ptr(),
+            w.gfin.as_mut_ptr(),
+            w.lm.as_mut_ptr(),
+            cos.data.as_ptr(),
+            sin.data.as_ptr(),
+            corpus_i.as_ptr(),
+            corpus_i.len() as c_int,
+            starts.as_ptr(),
+            n_steps as c_int,
+            lr,
+            loss_curve.as_mut_ptr(),
+        )
+    };
+    check(s, "train_corpus");
+
+    let mut m = model.clone();
+    m.embed.data = w.embed;
+    m.gamma_final = w.gfin;
+    m.lm_head.data = w.lm;
+    for l in 0..nl {
+        m.layers[l].gamma_attn = w.ga[l * d..(l + 1) * d].to_vec();
+        m.layers[l].wqkv.data = w.wqkv[l * d * 3 * d..(l + 1) * d * 3 * d].to_vec();
+        m.layers[l].wo.data = w.wo[l * d * d..(l + 1) * d * d].to_vec();
+        m.layers[l].gamma_ffn = w.gf[l * d..(l + 1) * d].to_vec();
+        m.layers[l].wgu.data = w.wgu[l * d * 2 * dff..(l + 1) * d * 2 * dff].to_vec();
+        m.layers[l].wdown.data = w.wd[l * dff * d..(l + 1) * dff * d].to_vec();
+    }
+    (m, loss_curve)
 }
