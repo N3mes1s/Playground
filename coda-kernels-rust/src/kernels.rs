@@ -31,6 +31,23 @@ fn out_shape(a: &Mat, ta: bool, b: &Mat, tb: bool) -> (usize, usize) {
     (m, n)
 }
 
+/// Fail fast if the cross-entropy `targets` do not match the logits shape.
+///
+/// A target outside `[0, vocab)` would otherwise never trigger the indexed
+/// store in [`EvtCrossEntropyStore`], silently leaving `z_tgt` at zero and
+/// corrupting the loss and gradients. This validates at the kernel boundary.
+fn validate_ce_targets(targets: &[usize], m: usize, n: usize) {
+    assert_eq!(
+        targets.len(),
+        m,
+        "cross-entropy kernel: expected one target per row (got {}, need {m})",
+        targets.len()
+    );
+    if let Some((row, &t)) = targets.iter().enumerate().find(|&(_, &t)| t >= n) {
+        panic!("cross-entropy kernel: target {t} at row {row} is outside [0, {n})");
+    }
+}
+
 /// A plain GEMM `op(A) @ op(B)` with a bare store epilogue. Not one of the
 /// paper's fused kernels, but the shared baseline they are all measured
 /// against, and the backbone of the backward pass (Theorem 1's GEMMs).
@@ -47,6 +64,7 @@ pub fn gemm(a: &Mat, ta: bool, b: &Mat, tb: bool) -> Mat {
 /// **Kernel 1** - GEMM with RoPE: `D = A B`, `O = RoPE(D)`.
 pub fn gemm_rope(a: &Mat, b: &Mat, cos: &Mat, sin: &Mat) -> Mat {
     let (m, n) = out_shape(a, false, b, false);
+    assert!(n % 2 == 0, "RoPE GEMM needs an even output width (got {n})");
     let mut o = Mat::zeros(m, n);
     {
         let mut evt = EvtRoPEStore::new(cos, sin, &mut o);
@@ -74,6 +92,7 @@ pub fn gemm_swiglu(a: &Mat, b: &Mat) -> Mat {
 /// Returns `(z_tgt, lse, per_token_loss)`.
 pub fn gemm_partial_ce(a: &Mat, b: &Mat, targets: &[usize]) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let (m, n) = out_shape(a, false, b, false);
+    validate_ce_targets(targets, m, n);
     let n_tiles = n.div_ceil(TILE_N);
     let mut zmax = Mat::zeros(m, n_tiles);
     let mut zsumexp = Mat::zeros(m, n_tiles);
@@ -167,6 +186,7 @@ pub fn gemm_rmsnorm_swiglu(a: &Mat, b: &Mat, r: &[f32]) -> (Mat, Mat) {
 /// `O = RoPE(D')` (the QKV projection followed by rotary embedding).
 pub fn gemm_rmsnorm_rope(a: &Mat, b: &Mat, r: &[f32], cos: &Mat, sin: &Mat) -> Mat {
     let (m, n) = out_shape(a, false, b, false);
+    assert!(n % 2 == 0, "RoPE GEMM needs an even output width (got {n})");
     let mut o = Mat::zeros(m, n);
     {
         let mut evt = EvtList::new()
@@ -187,6 +207,7 @@ pub fn gemm_rmsnorm_partial_ce(
     targets: &[usize],
 ) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let (m, n) = out_shape(a, false, b, false);
+    validate_ce_targets(targets, m, n);
     let n_tiles = n.div_ceil(TILE_N);
     let mut zmax = Mat::zeros(m, n_tiles);
     let mut zsumexp = Mat::zeros(m, n_tiles);

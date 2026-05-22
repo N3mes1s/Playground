@@ -142,3 +142,26 @@ fn model_trains_and_loss_drops() {
     assert!(after < before * 0.5, "loss {before} -> {after} did not drop enough");
     assert!(after < 0.5, "final loss {after} too high");
 }
+
+#[test]
+#[should_panic(expected = "outside")]
+fn ce_kernel_rejects_out_of_range_target() {
+    let mut rng = Rng::new(99);
+    let a = randmat(&mut rng, 8, 12, 0.4);
+    let b = randmat(&mut rng, 12, 16, 0.4);
+    // The last target (999) is outside [0, vocab=16); the fused CE kernel
+    // must reject it instead of silently returning a wrong loss.
+    let targets = vec![0, 1, 2, 3, 4, 5, 6, 999];
+    let _ = kernels::gemm_partial_ce(&a, &b, &targets);
+}
+
+#[test]
+#[should_panic(expected = "even output width")]
+fn rope_kernel_rejects_odd_width() {
+    let mut rng = Rng::new(98);
+    let a = randmat(&mut rng, 8, 12, 0.4);
+    let b = randmat(&mut rng, 12, 15, 0.4); // odd output width
+    let cos = Mat::zeros(8, 15);
+    let sin = Mat::zeros(8, 15);
+    let _ = kernels::gemm_rope(&a, &b, &cos, &sin);
+}
