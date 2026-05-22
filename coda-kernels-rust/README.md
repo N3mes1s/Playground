@@ -155,8 +155,8 @@ Run it on a Modal GPU:
 ```bash
 pip install modal
 modal token set --token-id <id> --token-secret <secret>
-modal run coda-kernels-rust/modal/run_gpu.py                        # T4
-modal run coda-kernels-rust/modal/run_gpu.py --gpu A100 --scale big  # ~100M params
+modal run coda-kernels-rust/modal/run_gpu.py                              # T4
+modal run coda-kernels-rust/modal/run_gpu.py --gpu A100-80GB --scale big   # ~2.7B params
 ```
 
 Verified results — all 10 kernels, the full forward, *and* the backward pass
@@ -175,14 +175,15 @@ match the CPU reference (the tensor-core path is TF32, so the error floor is
 == GPU training: device-resident loop vs CPU ==
     GPU loss 3.27 -> 0.0011 ;  CPU from identical init -> 0.0011
 
-== Scaled-up GPU training (A100, --scale big) ==
-    ~778M params (GPT-2-Large class: d_model 1536, 24 layers, seq 512)
-    200 steps in ~125s (~627 ms/step), loss 10.49 -> 0.96
+== Scaled-up GPU training (A100-80GB, --scale big) ==
+    ~2.7B params (d_model 2560, 32 layers, 40 heads, d_ff 6912, seq 512)
+    200 steps in ~322s (~1.6 s/step), loss 10.47 -> 4.33
 ```
 
-So a **~778M-parameter Transformer trains end-to-end on a single A100**, every
-GPU result verified against the CPU reference. (The default `--scale` runs a
-~100M model in ~20s; `--scale big` is the 778M run above.)
+So a **~2.7-billion-parameter Transformer trains end-to-end on a single
+A100-80GB** — the full forward + backward + Adam, device-resident — every GPU
+result verified against the CPU reference. (The default `--scale` runs a
+~100M model in ~20s on a 40GB A100; `--scale big` is the 2.7B run above.)
 
 **Performance journey.** The 100M-parameter training step was optimized in
 measured steps, each verified to stay bit-correct against the CPU:

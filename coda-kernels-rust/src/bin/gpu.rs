@@ -282,14 +282,14 @@ fn main() {
     {
         let big = std::env::var("CODA_SCALE").map(|s| s == "big").unwrap_or(false);
         let cfg = if big {
-            // ~780M parameters - GPT-2-Large class.
+            // ~2.7B parameters - GPT-3-2.7B class (needs an 80GB A100).
             Config {
                 vocab: 32000,
-                d_model: 1536,
-                n_layers: 24,
-                n_heads: 24,
+                d_model: 2560,
+                n_layers: 32,
+                n_heads: 40,
                 head_dim: 64,
-                d_ff: 4096,
+                d_ff: 6912,
                 eps: 1e-5,
                 rope_base: 10000.0,
             }
