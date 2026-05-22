@@ -157,8 +157,11 @@ def main(*, n_questions: int, runs: int, model: str | None, max_iters: int) -> N
     print(f"questions   : {len(questions)}   runs: {runs}")
     print(f"agent model : {model or 'claude CLI default'}   max_iterations={max_iters}")
 
-    agent_client = ClaudeCodeClient(model=model)
-    peek_client = ClaudeCodeClient(model=model)
+    # A longer timeout and an extra retry: the larger corpus makes agent
+    # trajectories longer, and an occasional slow/hung `claude` call should not
+    # cost a paired data point.
+    agent_client = ClaudeCodeClient(model=model, timeout=240.0, retries=3)
+    peek_client = ClaudeCodeClient(model=model, timeout=240.0, retries=3)
     agent = RLMAgent(agent_client, max_iterations=max_iters, verbose=True)
 
     # all_baseline[run][question] = (RLMResult, ok); same shape for all_peek.
@@ -191,43 +194,47 @@ def main(*, n_questions: int, runs: int, model: str | None, max_iters: int) -> N
         print(f"{i + 1:<3}{item['label']:<28}{_fmt(b):>18}{_fmt(p):>18}")
     print("-" * 67)
 
-    # Paired per-run totals -- only runs where every question completed in
-    # both conditions are comparable.
-    deltas: list[int] = []
-    b_totals: list[int] = []
-    p_totals: list[int] = []
+    # Paired comparison at the (run, question) level: a pair counts only when
+    # both conditions answered that question without a CLI failure. Pairing per
+    # question rather than per run means one timeout drops a single pair, not a
+    # whole run -- so the usable sample is up to questions x runs, the n the
+    # earlier 4-question version never had enough of.
+    pairs: list[tuple[int, int]] = []  # (baseline_turns, peek_turns)
     for r in range(runs):
-        b_ok = all(res.stopped != "error" for res, _ in all_baseline[r])
-        p_ok = all(res.stopped != "error" for res, _ in all_peek[r])
-        if b_ok and p_ok:
-            bt = sum(res.turns for res, _ in all_baseline[r])
-            pt = sum(res.turns for res, _ in all_peek[r])
-            b_totals.append(bt)
-            p_totals.append(pt)
-            deltas.append(pt - bt)
+        for i in range(len(questions)):
+            b_res = all_baseline[r][i][0]
+            p_res = all_peek[r][i][0]
+            if b_res.stopped != "error" and p_res.stopped != "error":
+                pairs.append((b_res.turns, p_res.turns))
 
-    banner("PAIRED COMPARISON -- total turns per run (PEEK vs baseline)")
-    if not deltas:
-        print("  No run completed every question in both conditions -- cannot compare.")
+    banner("PAIRED COMPARISON -- per-question turn delta (PEEK - baseline)")
+    attempted = len(questions) * runs
+    dropped = attempted - len(pairs)
+    if not pairs:
+        print("  No question completed in both conditions -- cannot compare.")
     else:
-        for idx, (bt, pt) in enumerate(zip(b_totals, p_totals), start=1):
-            print(f"  run {idx}: baseline {bt:>3}  |  PEEK {pt:>3}  |  delta {pt - bt:+d}")
+        deltas = [p - b for b, p in pairs]
         mean_d = statistics.mean(deltas)
-        print(f"\n  baseline mean total : {statistics.mean(b_totals):.1f} turns")
-        print(f"  PEEK     mean total : {statistics.mean(p_totals):.1f} turns")
+        print(f"  paired questions    : {len(pairs)} of {attempted}"
+              + (f"  ({dropped} dropped to a CLI failure)" if dropped else ""))
+        print(f"  baseline mean turns : {statistics.mean(b for b, _ in pairs):.2f} per question")
+        print(f"  PEEK     mean turns : {statistics.mean(p for _, p in pairs):.2f} per question")
         if len(deltas) >= 2:
             sd = statistics.stdev(deltas)
-            print(f"  paired delta (PEEK - baseline): {mean_d:+.1f} +/- {sd:.1f} turns "
-                  f"(n={len(deltas)})")
+            print(f"  paired delta (PEEK - baseline): {mean_d:+.2f} turns per question "
+                  f"(SD {sd:.2f}, n={len(deltas)})")
+            # Deltas within one run are not fully independent -- the PEEK map
+            # evolves across the stream -- so this stays a descriptive
+            # mean-vs-spread read, not a significance test.
             verdict = (
-                "within run-to-run noise -- no measurable effect at this sample size"
+                "within question-to-question noise -- no measurable effect"
                 if abs(mean_d) <= sd
                 else ("PEEK faster" if mean_d < 0 else "PEEK slower")
             )
             print(f"  verdict: {verdict}")
         else:
-            print(f"  paired delta (PEEK - baseline): {mean_d:+.1f} turns "
-                  f"(n=1 -- not enough runs for a spread)")
+            print(f"  paired delta (PEEK - baseline): {mean_d:+.2f} turns per question "
+                  f"(n=1 -- not enough pairs for a spread)")
 
     total_q = len(questions) * runs
     b_correct = sum(ok for run in all_baseline for _, ok in run)
