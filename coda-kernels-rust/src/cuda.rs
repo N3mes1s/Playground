@@ -142,6 +142,16 @@ extern "C" {
         window_starts: *const c_int, n_steps: c_int, batch: c_int, lr: f32,
         loss_curve: *mut f32,
     ) -> c_int;
+    #[allow(clippy::too_many_arguments)]
+    fn coda_cuda_generate(
+        tmax: c_int, d: c_int, nl: c_int, nh: c_int, hd: c_int, dff: c_int,
+        vocab: c_int, eps: f32,
+        embed: *const f32, ga: *const f32, wqkv: *const f32, wo: *const f32,
+        gf: *const f32, wgu: *const f32, wd: *const f32, gfin: *const f32,
+        lm: *const f32, cos: *const f32, sin: *const f32,
+        prompt: *const c_int, prompt_len: c_int, n_new: c_int,
+        out_ids: *mut c_int,
+    ) -> c_int;
 }
 
 /// The nine weight tensors flattened into contiguous `[n_layers, ...]` buffers,
@@ -416,6 +426,44 @@ pub fn model_forward(model: &Model, tokens: &[usize]) -> Mat {
     };
     check(s, "model_forward");
     logits
+}
+
+/// Autoregressively generate `n_new` tokens from `prompt`, **device-resident**.
+///
+/// [`model_forward`] re-uploads every weight on each call; for a
+/// multi-billion-parameter model that transfer dwarfs the compute and makes
+/// per-token decoding unusably slow. This entry point uploads the full weight
+/// set to the GPU *once* and runs the whole greedy decode loop on the resident
+/// weights - only the new token id crosses the PCIe bus between steps.
+///
+/// Sampling is greedy (argmax). Returns the `n_new` generated token ids.
+pub fn generate(model: &Model, prompt: &[usize], n_new: usize) -> Vec<usize> {
+    let cfg = &model.cfg;
+    let d = cfg.d_model;
+    assert!(cfg.head_dim <= 256, "CUDA attention caps head_dim at 256");
+    assert_eq!(cfg.n_heads * cfg.head_dim, d, "n_heads * head_dim must equal d_model");
+    let tmax = prompt.len() + n_new;
+    assert!(tmax <= 1024, "CUDA attention supports T <= 1024");
+
+    let (cos, sin) = model.rope_tables(tmax);
+    let w = flatten_weights(model);
+    let prompt_i: Vec<c_int> = prompt.iter().map(|&x| x as c_int).collect();
+    let mut out = vec![0 as c_int; n_new];
+
+    let s = unsafe {
+        coda_cuda_generate(
+            tmax as c_int, d as c_int, cfg.n_layers as c_int,
+            cfg.n_heads as c_int, cfg.head_dim as c_int, cfg.d_ff as c_int,
+            cfg.vocab as c_int, cfg.eps,
+            w.embed.as_ptr(), w.ga.as_ptr(), w.wqkv.as_ptr(), w.wo.as_ptr(),
+            w.gf.as_ptr(), w.wgu.as_ptr(), w.wd.as_ptr(), w.gfin.as_ptr(),
+            w.lm.as_ptr(), cos.data.as_ptr(), sin.data.as_ptr(),
+            prompt_i.as_ptr(), prompt_i.len() as c_int, n_new as c_int,
+            out.as_mut_ptr(),
+        )
+    };
+    check(s, "generate");
+    out.into_iter().map(|x| x as usize).collect()
 }
 
 /// Run **one forward + backward on the GPU** and return the gradients.

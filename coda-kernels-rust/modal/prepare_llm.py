@@ -1,9 +1,9 @@
-"""Prepare OpenLLaMA-3B for the CODA-rs CUDA backend.
+"""Prepare Llama-2-7B-chat for the CODA-rs CUDA backend.
 
-`prepare` : download OpenLLaMA-3B, convert its weights into the flat layout the
-            Rust `coda-llm` binary expects, tokenize a generation prompt, and
-            save reference last-token logits (a real HuggingFace forward) so the
-            Rust forward can be verified against it.
+`prepare` : download Llama-2-7B-chat, convert its weights into the flat layout
+            the Rust `coda-llm` binary expects, tokenize a chat-formatted
+            generation prompt, and save reference last-token logits (a real
+            HuggingFace forward) so the Rust forward can be verified against it.
 `decode`  : turn the token ids `coda-llm` generated back into text.
 
 The CODA backend implements the LLaMA architecture directly, so the only work
@@ -15,6 +15,9 @@ here is a layout conversion:
     the adjacent-pair convention the CODA `k_rope` kernel uses;
   * PyTorch `[out, in]` Linear weights are transposed to the `[in, out]` matmul
     layout, and everything is written as fp32.
+
+Llama-2-7B is multi-head attention (32 query heads, 32 KV heads), so the fused
+`wqkv` with three equal `[d, d]` blocks maps directly - no GQA expansion needed.
 """
 
 import struct
@@ -22,9 +25,13 @@ import sys
 
 import numpy as np
 
-MODEL = "openlm-research/open_llama_3b_v2"
+# Ungated mirror of meta-llama/Llama-2-7b-chat-hf (identical weights).
+MODEL = "NousResearch/Llama-2-7b-chat-hf"
 WORK = "/work"
-GEN_PROMPT = "The history of computing began"
+SYSTEM_PROMPT = "You are a helpful, concise assistant."
+USER_PROMPT = "Explain what a transformer neural network is, in two sentences."
+# Llama-2-chat instruction format; the tokenizer prepends the <s> BOS token.
+GEN_PROMPT = f"[INST] <<SYS>>\n{SYSTEM_PROMPT}\n<</SYS>>\n\n{USER_PROMPT} [/INST]"
 VER_PROMPT = "The capital of France is"
 MAGIC = 0x41444F43  # 'CODA'
 
@@ -52,6 +59,13 @@ def prepare():
     dff, vocab = cfg.intermediate_size, cfg.vocab_size
     eps = float(cfg.rms_norm_eps)
     rope_base = float(getattr(cfg, "rope_theta", 10000.0))
+    # The CODA fused wqkv has three equal [d, d] blocks: multi-head attention
+    # only. A GQA model (n_kv < n_heads) would need a different k/v layout.
+    n_kv = int(getattr(cfg, "num_key_value_heads", nh))
+    assert n_kv == nh, (
+        f"model uses grouped-query attention (n_kv={n_kv} != n_heads={nh}); "
+        "the CODA fused wqkv expects multi-head attention"
+    )
     print(f"prepared: d={d} nl={nl} nh={nh} hd={hd} dff={dff} vocab={vocab}", flush=True)
 
     sd = model.state_dict()

@@ -1,15 +1,16 @@
-"""Run a real pretrained model (OpenLLaMA-3B) on the CODA-rs CUDA backend.
+"""Run a real pretrained model (Llama-2-7B-chat) on the CODA-rs CUDA backend.
 
 Pipeline (all on one Modal GPU):
-  1. `prepare_llm.py prepare` - convert the OpenLLaMA-3B checkpoint into the
-     flat layout the Rust backend expects, tokenize a prompt, and save
+  1. `prepare_llm.py prepare` - convert the Llama-2-7B-chat checkpoint into the
+     flat layout the Rust backend expects, tokenize a chat prompt, and save
      reference logits from a genuine HuggingFace forward.
   2. build + run `coda-llm` - load the converted model, verify the CUDA
-     forward against the reference logits, and autoregressively generate.
+     forward against the reference logits, and autoregressively generate with
+     the device-resident decode loop (the 27 GB weight set uploads once).
   3. `prepare_llm.py decode` - turn the generated token ids back into text.
 
 Usage:
-    modal run coda-kernels-rust/modal/run_llm.py --gpu A100
+    modal run coda-kernels-rust/modal/run_llm.py
 """
 
 import os
@@ -19,7 +20,8 @@ import modal
 
 app = modal.App("coda-kernels-llm")
 
-MODEL = "openlm-research/open_llama_3b_v2"
+# Ungated mirror of meta-llama/Llama-2-7b-chat-hf (identical weights).
+MODEL = "NousResearch/Llama-2-7b-chat-hf"
 
 image = (
     modal.Image.from_registry(
@@ -60,9 +62,9 @@ def _run(cmd: list[str], **kw) -> None:
     subprocess.run(cmd, check=True, **kw)
 
 
-@app.function(image=image, gpu="A100", memory=65536, timeout=2400)
+@app.function(image=image, gpu="A100-80GB", memory=131072, timeout=3600)
 def run_llm() -> None:
-    """Convert OpenLLaMA-3B, run it on the CUDA backend, and decode the output."""
+    """Convert Llama-2-7B-chat, run it on the CUDA backend, and decode the output."""
     _run(["nvidia-smi"])
     _run(["python", "/work/modal/prepare_llm.py", "prepare"])
     _run(
@@ -76,5 +78,5 @@ def run_llm() -> None:
 
 @app.local_entrypoint()
 def main() -> None:
-    print("[modal] running OpenLLaMA-3B on the CODA CUDA backend ...")
+    print("[modal] running Llama-2-7B-chat on the CODA CUDA backend ...")
     run_llm.remote()

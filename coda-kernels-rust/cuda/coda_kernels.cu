@@ -1253,6 +1253,154 @@ int coda_cuda_model_forward(
     return err;
 }
 
+// ---------------------------------------------------------------------------
+// Device-resident autoregressive generation.
+//
+// `coda_cuda_model_forward` re-uploads every weight on each call; for a
+// multi-billion-parameter model that 27 GB transfer would dwarf the compute
+// and make per-token decoding absurdly slow. This entry point uploads the
+// whole weight set *once*, then runs a greedy decode loop entirely on the
+// resident weights: each step is a forward at the current sequence length L,
+// and only the new token id (one int) crosses the PCIe bus between steps.
+//
+// `cosT` / `sinT` are sized for `Tmax` positions; a forward at length L just
+// uses their first L rows. `out_ids` receives the `n_new` generated ids.
+// Returns 0 on success, non-zero on a CUDA error.
+// ---------------------------------------------------------------------------
+int coda_cuda_generate(
+    int Tmax, int d, int n_layers, int n_heads, int head_dim, int d_ff,
+    int vocab, float eps,
+    const float* embed, const float* gamma_attn, const float* wqkv,
+    const float* wo, const float* gamma_ffn, const float* wgu,
+    const float* wdown, const float* gamma_final, const float* lm_head,
+    const float* cosT, const float* sinT,
+    const int* prompt, int prompt_len, int n_new, int* out_ids) {
+
+    int d3 = 3 * d;
+    int dff2 = 2 * d_ff;
+
+    // Weights: uploaded once, resident for the whole decode.
+    float* dEmbed = up(embed, (size_t)vocab * d);
+    float* dGA = up(gamma_attn, (size_t)n_layers * d);
+    float* dWQKV = up(wqkv, (size_t)n_layers * d * d3);
+    float* dWO = up(wo, (size_t)n_layers * d * d);
+    float* dGF = up(gamma_ffn, (size_t)n_layers * d);
+    float* dWGU = up(wgu, (size_t)n_layers * d * dff2);
+    float* dWD = up(wdown, (size_t)n_layers * d_ff * d);
+    float* dGFinal = up(gamma_final, (size_t)d);
+    float* dLM = up(lm_head, (size_t)d * vocab);
+    float* dCos = up(cosT, (size_t)Tmax * d);
+    float* dSin = up(sinT, (size_t)Tmax * d);
+
+    // Token buffer: the prompt up front, generated ids appended in place.
+    int* dTokens = nullptr;
+    cudaMalloc(&dTokens, (size_t)Tmax * sizeof(int));
+    cudaMemcpy(dTokens, prompt, (size_t)prompt_len * sizeof(int),
+               cudaMemcpyHostToDevice);
+
+    // Forward scratch, sized for the longest sequence the decode will reach.
+    float* dX = up(NULL, (size_t)Tmax * d);
+    float* dY = up(NULL, (size_t)Tmax * d);
+    float* dOnorm = up(NULL, (size_t)Tmax * d);
+    float* dR = up(NULL, (size_t)Tmax);
+    float* dR2 = up(NULL, (size_t)Tmax);
+    float* dQKV = up(NULL, (size_t)Tmax * d3);
+    float* dQ = up(NULL, (size_t)Tmax * d);
+    float* dK = up(NULL, (size_t)Tmax * d);
+    float* dV = up(NULL, (size_t)Tmax * d);
+    float* dQR = up(NULL, (size_t)Tmax * d);
+    float* dKR = up(NULL, (size_t)Tmax * d);
+    float* dAttn = up(NULL, (size_t)Tmax * d);
+    float* dH = up(NULL, (size_t)Tmax * d);
+    float* dN2 = up(NULL, (size_t)Tmax * d);
+    float* dDP = up(NULL, (size_t)Tmax * dff2);
+    float* dFF = up(NULL, (size_t)Tmax * d_ff);
+    float* dLogits = up(NULL, (size_t)Tmax * vocab);
+
+    dim3 blk(BLK, BLK);
+    float* row = (float*)malloc((size_t)vocab * sizeof(float));
+    int err = 0;
+
+    for (int step = 0; step < n_new && err == 0; ++step) {
+        int L = prompt_len + step;  // current sequence length
+
+        // Embed the live token stream, then the embedding-side RMSNorm.
+        float* X = dX;
+        float* Y = dY;
+        k_embed_gather<<<grid2d(d, L), blk>>>(dEmbed, dTokens, X, L, d);
+        k_row_invrms<<<(L + 255) / 256, 256>>>(X, dR, L, d, eps);
+        k_col_scale<<<grid2d(d, L), blk>>>(X, dGA, dOnorm, L, d);
+
+        for (int l = 0; l < n_layers; ++l) {
+            const float* wqkv_l = dWQKV + (size_t)l * d * d3;
+            const float* wo_l = dWO + (size_t)l * d * d;
+            const float* gf_l = dGF + (size_t)l * d;
+            const float* wgu_l = dWGU + (size_t)l * d * dff2;
+            const float* wd_l = dWD + (size_t)l * d_ff * d;
+
+            // QKV projection with the delayed RMSNorm scale (Kernel 5).
+            launch_gemm<EPI_ROWSCALE>(
+                dOnorm, wqkv_l, nullptr, nullptr, dR, nullptr, dQKV, L, d3, d);
+            k_slice<<<grid2d(d, L), blk>>>(dQKV, dQ, L, d, d3, 0);
+            k_slice<<<grid2d(d, L), blk>>>(dQKV, dK, L, d, d3, d);
+            k_slice<<<grid2d(d, L), blk>>>(dQKV, dV, L, d, d3, 2 * d);
+            k_rope<<<grid2d(d / 2, L), blk>>>(dQ, dCos, dSin, dQR, L, d);
+            k_rope<<<grid2d(d / 2, L), blk>>>(dK, dCos, dSin, dKR, L, d);
+            k_attention<<<L * n_heads, ATTN_THREADS>>>(
+                dQR, dKR, dV, dAttn, nullptr, L, d, n_heads, head_dim);
+
+            // Output proj + residual + FFN-norm (Kernel 4).
+            launch_gemm<EPI_RESGAMMA>(
+                dAttn, wo_l, X, gf_l, nullptr, dH, dN2, L, d, d);
+            k_row_invrms<<<(L + 255) / 256, 256>>>(dH, dR2, L, d, eps);
+
+            // Gate/Up projection + SwiGLU (Kernel 6).
+            launch_gemm<EPI_ROWSCALE>(
+                dN2, wgu_l, nullptr, nullptr, dR2, nullptr, dDP, L, dff2, d);
+            k_swiglu<<<grid2d(d_ff, L), blk>>>(dDP, dFF, L, d_ff);
+
+            // Down proj + residual + next sublayer's norm (Kernel 4).
+            const float* next_gamma =
+                (l + 1 < n_layers) ? (dGA + (size_t)(l + 1) * d) : dGFinal;
+            launch_gemm<EPI_RESGAMMA>(
+                dFF, wd_l, dH, next_gamma, nullptr, Y, dOnorm, L, d, d_ff);
+            k_row_invrms<<<(L + 255) / 256, 256>>>(Y, dR, L, d, eps);
+
+            float* tmp = X; X = Y; Y = tmp;
+        }
+
+        // LM head: logits = (final-normed residual @ W_lm) * r  (Kernel 5).
+        launch_gemm<EPI_ROWSCALE>(
+            dOnorm, dLM, nullptr, nullptr, dR, nullptr, dLogits, L, vocab, d);
+        cudaDeviceSynchronize();
+        err = cuda_check("coda_cuda_generate");
+        if (err) break;
+
+        // Greedy decode: argmax of the last row of logits is the next token.
+        cudaMemcpy(row, dLogits + (size_t)(L - 1) * vocab,
+                   (size_t)vocab * sizeof(float), cudaMemcpyDeviceToHost);
+        int best = 0;
+        float bestv = row[0];
+        for (int j = 1; j < vocab; ++j) {
+            if (row[j] > bestv) { bestv = row[j]; best = j; }
+        }
+        out_ids[step] = best;
+        cudaMemcpy(dTokens + L, &best, sizeof(int), cudaMemcpyHostToDevice);
+        printf("    generated token %d/%d  (id %d)\n", step + 1, n_new, best);
+        fflush(stdout);
+    }
+
+    free(row);
+    cudaFree(dEmbed); cudaFree(dGA); cudaFree(dWQKV); cudaFree(dWO);
+    cudaFree(dGF); cudaFree(dWGU); cudaFree(dWD); cudaFree(dGFinal);
+    cudaFree(dLM); cudaFree(dCos); cudaFree(dSin); cudaFree(dTokens);
+    cudaFree(dX); cudaFree(dY); cudaFree(dOnorm); cudaFree(dR); cudaFree(dR2);
+    cudaFree(dQKV); cudaFree(dQ); cudaFree(dK); cudaFree(dV);
+    cudaFree(dQR); cudaFree(dKR); cudaFree(dAttn); cudaFree(dH); cudaFree(dN2);
+    cudaFree(dDP); cudaFree(dFF); cudaFree(dLogits);
+    return err;
+}
+
 // Upload host weights into a Net's device weight buffers.
 static void upload_weights(Net* n, const float* embed, const float* ga,
                            const float* wqkv, const float* wo, const float* gf,

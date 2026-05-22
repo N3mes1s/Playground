@@ -1,10 +1,11 @@
-//! `coda-llm` - run a real pretrained model (OpenLLaMA-3B) on the CUDA backend.
+//! `coda-llm` - run a real pretrained model (Llama-2-7B-chat) on the CUDA backend.
 //!
 //! The CODA backend implements the LLaMA architecture, so a converted
-//! OpenLLaMA checkpoint runs inference on it unchanged. This binary loads the
-//! flat model produced by `modal/prepare_llm.py`, verifies its own forward
+//! Llama-2-7B-chat checkpoint runs inference on it unchanged. This binary loads
+//! the flat model produced by `modal/prepare_llm.py`, verifies its own forward
 //! pass against reference logits from a genuine HuggingFace forward, and then
-//! autoregressively generates text. Build with `--features cuda`.
+//! autoregressively generates text with the device-resident decode loop (the
+//! 27 GB weight set is uploaded once, not per token). Build with `--features cuda`.
 
 #[cfg(not(feature = "cuda"))]
 fn main() {
@@ -59,7 +60,7 @@ fn load_model() -> coda::model::Model {
         rope_base,
     };
     println!(
-        "loaded OpenLLaMA: d_model={d}, layers={nl}, heads={nh}, head_dim={hd}, \
+        "loaded model: d_model={d}, layers={nl}, heads={nh}, head_dim={hd}, \
          d_ff={dff}, vocab={vocab}"
     );
 
@@ -91,9 +92,8 @@ fn load_model() -> coda::model::Model {
 #[cfg(feature = "cuda")]
 fn main() {
     use coda::cuda;
-    use coda::model::Rng;
 
-    println!("CODA-rs : running OpenLLaMA-3B on the CUDA GEMM-plus-epilogue backend\n");
+    println!("CODA-rs : running Llama-2-7B-chat on the CUDA GEMM-plus-epilogue backend\n");
     let model = load_model();
     let vocab = model.cfg.vocab;
     let argmax = |v: &[f32]| {
@@ -131,42 +131,22 @@ fn main() {
         if my_arg == ref_arg && corr > 0.98 { "VERIFIED" } else { "MISMATCH" }
     );
 
-    // ---- Autoregressive generation. ----
+    // ---- Autoregressive generation (device-resident, greedy decode). ----
     let prompt = read_ids("/work/gen_ids.txt");
-    let mut seq = prompt.clone();
-    let mut rng = Rng::new(20260522);
-    let temp = 0.8f32;
-    let n_gen = 60;
+    let n_gen = 80;
     println!("\n== Generating {n_gen} tokens with the GPU backend ==");
+    println!("    weights upload once, then the decode loop runs device-resident");
     let t0 = std::time::Instant::now();
-    for _ in 0..n_gen {
-        let logits = cuda::model_forward(&model, &seq);
-        let last = logits.rows - 1;
-        let mx = (0..vocab).fold(f32::NEG_INFINITY, |m, j| m.max(logits.get(last, j)));
-        let mut probs = vec![0.0f32; vocab];
-        let mut sum = 0.0f32;
-        for j in 0..vocab {
-            let p = ((logits.get(last, j) - mx) / temp).exp();
-            probs[j] = p;
-            sum += p;
-        }
-        let r = rng.uniform() * sum;
-        let (mut acc, mut pick) = (0.0f32, vocab - 1);
-        for j in 0..vocab {
-            acc += probs[j];
-            if acc >= r {
-                pick = j;
-                break;
-            }
-        }
-        seq.push(pick);
-    }
+    let new_ids = cuda::generate(&model, &prompt, n_gen);
+    let elapsed = t0.elapsed().as_secs_f64();
     println!(
         "    done in {:.1}s ({:.2}s/token)",
-        t0.elapsed().as_secs_f64(),
-        t0.elapsed().as_secs_f64() / n_gen as f64
+        elapsed,
+        elapsed / n_gen as f64
     );
 
+    let mut seq = prompt.clone();
+    seq.extend(new_ids);
     let ids: Vec<String> = seq.iter().map(|x| x.to_string()).collect();
     std::fs::write("/work/out_ids.txt", ids.join(" ")).unwrap();
     println!("    wrote {} token ids to /work/out_ids.txt", seq.len());
