@@ -277,18 +277,34 @@ fn main() {
         ok &= line("GPU training drives the loss down", gpu_curve[299], 0.5);
     }
 
-    // ---- Scale up: train a ~10M-param model on the GPU ----
+    // ---- Scale up: train a larger model on the GPU ----
+    // CODA_SCALE=big selects a ~100M-parameter config (for an A100); the
+    // default is a ~10M-parameter config that runs comfortably on a T4.
     println!("\n== Scaled-up GPU training ==");
     {
-        let cfg = Config {
-            vocab: 4096,
-            d_model: 384,
-            n_layers: 4,
-            n_heads: 6,
-            head_dim: 64,
-            d_ff: 1024,
-            eps: 1e-5,
-            rope_base: 10000.0,
+        let big = std::env::var("CODA_SCALE").map(|s| s == "big").unwrap_or(false);
+        let cfg = if big {
+            Config {
+                vocab: 8192,
+                d_model: 768,
+                n_layers: 12,
+                n_heads: 12,
+                head_dim: 64,
+                d_ff: 2048,
+                eps: 1e-5,
+                rope_base: 10000.0,
+            }
+        } else {
+            Config {
+                vocab: 4096,
+                d_model: 384,
+                n_layers: 4,
+                n_heads: 6,
+                head_dim: 64,
+                d_ff: 1024,
+                eps: 1e-5,
+                rope_base: 10000.0,
+            }
         };
         let params = cfg.vocab * cfg.d_model * 2
             + cfg.n_layers
@@ -298,7 +314,7 @@ fn main() {
                     + cfg.d_ff * cfg.d_model
                     + 2 * cfg.d_model)
             + cfg.d_model;
-        let seq = 128;
+        let seq = if big { 256 } else { 128 };
         let model = Model::new(cfg.clone(), &mut Rng::new(2025));
         let tokens: Vec<usize> = (0..seq).map(|i| (i * 13 + 1) % cfg.vocab).collect();
         let targets: Vec<usize> = tokens.iter().map(|&t| (t * 2 + 1) % cfg.vocab).collect();

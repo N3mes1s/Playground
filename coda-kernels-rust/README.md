@@ -119,57 +119,64 @@ generated : "coda fuses transformer epilogues into a gemm kernel."
 
 ## GPU backend (CUDA, via Modal.com)
 
-The crate has a real **CUDA backend** behind the `cuda` feature. The GPU
-realization of CODA lives in `cuda/coda_kernels.cu`: each kernel computes a
-GEMM accumulator in registers and applies the fused epilogue (residual,
-RMSNorm scale, SwiGLU, RoPE, cross-entropy) *before* the single global-memory
-write — the same data-movement story as the CPU port, now on hardware. The
-GEMM mainloop is a simple one-thread-per-output-element loop (correctness over
-peak FLOPs; a tiled / WGMMA mainloop can be slotted in later without touching
-the epilogue structure).
+The crate has a complete **CUDA backend** behind the `cuda` feature — forward
+*and* backward, kernels *and* whole-model training. The GPU realization of
+CODA lives in `cuda/coda_kernels.cu`: each kernel computes a GEMM accumulator
+in registers and applies the fused epilogue (residual, RMSNorm scale, SwiGLU,
+RoPE, cross-entropy) *before* the single global-memory write — the same
+data-movement story as the CPU port, now on hardware.
+
+* **Tiled mainloop** — the GEMM is a shared-memory tiled kernel (`k_gemm_epi`),
+  templated on the epilogue mode: one fixed mainloop, programmable epilogue.
+* **Whole-model forward** — `coda_cuda_model_forward` runs every layer
+  device-resident; weights upload once, only logits come back.
+* **Device-resident training** — `coda_cuda_train` runs the full training loop
+  on the GPU: forward (saving activations), the complete backward pass
+  (transposed-GEMM weight/activation gradients, RMSNorm/SwiGLU/RoPE/attention
+  backward, embedding scatter — paper Theorem 1), and an Adam step, with
+  weights and optimizer state resident on the device across all steps.
 
 `build.rs` compiles the kernels with `nvcc` when `--features cuda` is set;
 `src/cuda.rs` is the Rust FFI; `src/bin/gpu.rs` (`coda-gpu`) verifies every
-CUDA kernel against the CPU reference and benchmarks GPU vs CPU.
+CUDA kernel and the GPU gradients against the CPU reference, then trains.
 
 Run it on a Modal GPU:
 
 ```bash
 pip install modal
 modal token set --token-id <id> --token-secret <secret>
-modal run coda-kernels-rust/modal/run_gpu.py
+modal run coda-kernels-rust/modal/run_gpu.py                        # T4
+modal run coda-kernels-rust/modal/run_gpu.py --gpu A100 --scale big  # ~100M params
 ```
 
-The whole Transformer forward also runs on the GPU as a single device-resident
-pass (`coda_cuda_model_forward` / `cuda::model_forward`): weights are uploaded
-once, every activation stays on the device across all layers, and only the
-logits come back.
-
-Verified result on an NVIDIA T4 — all 10 kernels *and* the full model are
-bit-faithful to the CPU reference:
+Verified results — all 10 kernels, the full forward, *and* the backward pass
+are bit-faithful to the CPU reference:
 
 ```
-== Kernel correctness: CUDA vs CPU reference ==
-    [PASS] gemm_residual_partial_rms (D)   max-err = 3.6e-7   ... all 10 PASS
+== Kernel correctness: CUDA vs CPU ==     all 10 kernels PASS (max-err ~1e-7)
 
-== Benchmark: gemm_residual_partial_rms (Kernel 4) ==
-     768^3 : CPU 0.50s (1.8 GFLOP/s) | GPU 0.012s (73 GFLOP/s) | 40x
-    2048^3 : GPU 0.146s (118 GFLOP/s) [CPU too slow]
+== Benchmark: gemm_residual_partial_rms (Kernel 4), A100 ==
+    2048^3 : GPU 0.022s (791 GFLOP/s)  [CPU too slow]
 
-== Full Transformer forward on GPU: CUDA vs CPU ==
-    [PASS] model_forward (tiny): CUDA vs CPU logits  max-err = 8.3e-7
-           next-token argmax agreement: 48/48
+== Full Transformer forward (~27.4M params) ==
+    GPU 0.25s | CPU 4.99s | 20x   logits max-err 3.1e-6   argmax 256/256
 
-== Scaled-up model: full forward, GPU vs CPU ==
-    d_model=512, layers=6, heads=8, d_ff=1376, vocab=8192, seq=256 (~27.4M params)
-    GPU forward 0.32s | CPU forward 7.34s | 23x speedup
-    next-token argmax agreement: 256/256   logits max-err = 3.1e-6
+== GPU backward: gradients vs CPU ==
+    GPU gradients match CPU backward to 7.5e-5 (relative)
+
+== GPU training: device-resident loop vs CPU ==
+    GPU loss 3.27 -> 0.0011 ;  CPU from identical init -> 0.0011
+
+== Scaled-up GPU training (A100) ==
+    ~97.5M params, 200 steps in 164s (820 ms/step), loss 9.10 -> 0.002
 ```
 
-**Next step:** the GEMM mainloop is still a naive one-thread-per-element loop;
-swapping in a tiled / tensor-core mainloop (the part CODA keeps fixed) and
-training on the GPU are the remaining optimizations. Larger models scale on a
-dedicated A100/H100 Modal GPU by editing the config in `src/bin/gpu.rs`.
+So a ~100M-parameter Transformer trains end-to-end on a single A100, with the
+GPU backward verified gradient-for-gradient against the CPU reference.
+
+**Next step:** the tiled mainloop is still fp32 with one element per thread;
+a register-blocked / tensor-core (WGMMA) mainloop — the part CODA deliberately
+keeps fixed — is the remaining performance lever.
 
 ## File map
 

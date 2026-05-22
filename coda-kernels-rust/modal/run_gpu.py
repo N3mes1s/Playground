@@ -2,16 +2,18 @@
 
 Builds the `coda-rs` crate with `--features cuda` on a CUDA toolkit image and
 runs the `coda-gpu` binary on a real NVIDIA GPU. That binary verifies every
-CUDA GEMM-plus-epilogue kernel against the CPU reference and benchmarks the
-GEMM-Residual-RMSNorm kernel GPU vs CPU.
+CUDA GEMM-plus-epilogue kernel against the CPU reference, runs the full
+Transformer forward and the device-resident training loop, and benchmarks
+GPU vs CPU.
 
 Usage:
     pip install modal
     modal token set --token-id <id> --token-secret <secret>
-    modal run modal/run_gpu.py                 # default GPU (T4)
-    modal run modal/run_gpu.py --gpu A100      # pick a GPU type
+    modal run modal/run_gpu.py                        # default: T4, small scale
+    modal run modal/run_gpu.py --gpu A100 --scale big # ~100M-param run on A100
 """
 
+import os
 import subprocess
 
 import modal
@@ -51,8 +53,8 @@ def _run(cmd: list[str], **kw) -> None:
     subprocess.run(cmd, check=True, **kw)
 
 
-@app.function(image=image, gpu="T4", timeout=1800)
-def build_and_run() -> None:
+@app.function(image=image, gpu="T4", timeout=3600)
+def build_and_run(scale: str = "small") -> None:
     """Compile the CUDA backend and run the GPU verification + benchmark."""
     _run(["nvidia-smi"])
     _run(["nvcc", "--version"])
@@ -61,12 +63,15 @@ def build_and_run() -> None:
         ["cargo", "build", "--release", "--features", "cuda", "--bin", "coda-gpu"],
         cwd="/work",
     )
-    _run(["/work/target/release/coda-gpu"])
+    # CODA_SCALE=big selects the ~100M-parameter training config.
+    env = {**os.environ, "CODA_SCALE": scale}
+    _run(["/work/target/release/coda-gpu"], env=env)
     print("\n[modal] coda-gpu finished successfully.", flush=True)
 
 
 @app.local_entrypoint()
-def main() -> None:
-    """Run the GPU verification + benchmark job on Modal."""
-    print("[modal] launching coda-gpu on a T4 GPU ...")
-    build_and_run.remote()
+def main(gpu: str = "T4", scale: str = "small") -> None:
+    """Run the GPU job. `--gpu` picks the accelerator (T4/A10/A100/H100);
+    `--scale big` selects the ~100M-parameter training config."""
+    print(f"[modal] launching coda-gpu on a {gpu} GPU (scale={scale}) ...")
+    build_and_run.with_options(gpu=gpu).remote(scale)
