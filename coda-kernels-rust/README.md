@@ -114,8 +114,25 @@ generated : "coda fuses transformer epilogues into a gemm kernel."
   GPU port is for.
 * Attention is deliberately *outside* CODA's scope (paper §5) and is a plain
   implementation here, identical in both forward paths.
-* GEMMs are plain triple loops — correctness over speed; the point is the
-  epilogue abstraction, not a fast CPU GEMM.
+* GEMMs on the **CPU** path are plain triple loops — correctness over speed;
+  the point is the epilogue abstraction, not a fast CPU GEMM.
+* On the **GPU**, all kernels are hand-written from scratch — *with one
+  exception*: the **batched-decode hot loop calls cuBLAS for the GEMM mainloop**,
+  with the CODA epilogue running as a separate kernel right after. This is how
+  the 1817 t/s steady-state number is reached at B = 64. The single-prompt
+  decode path (0.20 s/token), the training path (forward + backward + Adam),
+  the verification path (model_forward vs HuggingFace, correlation 1.00000),
+  and the Shakespeare end-to-end training are 100% from-scratch CODA — no
+  cuBLAS or CUTLASS. See the §"What's CODA-from-scratch and what's cuBLAS"
+  block under the pretrained-model section for the exact breakdown.
+* CODA itself is a real but **modest** innovation: a clean
+  GEMM-plus-epilogue abstraction for the whole transformer block, plus the
+  delayed-r RMSNorm trick. The paper compares against PyTorch eager, not
+  cuBLAS/CUTLASS, and the wins shrink to ~1.1–1.3× against tuned production
+  engines. The value of this implementation is *faithfulness and clarity*: a
+  complete, verified, end-to-end CODA backend you can read, run, and modify —
+  not a claim that CODA beats cuBLAS on the GEMM mainloop. It doesn't, and
+  the paper doesn't claim that either.
 
 ## GPU backend (CUDA, via Modal.com)
 
@@ -237,18 +254,37 @@ then processes only the one new token — its projections become matrix-vector
 products and it attends against the cache instead of recomputing every earlier
 position. Decode cost is therefore constant per token rather than growing with
 sequence length — **0.20 s/token** at batch 1, **1817 tokens/s steady-state at
-batch 64**. The single-prompt path uses CODA-from-scratch end to end (a split-K
-fp16-weight GEMV with the fused epilogue baked in); the batched path then
-hands the GEMM mainloop to **cuBLAS** (`CUBLAS_COMPUTE_32F_FAST_16F`, fp16 TC
-on Ampere) while still running the CODA epilogue as a tiny separate kernel
-right after each call. The decode kernels otherwise are still hand-written:
-fused QKV→slice→RoPE→cache write in one kernel, a one-block-per-(head, batch)
-attention-decode that reads the per-request cache, a device-side argmax +
-scatter so the host roundtrip per step is just `batch` ints. The KV cache,
-weights, RoPE tables, scratch, and partials all live on the GPU for the
-duration of the call. cudaEvent instrumentation reports the per-section
-breakdown so you can see where the time actually goes (98.7 % of a decode
-step is the 32-layer loop; the LM head and argmax sync are noise).
+batch 64** (GPU sum per step ~35 ms; the wall-clock aggregate including the
+one-time host setup is ~240 t/s).
+
+### What's CODA-from-scratch and what's cuBLAS
+
+This matters; both numbers above need to be read with the right caveat.
+
+* **Single-prompt path (0.20 s/token):** 100% CODA-from-scratch. The fp16-weight
+  split-K GEMV (`k_gemv_splitk_h`) and the fused-epilogue tiled GEMM
+  (`k_gemm_epi_h`, `k_gemm_tc_h`) are mine; the RMSNorm + RoPE + SwiGLU + the
+  fused QKV→slice→RoPE→cache-write kernel are mine; the per-(head) attention
+  decode is mine.
+* **Batched path (1817 t/s steady-state):** the GEMM **mainloop is cuBLAS**
+  (`CUBLAS_COMPUTE_32F_FAST_16F`, fp16 TC on Ampere). My hand-rolled fp16 TC
+  kernel at B=64 was at ~12 TFLOPS — cuBLAS hits ~10× that on these shapes,
+  and the CODA paper itself builds on CUTLASS (NVIDIA's templated GEMM
+  library) for the same reason. The **CODA epilogue still runs from-scratch
+  as a separate tiny kernel right after each cuBLAS call** (`k_epi_rowscale`
+  and `k_epi_resgamma` — the EPI_ROWSCALE and EPI_RESGAMMA paper modes,
+  unfused from the mainloop). What's strictly *not* from-scratch in the
+  batched path is the matmul itself; everything else (the fused
+  slice/rope/cache write, the per-(head, batch) attention decode, the
+  device-side argmax + scatter into the token buffer, the KV cache layout,
+  the prefill, the embedding gather) is hand-written.
+
+To restate it bluntly: the headline 1817 t/s number is "CODA epilogues bolted
+onto a cuBLAS GEMM." If "no NVIDIA libraries anywhere in the hot path" is the
+spirit you want, the single-prompt 0.20 s/token number is the honest one and
+the path forward is CUTLASS (the same library CODA's reference uses) — that
+gets back to fused-with-mainloop with cuBLAS-class throughput, at the cost of
+a few hundred lines of template wiring.
 
 The from-scratch Shakespeare model is a genuine (small) *trained* model: a
 char-level GPT is trained on the GPU over ~1.1 MB of public-domain Shakespeare
