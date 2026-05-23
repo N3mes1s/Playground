@@ -207,7 +207,9 @@ match the CPU reference (the tensor-core path is TF32, so the error floor is
     forward is verified against a genuine HuggingFace forward:
         next-token argmax : CUDA 3681  ==  HuggingFace 3681
         logits correlation with HuggingFace : 1.00000   (conversion VERIFIED)
-    KV-cached greedy decode: 200 tokens in 39.8s (0.20 s/token)
+    KV-cached greedy decode (single prompt): 200 tokens in 39.8s (0.20 s/token)
+    Batched decode (B=64, cuBLAS GEMM + CODA epilogue):
+        GPU per step 35.2 ms  ->  steady-state 1817 tokens/s decode
     chat prompt "Explain what a transformer neural network is, in two
     sentences." -> generated:
         "Of course! Here's a brief explanation of what a transformer neural
@@ -234,19 +236,19 @@ once, a prefill pass fills a per-layer key/value cache, and each decode step
 then processes only the one new token — its projections become matrix-vector
 products and it attends against the cache instead of recomputing every earlier
 position. Decode cost is therefore constant per token rather than growing with
-sequence length — **0.20 s/token**. The decode GEMV is a split-K kernel that
-cuts the K dimension across many phase-1 blocks (then a phase-2 sum + epilogue)
-so the GPU sees enough parallelism, and the big projection matrices are stored
-in fp16 (uploaded as fp32, converted device-side, fp32 buffers freed) so the
-per-token HBM traffic is halved. Together those took the run from
-0.62 → 0.20 s/token (~3.1×). The remaining cost is *not* the projection GEMV
-bandwidth (each individual optimization moved the needle by less than projected,
-and the bit-identical token stream across the fp32 and fp16 runs argues the
-GEMV is already cheap); the time lives in the many small per-step kernels —
-single-block-per-head attention, the slice/RoPE chain, the host-side argmax
-round-trip — and the kernel-launch overhead summed across ~600 launches per
-decode step. Fusing the slice/RoPE/cache write into one kernel and raising
-attention parallelism (split-along-L, à la FlashAttention) are the next levers.
+sequence length — **0.20 s/token** at batch 1, **1817 tokens/s steady-state at
+batch 64**. The single-prompt path uses CODA-from-scratch end to end (a split-K
+fp16-weight GEMV with the fused epilogue baked in); the batched path then
+hands the GEMM mainloop to **cuBLAS** (`CUBLAS_COMPUTE_32F_FAST_16F`, fp16 TC
+on Ampere) while still running the CODA epilogue as a tiny separate kernel
+right after each call. The decode kernels otherwise are still hand-written:
+fused QKV→slice→RoPE→cache write in one kernel, a one-block-per-(head, batch)
+attention-decode that reads the per-request cache, a device-side argmax +
+scatter so the host roundtrip per step is just `batch` ints. The KV cache,
+weights, RoPE tables, scratch, and partials all live on the GPU for the
+duration of the call. cudaEvent instrumentation reports the per-section
+breakdown so you can see where the time actually goes (98.7 % of a decode
+step is the 32-layer loop; the LM head and argmax sync are noise).
 
 The from-scratch Shakespeare model is a genuine (small) *trained* model: a
 char-level GPT is trained on the GPU over ~1.1 MB of public-domain Shakespeare
