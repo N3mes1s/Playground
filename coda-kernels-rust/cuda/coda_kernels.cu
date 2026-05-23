@@ -303,72 +303,84 @@ __global__ void k_gemm_epi_h(const float* A, const __half* B, const float* C,
     }
 }
 
-// fp16 tensor-core GEMM: matrix_a and matrix_b are both fp16, accumulator
-// fp32 (16x16x16 fragments). A (fp32 activations) is staged to fp16 in
-// shared memory once per K-tile; B is read straight from fp16 global. Each
-// warp computes one 16x16 output tile; the fused epilogue matches
-// `k_gemm_tc`. On A100 this hits the fp16 tensor-core datapath
-// (peak ~312 TFLOPS, realistic ~150-200 TFLOPS) - the lever that takes the
-// batched decode from compute-bound at ~10 TFLOPS to bandwidth-bound.
+// fp16 tensor-core GEMM with cooperative A staging.
+//
+// All warps in a block share the same `tile_m` (the row strip of A), so A is
+// staged into shared memory **once per block** rather than once per warp;
+// each warp then loads its matrix_a fragment from that shared block. Matrix_b
+// (fp16 weights) loads straight from global into the warp's fragment. The
+// 16x16x16 fp16 fragments hit A100's fp16 tensor-core datapath (peak ~312
+// TFLOPS), which is the lever that takes batched decode from compute-bound
+// at ~10 TFLOPS back to bandwidth-bound.
+//
+// Block layout: TC_WARPS warps per block cover a 16 x (TC_WARPS * 16) output
+// tile. Grid is `tile_m_count * ceil(tiles_n / TC_WARPS)`.
 template <int MODE>
 __global__ void k_gemm_tc_h(const float* A, const __half* B, const float* C,
                             const float* gamma, const float* r,
                             float* D, float* O, int M, int N, int K) {
 #if __CUDA_ARCH__ >= 800
     using namespace nvcuda;
-    int warp = (blockIdx.x * blockDim.x + threadIdx.x) / 32;
+    int warp_idx = threadIdx.x / 32;
     int lane = threadIdx.x & 31;
     int tiles_n = N / 16;
-    int tile_m = warp / tiles_n;
-    int tile_n = warp % tiles_n;
+    int n_groups = (tiles_n + TC_WARPS - 1) / TC_WARPS;
+    int tile_m = blockIdx.x / n_groups;
+    int n_group = blockIdx.x % n_groups;
+    int tile_n = n_group * TC_WARPS + warp_idx;
     if (tile_m * 16 >= M) return;
+    bool valid_n = (tile_n * 16 < N);
 
-    // Shared memory: per-warp 16x16 fp16 A staging buffer (head of smem) +
-    // per-warp 16x16 fp32 output staging buffer (tail of smem).
+    // Shared memory: one 16x16 fp16 A buffer shared by all warps in the
+    // block, plus a per-warp 16x16 fp32 epilogue tile.
     extern __shared__ char smem[];
-    __half* sh_a_all = (__half*)smem;
-    __half* a_buf = sh_a_all + (threadIdx.x / 32) * 256;
+    __half* sh_a = (__half*)smem;
     float* sh_tile_all =
-        (float*)(smem + TC_WARPS * 256 * sizeof(__half));
-    float* tile = sh_tile_all + (threadIdx.x / 32) * 256;
+        (float*)(smem + 256 * sizeof(__half));
+    float* tile = sh_tile_all + warp_idx * 256;
 
     wmma::fragment<wmma::accumulator, 16, 16, 16, float> acc;
     wmma::fill_fragment(acc, 0.0f);
 
+    int tid = threadIdx.x;  // 0 .. TC_WARPS*32 - 1
     for (int k0 = 0; k0 < K; k0 += 16) {
-        // Stage this warp's 16x16 slice of A as fp16 in shared memory.
-        // 32 lanes, 256 elements, 8 per lane.
-        for (int i = lane; i < 256; i += 32) {
-            int row = i / 16;
-            int col = i % 16;
+        // Cooperative A staging: 256 halves, 1 element per thread (block has
+        // TC_WARPS * 32 = 256 threads when TC_WARPS = 8).
+        if (tid < 256) {
+            int row = tid / 16;
+            int col = tid % 16;
             int gm = tile_m * 16 + row;
             int gk = k0 + col;
             float v = (gm < M && gk < K) ? A[gm * K + gk] : 0.0f;
-            a_buf[i] = __float2half(v);
+            sh_a[tid] = __float2half(v);
         }
-        __syncwarp();
+        __syncthreads();
 
-        wmma::fragment<wmma::matrix_a, 16, 16, 16, __half, wmma::row_major> af;
-        wmma::fragment<wmma::matrix_b, 16, 16, 16, __half, wmma::row_major> bf;
-        wmma::load_matrix_sync(af, a_buf, 16);
-        wmma::load_matrix_sync(bf, B + k0 * N + tile_n * 16, N);
-        wmma::mma_sync(acc, af, bf, acc);
+        if (valid_n) {
+            wmma::fragment<wmma::matrix_a, 16, 16, 16, __half, wmma::row_major> af;
+            wmma::fragment<wmma::matrix_b, 16, 16, 16, __half, wmma::row_major> bf;
+            wmma::load_matrix_sync(af, sh_a, 16);
+            wmma::load_matrix_sync(bf, B + k0 * N + tile_n * 16, N);
+            wmma::mma_sync(acc, af, bf, acc);
+        }
+        __syncthreads();
     }
 
-    // Stage the 16x16 tile in shared memory, then run the fused epilogue.
-    wmma::store_matrix_sync(tile, acc, 16, wmma::mem_row_major);
-    for (int idx = lane; idx < 256; idx += 32) {
-        int row = tile_m * 16 + idx / 16;
-        int col = tile_n * 16 + idx % 16;
-        float a = tile[idx];
-        if (MODE == EPI_PLAIN) {
-            D[row * N + col] = a;
-        } else if (MODE == EPI_RESGAMMA) {
-            float d = a + C[row * N + col];
-            D[row * N + col] = d;
-            O[row * N + col] = d * gamma[col];
-        } else if (MODE == EPI_ROWSCALE) {
-            O[row * N + col] = a * r[row];
+    if (valid_n) {
+        wmma::store_matrix_sync(tile, acc, 16, wmma::mem_row_major);
+        for (int idx = lane; idx < 256; idx += 32) {
+            int row = tile_m * 16 + idx / 16;
+            int col = tile_n * 16 + idx % 16;
+            float a = tile[idx];
+            if (MODE == EPI_PLAIN) {
+                D[row * N + col] = a;
+            } else if (MODE == EPI_RESGAMMA) {
+                float d = a + C[row * N + col];
+                D[row * N + col] = d;
+                O[row * N + col] = d * gamma[col];
+            } else if (MODE == EPI_ROWSCALE) {
+                O[row * N + col] = a * r[row];
+            }
         }
     }
 #endif
@@ -380,9 +392,11 @@ static void launch_gemm_h(const float* A, const __half* B, const float* C,
                           int M, int N, int K) {
     // fp16 tensor cores when the shape aligns (decode batched GEMMs do).
     if (tensor_cores_available() && M % 16 == 0 && N % 16 == 0 && K % 16 == 0) {
-        int total_warps = (M / 16) * (N / 16);
-        int blocks = (total_warps + TC_WARPS - 1) / TC_WARPS;
-        size_t shmem = (size_t)TC_WARPS * 256 * sizeof(__half) +
+        int tiles_n = N / 16;
+        int n_groups = (tiles_n + TC_WARPS - 1) / TC_WARPS;
+        int tile_m_count = (M + 15) / 16;
+        int blocks = tile_m_count * n_groups;
+        size_t shmem = 256 * sizeof(__half) +
                        (size_t)TC_WARPS * 256 * sizeof(float);
         k_gemm_tc_h<MODE><<<blocks, TC_WARPS * 32, shmem>>>(
             A, B, C, gamma, r, D, O, M, N, K);
