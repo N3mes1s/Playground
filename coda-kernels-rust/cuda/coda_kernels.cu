@@ -303,12 +303,93 @@ __global__ void k_gemm_epi_h(const float* A, const __half* B, const float* C,
     }
 }
 
+// fp16 tensor-core GEMM: matrix_a and matrix_b are both fp16, accumulator
+// fp32 (16x16x16 fragments). A (fp32 activations) is staged to fp16 in
+// shared memory once per K-tile; B is read straight from fp16 global. Each
+// warp computes one 16x16 output tile; the fused epilogue matches
+// `k_gemm_tc`. On A100 this hits the fp16 tensor-core datapath
+// (peak ~312 TFLOPS, realistic ~150-200 TFLOPS) - the lever that takes the
+// batched decode from compute-bound at ~10 TFLOPS to bandwidth-bound.
+template <int MODE>
+__global__ void k_gemm_tc_h(const float* A, const __half* B, const float* C,
+                            const float* gamma, const float* r,
+                            float* D, float* O, int M, int N, int K) {
+#if __CUDA_ARCH__ >= 800
+    using namespace nvcuda;
+    int warp = (blockIdx.x * blockDim.x + threadIdx.x) / 32;
+    int lane = threadIdx.x & 31;
+    int tiles_n = N / 16;
+    int tile_m = warp / tiles_n;
+    int tile_n = warp % tiles_n;
+    if (tile_m * 16 >= M) return;
+
+    // Shared memory: per-warp 16x16 fp16 A staging buffer (head of smem) +
+    // per-warp 16x16 fp32 output staging buffer (tail of smem).
+    extern __shared__ char smem[];
+    __half* sh_a_all = (__half*)smem;
+    __half* a_buf = sh_a_all + (threadIdx.x / 32) * 256;
+    float* sh_tile_all =
+        (float*)(smem + TC_WARPS * 256 * sizeof(__half));
+    float* tile = sh_tile_all + (threadIdx.x / 32) * 256;
+
+    wmma::fragment<wmma::accumulator, 16, 16, 16, float> acc;
+    wmma::fill_fragment(acc, 0.0f);
+
+    for (int k0 = 0; k0 < K; k0 += 16) {
+        // Stage this warp's 16x16 slice of A as fp16 in shared memory.
+        // 32 lanes, 256 elements, 8 per lane.
+        for (int i = lane; i < 256; i += 32) {
+            int row = i / 16;
+            int col = i % 16;
+            int gm = tile_m * 16 + row;
+            int gk = k0 + col;
+            float v = (gm < M && gk < K) ? A[gm * K + gk] : 0.0f;
+            a_buf[i] = __float2half(v);
+        }
+        __syncwarp();
+
+        wmma::fragment<wmma::matrix_a, 16, 16, 16, __half, wmma::row_major> af;
+        wmma::fragment<wmma::matrix_b, 16, 16, 16, __half, wmma::row_major> bf;
+        wmma::load_matrix_sync(af, a_buf, 16);
+        wmma::load_matrix_sync(bf, B + k0 * N + tile_n * 16, N);
+        wmma::mma_sync(acc, af, bf, acc);
+    }
+
+    // Stage the 16x16 tile in shared memory, then run the fused epilogue.
+    wmma::store_matrix_sync(tile, acc, 16, wmma::mem_row_major);
+    for (int idx = lane; idx < 256; idx += 32) {
+        int row = tile_m * 16 + idx / 16;
+        int col = tile_n * 16 + idx % 16;
+        float a = tile[idx];
+        if (MODE == EPI_PLAIN) {
+            D[row * N + col] = a;
+        } else if (MODE == EPI_RESGAMMA) {
+            float d = a + C[row * N + col];
+            D[row * N + col] = d;
+            O[row * N + col] = d * gamma[col];
+        } else if (MODE == EPI_ROWSCALE) {
+            O[row * N + col] = a * r[row];
+        }
+    }
+#endif
+}
+
 template <int MODE>
 static void launch_gemm_h(const float* A, const __half* B, const float* C,
                           const float* gamma, const float* r, float* D, float* O,
                           int M, int N, int K) {
-    dim3 grid((N + BN - 1) / BN, (M + BM - 1) / BM);
-    k_gemm_epi_h<MODE><<<grid, GEMM_THREADS>>>(A, B, C, gamma, r, D, O, M, N, K);
+    // fp16 tensor cores when the shape aligns (decode batched GEMMs do).
+    if (tensor_cores_available() && M % 16 == 0 && N % 16 == 0 && K % 16 == 0) {
+        int total_warps = (M / 16) * (N / 16);
+        int blocks = (total_warps + TC_WARPS - 1) / TC_WARPS;
+        size_t shmem = (size_t)TC_WARPS * 256 * sizeof(__half) +
+                       (size_t)TC_WARPS * 256 * sizeof(float);
+        k_gemm_tc_h<MODE><<<blocks, TC_WARPS * 32, shmem>>>(
+            A, B, C, gamma, r, D, O, M, N, K);
+    } else {
+        dim3 grid((N + BN - 1) / BN, (M + BM - 1) / BM);
+        k_gemm_epi_h<MODE><<<grid, GEMM_THREADS>>>(A, B, C, gamma, r, D, O, M, N, K);
+    }
 }
 
 // Convert a flat fp32 buffer to fp16 in place-of-a-separate-buffer. Used once
