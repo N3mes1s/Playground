@@ -1833,8 +1833,14 @@ int coda_cuda_generate(
             if (row[j] > bestv) { bestv = row[j]; best = j; }
         out_ids[step] = best;
         cudaMemcpy(dTokens + p + 1, &best, sizeof(int), cudaMemcpyHostToDevice);
-        printf("    generated token %d/%d  (id %d)\n", step + 1, n_new, best);
-        fflush(stdout);
+        // Per-token printf+fflush against Modal's log-capture pipeline costs
+        // ~150 ms/step (the GPU work itself is ~18 ms). Print periodically
+        // instead so progress is still visible but the run isn't dominated
+        // by stdout flushes.
+        if ((step + 1) % 32 == 0 || step == n_new - 1) {
+            printf("    generated %d/%d tokens\n", step + 1, n_new);
+            fflush(stdout);
+        }
     }
 
     // Decode timing breakdown (averaged over the steps that actually ran).
