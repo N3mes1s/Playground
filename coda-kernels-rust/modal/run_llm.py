@@ -78,5 +78,10 @@ def run_llm() -> None:
 
 @app.local_entrypoint()
 def main() -> None:
-    print("[modal] running Llama-2-7B-chat on the CODA CUDA backend ...")
-    run_llm.remote()
+    # `.spawn()` (not `.remote()`) so a `modal run --detach` invocation truly
+    # detaches: the local entrypoint returns immediately, the function runs in
+    # the background, and the run survives a local-client disconnect. Follow
+    # progress with `modal app logs <app-id>`; Modal prints the run URL above.
+    print("[modal] launching Llama-2-7B-chat on the CODA CUDA backend ...")
+    call = run_llm.spawn()
+    print(f"[modal] spawned FunctionCall {call.object_id}")
