@@ -207,7 +207,7 @@ match the CPU reference (the tensor-core path is TF32, so the error floor is
     forward is verified against a genuine HuggingFace forward:
         next-token argmax : CUDA 3681  ==  HuggingFace 3681
         logits correlation with HuggingFace : 1.00000   (conversion VERIFIED)
-    KV-cached greedy decode: 200 tokens in 46.0s (0.23 s/token)
+    KV-cached greedy decode: 200 tokens in 41.0s (0.21 s/token)
     chat prompt "Explain what a transformer neural network is, in two
     sentences." -> generated:
         "Of course! Here's a brief explanation of what a transformer neural
@@ -234,9 +234,17 @@ once, a prefill pass fills a per-layer key/value cache, and each decode step
 then processes only the one new token — its projections become matrix-vector
 products and it attends against the cache instead of recomputing every earlier
 position. Decode cost is therefore constant per token rather than growing with
-sequence length — **0.23 s/token**. (The remaining cost is the GEMV kernel,
-which is latency-bound at low occupancy; a split-K GEMV or fp16 weights are the
-next lever.)
+sequence length — **0.21 s/token**. The decode GEMV is a split-K kernel that
+cuts the K dimension across many phase-1 blocks (then a phase-2 sum + epilogue)
+so the GPU sees enough parallelism; on its own the cache + split-K take the run
+from 0.62 → 0.21 s/token (~3×). The remaining cost is *not* the projection
+GEMVs (which now stream the weights close to memory-bandwidth-bound) but the
+many small per-step kernels — single-block-per-head attention, the slice/RoPE
+chain, the host-side argmax round-trip — plus the kernel-launch overhead
+summed across ~600 launches per decode step. fp16 weights would halve what's
+streamed and unlock tensor cores for the GEMV; fusing the slice/RoPE/cache
+write into one kernel and raising attention parallelism (split-along-L) are
+the remaining levers.
 
 The from-scratch Shakespeare model is a genuine (small) *trained* model: a
 char-level GPT is trained on the GPU over ~1.1 MB of public-domain Shakespeare
