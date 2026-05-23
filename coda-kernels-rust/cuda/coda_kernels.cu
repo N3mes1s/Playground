@@ -16,6 +16,7 @@
 // arrays out. Each returns 0 on success, non-zero on a CUDA error.
 
 #include <cuda_runtime.h>
+#include <cuda_fp16.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -222,6 +223,112 @@ static void launch_gemm(const float* A, const float* B, const float* C,
 }
 
 // ---------------------------------------------------------------------------
+// fp16-weight GEMM and a fp32 -> fp16 conversion helper.
+//
+// Storing weights in half precision halves the bytes streamed over HBM per
+// forward; the kernels below mirror their fp32 counterparts but read B as
+// `__half*` and convert on the way into shared memory or registers. Compute
+// stays fp32 (the fp16 -> fp32 conversion is a single hardware instruction
+// per element). No tensor-core path here - the prefill GEMM is one-shot and
+// the decode path uses the GEMV below; register-blocked is enough.
+// ---------------------------------------------------------------------------
+
+// Same staged-shared-memory GEMM as `k_gemm_epi`, but B is fp16 and is
+// promoted to fp32 on staging into `Bs`.
+template <int MODE>
+__global__ void k_gemm_epi_h(const float* A, const __half* B, const float* C,
+                             const float* gamma, const float* r,
+                             float* D, float* O, int M, int N, int K) {
+    __shared__ float As[BK * BM];
+    __shared__ float Bs[BK * BN];
+
+    int c_row = blockIdx.y;
+    int c_col = blockIdx.x;
+    int tid = threadIdx.x;
+    int t_row = tid / (BN / TN);
+    int t_col = tid % (BN / TN);
+
+    float acc[TM * TN];
+#pragma unroll
+    for (int i = 0; i < TM * TN; ++i) acc[i] = 0.0f;
+    float a_reg[TM], b_reg[TN];
+
+    for (int k0 = 0; k0 < K; k0 += BK) {
+        for (int ld = 0; ld < (BM * BK) / GEMM_THREADS; ++ld) {
+            int idx = tid + ld * GEMM_THREADS;
+            int m = idx / BK, k = idx % BK;
+            int gm = c_row * BM + m, gk = k0 + k;
+            As[k * BM + m] = (gm < M && gk < K) ? A[gm * K + gk] : 0.0f;
+        }
+        for (int ld = 0; ld < (BK * BN) / GEMM_THREADS; ++ld) {
+            int idx = tid + ld * GEMM_THREADS;
+            int k = idx / BN, n = idx % BN;
+            int gk = k0 + k, gn = c_col * BN + n;
+            Bs[k * BN + n] =
+                (gk < K && gn < N) ? __half2float(B[gk * N + gn]) : 0.0f;
+        }
+        __syncthreads();
+#pragma unroll
+        for (int kk = 0; kk < BK; ++kk) {
+#pragma unroll
+            for (int i = 0; i < TM; ++i) a_reg[i] = As[kk * BM + t_row * TM + i];
+#pragma unroll
+            for (int j = 0; j < TN; ++j) b_reg[j] = Bs[kk * BN + t_col * TN + j];
+#pragma unroll
+            for (int i = 0; i < TM; ++i)
+#pragma unroll
+                for (int j = 0; j < TN; ++j)
+                    acc[i * TN + j] += a_reg[i] * b_reg[j];
+        }
+        __syncthreads();
+    }
+
+    for (int i = 0; i < TM; ++i) {
+        int row = c_row * BM + t_row * TM + i;
+        if (row >= M) continue;
+        for (int j = 0; j < TN; ++j) {
+            int col = c_col * BN + t_col * TN + j;
+            if (col >= N) continue;
+            float a = acc[i * TN + j];
+            if (MODE == EPI_PLAIN) {
+                D[row * N + col] = a;
+            } else if (MODE == EPI_RESGAMMA) {
+                float d = a + C[row * N + col];
+                D[row * N + col] = d;
+                O[row * N + col] = d * gamma[col];
+            } else if (MODE == EPI_ROWSCALE) {
+                O[row * N + col] = a * r[row];
+            }
+        }
+    }
+}
+
+template <int MODE>
+static void launch_gemm_h(const float* A, const __half* B, const float* C,
+                          const float* gamma, const float* r, float* D, float* O,
+                          int M, int N, int K) {
+    dim3 grid((N + BN - 1) / BN, (M + BM - 1) / BM);
+    k_gemm_epi_h<MODE><<<grid, GEMM_THREADS>>>(A, B, C, gamma, r, D, O, M, N, K);
+}
+
+// Convert a flat fp32 buffer to fp16 in place-of-a-separate-buffer. Used once
+// per generation to halve the resident weight footprint (and the per-token
+// HBM traffic) before the fp32 source buffer is freed.
+__global__ void k_f2h(const float* src, __half* dst, size_t n) {
+    size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    size_t stride = (size_t)gridDim.x * blockDim.x;
+    for (; i < n; i += stride) dst[i] = __float2half(src[i]);
+}
+
+static void f2h(const float* src, __half* dst, size_t n) {
+    int threads = 256;
+    long long need = ((long long)n + threads - 1) / threads;
+    int blocks = need > 65535 ? 65535 : (int)need;
+    if (blocks < 1) blocks = 1;
+    k_f2h<<<blocks, threads>>>(src, dst, n);
+}
+
+// ---------------------------------------------------------------------------
 // Split-K GEMV: the M = 1 case of the fused-epilogue GEMM, for decode.
 //
 // A cached decode step processes one new token, so the projection "GEMMs" are
@@ -241,9 +348,10 @@ static void launch_gemm(const float* A, const float* B, const float* C,
 #define GEMV_TARGET 512    // phase-1 block count to aim for
 #define GEMV_MIN_CHUNK 64  // smallest worthwhile K-slice per block
 
-// Phase 1: block (column-tile, K-slice) -> partial dot product.
-__global__ void k_gemv_splitk(const float* A, const float* B, float* partials,
-                              int N, int K, int n_split) {
+// Phase 1: block (column-tile, K-slice) -> partial dot product. B is fp16
+// (half the bytes per element off HBM, the same fp32 accumulator and partials).
+__global__ void k_gemv_splitk_h(const float* A, const __half* B,
+                                float* partials, int N, int K, int n_split) {
     int n = blockIdx.x * blockDim.x + threadIdx.x;  // output column
     int ks = blockIdx.y;                            // K-slice index
     if (n >= N) return;
@@ -251,7 +359,8 @@ __global__ void k_gemv_splitk(const float* A, const float* B, float* partials,
     int k0 = ks * chunk;
     int k1 = min(k0 + chunk, K);
     float acc = 0.0f;
-    for (int k = k0; k < k1; ++k) acc += A[k] * B[(size_t)k * N + n];
+    for (int k = k0; k < k1; ++k)
+        acc += A[k] * __half2float(B[(size_t)k * N + n]);
     partials[(size_t)ks * N + n] = acc;
 }
 
@@ -286,15 +395,16 @@ static int gemv_split(int N, int K) {
     return n_split;
 }
 
-// Launch the split-K GEMV. `partials` is caller-owned scratch, sized for at
-// least `gemv_split(N, K) * N` floats. Epilogue selection matches `launch_gemm`.
+// Launch the fp16-weight split-K GEMV. `partials` is caller-owned scratch,
+// sized for at least `gemv_split(N, K) * N` floats. Epilogue selection
+// matches `launch_gemm`.
 template <int MODE>
-static void launch_gemv(const float* A, const float* B, const float* C,
-                        const float* gamma, const float* r, float* D, float* O,
-                        int N, int K, float* partials) {
+static void launch_gemv_h(const float* A, const __half* B, const float* C,
+                          const float* gamma, const float* r, float* D, float* O,
+                          int N, int K, float* partials) {
     int col_blocks = (N + GEMV_BN - 1) / GEMV_BN;
     int n_split = gemv_split(N, K);
-    k_gemv_splitk<<<dim3(col_blocks, n_split), GEMV_BN>>>(
+    k_gemv_splitk_h<<<dim3(col_blocks, n_split), GEMV_BN>>>(
         A, B, partials, N, K, n_split);
     k_gemv_epilogue<MODE><<<col_blocks, GEMV_BN>>>(
         partials, C, gamma, r, D, O, N, n_split);
@@ -519,6 +629,16 @@ __global__ void k_embed_gather(const float* embed, const int* tokens,
     int i = blockIdx.y * blockDim.y + threadIdx.y;
     if (i >= T || j >= d) return;
     x0[i * d + j] = embed[tokens[i] * d + j];
+}
+
+// Same gather with an fp16 embedding table (the table is promoted to fp32 on
+// the load). Used by the generation path so the embedding can live in fp16.
+__global__ void k_embed_gather_h(const __half* embed, const int* tokens,
+                                 float* x0, int T, int d) {
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i >= T || j >= d) return;
+    x0[i * d + j] = __half2float(embed[tokens[i] * d + j]);
 }
 
 // Cross-entropy gradient + per-token loss: d_logits = (softmax - onehot)/T.
@@ -1410,7 +1530,7 @@ int coda_cuda_model_forward(
 //   * Prefill - one tiled forward over the whole prompt, which also fills the
 //     per-layer KV cache (rotated keys + values) for positions 0..prompt_len-1.
 //   * Decode  - each step processes exactly ONE new token: its projections are
-//     matrix-vector products (`launch_gemv`), its key/value are appended to
+//     matrix-vector products (`launch_gemv_h`), its key/value are appended to
 //     the cache, and it attends against the cache instead of recomputing the
 //     keys and values of every earlier position. A decode step is therefore
 //     O(model) work, not O(model x sequence length) as a cache-free re-forward
@@ -1432,16 +1552,46 @@ int coda_cuda_generate(
     int d3 = 3 * d;
     int dff2 = 2 * d_ff;
 
-    // Weights: uploaded once, resident for the whole decode.
-    float* dEmbed = up(embed, (size_t)vocab * d);
+    // Weights: the big projection matrices are uploaded as fp32 and then
+    // converted to fp16 device-side. The per-token decode then streams half
+    // the bytes off HBM. The fp32 staging buffers are freed as soon as the
+    // conversion is done; only the fp16 copies remain resident. Per-channel
+    // gamma weights and the RoPE tables stay fp32 (small and read at every
+    // layer, no benefit from going to fp16).
+    size_t n_embed = (size_t)vocab * d;
+    size_t n_wqkv = (size_t)n_layers * d * d3;
+    size_t n_wo = (size_t)n_layers * d * d;
+    size_t n_wgu = (size_t)n_layers * d * dff2;
+    size_t n_wd = (size_t)n_layers * d_ff * d;
+    size_t n_lm = (size_t)d * vocab;
+    float* dEmbed_f = up(embed, n_embed);
+    float* dWQKV_f = up(wqkv, n_wqkv);
+    float* dWO_f = up(wo, n_wo);
+    float* dWGU_f = up(wgu, n_wgu);
+    float* dWD_f = up(wdown, n_wd);
+    float* dLM_f = up(lm_head, n_lm);
+    __half *dEmbed = nullptr, *dWQKV = nullptr, *dWO = nullptr;
+    __half *dWGU = nullptr, *dWD = nullptr, *dLM = nullptr;
+    cudaMalloc(&dEmbed, n_embed * sizeof(__half));
+    cudaMalloc(&dWQKV, n_wqkv * sizeof(__half));
+    cudaMalloc(&dWO, n_wo * sizeof(__half));
+    cudaMalloc(&dWGU, n_wgu * sizeof(__half));
+    cudaMalloc(&dWD, n_wd * sizeof(__half));
+    cudaMalloc(&dLM, n_lm * sizeof(__half));
+    f2h(dEmbed_f, dEmbed, n_embed);
+    f2h(dWQKV_f, dWQKV, n_wqkv);
+    f2h(dWO_f, dWO, n_wo);
+    f2h(dWGU_f, dWGU, n_wgu);
+    f2h(dWD_f, dWD, n_wd);
+    f2h(dLM_f, dLM, n_lm);
+    cudaDeviceSynchronize();
+    cudaFree(dEmbed_f); cudaFree(dWQKV_f); cudaFree(dWO_f);
+    cudaFree(dWGU_f); cudaFree(dWD_f); cudaFree(dLM_f);
+
+    // Per-channel gamma weights and the RoPE tables stay fp32.
     float* dGA = up(gamma_attn, (size_t)n_layers * d);
-    float* dWQKV = up(wqkv, (size_t)n_layers * d * d3);
-    float* dWO = up(wo, (size_t)n_layers * d * d);
     float* dGF = up(gamma_ffn, (size_t)n_layers * d);
-    float* dWGU = up(wgu, (size_t)n_layers * d * dff2);
-    float* dWD = up(wdown, (size_t)n_layers * d_ff * d);
     float* dGFinal = up(gamma_final, (size_t)d);
-    float* dLM = up(lm_head, (size_t)d * vocab);
     float* dCos = up(cosT, (size_t)Tmax * d);
     float* dSin = up(sinT, (size_t)Tmax * d);
 
@@ -1492,21 +1642,21 @@ int coda_cuda_generate(
         int M = prompt_len;
         float* X = dX;
         float* Y = dY;
-        k_embed_gather<<<grid2d(d, M), blk>>>(dEmbed, dTokens, X, M, d);
+        k_embed_gather_h<<<grid2d(d, M), blk>>>(dEmbed, dTokens, X, M, d);
         k_row_invrms<<<(M + 255) / 256, 256>>>(X, dR, M, d, eps);
         k_col_scale<<<grid2d(d, M), blk>>>(X, dGA, dOnorm, M, d);
 
         for (int l = 0; l < n_layers; ++l) {
-            const float* wqkv_l = dWQKV + (size_t)l * d * d3;
-            const float* wo_l = dWO + (size_t)l * d * d;
+            const __half* wqkv_l = dWQKV + (size_t)l * d * d3;
+            const __half* wo_l = dWO + (size_t)l * d * d;
             const float* gf_l = dGF + (size_t)l * d;
-            const float* wgu_l = dWGU + (size_t)l * d * dff2;
-            const float* wd_l = dWD + (size_t)l * d_ff * d;
+            const __half* wgu_l = dWGU + (size_t)l * d * dff2;
+            const __half* wd_l = dWD + (size_t)l * d_ff * d;
             float* Kc = dKcache + (size_t)l * Tmax * d;
             float* Vc = dVcache + (size_t)l * Tmax * d;
 
             // QKV projection (Kernel 5); rotated K and V go straight to cache.
-            launch_gemm<EPI_ROWSCALE>(
+            launch_gemm_h<EPI_ROWSCALE>(
                 dOnorm, wqkv_l, nullptr, nullptr, dR, nullptr, dQKV, M, d3, d);
             k_slice<<<grid2d(d, M), blk>>>(dQKV, dQ, M, d, d3, 0);
             k_slice<<<grid2d(d, M), blk>>>(dQKV, dK, M, d, d3, d);
@@ -1517,25 +1667,25 @@ int coda_cuda_generate(
                 dQR, Kc, Vc, dAttn, nullptr, M, d, n_heads, head_dim);
 
             // Output proj + residual + FFN-norm (Kernel 4).
-            launch_gemm<EPI_RESGAMMA>(
+            launch_gemm_h<EPI_RESGAMMA>(
                 dAttn, wo_l, X, gf_l, nullptr, dH, dN2, M, d, d);
             k_row_invrms<<<(M + 255) / 256, 256>>>(dH, dR2, M, d, eps);
 
             // Gate/Up projection + SwiGLU (Kernel 6).
-            launch_gemm<EPI_ROWSCALE>(
+            launch_gemm_h<EPI_ROWSCALE>(
                 dN2, wgu_l, nullptr, nullptr, dR2, nullptr, dDP, M, dff2, d);
             k_swiglu<<<grid2d(d_ff, M), blk>>>(dDP, dFF, M, d_ff);
 
             // Down proj + residual + next sublayer's norm (Kernel 4).
             const float* next_gamma =
                 (l + 1 < n_layers) ? (dGA + (size_t)(l + 1) * d) : dGFinal;
-            launch_gemm<EPI_RESGAMMA>(
+            launch_gemm_h<EPI_RESGAMMA>(
                 dFF, wd_l, dH, next_gamma, nullptr, Y, dOnorm, M, d, d_ff);
             k_row_invrms<<<(M + 255) / 256, 256>>>(Y, dR, M, d, eps);
 
             float* tmp = X; X = Y; Y = tmp;
         }
-        launch_gemm<EPI_ROWSCALE>(
+        launch_gemm_h<EPI_ROWSCALE>(
             dOnorm, dLM, nullptr, nullptr, dR, nullptr, dLogits, M, vocab, d);
         cudaDeviceSynchronize();
         err = cuda_check("coda_cuda_generate (prefill)");
@@ -1564,21 +1714,21 @@ int coda_cuda_generate(
         float* Y = dY;
 
         // Embed the one new token (dTokens[p]), then the embedding-side norm.
-        k_embed_gather<<<grid2d(d, 1), blk>>>(dEmbed, dTokens + p, X, 1, d);
+        k_embed_gather_h<<<grid2d(d, 1), blk>>>(dEmbed, dTokens + p, X, 1, d);
         k_row_invrms<<<1, 256>>>(X, dR, 1, d, eps);
         k_col_scale<<<grid2d(d, 1), blk>>>(X, dGA, dOnorm, 1, d);
 
         for (int l = 0; l < n_layers; ++l) {
-            const float* wqkv_l = dWQKV + (size_t)l * d * d3;
-            const float* wo_l = dWO + (size_t)l * d * d;
+            const __half* wqkv_l = dWQKV + (size_t)l * d * d3;
+            const __half* wo_l = dWO + (size_t)l * d * d;
             const float* gf_l = dGF + (size_t)l * d;
-            const float* wgu_l = dWGU + (size_t)l * d * dff2;
-            const float* wd_l = dWD + (size_t)l * d_ff * d;
+            const __half* wgu_l = dWGU + (size_t)l * d * dff2;
+            const __half* wd_l = dWD + (size_t)l * d_ff * d;
             float* Kc = dKcache + (size_t)l * Tmax * d;
             float* Vc = dVcache + (size_t)l * Tmax * d;
 
             // QKV as a matrix-vector product; rotated K and V append to cache[p].
-            launch_gemv<EPI_ROWSCALE>(
+            launch_gemv_h<EPI_ROWSCALE>(
                 dOnorm, wqkv_l, nullptr, nullptr, dR, nullptr, dQKV, d3, d,
                 dPartials);
             k_slice<<<grid2d(d, 1), blk>>>(dQKV, dQ, 1, d, d3, 0);
@@ -1592,12 +1742,12 @@ int coda_cuda_generate(
                 dQR, Kc, Vc, dAttn, p, d, n_heads, head_dim);
 
             // Output proj + residual + FFN-norm (Kernel 4).
-            launch_gemv<EPI_RESGAMMA>(
+            launch_gemv_h<EPI_RESGAMMA>(
                 dAttn, wo_l, X, gf_l, nullptr, dH, dN2, d, d, dPartials);
             k_row_invrms<<<1, 256>>>(dH, dR2, 1, d, eps);
 
             // Gate/Up projection + SwiGLU (Kernel 6).
-            launch_gemv<EPI_ROWSCALE>(
+            launch_gemv_h<EPI_ROWSCALE>(
                 dN2, wgu_l, nullptr, nullptr, dR2, nullptr, dDP, dff2, d,
                 dPartials);
             k_swiglu<<<grid2d(d_ff, 1), blk>>>(dDP, dFF, 1, d_ff);
@@ -1605,7 +1755,7 @@ int coda_cuda_generate(
             // Down proj + residual + next sublayer's norm (Kernel 4).
             const float* next_gamma =
                 (l + 1 < n_layers) ? (dGA + (size_t)(l + 1) * d) : dGFinal;
-            launch_gemv<EPI_RESGAMMA>(
+            launch_gemv_h<EPI_RESGAMMA>(
                 dFF, wd_l, dH, next_gamma, nullptr, Y, dOnorm, d, d_ff,
                 dPartials);
             k_row_invrms<<<1, 256>>>(Y, dR, 1, d, eps);
@@ -1614,7 +1764,7 @@ int coda_cuda_generate(
         }
 
         // LM head: logits = (final-normed residual @ W_lm) * r  (Kernel 5).
-        launch_gemv<EPI_ROWSCALE>(
+        launch_gemv_h<EPI_ROWSCALE>(
             dOnorm, dLM, nullptr, nullptr, dR, nullptr, dLogits, vocab, d,
             dPartials);
         cudaDeviceSynchronize();
