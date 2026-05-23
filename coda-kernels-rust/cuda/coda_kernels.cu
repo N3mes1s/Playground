@@ -2235,6 +2235,17 @@ int coda_cuda_generate_batch(
     int* host_next = (int*)malloc((size_t)B * sizeof(int));
     int err = 0;
 
+    // Per-section CUDA-event timers across the batched decode loop.
+    cudaEvent_t e_pre, e_emb, e_layers, e_lm, e_done;
+    cudaEventCreate(&e_pre); cudaEventCreate(&e_emb);
+    cudaEventCreate(&e_layers); cudaEventCreate(&e_lm);
+    cudaEventCreate(&e_done);
+    float t_emb = 0.0f, t_layers = 0.0f, t_lm = 0.0f, t_argmax = 0.0f;
+    cudaEvent_t f[6];
+    for (int i = 0; i < 6; ++i) cudaEventCreate(&f[i]);
+    float tf[5] = {0, 0, 0, 0, 0};
+    bool fine_recorded = false;
+
     // ---- Prefill: serially process each prompt; fills its KV-cache slice
     //      and produces its first generated token. ----
     for (int b = 0; b < B && err == 0; ++b) {
@@ -2306,12 +2317,14 @@ int coda_cuda_generate_batch(
         const float* sinP = dSin + (size_t)p * d;
         float* X = dX;
         float* Y = dY;
+        cudaEventRecord(e_pre, 0);
 
         // Gather the one new token per request from row `p` of each batch slice.
         k_embed_gather_bdec<<<dim3((d + 255) / 256, B), 256>>>(
             dEmbed, dTokens, p, Tmax, X, B, d);
         k_row_invrms<<<(B + 255) / 256, 256>>>(X, dR, B, d, eps);
         k_col_scale<<<grid2d(d, B), blk>>>(X, dGA, dOnorm, B, d);
+        cudaEventRecord(e_emb, 0);
 
         for (int l = 0; l < n_layers; ++l) {
             const __half* wqkv_l = dWQKV + (size_t)l * d * d3;
@@ -2321,19 +2334,25 @@ int coda_cuda_generate_batch(
             const __half* wd_l = dWD + (size_t)l * d_ff * d;
             float* Kc = dKcache + (size_t)l * B * Tmax * d;
             float* Vc = dVcache + (size_t)l * B * Tmax * d;
+            bool fine = (step == 1 && l == 0);
 
             // QKV as a GEMM with M = B (a "fat GEMV" that fills the M-tile).
+            if (fine) cudaEventRecord(f[0], 0);
             launch_gemm_h<EPI_ROWSCALE>(
                 dOnorm, wqkv_l, nullptr, nullptr, dR, nullptr, dQKV, B, d3, d);
+            if (fine) cudaEventRecord(f[1], 0);
             k_qkv_rope_cache_b<<<dim3((d / 2 + 255) / 256, B), 256>>>(
                 dQKV, cosP, sinP, dQR, Kc, Vc, d, p, Tmax);
+            if (fine) cudaEventRecord(f[2], 0);
             k_attention_decode_b<<<dim3(n_heads, B), ATTN_THREADS>>>(
                 dQR, Kc, Vc, dAttn, p, d, n_heads, head_dim, Tmax);
 
+            if (fine) cudaEventRecord(f[3], 0);
             launch_gemm_h<EPI_RESGAMMA>(
                 dAttn, wo_l, X, gf_l, nullptr, dH, dN2, B, d, d);
             k_row_invrms<<<(B + 255) / 256, 256>>>(dH, dR2, B, d, eps);
 
+            if (fine) cudaEventRecord(f[4], 0);
             launch_gemm_h<EPI_ROWSCALE>(
                 dN2, wgu_l, nullptr, nullptr, dR2, nullptr, dDP, B, dff2, d);
             k_swiglu<<<grid2d(d_ff, B), blk>>>(dDP, dFF, B, d_ff);
@@ -2342,9 +2361,15 @@ int coda_cuda_generate_batch(
             launch_gemm_h<EPI_RESGAMMA>(
                 dFF, wd_l, dH, next_gamma, nullptr, Y, dOnorm, B, d, d_ff);
             k_row_invrms<<<(B + 255) / 256, 256>>>(Y, dR, B, d, eps);
+            if (fine) {
+                cudaEventRecord(f[5], 0);
+                fine_recorded = true;
+            }
 
             float* tmp = X; X = Y; Y = tmp;
         }
+        cudaEventRecord(e_layers, 0);
+
         // LM head: GEMM [B, d] @ [d, vocab] = [B, vocab].
         launch_gemm_h<EPI_ROWSCALE>(
             dOnorm, dLM, nullptr, nullptr, dR, nullptr, dLogits, B, vocab, d);
@@ -2352,11 +2377,20 @@ int coda_cuda_generate_batch(
         // Host only needs the B new ids (256 bytes for B = 64).
         k_argmax_scatter<<<B, 256>>>(
             dLogits, dTokens, dNextToks, B, vocab, Tmax, p + 1);
+        cudaEventRecord(e_lm, 0);
         cudaMemcpy(host_next, dNextToks, (size_t)B * sizeof(int),
                    cudaMemcpyDeviceToHost);
+        cudaEventRecord(e_done, 0);
         err = cuda_check("coda_cuda_generate_batch (decode)");
         if (err) break;
         for (int b = 0; b < B; ++b) out_ids[(size_t)b * n_new + step] = host_next[b];
+
+        // Accumulate per-section timings (the cudaMemcpy above synchronizes).
+        float dt;
+        cudaEventElapsedTime(&dt, e_pre, e_emb);     t_emb += dt;
+        cudaEventElapsedTime(&dt, e_emb, e_layers);  t_layers += dt;
+        cudaEventElapsedTime(&dt, e_layers, e_lm);   t_lm += dt;
+        cudaEventElapsedTime(&dt, e_lm, e_done);     t_argmax += dt;
 
         if ((step + 1) % 32 == 0 || step == n_new - 1) {
             printf("    generated %d/%d tokens across %d prompts\n",
@@ -2364,6 +2398,42 @@ int coda_cuda_generate_batch(
             fflush(stdout);
         }
     }
+
+    // Decode timing breakdown.
+    int n_dec = (err == 0) ? (n_new - 1) : 0;
+    if (n_dec > 0) {
+        float total = t_emb + t_layers + t_lm + t_argmax;
+        printf("\n    batched decode timing (mean over %d steps, B = %d):\n",
+               n_dec, B);
+        printf("      embed prelude      %7.3f ms  (%.1f%%)\n",
+               t_emb / n_dec, 100.0f * t_emb / total);
+        printf("      %d layers (loop)    %7.3f ms  (%.1f%%)\n",
+               n_layers, t_layers / n_dec, 100.0f * t_layers / total);
+        printf("      LM head + argmax   %7.3f ms  (%.1f%%)\n",
+               t_lm / n_dec, 100.0f * t_lm / total);
+        printf("      next-token sync    %7.3f ms  (%.1f%%)\n",
+               t_argmax / n_dec, 100.0f * t_argmax / total);
+        printf("      GPU sum per step   %7.3f ms\n", total / n_dec);
+    }
+    if (fine_recorded) {
+        float dt;
+        cudaEventElapsedTime(&dt, f[0], f[1]); tf[0] = dt;
+        cudaEventElapsedTime(&dt, f[1], f[2]); tf[1] = dt;
+        cudaEventElapsedTime(&dt, f[2], f[3]); tf[2] = dt;
+        cudaEventElapsedTime(&dt, f[3], f[4]); tf[3] = dt;
+        cudaEventElapsedTime(&dt, f[4], f[5]); tf[4] = dt;
+        printf("    one-layer sample (step 1, layer 0):\n");
+        printf("      qkv GEMM           %7.3f ms\n", tf[0]);
+        printf("      qkv->Q/K/V+RoPE+$  %7.3f ms\n", tf[1]);
+        printf("      attention decode   %7.3f ms\n", tf[2]);
+        printf("      wo GEMM + invrms   %7.3f ms\n", tf[3]);
+        printf("      wgu/swiglu/wd      %7.3f ms\n", tf[4]);
+    }
+
+    cudaEventDestroy(e_pre); cudaEventDestroy(e_emb);
+    cudaEventDestroy(e_layers); cudaEventDestroy(e_lm);
+    cudaEventDestroy(e_done);
+    for (int i = 0; i < 6; ++i) cudaEventDestroy(f[i]);
 
     free(row);
     free(host_next);
