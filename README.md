@@ -31,6 +31,7 @@ While this is primarily a coding agent workspace, contributions and suggestions 
 |-----------|-------------|
 | [`vulnllm-analyzer/`](vulnllm-analyzer/) | Automated vulnerability analysis for GitHub repos using [VulnLLM-R-7B](https://github.com/ucsb-mlsec/VulnLLM-R) on Modal GPUs |
 | [recursive-lm-security-audit](./recursive-lm-security-audit/) | Automated codebase security scanner using DSPy's Recursive Language Model (RLM) module. Accepts a GitHub repo URL or local path and produces a vulnerability report for ~$0.87. |
+| [`coda-kernels-rust/`](coda-kernels-rust/) | Faithful CPU/Rust port of [CODA](https://github.com/HanGuo97/coda-kernels) ([arXiv:2605.19269](https://arxiv.org/abs/2605.19269)) — Transformer blocks as GEMM-plus-epilogue programs. Implements all 10 kernels, the Epilogue Visitor Tree, and trains a tiny Transformer on CPU. Proof-of-concept ahead of a Modal.com GPU run. |
 
 ## Note
 
