@@ -1,0 +1,9 @@
+[package]
+name = "coda"
+version = "0.1.0"
+edition = "2021"
+description = "CODA - Rewriting Transformer Blocks as GEMM-Epilogue Programs (arXiv:2605.19269), CPU implementation"
+
+[lib]
+name = "coda"
+path = "src/lib.rs"

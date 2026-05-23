@@ -40,11 +40,12 @@ image = (
         }
     )
     # Only the crate sources - never the local (CPU-built) target/ directory.
+    # Workspace layout: `coda/` is the paper-faithful CODA library, `coda-llama/`
+    # is the LLaMA model + CUDA backend that consumes it.
     .add_local_file("coda-kernels-rust/Cargo.toml", "/work/Cargo.toml", copy=True)
     .add_local_file("coda-kernels-rust/Cargo.lock", "/work/Cargo.lock", copy=True)
-    .add_local_file("coda-kernels-rust/build.rs", "/work/build.rs", copy=True)
-    .add_local_dir("coda-kernels-rust/src", "/work/src", copy=True)
-    .add_local_dir("coda-kernels-rust/cuda", "/work/cuda", copy=True)
+    .add_local_dir("coda-kernels-rust/coda", "/work/coda", copy=True)
+    .add_local_dir("coda-kernels-rust/coda-llama", "/work/coda-llama", copy=True)
 )
 
 
@@ -60,7 +61,8 @@ def build_and_run(scale: str = "small") -> None:
     _run(["nvcc", "--version"])
     _run(["cargo", "--version"])
     _run(
-        ["cargo", "build", "--release", "--features", "cuda", "--bin", "coda-gpu"],
+        ["cargo", "build", "--release", "-p", "coda-llama",
+         "--features", "cuda", "--bin", "coda-gpu"],
         cwd="/work",
     )
     # Download a real public-domain training corpus (~1 MB of Shakespeare).

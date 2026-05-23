@@ -7,10 +7,10 @@
 //! epilogue of Kernel 10 and [`rmsnorm_bwd`] is the local part of Kernel 9.
 //! The surrounding linear maps are plain GEMMs ([`kernels::gemm`]).
 
-use crate::epilogue::{sigmoid, silu};
-use crate::kernels;
+use coda::epilogue::{sigmoid, silu};
+use coda::kernels;
+use coda::tensor::Mat;
 use crate::model::{col_scale, Cache, Model};
-use crate::tensor::Mat;
 
 // ---------------------------------------------------------------------------
 // Gradient containers.

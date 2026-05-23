@@ -18,9 +18,9 @@
 //! They are numerically equivalent; the difference is DRAM traffic, which the
 //! demo measures.
 
-use crate::kernels;
-use crate::reference as rf;
-use crate::tensor::{self, Mat};
+use coda::kernels;
+use coda::reference as rf;
+use coda::tensor::{self, Mat};
 
 /// A minimal deterministic PRNG (xorshift128+) so the demo needs no crates.
 pub struct Rng {

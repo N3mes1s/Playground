@@ -6,10 +6,10 @@
 //! a finite-difference check, and that the model can be trained.
 
 use coda::kernels;
-use coda::model::{rms_factor, Config, Model, Rng};
 use coda::reference as rf;
 use coda::tensor::{self, Mat};
-use coda::train;
+use coda_llama::model::{rms_factor, Config, Model, Rng};
+use coda_llama::train;
 
 fn randmat(rng: &mut Rng, r: usize, c: usize, s: f32) -> Mat {
     let mut m = Mat::zeros(r, c);

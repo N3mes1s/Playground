@@ -24,9 +24,9 @@ fn read_ids(path: &str) -> Vec<usize> {
 
 /// Load the flat model written by `prepare_llm.py` (header + fp32 tensors).
 #[cfg(feature = "cuda")]
-fn load_model() -> coda::model::Model {
-    use coda::model::{Config, Layer, Model};
+fn load_model() -> coda_llama::model::Model {
     use coda::tensor::Mat;
+    use coda_llama::model::{Config, Layer, Model};
 
     let bytes = std::fs::read("/work/model.bin").expect("missing /work/model.bin");
     let mut o = 0usize;
@@ -91,7 +91,7 @@ fn load_model() -> coda::model::Model {
 
 #[cfg(feature = "cuda")]
 fn main() {
-    use coda::cuda;
+    use coda_llama::cuda;
 
     println!("CODA-rs : running Llama-2-7B-chat on the CUDA GEMM-plus-epilogue backend\n");
     let model = load_model();

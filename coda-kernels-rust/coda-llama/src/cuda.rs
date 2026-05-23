@@ -2,13 +2,13 @@
 //! `cuda/coda_kernels.cu`.
 //!
 //! This module exists only when the crate is built with `--features cuda`.
-//! Each function mirrors a kernel in [`crate::kernels`] but runs the
+//! Each function mirrors a kernel in [`coda::kernels`] but runs the
 //! GEMM-plus-epilogue on an NVIDIA GPU. The CUDA host wrappers own all device
 //! memory; these wrappers just marshal [`Mat`] buffers across the FFI
 //! boundary and panic with the kernel name if CUDA reports an error.
 
+use coda::tensor::Mat;
 use crate::model::{Config, Model};
-use crate::tensor::Mat;
 use crate::train::{Grads, LayerGrad};
 use std::os::raw::{c_char, c_int};
 

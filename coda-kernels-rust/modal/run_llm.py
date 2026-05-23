@@ -48,11 +48,12 @@ image = (
             "LD_LIBRARY_PATH": "/usr/local/cuda/lib64",
         }
     )
+    # Workspace layout: `coda/` is the paper-faithful CODA library, `coda-llama/`
+    # is the LLaMA model + CUDA backend that consumes it.
     .add_local_file("coda-kernels-rust/Cargo.toml", "/work/Cargo.toml", copy=True)
     .add_local_file("coda-kernels-rust/Cargo.lock", "/work/Cargo.lock", copy=True)
-    .add_local_file("coda-kernels-rust/build.rs", "/work/build.rs", copy=True)
-    .add_local_dir("coda-kernels-rust/src", "/work/src", copy=True)
-    .add_local_dir("coda-kernels-rust/cuda", "/work/cuda", copy=True)
+    .add_local_dir("coda-kernels-rust/coda", "/work/coda", copy=True)
+    .add_local_dir("coda-kernels-rust/coda-llama", "/work/coda-llama", copy=True)
     .add_local_dir("coda-kernels-rust/modal", "/work/modal", copy=True)
 )
 
@@ -68,7 +69,8 @@ def run_llm() -> None:
     _run(["nvidia-smi"])
     _run(["python", "/work/modal/prepare_llm.py", "prepare"])
     _run(
-        ["cargo", "build", "--release", "--features", "cuda", "--bin", "coda-llm"],
+        ["cargo", "build", "--release", "-p", "coda-llama",
+         "--features", "cuda", "--bin", "coda-llm"],
         cwd="/work",
     )
     _run(["/work/target/release/coda-llm"], env={**os.environ})

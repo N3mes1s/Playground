@@ -7,10 +7,10 @@
 //! training run that memorizes a sentence and reproduces it by generation.
 
 use coda::kernels;
-use coda::model::{rms_factor, Config, Model, Rng};
 use coda::reference as rf;
 use coda::tensor::{self, Mat};
-use coda::train;
+use coda_llama::model::{rms_factor, Config, Model, Rng};
+use coda_llama::train;
 
 /// A random matrix, for kernel correctness tests.
 fn randmat(rng: &mut Rng, r: usize, c: usize, scale: f32) -> Mat {

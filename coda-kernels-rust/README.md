@@ -1,15 +1,24 @@
 # coda-kernels-rust
 
-A faithful, **CPU-only Rust port of CODA** — *"Rewriting Transformer Blocks as
+A faithful Rust port of **CODA** — *"Rewriting Transformer Blocks as
 GEMM-Epilogue Programs"* (Guo, Zhang, Menon, Guessous, Thakkar, Kim, Dao;
 [arXiv:2605.19269](https://arxiv.org/abs/2605.19269), reference implementation
 [HanGuo97/coda-kernels](https://github.com/HanGuo97/coda-kernels)).
 
 The original project is CUDA/CuTeDSL targeting NVIDIA Hopper H100 GPUs. This
-port keeps CODA's **abstraction and algebra exactly** and re-grounds the
-hardware story on a CPU so the ideas can be run, tested, and inspected without
-a GPU. It is the proof-of-concept stage before scaling the same design up on a
-real GPU via Modal.com.
+port is a Cargo workspace with two crates that split the paper's contribution
+from its application:
+
+* [**`coda`**](coda/) — the paper-faithful library: the GEMM-plus-epilogue
+  abstraction (mainloop + Epilogue Visitor Tree) and the ten GEMM-plus-epilogue
+  kernels from §C.1, in pure Rust on the CPU. Nothing model-specific lives
+  here; this is the part you point at and say "this is CODA."
+* [**`coda-llama`**](coda-llama/) — a LLaMA-architecture Transformer (model +
+  training + KV-cached inference) built on the `coda` primitives, plus a full
+  CUDA backend (`cuda/coda_kernels.cu`) that scales the same design up to a
+  real GPU. This is the application: a 6.7-billion-parameter model trained
+  end-to-end on a single A100-80GB, and Llama-2-7B-chat run for inference at
+  **0.20 s/token single-prompt** and **1817 tokens/s steady-state at batch 64**.
 
 ## What CODA is
 
@@ -35,7 +44,7 @@ held fixed and highly optimized; only the epilogue is programmable.
 
 Everything in the paper's non-attention forward **and** backward pass:
 
-### The abstraction (`src/gemm.rs`, `src/epilogue.rs`)
+### The abstraction (`coda/src/gemm.rs`, `coda/src/epilogue.rs`)
 
 * A fixed tiled **GEMM mainloop** that produces one on-chip accumulator
   `Frag` per output tile and exposes the epilogue hook points of the paper's
@@ -49,7 +58,7 @@ Everything in the paper's non-attention forward **and** backward pass:
   4. tile reductions (`EvtColBlockReduceStore`, `EvtRowReduceStore`),
   5. stateful transforms (`EvtCrossEntropyStore` — online log-sum-exp).
 
-### All 10 kernels (`src/kernels.rs`, paper §C.1)
+### All 10 kernels (`coda/src/kernels.rs`, paper §C.1)
 
 | # | Function | Computation |
 |---|----------|-------------|
@@ -64,10 +73,10 @@ Everything in the paper's non-attention forward **and** backward pass:
 | 9 | `gemm_residual_rmsnorm_bwd` | RMSNorm backward (local rule) |
 | 10 | `gemm_swiglu_bwd` | SwiGLU backward |
 
-Plus the **auxiliary reductions** (`src/reduce.rs`) that combine tile partials
+Plus the **auxiliary reductions** (`coda/src/reduce.rs`) that combine tile partials
 into the row-wise RMS factor `r` and the cross-entropy log-sum-exp.
 
-### A tiny Transformer (`src/model.rs`, `src/train.rs`)
+### A tiny Transformer (`coda-llama/src/model.rs`, `coda-llama/src/train.rs`)
 
 A LLaMA-style decoder (pre-norm RMSNorm, RoPE, causal attention, SwiGLU MLP).
 Its entire non-attention forward pass is the paper's **GEMM-Residual-RMSNorm-
@@ -80,8 +89,8 @@ backward block of the same `GEMM → tile-local transform → GEMM` shape.
 ## Running it
 
 ```bash
-cargo run --release      # the full demonstration
-cargo test  --release    # the integration test suite
+cargo run  --release -p coda-llama --bin coda-demo   # the CPU demonstration
+cargo test --release                                 # the integration test suite
 ```
 
 The demo runs five stages, all of which must pass:
@@ -109,7 +118,7 @@ generated : "coda fuses transformer epilogues into a gemm kernel."
 * CODA's *latency* win is GPU-specific (WGMMA pipelines, TMA, hiding epilogue
   work in another tile's mainloop). On a CPU we instead measure the
   **algorithmic data-movement reduction** — bytes through "global memory" — via
-  the instrumented counters in `src/tensor.rs`. That reduction is real and
+  the instrumented counters in `coda/src/tensor.rs`. That reduction is real and
   faithful to the paper's reparameterization; the wall-clock win is what the
   GPU port is for.
 * Attention is deliberately *outside* CODA's scope (paper §5) and is a plain
@@ -138,7 +147,7 @@ generated : "coda fuses transformer epilogues into a gemm kernel."
 
 The crate has a complete **CUDA backend** behind the `cuda` feature — forward
 *and* backward, kernels *and* whole-model training. The GPU realization of
-CODA lives in `cuda/coda_kernels.cu`: each kernel computes a GEMM accumulator
+CODA lives in `coda-llama/cuda/coda_kernels.cu`: each kernel computes a GEMM accumulator
 in registers and applies the fused epilogue (residual, RMSNorm scale, SwiGLU,
 RoPE, cross-entropy) *before* the single global-memory write — the same
 data-movement story as the CPU port, now on hardware.
@@ -167,8 +176,8 @@ data-movement story as the CPU port, now on hardware.
   optimizes with plain SGD, so a model far larger than host RAM — and larger
   than Adam's 4×-memory footprint would allow — still trains on one GPU.
 
-`build.rs` compiles the kernels with `nvcc` when `--features cuda` is set;
-`src/cuda.rs` is the Rust FFI; `src/bin/gpu.rs` (`coda-gpu`) verifies every
+`coda-llama/build.rs` compiles the kernels with `nvcc` when `--features cuda` is set;
+`coda-llama/src/cuda.rs` is the Rust FFI; `coda-llama/src/bin/gpu.rs` (`coda-gpu`) verifies every
 CUDA kernel and the GPU gradients against the CPU reference, then trains.
 
 Run it on a Modal GPU:
@@ -320,22 +329,61 @@ materialized-`P` backward gave a **7.2× end-to-end speedup**. The GEMM still
 runs on tensor cores; both pieces matter, but profiling-by-measurement is what
 found the bottleneck.
 
-## File map
+## Workspace layout
+
+This is a Cargo workspace with two crates. The split is deliberate: the
+`coda` crate is the paper-faithful CODA library and *nothing else*; the
+`coda-llama` crate is everything model-, training-, and GPU-specific that
+*consumes* CODA's primitives.
 
 ```
-src/tensor.rs     Mat type + DRAM-traffic instrumentation
-src/gemm.rs       fixed tiled GEMM mainloop + epilogue hook points
-src/epilogue.rs   EpilogueVisitor trait, EvtList, the 5 primitive classes
-src/kernels.rs    the 10 GEMM-plus-epilogue kernels
-src/reduce.rs     auxiliary reductions over tile partials
-src/reference.rs  naive unfused operators (correctness + traffic baseline)
-src/model.rs      tiny LLaMA-style Transformer on CODA kernels
-src/train.rs      backward pass (Theorem 1), Adam, training, gradient check
-src/main.rs       the CPU demonstration binary
-src/cuda.rs       Rust FFI to the CUDA backend            (feature `cuda`)
-src/bin/gpu.rs    GPU verification + benchmark binary     (feature `cuda`)
-cuda/             CUDA kernels (coda_kernels.cu)
-build.rs          compiles the CUDA kernels via nvcc
-modal/run_gpu.py  Modal app: build + run the GPU backend
-tests/            integration tests
+coda-kernels-rust/
+├── Cargo.toml            workspace manifest
+├── coda/                 the paper, as a library
+│   ├── Cargo.toml
+│   └── src/
+│       ├── tensor.rs     Mat type + DRAM-traffic instrumentation
+│       ├── gemm.rs       fixed tiled GEMM mainloop + epilogue hook points
+│       ├── epilogue.rs   EpilogueVisitor trait, EvtList, 5 primitive classes
+│       ├── kernels.rs    the 10 GEMM-plus-epilogue kernels (CPU port, §C.1)
+│       ├── reduce.rs     auxiliary reductions over tile partials
+│       └── reference.rs  naive unfused operators (correctness + traffic baseline)
+│
+├── coda-llama/           LLaMA model + training + CUDA backend
+│   ├── Cargo.toml        (depends on `coda`)
+│   ├── build.rs          compiles cuda/coda_kernels.cu via nvcc
+│   ├── src/
+│   │   ├── lib.rs
+│   │   ├── model.rs      LLaMA-style Transformer built on CODA kernels
+│   │   ├── train.rs      backward pass (Theorem 1), Adam, training
+│   │   ├── cuda.rs       Rust FFI to the CUDA backend       (feature `cuda`)
+│   │   ├── main.rs       coda-demo: CPU demonstration binary
+│   │   └── bin/
+│   │       ├── gpu.rs    coda-gpu: GPU verification + benchmark (feature `cuda`)
+│   │       └── llm.rs    coda-llm: Llama-2-7B-chat inference  (feature `cuda`)
+│   ├── cuda/
+│   │   └── coda_kernels.cu   CUDA kernels + LLaMA orchestration
+│   └── tests/
+│       └── correctness.rs    integration tests against the CODA kernels
+│
+├── modal/                Modal.com deployment scripts
+│   ├── run_gpu.py        kernel + training GPU run
+│   ├── run_llm.py        Llama-2-7B-chat inference run
+│   └── prepare_llm.py    HF -> CODA layout converter (called from run_llm.py)
+└── README.md
+```
+
+Build/run examples:
+
+```bash
+# CPU demo + all CODA kernel correctness tests (no GPU needed)
+cargo test --release
+cargo run --release -p coda-llama --bin coda-demo
+
+# GPU build (requires CUDA toolkit + an Ampere+ GPU)
+cargo build --release -p coda-llama --features cuda --bin coda-llm
+
+# Modal.com runs (Llama-2-7B-chat inference / GPU training)
+modal run coda-kernels-rust/modal/run_llm.py
+modal run coda-kernels-rust/modal/run_gpu.py
 ```

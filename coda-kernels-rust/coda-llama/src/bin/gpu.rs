@@ -13,11 +13,11 @@ fn main() {
 
 #[cfg(feature = "cuda")]
 fn main() {
-    use coda::cuda;
     use coda::kernels;
-    use coda::model::{Config, Model, Rng};
     use coda::tensor::Mat;
-    use coda::train;
+    use coda_llama::cuda;
+    use coda_llama::model::{Config, Model, Rng};
+    use coda_llama::train;
     use std::time::Instant;
 
     fn randmat(rng: &mut Rng, r: usize, c: usize, s: f32) -> Mat {

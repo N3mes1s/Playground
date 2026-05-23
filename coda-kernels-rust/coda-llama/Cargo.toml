@@ -1,0 +1,31 @@
+[package]
+name = "coda-llama"
+version = "0.1.0"
+edition = "2021"
+description = "LLaMA-architecture model, training, and CUDA backend built on the `coda` crate"
+
+[dependencies]
+coda = { path = "../coda" }
+
+[lib]
+name = "coda_llama"
+path = "src/lib.rs"
+
+[[bin]]
+name = "coda-demo"
+path = "src/main.rs"
+
+# GPU verification + benchmark binary. Build with `--features cuda`.
+[[bin]]
+name = "coda-gpu"
+path = "src/bin/gpu.rs"
+
+# Pretrained-model (Llama-2-7B-chat) inference binary. Build with `--features cuda`.
+[[bin]]
+name = "coda-llm"
+path = "src/bin/llm.rs"
+
+[features]
+# Enables the CUDA backend (`src/cuda.rs` + `cuda/coda_kernels.cu`, compiled
+# by `build.rs` via nvcc). Off by default so the crate builds with no GPU.
+cuda = []
