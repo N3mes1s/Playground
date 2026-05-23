@@ -2520,6 +2520,10 @@ int coda_cuda_generate_batch(
         printf("      next-token sync    %7.3f ms  (%.1f%%)\n",
                t_argmax / n_dec, 100.0f * t_argmax / total);
         printf("      GPU sum per step   %7.3f ms\n", total / n_dec);
+        float ms_per_step = total / n_dec;
+        float steady_tps = 1000.0f * (float)B / ms_per_step;
+        printf("    steady-state decode throughput: %.0f tokens/s "
+               "(GPU only, excludes one-time setup)\n", steady_tps);
     }
     if (fine_recorded) {
         float dt;

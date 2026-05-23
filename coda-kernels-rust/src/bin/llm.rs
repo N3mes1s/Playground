@@ -145,7 +145,7 @@ fn main() {
     let total_tokens = batch * n_gen;
     let tps = total_tokens as f64 / elapsed;
     println!(
-        "    done in {:.1}s  ({} tokens total -> {:.0} tokens/s aggregate)",
+        "    done in {:.1}s  ({} tokens total -> {:.0} tokens/s wall-clock\n     including one-time setup; see steady-state decode line above)",
         elapsed, total_tokens, tps
     );
 
