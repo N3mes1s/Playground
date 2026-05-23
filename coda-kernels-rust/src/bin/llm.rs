@@ -131,23 +131,28 @@ fn main() {
         if my_arg == ref_arg && corr > 0.98 { "VERIFIED" } else { "MISMATCH" }
     );
 
-    // ---- Autoregressive generation (device-resident, KV-cached decode). ----
+    // ---- Batched generation: B prompts decoded in lockstep. ----
     let prompt = read_ids("/work/gen_ids.txt");
+    let batch = 64;
     let n_gen = 200;
-    println!("\n== Generating {n_gen} tokens with the GPU backend ==");
-    println!("    weights upload once; prefill fills the KV cache, then each");
-    println!("    decode step processes just the one new token");
+    let prompts: Vec<Vec<usize>> = (0..batch).map(|_| prompt.clone()).collect();
+    println!("\n== Batched generation: B={batch} prompts, {n_gen} tokens each ==");
+    println!("    one shared weight upload + KV-cached decode; each step's");
+    println!("    projections become a real GEMM with M={batch}");
     let t0 = std::time::Instant::now();
-    let new_ids = cuda::generate(&model, &prompt, n_gen);
+    let outs = cuda::generate_batch(&model, &prompts, n_gen);
     let elapsed = t0.elapsed().as_secs_f64();
+    let total_tokens = batch * n_gen;
+    let tps = total_tokens as f64 / elapsed;
     println!(
-        "    done in {:.1}s ({:.2}s/token)",
-        elapsed,
-        elapsed / n_gen as f64
+        "    done in {:.1}s  ({} tokens total -> {:.0} tokens/s aggregate)",
+        elapsed, total_tokens, tps
     );
 
+    // Save the first request's output for the decode step (all are identical
+    // since the prompts and the decode are deterministic).
     let mut seq = prompt.clone();
-    seq.extend(new_ids);
+    seq.extend(outs[0].iter().copied());
     let ids: Vec<String> = seq.iter().map(|x| x.to_string()).collect();
     std::fs::write("/work/out_ids.txt", ids.join(" ")).unwrap();
     println!("    wrote {} token ids to /work/out_ids.txt", seq.len());

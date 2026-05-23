@@ -152,6 +152,16 @@ extern "C" {
         prompt: *const c_int, prompt_len: c_int, n_new: c_int,
         out_ids: *mut c_int,
     ) -> c_int;
+    #[allow(clippy::too_many_arguments)]
+    fn coda_cuda_generate_batch(
+        tmax: c_int, d: c_int, nl: c_int, nh: c_int, hd: c_int, dff: c_int,
+        vocab: c_int, eps: f32, batch: c_int,
+        embed: *const f32, ga: *const f32, wqkv: *const f32, wo: *const f32,
+        gf: *const f32, wgu: *const f32, wd: *const f32, gfin: *const f32,
+        lm: *const f32, cos: *const f32, sin: *const f32,
+        prompts: *const c_int, prompt_len: c_int, n_new: c_int,
+        out_ids: *mut c_int,
+    ) -> c_int;
 }
 
 /// The nine weight tensors flattened into contiguous `[n_layers, ...]` buffers,
@@ -464,6 +474,63 @@ pub fn generate(model: &Model, prompt: &[usize], n_new: usize) -> Vec<usize> {
     };
     check(s, "generate");
     out.into_iter().map(|x| x as usize).collect()
+}
+
+/// Batched greedy decode: run `batch` prompts in lockstep, sharing one weight
+/// upload. Aggregate throughput scales with `batch` until the GEMMs become
+/// compute-bound; the projection "GEMMs" stop being M=1 matrix-vector
+/// products and have real M-tile work to do, so the weight read amortizes
+/// across `batch` tokens per step.
+///
+/// `prompts` is the per-request prompt slice (all of the same length).
+/// Returns a `[batch, n_new]` row-major vector of generated token ids.
+pub fn generate_batch(
+    model: &Model,
+    prompts: &[Vec<usize>],
+    n_new: usize,
+) -> Vec<Vec<usize>> {
+    let batch = prompts.len();
+    assert!(batch > 0, "batch must be non-empty");
+    let prompt_len = prompts[0].len();
+    assert!(
+        prompts.iter().all(|p| p.len() == prompt_len),
+        "all prompts must have the same length",
+    );
+    let cfg = &model.cfg;
+    let d = cfg.d_model;
+    assert!(cfg.head_dim <= 256, "CUDA attention caps head_dim at 256");
+    assert_eq!(cfg.n_heads * cfg.head_dim, d, "n_heads * head_dim must equal d_model");
+    let tmax = prompt_len + n_new;
+    assert!(tmax <= 1024, "CUDA attention supports T <= 1024");
+
+    let (cos, sin) = model.rope_tables(tmax);
+    let w = flatten_weights(model);
+
+    // Flatten all prompts into one `[batch, prompt_len]` int buffer.
+    let mut prompts_flat: Vec<c_int> = Vec::with_capacity(batch * prompt_len);
+    for p in prompts {
+        prompts_flat.extend(p.iter().map(|&x| x as c_int));
+    }
+    let mut out = vec![0 as c_int; batch * n_new];
+
+    let s = unsafe {
+        coda_cuda_generate_batch(
+            tmax as c_int, d as c_int, cfg.n_layers as c_int,
+            cfg.n_heads as c_int, cfg.head_dim as c_int, cfg.d_ff as c_int,
+            cfg.vocab as c_int, cfg.eps, batch as c_int,
+            w.embed.as_ptr(), w.ga.as_ptr(), w.wqkv.as_ptr(), w.wo.as_ptr(),
+            w.gf.as_ptr(), w.wgu.as_ptr(), w.wd.as_ptr(), w.gfin.as_ptr(),
+            w.lm.as_ptr(), cos.data.as_ptr(), sin.data.as_ptr(),
+            prompts_flat.as_ptr(), prompt_len as c_int, n_new as c_int,
+            out.as_mut_ptr(),
+        )
+    };
+    check(s, "generate_batch");
+
+    // Split out into per-request id lists.
+    out.chunks(n_new)
+        .map(|c| c.iter().map(|&x| x as usize).collect())
+        .collect()
 }
 
 /// Run **one forward + backward on the GPU** and return the gradients.
