@@ -618,6 +618,31 @@ __global__ void k_attention_decode(const float* q, const float* Kc,
     }
 }
 
+// Fused decode "post-QKV" kernel: take the QKV row, slice it into q/k/v, RoPE
+// q and k at position p (the cos/sin pointers are caller-offset to that row),
+// write the rotated q to `qrot`, and append the rotated k and the raw v to
+// the per-layer KV cache at row p. Replaces 3 k_slice + 2 k_rope launches per
+// layer in the decode hot loop (a ~5x cut in launches for that section). The
+// rotation is the adjacent-pair convention CODA uses; matches `k_rope` on a
+// single row.
+__global__ void k_qkv_rope_cache(const float* qkv, const float* cosP,
+                                 const float* sinP, float* qrot,
+                                 float* kcache_row, float* vcache_row, int d) {
+    int p = blockIdx.x * blockDim.x + threadIdx.x;  // adjacent-pair index
+    int c0 = 2 * p, c1 = 2 * p + 1;
+    if (c1 >= d) return;
+    float q0 = qkv[c0],         q1 = qkv[c1];
+    float k0 = qkv[d + c0],     k1 = qkv[d + c1];
+    float v0 = qkv[2 * d + c0], v1 = qkv[2 * d + c1];
+    float c = cosP[c0], s = sinP[c0];
+    qrot[c0]       = q0 * c - q1 * s;
+    qrot[c1]       = q0 * s + q1 * c;
+    kcache_row[c0] = k0 * c - k1 * s;
+    kcache_row[c1] = k0 * s + k1 * c;
+    vcache_row[c0] = v0;
+    vcache_row[c1] = v1;
+}
+
 // ---------------------------------------------------------------------------
 // Backward-pass kernels (paper Theorem 1: tile-local backward rules + GEMMs).
 // ---------------------------------------------------------------------------
@@ -1636,6 +1661,17 @@ int coda_cuda_generate(
     float* row = (float*)malloc((size_t)vocab * sizeof(float));
     int err = 0;
 
+    // Per-section CUDA-event timers, accumulated across the decode loop.
+    cudaEvent_t e_pre, e_emb, e_layers, e_lm;
+    cudaEventCreate(&e_pre); cudaEventCreate(&e_emb);
+    cudaEventCreate(&e_layers); cudaEventCreate(&e_lm);
+    float t_emb = 0.0f, t_layers = 0.0f, t_lm = 0.0f;
+    // One-layer fine breakdown captured on step 1, layer 0.
+    cudaEvent_t f[6];
+    for (int i = 0; i < 6; ++i) cudaEventCreate(&f[i]);
+    float tf[5] = {0, 0, 0, 0, 0};
+    bool fine_recorded = false;
+
     // ---- Prefill: one tiled forward over the whole prompt; fills the KV
     //      cache for positions 0 .. prompt_len-1. ----
     {
@@ -1713,10 +1749,13 @@ int coda_cuda_generate(
         float* X = dX;
         float* Y = dY;
 
+        cudaEventRecord(e_pre, 0);
+
         // Embed the one new token (dTokens[p]), then the embedding-side norm.
         k_embed_gather_h<<<grid2d(d, 1), blk>>>(dEmbed, dTokens + p, X, 1, d);
         k_row_invrms<<<1, 256>>>(X, dR, 1, d, eps);
         k_col_scale<<<grid2d(d, 1), blk>>>(X, dGA, dOnorm, 1, d);
+        cudaEventRecord(e_emb, 0);
 
         for (int l = 0; l < n_layers; ++l) {
             const __half* wqkv_l = dWQKV + (size_t)l * d * d3;
@@ -1726,50 +1765,64 @@ int coda_cuda_generate(
             const __half* wd_l = dWD + (size_t)l * d_ff * d;
             float* Kc = dKcache + (size_t)l * Tmax * d;
             float* Vc = dVcache + (size_t)l * Tmax * d;
+            bool fine = (step == 1 && l == 0);
 
-            // QKV as a matrix-vector product; rotated K and V append to cache[p].
+            // QKV as a matrix-vector product.
+            if (fine) cudaEventRecord(f[0], 0);
             launch_gemv_h<EPI_ROWSCALE>(
                 dOnorm, wqkv_l, nullptr, nullptr, dR, nullptr, dQKV, d3, d,
                 dPartials);
-            k_slice<<<grid2d(d, 1), blk>>>(dQKV, dQ, 1, d, d3, 0);
-            k_slice<<<grid2d(d, 1), blk>>>(dQKV, dK, 1, d, d3, d);
-            k_slice<<<grid2d(d, 1), blk>>>(
-                dQKV, Vc + (size_t)p * d, 1, d, d3, 2 * d);
-            k_rope<<<grid2d(d / 2, 1), blk>>>(dQ, cosP, sinP, dQR, 1, d);
-            k_rope<<<grid2d(d / 2, 1), blk>>>(
-                dK, cosP, sinP, Kc + (size_t)p * d, 1, d);
+            // Fused: split QKV into q/k/v, RoPE q and k, append k and v to cache.
+            if (fine) cudaEventRecord(f[1], 0);
+            k_qkv_rope_cache<<<(d / 2 + 255) / 256, 256>>>(
+                dQKV, cosP, sinP, dQR,
+                Kc + (size_t)p * d, Vc + (size_t)p * d, d);
+            // Causal attention over the cache up to position p.
+            if (fine) cudaEventRecord(f[2], 0);
             k_attention_decode<<<n_heads, ATTN_THREADS>>>(
                 dQR, Kc, Vc, dAttn, p, d, n_heads, head_dim);
 
             // Output proj + residual + FFN-norm (Kernel 4).
+            if (fine) cudaEventRecord(f[3], 0);
             launch_gemv_h<EPI_RESGAMMA>(
                 dAttn, wo_l, X, gf_l, nullptr, dH, dN2, d, d, dPartials);
             k_row_invrms<<<1, 256>>>(dH, dR2, 1, d, eps);
 
-            // Gate/Up projection + SwiGLU (Kernel 6).
+            // Gate/Up projection + SwiGLU (Kernel 6) + down proj.
+            if (fine) cudaEventRecord(f[4], 0);
             launch_gemv_h<EPI_ROWSCALE>(
                 dN2, wgu_l, nullptr, nullptr, dR2, nullptr, dDP, dff2, d,
                 dPartials);
             k_swiglu<<<grid2d(d_ff, 1), blk>>>(dDP, dFF, 1, d_ff);
-
-            // Down proj + residual + next sublayer's norm (Kernel 4).
             const float* next_gamma =
                 (l + 1 < n_layers) ? (dGA + (size_t)(l + 1) * d) : dGFinal;
             launch_gemv_h<EPI_RESGAMMA>(
                 dFF, wd_l, dH, next_gamma, nullptr, Y, dOnorm, d, d_ff,
                 dPartials);
             k_row_invrms<<<1, 256>>>(Y, dR, 1, d, eps);
+            if (fine) {
+                cudaEventRecord(f[5], 0);
+                fine_recorded = true;
+            }
 
             float* tmp = X; X = Y; Y = tmp;
         }
+        cudaEventRecord(e_layers, 0);
 
         // LM head: logits = (final-normed residual @ W_lm) * r  (Kernel 5).
         launch_gemv_h<EPI_ROWSCALE>(
             dOnorm, dLM, nullptr, nullptr, dR, nullptr, dLogits, vocab, d,
             dPartials);
+        cudaEventRecord(e_lm, 0);
         cudaDeviceSynchronize();
         err = cuda_check("coda_cuda_generate (decode)");
         if (err) break;
+
+        // Accumulate the per-section timings now that the events are done.
+        float dt;
+        cudaEventElapsedTime(&dt, e_pre, e_emb);     t_emb += dt;
+        cudaEventElapsedTime(&dt, e_emb, e_layers);  t_layers += dt;
+        cudaEventElapsedTime(&dt, e_layers, e_lm);   t_lm += dt;
 
         // Greedy: argmax of the single logits row is the next token.
         cudaMemcpy(row, dLogits, (size_t)vocab * sizeof(float),
@@ -1783,6 +1836,38 @@ int coda_cuda_generate(
         printf("    generated token %d/%d  (id %d)\n", step + 1, n_new, best);
         fflush(stdout);
     }
+
+    // Decode timing breakdown (averaged over the steps that actually ran).
+    int n_dec = (err == 0) ? (n_new - 1) : 0;
+    if (n_dec > 0) {
+        float total = t_emb + t_layers + t_lm;
+        printf("\n    decode timing breakdown (mean over %d steps):\n", n_dec);
+        printf("      embed prelude     %6.3f ms  (%.1f%%)\n",
+               t_emb / n_dec, 100.0f * t_emb / total);
+        printf("      %d layers (loop)   %6.3f ms  (%.1f%%)\n",
+               n_layers, t_layers / n_dec, 100.0f * t_layers / total);
+        printf("      LM head GEMV      %6.3f ms  (%.1f%%)\n",
+               t_lm / n_dec, 100.0f * t_lm / total);
+        printf("      GPU sum per step  %6.3f ms\n", total / n_dec);
+    }
+    if (fine_recorded) {
+        float dt;
+        cudaEventElapsedTime(&dt, f[0], f[1]); tf[0] = dt;  // qkv gemv
+        cudaEventElapsedTime(&dt, f[1], f[2]); tf[1] = dt;  // fused qkv->rope/cache
+        cudaEventElapsedTime(&dt, f[2], f[3]); tf[2] = dt;  // attention decode
+        cudaEventElapsedTime(&dt, f[3], f[4]); tf[3] = dt;  // wo + invrms
+        cudaEventElapsedTime(&dt, f[4], f[5]); tf[4] = dt;  // wgu + swiglu + wd + invrms
+        printf("    one-layer sample (step 1, layer 0):\n");
+        printf("      qkv GEMV          %6.3f ms\n", tf[0]);
+        printf("      qkv->qkv+RoPE+$   %6.3f ms  (fused: slice/rope/cache)\n", tf[1]);
+        printf("      attention decode  %6.3f ms\n", tf[2]);
+        printf("      wo GEMV + invrms  %6.3f ms\n", tf[3]);
+        printf("      wgu/swiglu/wd     %6.3f ms\n", tf[4]);
+    }
+
+    cudaEventDestroy(e_pre); cudaEventDestroy(e_emb);
+    cudaEventDestroy(e_layers); cudaEventDestroy(e_lm);
+    for (int i = 0; i < 6; ++i) cudaEventDestroy(f[i]);
 
     free(row);
     cudaFree(dEmbed); cudaFree(dGA); cudaFree(dWQKV); cudaFree(dWO);
