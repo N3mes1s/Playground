@@ -1,0 +1,45 @@
+name: Boot Linux guest + load CO-RE eBPF probe (single kernel)
+
+# Pulls the cached ebpf-runner image — firecracker, util-linux, one
+# Ubuntu 6.8 kernel ELF, an initrd containing the static-musl loader
+# + probe.bpf.o, and the boot script all baked in. Boots the guest,
+# loader runs as PID 1, loads + attaches the probe, fires execve,
+# captures the ringbuf event, prints JSON to ttyS0, reboots.
+#
+# Stage 1 acceptance: BPF_RESULT_END marker, verdict OK, events >= 1.
+
+on:
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  boot:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 5
+    container:
+      image: registry.depot.dev/lmpn2xx8kz:ebpf-runner-latest
+      credentials:
+        username: x-token
+        password: ${{ secrets.AEGIS_DEPOT_TOKEN }}
+      options: >-
+        --device=/dev/kvm
+        --cap-add=SYS_ADMIN
+        --security-opt seccomp=unconfined
+        --security-opt apparmor=unconfined
+    steps:
+      - name: Verify image + KVM passthrough
+        run: |
+          set -eux
+          ls -l /dev/kvm
+          firecracker --version
+          file /opt/guest/vmlinux
+          ls -lh /opt/guest/vmlinux /opt/guest/initrd.cpio /opt/run_linux_guest.sh
+
+      - name: Boot Linux guest and load probe
+        run: |
+          bash /opt/run_linux_guest.sh \
+            /opt/guest/vmlinux \
+            /opt/guest/initrd.cpio

@@ -1,0 +1,36 @@
+name: Build CO-RE eBPF runner image
+
+# Cross-compiles probe.bpf.o + static-musl loader, fetches an Ubuntu
+# 6.8 kernel + decompresses it to vmlinux ELF, generates vmlinux.h
+# from its BTF, builds an initrd cpio, and bakes everything plus
+# firecracker into a runner image saved to the Depot Registry as
+# `registry.depot.dev/lmpn2xx8kz:ebpf-runner-latest`.
+#
+# First build: ~3-5 min (Ubuntu kernel deb ~80 MB, libbpf compile).
+# Repeat builds reuse Depot's BuildKit layer cache (~30 s).
+
+on:
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build runner image and save to Depot Registry
+        uses: depot/build-push-action@v1
+        with:
+          project: lmpn2xx8kz
+          token: ${{ secrets.AEGIS_DEPOT_TOKEN }}
+          context: ebpf-core-firecracker-depot
+          file: ebpf-core-firecracker-depot/infra/docker/ebpf-runner.Dockerfile
+          platforms: linux/amd64
+          save: true
+          save-tag: ebpf-runner-latest
+          push: false
