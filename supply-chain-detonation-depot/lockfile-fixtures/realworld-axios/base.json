@@ -1,0 +1,12 @@
+{
+  "name": "realproj",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "realproj",
+      "version": "1.0.0"
+    }
+  }
+}
