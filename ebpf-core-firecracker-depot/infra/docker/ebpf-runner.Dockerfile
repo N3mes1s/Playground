@@ -59,12 +59,16 @@ RUN bpftool btf dump file /tmp/vmlinux format c > /tmp/vmlinux.h \
 # ----- Stage C: cross-compile probe + loader --------------------------
 FROM alpine:3.20 AS build
 
+# Alpine bundles static .a archives inside the -dev packages
+# (libbpf-dev ships /usr/lib/libbpf.a, elfutils-dev ships libelf.a).
+# Only zlib has a separate -static apk.
 RUN apk add --no-cache \
         build-base clang lld llvm \
-        libbpf-dev libbpf-static \
-        elfutils-dev elfutils-static \
+        libbpf-dev \
+        elfutils-dev \
         zlib-dev zlib-static \
-        linux-headers bpftool
+        linux-headers bpftool \
+        argp-standalone
 
 WORKDIR /src
 COPY src/ .
