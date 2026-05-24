@@ -24,7 +24,11 @@ initrd="${2:?missing initrd path}"
 # multi-image smoke run): "kernel" as the app name, full path to the node
 # binary inside the rootfs, full path to the script.
 boot_args="${BOOT_ARGS:-kernel -- /usr/bin/node /usr/src/detonate.js}"
-mem_mib="${MEM_MIB:-256}"
+# 1024 MiB: the alpine `node` binary is ~100 MB; libukcpio holds
+# both the cpio source (~106 MB) AND the extracted /usr/bin/node
+# (~100 MB) in guest RAM during boot, so 256 MiB OOMs with an -EIO
+# write failure on the first cpio entry.
+mem_mib="${MEM_MIB:-1024}"
 wait_iters="${WAIT_ITERS:-900}"
 
 for f in "$kernel" "$initrd"; do
