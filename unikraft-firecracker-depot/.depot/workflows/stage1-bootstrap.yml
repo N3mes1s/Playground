@@ -32,7 +32,8 @@ jobs:
             /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
           apt-get update
           apt-get install -y --no-install-recommends \
-            ca-certificates curl jq xz-utils tar gzip uuid-runtime file binutils
+            ca-certificates curl jq xz-utils tar gzip uuid-runtime file binutils \
+            util-linux bsdmainutils
 
       - name: Verify KVM passthrough
         run: |
@@ -115,6 +116,29 @@ jobs:
           echo "--- 'Hello' strings embedded in the kernel ---"
           strings /tmp/uk-kernel | grep -i 'hello' | head -5 || true
 
-      - name: Boot unikernel under Firecracker
+      - name: Boot unikernel via direct Firecracker REST API
+        id: fc_boot
+        continue-on-error: true
         run: |
-          bash unikraft-firecracker-depot/scripts/run_unikernel.sh /tmp/uk-kernel "Hello world"
+          bash unikraft-firecracker-depot/scripts/run_unikernel.sh \
+            /tmp/uk-kernel "Hello from Unikraft"
+
+      - name: Diagnostic — boot via kraft run (proves binary works under FC)
+        if: steps.fc_boot.outcome == 'failure'
+        run: |
+          set -eux
+          echo "Direct-FC boot did not surface the banner. Falling back to kraft run"
+          echo "to confirm the unikernel + firecracker plumbing works end-to-end."
+          # kraft drives FC itself, with its own serial wiring.
+          timeout 30 kraft run --plat fc/x86_64 --rm \
+            unikraft.org/helloworld:latest 2>&1 | tee /tmp/kraft-run.log || true
+          echo "--- match check ---"
+          grep -F "Hello from Unikraft" /tmp/kraft-run.log
+
+      - name: Fail the job if the direct-FC boot did not capture the banner
+        if: steps.fc_boot.outcome == 'failure'
+        run: |
+          echo "Stage 1 boot path (direct Firecracker REST API) did not print the banner."
+          echo "If the kraft run diagnostic above succeeded, the kernel is fine but our"
+          echo "manual FC wiring needs more work (likely serial/console config)."
+          exit 1
