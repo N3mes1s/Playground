@@ -7,8 +7,13 @@
 
 set -euo pipefail
 
+# Resolve paths relative to the repo root so the script works whether
+# you run it from the repo root or from inside unikraft-firecracker-depot/.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+WORKFLOWS_DIR_REL="unikraft-firecracker-depot/.depot/workflows"
+
 REPO="${REPO:-N3mes1s/Playground}"
-WORKFLOWS_DIR="unikraft-firecracker-depot/.depot/workflows"
 
 usage() {
   cat <<EOF
@@ -53,7 +58,8 @@ require_token() {
 run_wf() {
   local file="$1"
   require_token
-  exec depot ci run --repo "$REPO" --workflow "$WORKFLOWS_DIR/$file"
+  cd "$REPO_ROOT"
+  exec depot ci run --repo "$REPO" --workflow "$WORKFLOWS_DIR_REL/$file"
 }
 
 cmd="${1:-}"
@@ -65,7 +71,7 @@ case "$cmd" in
   build-native-image)      run_wf build-native-image.yml ;;
   smoke)                   run_wf smoke-catalog-images.yml ;;
   list)
-    ls -1 "$WORKFLOWS_DIR" | sed "s#^#$WORKFLOWS_DIR/#"
+    ls -1 "$REPO_ROOT/$WORKFLOWS_DIR_REL" | sed "s#^#$WORKFLOWS_DIR_REL/#"
     ;;
   status)
     require_token
