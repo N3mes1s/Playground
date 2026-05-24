@@ -1,0 +1,28 @@
+name: Build CI base image
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - "unikraft-firecracker-depot/infra/docker/**"
+      - "unikraft-firecracker-depot/.depot/workflows/ci-base-image.yml"
+
+jobs:
+  build:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and save base image to Depot Registry
+        uses: depot/build-push-action@v1
+        with:
+          project: <DEPOT_PROJECT_ID>
+          token: ${{ secrets.AEGIS_DEPOT_TOKEN }}
+          context: unikraft-firecracker-depot/infra/docker
+          file: unikraft-firecracker-depot/infra/docker/ci-base.Dockerfile
+          platforms: linux/amd64
+          save: true
+          save-tag: base-latest
+          push: false
