@@ -77,8 +77,10 @@ RUN mkdir -p /rootfs/etc/apk \
  && cp -r /etc/apk/keys      /rootfs/etc/apk/keys \
  && apk add --no-cache --root /rootfs --initdb \
         alpine-base busybox musl libc6-compat ca-certificates \
+        iproute2 \
         nodejs npm \
- && du -sh /rootfs
+ && du -sh /rootfs \
+ && ls -l /rootfs/sbin/ip /rootfs/bin/busybox 2>&1 | head
 
 # Drop our PID-1 loader and probe object on top of the Alpine root.
 COPY --from=build /src/loader      /rootfs/init

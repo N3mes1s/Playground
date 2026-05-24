@@ -262,13 +262,17 @@ static char *cmdline_kv(const char *key)
 }
 
 // Fork+exec a command, wait, return exit status. Used to bring up
-// the guest network via busybox `ip` from the Alpine rootfs.
+// the guest network via `ip` from the Alpine rootfs.
 static int run_cmd(char *const argv[])
 {
 	pid_t p = fork();
 	if (p < 0) return -1;
 	if (p == 0) {
 		execvp(argv[0], argv);
+		// execvp returned: report the errno on stderr (serial) before
+		// dying so we don't lose the diagnosis.
+		fprintf(stderr, "execvp(%s) failed: %s (errno=%d)\n",
+		        argv[0], strerror(errno), errno);
 		_exit(127);
 	}
 	int status;
@@ -316,6 +320,13 @@ int main(int argc, char **argv)
 	(void)argc; (void)argv;
 
 	long long t0 = now_ms();
+
+	// Kernel starts /init with empty env. Set PATH first so the
+	// downstream execvp("ip", ...) and execlp("npm", ...) can find
+	// their binaries.
+	setenv("PATH",
+	       "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+	       1);
 
 	// PID 1: mount our own /proc, /sys, /dev, /sys/fs/bpf, tracefs.
 	mkdir("/proc", 0755);
@@ -383,9 +394,7 @@ int main(int argc, char **argv)
 	// npm env — point caches into /install so we can identify writes
 	// outside the install root as "suspicious" (Stage 2 work).
 	setenv("HOME", "/install/.home", 1);
-	setenv("PATH",
-	       "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-	       1);
+	// PATH already set at top of main(); keep here as documentation.
 	setenv("npm_config_prefix",       "/install",            1);
 	setenv("npm_config_cache",        "/install/.npm-cache", 1);
 	setenv("npm_config_userconfig",   "/install/.npmrc",     1);
