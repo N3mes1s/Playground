@@ -27,7 +27,12 @@ RUN sed -i 's|http://archive.ubuntu.com/ubuntu|http://mirror.facebook.net/ubuntu
 RUN curl -sSf https://get.kraftkit.sh | sh -s -- -y \
  && kraft version
 
-RUN kraft pkg pull --plat fc --arch x86_64 unikraft.org/runtime/node:latest \
+# The Unikraft Node catalog publishes images as unikraft.org/node:<version>
+# (not under library/ or runtime/). Try a few known LTS versions in order.
+RUN ( kraft pkg pull --plat fc --arch x86_64 unikraft.org/node:22 \
+   || kraft pkg pull --plat fc --arch x86_64 unikraft.org/node:21 \
+   || kraft pkg pull --plat fc --arch x86_64 unikraft.org/node:20 \
+   || kraft pkg pull --plat fc --arch x86_64 unikraft.org/node:18 ) \
  && mkdir -p /tmp/uk-extract \
  && for blob in $(find /root/.local/share/kraftkit -type f); do \
       ft="$(file -b "$blob" 2>/dev/null || true)"; \
