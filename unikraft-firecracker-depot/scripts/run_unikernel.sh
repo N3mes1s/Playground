@@ -9,7 +9,9 @@
 set -euo pipefail
 
 kernel="${1:?missing kernel path}"
-pattern="${2:-hello}"
+pattern="${2:-Hello world}"
+# How long to wait for the banner (deciseconds; 100 == 10s)
+wait_iters="${WAIT_ITERS:-100}"
 
 if [[ ! -f "$kernel" ]]; then
   echo "ERROR: kernel not found at $kernel" >&2
@@ -58,9 +60,9 @@ curl -fsS --unix-socket "$sock" -X PUT \
   -H 'Content-Type: application/json' \
   -d '{"action_type":"InstanceStart"}'
 
-# Wait for the banner to land on the serial log (or 5s, whichever first)
-for _ in $(seq 1 50); do
-  if grep -qi "$pattern" "$log" 2>/dev/null; then
+# Wait for the banner to land on the serial log
+for _ in $(seq 1 "$wait_iters"); do
+  if grep -qF "$pattern" "$log" 2>/dev/null; then
     break
   fi
   sleep 0.1
@@ -72,8 +74,12 @@ cat "$log"
 echo "---"
 echo "elapsed_ms=$(( (t1 - t0) / 1000000 ))"
 
-if ! grep -qi "$pattern" "$log"; then
-  echo "ERROR: unikernel did not print expected pattern '$pattern'" >&2
+if ! grep -qF "$pattern" "$log"; then
+  echo "ERROR: unikernel did not print expected pattern '$pattern' within ${wait_iters} deciseconds" >&2
+  echo "--- kernel info ---" >&2
+  file "$kernel" >&2 || true
+  echo "--- 'Hello' strings inside kernel ---" >&2
+  strings "$kernel" 2>/dev/null | grep -i 'hello' | head >&2 || true
   exit 1
 fi
 

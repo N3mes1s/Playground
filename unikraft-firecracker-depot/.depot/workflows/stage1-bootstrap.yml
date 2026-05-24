@@ -32,7 +32,7 @@ jobs:
             /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
           apt-get update
           apt-get install -y --no-install-recommends \
-            ca-certificates curl jq xz-utils tar gzip uuid-runtime file
+            ca-certificates curl jq xz-utils tar gzip uuid-runtime file binutils
 
       - name: Verify KVM passthrough
         run: |
@@ -56,14 +56,16 @@ jobs:
           which kraft
           kraft version
 
-      - name: Pull and extract Unikraft helloworld binary
+      - name: Pull and extract Unikraft helloworld binary (Firecracker platform)
         run: |
           set -eux
-          kraft pkg pull unikraft.org/helloworld:latest
+          # Prefer the firecracker-arch build; fall back to default (qemu-arch).
+          kraft pkg pull --plat fc/x86_64 unikraft.org/helloworld:latest \
+            || kraft pkg pull unikraft.org/helloworld:latest
 
-          # kraft 0.12 stores the unikernel as OCI layer blobs (POSIX tar
-          # archives) under ~/.local/share/kraftkit/runtime/oci/digests/
-          # sha256/<hash>. The kernel ELF lives INSIDE one of those tars.
+          # kraft 0.12 stores OCI layers as POSIX tar archives under
+          # ~/.local/share/kraftkit/runtime/oci/digests/sha256/<hash>.
+          # Extract every tar layer so we can find the kernel inside.
           mkdir -p /tmp/uk-extract
           for blob in $(find ~/.local/share/kraftkit /var/kraftkit /var/lib/kraftkit -type f 2>/dev/null); do
             ft="$(file -b "$blob" 2>/dev/null || true)"
@@ -79,31 +81,40 @@ jobs:
           echo "=== /tmp/uk-extract tree ==="
           find /tmp/uk-extract -maxdepth 6 -type f -printf '%s\t%p\n' 2>/dev/null | sort -rn | head -50
 
+          # Prefer kernel.dbg (full ELF64 with symbols) over kernel (sometimes
+          # a stripped 32-bit multiboot artifact that does not boot under FC).
           bin=""
-          best_size=0
-          while IFS= read -r f; do
-            ft="$(file -b "$f" 2>/dev/null || true)"
-            case "$ft" in
-              *ELF*64-bit*x86-64*)
-                sz="$(stat -c%s "$f")"
-                echo "ELF: $f  size=$sz  -- $ft"
-                if (( sz > best_size )); then
-                  best_size=$sz
-                  bin="$f"
-                fi
-                ;;
-            esac
-          done < <(find /tmp/uk-extract -type f)
-
+          for cand in /tmp/uk-extract/unikraft/bin/kernel.dbg \
+                      /tmp/uk-extract/unikraft/bin/kernel; do
+            if [[ -f "$cand" ]]; then
+              ft="$(file -b "$cand" 2>/dev/null || true)"
+              case "$ft" in
+                *ELF*64-bit*x86-64*) bin="$cand"; break ;;
+              esac
+            fi
+          done
+          # Fallback: largest ELF64 anywhere in the extracted tree.
+          if [[ -z "$bin" ]]; then
+            bin="$(find /tmp/uk-extract -type f -size +100k 2>/dev/null | while read -r f; do
+              ft="$(file -b "$f" 2>/dev/null || true)"
+              case "$ft" in
+                *ELF*64-bit*x86-64*) printf '%s\t%s\n' "$(stat -c%s "$f")" "$f" ;;
+              esac
+            done | sort -rn | head -1 | cut -f2)"
+          fi
           if [[ -z "$bin" ]]; then
             echo "ERROR: no ELF64 x86-64 candidate found after extraction" >&2
             exit 1
           fi
 
-          cp "$bin" /tmp/helloworld
-          file /tmp/helloworld
-          ls -lh /tmp/helloworld
+          # Rename so the kernel path does not contain the banner string and
+          # produce a grep false-positive when firecracker logs the path.
+          cp "$bin" /tmp/uk-kernel
+          file /tmp/uk-kernel
+          ls -lh /tmp/uk-kernel
+          echo "--- 'Hello' strings embedded in the kernel ---"
+          strings /tmp/uk-kernel | grep -i 'hello' | head -5 || true
 
       - name: Boot unikernel under Firecracker
         run: |
-          bash unikraft-firecracker-depot/scripts/run_unikernel.sh /tmp/helloworld
+          bash unikraft-firecracker-depot/scripts/run_unikernel.sh /tmp/uk-kernel "Hello world"
