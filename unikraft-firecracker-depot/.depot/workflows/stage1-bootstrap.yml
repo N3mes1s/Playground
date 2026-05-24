@@ -1,0 +1,78 @@
+name: Stage 1 — boot Unikraft helloworld (bootstrap, no registry cache)
+
+# This workflow installs firecracker + kraft inline on every run.
+# It exists so we can prove the boot path before a Depot project ID
+# (needed for registry caching) is available. Once the project ID is
+# wired in, prefer ci-base-image.yml + unikraft-helloworld.yml which
+# reuse a cached base image and unikernel binary.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  boot:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 10
+    container:
+      # buildpack-deps:24.04-scm ships git so actions/checkout works
+      # without an extra install step.
+      image: buildpack-deps:24.04-scm
+      options: >-
+        --device=/dev/kvm
+        --cap-add=SYS_ADMIN
+        --security-opt seccomp=unconfined
+        --security-opt apparmor=unconfined
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use mirror.facebook.net for apt (archive.ubuntu.com is Cloudflare-blocked from Depot)
+        run: |
+          set -eux
+          sed -i 's|http://archive.ubuntu.com/ubuntu|http://mirror.facebook.net/ubuntu|g; s|http://security.ubuntu.com/ubuntu|http://mirror.facebook.net/ubuntu|g' \
+            /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl jq xz-utils tar gzip uuid-runtime
+
+      - name: Verify KVM passthrough
+        run: |
+          set -eux
+          ls -l /dev/kvm
+          cat /proc/cpuinfo | grep -E '^(vmx|svm)' | head -n1 || true
+
+      - name: Install Firecracker v1.15.0
+        run: |
+          set -eux
+          curl -fsSL https://github.com/firecracker-microvm/firecracker/releases/download/v1.15.0/firecracker-v1.15.0-x86_64.tgz -o /tmp/fc.tgz
+          tar -xzf /tmp/fc.tgz -C /tmp
+          install -m 0755 /tmp/release-v1.15.0-x86_64/firecracker-v1.15.0-x86_64 /usr/local/bin/firecracker
+          firecracker --version
+
+      - name: Install KraftKit
+        run: |
+          set -eux
+          curl -sSf https://get.kraftkit.sh | sh -s -- -y
+          # KraftKit installer drops the binary under /usr/local/bin by default
+          which kraft
+          kraft version
+
+      - name: Pull Unikraft helloworld unikernel
+        run: |
+          set -eux
+          kraft pkg pull unikraft.org/helloworld:latest
+          # Find the firecracker-arch build (fall back to qemu-arch — both are
+          # ELF64 vmlinux and boot under FC).
+          bin="$(find / -type f \( -name '*_fc-x86_64*' -o -name '*_qemu-x86_64*' \) 2>/dev/null | grep -v '/proc/' | head -n1 || true)"
+          if [[ -z "$bin" ]]; then
+            echo "ERROR: could not locate a Unikraft helloworld binary" >&2
+            echo "--- kraft pkg ls ---" >&2
+            kraft pkg ls 2>&1 || true
+            exit 1
+          fi
+          cp "$bin" /tmp/helloworld
+          ls -lh /tmp/helloworld
+          file /tmp/helloworld || true
+
+      - name: Boot unikernel under Firecracker
+        run: |
+          bash unikraft-firecracker-depot/scripts/run_unikernel.sh /tmp/helloworld
