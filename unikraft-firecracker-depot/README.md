@@ -8,6 +8,7 @@ on a [Depot](https://depot.dev) nested-virt CI runner.
 |---|---|
 | Boot the Unikraft `helloworld` unikernel under Firecracker on `depot-ubuntu-24.04`, capture the serial banner via the FC REST API directly | **green — 11 s wall (cached), 209 ms boot** |
 | Run the official Unikraft catalog images in Depot CI, confirm each boots to the Unikraft banner | **green — 4/4 boot** (helloworld, python:3.12, nginx:1.25, redis:7.2). `node:21` excluded — see below. |
+| **Build a true native unikernel** from C sources (`kraft build`), boot it, capture a JSON status line | **green — 249 KB ELF, 209 ms boot, 10 s CI wall (cached)** |
 
 ## Result snapshots
 
@@ -50,6 +51,32 @@ Notes:
   the unikernel value prop, so it's out of scope here (see "What's
   not in scope" below).
 
+### Native unikernel boot (`apps/aegis-probe`)
+
+```
+Powered by
+=== aegis-probe (native Unikraft unikernel) ===
+DETONATE_JSON_BEGIN
+{"verdict":"OK","app":"aegis-probe","runtime":"native","argc":2,"argv0":"kernel","linkage":"compiled-into-unikernel"}
+DETONATE_JSON_END
+elapsed_ms=209
+Firecracker exiting successfully. exit_code=0
+```
+
+- ELF size: **249 KB stripped** (vs ~110 MB for `node:21` bin-compat)
+- Boot → JSON → clean halt: **209 ms**
+- CI wall (cached): **10 s** (build the runner image once with
+  `build-native-unikernel.yml` — ~30 s cached, ~5 min first time)
+- `main.c` is **linked into the unikernel ELF at build time** by
+  `kraft build`, not loaded from a rootfs cpio at boot. No Linux
+  ELF loader, no syscall translation — the C code IS the kernel.
+
+To change what the unikernel does, edit
+`apps/aegis-probe/main.c`, re-run `build-native-unikernel.yml`,
+then `run-native-cached.yml`. To add more source files, append
+to `apps/aegis-probe/Makefile.uk` as
+`APPAEGISPROBE_SRCS-y += $(APPAEGISPROBE_BASE)/<file>.c`.
+
 ## What's not in scope (deliberately)
 
 The Unikraft catalog images `node:21`, `python:3.12`, etc. are the
@@ -60,13 +87,19 @@ user-supplied rootfs cpio; the package only ships the kernel.
 
 Booting these images to the "Powered by Unikraft" banner with no
 user rootfs is sufficient to prove **the unikernel boots on FC under
-Depot CI**, which is the deliverable here. Running an actual Node
-program (e.g. `require("lodash")`) inside one would mean staging a
-100 MB rootfs with the Linux node binary + musl + libstdc++ — which
-defeats the unikernel value prop (5–30 MB image, sub-second boot, no
-userland). A real demonstration of that value prop would mean
-`kraft build`ing a custom unikernel with a tiny JS engine
-(QuickJS, ~1 MB) and the application baked in. Not scoped here.
+Depot CI**, which is one of the deliverables here. Running an actual
+Node program (e.g. `require("lodash")`) inside one would mean
+staging a 100 MB rootfs with the Linux node binary + musl + libstdc++,
+booting it in a 1 GB FC microVM — which defeats the unikernel value
+prop entirely.
+
+The native `aegis-probe` deliverable above shows what that value
+prop actually looks like in practice: a 249 KB self-contained
+unikernel ELF that boots in 209 ms with our C code linked in.
+Extending it to host a JS or Wasm interpreter linked into the
+unikernel (so it's a *unikernel that runs JS*, not a *microVM
+running Linux + node*) is the natural next step but out of
+scope for this experiment.
 
 ## Three things that were surprising about driving FC directly
 
@@ -93,16 +126,24 @@ userland). A real demonstration of that value prop would mean
 ```
 unikraft-firecracker-depot/
 ├── .depot/workflows/
-│   ├── stage1-bootstrap.yml        # no-cache helloworld boot (apt+kraft inline)
-│   ├── build-runner-image.yml      # build & save the helloworld cached runner
-│   ├── run-stage1-cached.yml       # pull cached image, boot helloworld in <12 s
-│   └── multi-image-smoke.yml       # boot all 5 catalog images via kraft run
+│   ├── stage1-bootstrap.yml         # no-cache helloworld boot (apt+kraft inline)
+│   ├── build-runner-image.yml       # build & save the helloworld cached runner
+│   ├── run-stage1-cached.yml        # pull cached image, boot helloworld in <12 s
+│   ├── multi-image-smoke.yml        # boot the 4 catalog images via kraft run
+│   ├── build-native-unikernel.yml   # kraft build aegis-probe + save runner image
+│   └── run-native-cached.yml        # boot the native unikernel (~10 s wall)
+├── apps/aegis-probe/
+│   ├── main.c                       # the C code that BECOMES the unikernel
+│   ├── Kraftfile                    # spec v0.6, target fc/x86_64
+│   ├── Makefile.uk                  # registers main.c into the unikraft build
+│   └── Makefile                     # wrapper around the unikraft build system
 ├── infra/docker/
-│   └── helloworld-runner.Dockerfile  # multi-stage: kraft-pulls helloworld kernel + bakes FC
+│   ├── helloworld-runner.Dockerfile # pulls the prebuilt helloworld unikernel
+│   └── native-runner.Dockerfile     # `kraft build`s apps/aegis-probe -> ELF
 ├── scripts/
-│   └── run_unikernel.sh            # boots FC via REST API, asserts banner
+│   └── run_unikernel.sh             # boots FC via REST API, asserts pattern
 ├── .dockerignore
-├── depot.json                      # { "id": "lmpn2xx8kz" }
+├── depot.json                       # { "id": "lmpn2xx8kz" }
 └── README.md
 ```
 
@@ -137,6 +178,14 @@ depot ci run --repo N3mes1s/Playground \
 # Direct-FC helloworld via cached runner image (~11 s wall)
 depot ci run --repo N3mes1s/Playground \
   --workflow unikraft-firecracker-depot/.depot/workflows/run-stage1-cached.yml
+
+# Build the native aegis-probe unikernel (~30 s cached, ~5 min first time)
+depot ci run --repo N3mes1s/Playground \
+  --workflow unikraft-firecracker-depot/.depot/workflows/build-native-unikernel.yml
+
+# Boot the native unikernel (~10 s wall, 209 ms inside the VM, 249 KB ELF)
+depot ci run --repo N3mes1s/Playground \
+  --workflow unikraft-firecracker-depot/.depot/workflows/run-native-cached.yml
 
 # Direct-FC helloworld via inline install (~61 s wall, no project needed)
 depot ci run --repo N3mes1s/Playground \
