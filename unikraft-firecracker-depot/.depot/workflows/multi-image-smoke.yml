@@ -50,9 +50,17 @@ jobs:
           # "Powered by Unikraft" on its serial console for the smoke
           # to pass. helloworld also gets its banner asserted as a
           # tighter check.
+          #
+          # NOTE: unikraft.org/node:21 is intentionally excluded.
+          # That package ships only the unikernel kernel; /usr/bin/node
+          # is expected to come from a user-supplied rootfs cpio.
+          # Without one, the unikernel aborts in libukcpio at 0.1 s,
+          # before the "Powered by Unikraft" splash. Smoking it with
+          # no rootfs is meaningless and staging the 100 MB node-rootfs
+          # defeats the unikernel value prop (out of scope for this
+          # experiment — see README).
           IMAGES=(
             "unikraft.org/helloworld:latest|Hello from Unikraft"
-            "unikraft.org/node:21|Powered by Unikraft"
             "unikraft.org/python:3.12|Powered by Unikraft"
             "unikraft.org/nginx:1.25|Powered by Unikraft"
             "unikraft.org/redis:7.2|Powered by Unikraft"

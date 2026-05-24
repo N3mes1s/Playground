@@ -7,7 +7,7 @@ on a [Depot](https://depot.dev) nested-virt CI runner.
 | Goal | Status |
 |---|---|
 | Boot the Unikraft `helloworld` unikernel under Firecracker on `depot-ubuntu-24.04`, capture the serial banner via the FC REST API directly | **green — 11 s wall (cached), 209 ms boot** |
-| Run the official Unikraft catalog images in Depot CI, confirm each boots to the Unikraft banner | **green — 5/5 boot** (helloworld, node:21, python:3.12, nginx:1.25, redis:7.2) |
+| Run the official Unikraft catalog images in Depot CI, confirm each boots to the Unikraft banner | **green — 4/4 boot** (helloworld, python:3.12, nginx:1.25, redis:7.2). `node:21` excluded — see below. |
 
 ## Result snapshots
 
@@ -31,17 +31,24 @@ Firecracker exiting successfully. exit_code=0
 
 ```
   IMAGE                            STATUS       PULL     RUN
-  unikraft.org/helloworld:latest   PASS         5s       1s
-  unikraft.org/node:21             PASS         15s      20s
-  unikraft.org/python:3.12         PASS         9s       20s
-  unikraft.org/nginx:1.25          PASS         7s       20s
-  unikraft.org/redis:7.2           PASS         8s       20s
+  unikraft.org/helloworld:latest   PASS         22s      1s
+  unikraft.org/python:3.12         PASS         24s      20s
+  unikraft.org/nginx:1.25          PASS         22s      20s
+  unikraft.org/redis:7.2           PASS         22s      20s
   OVERALL: all images booted to the Unikraft banner
 ```
 
-Note: server-style unikernels (nginx, redis) don't self-halt, so we
-cap the run at 20 s and pass when "Powered by Unikraft" lands on
-serial. helloworld self-halts after printing.
+Notes:
+- helloworld self-halts after printing. The server / runtime
+  images (nginx, redis, python) don't self-halt, so we cap the
+  run at 20 s and pass when "Powered by Unikraft" lands on serial.
+- `unikraft.org/node:21` is intentionally NOT in the smoke list.
+  That package ships only the unikernel; `/usr/bin/node` is meant
+  to come from a user-supplied rootfs cpio. Without one the
+  unikernel aborts in libukcpio at 0.1 s, before the splash.
+  Staging the 100 MB node-rootfs to get past that point defeats
+  the unikernel value prop, so it's out of scope here (see "What's
+  not in scope" below).
 
 ## What's not in scope (deliberately)
 
