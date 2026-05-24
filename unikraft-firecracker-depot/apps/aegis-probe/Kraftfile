@@ -1,0 +1,13 @@
+# Kraftfile for a native C unikernel — no rootfs, no runtime,
+# main.c is linked directly into the unikernel ELF at build time.
+
+spec: v0.6
+
+name: aegis-probe
+
+unikraft:
+  source: https://github.com/unikraft/unikraft.git
+  version: stable
+
+targets:
+  - fc/x86_64

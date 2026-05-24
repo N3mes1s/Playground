@@ -1,0 +1,31 @@
+name: Build native Unikraft unikernel (aegis-probe)
+
+# kraft-builds the aegis-probe unikernel from main.c + Kraftfile +
+# Makefile.uk under apps/aegis-probe/, then bakes the resulting ELF
+# and firecracker into a runner image saved to the Depot Registry as
+# `registry.depot.dev/lmpn2xx8kz:native-runner-latest`.
+#
+# First build clones unikraft@stable + libs (slow, ~5-10 min). Repeat
+# builds reuse Depot's BuildKit layer cache.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build native-runner image and save to Depot Registry
+        uses: depot/build-push-action@v1
+        with:
+          project: lmpn2xx8kz
+          token: ${{ secrets.AEGIS_DEPOT_TOKEN }}
+          context: unikraft-firecracker-depot
+          file: unikraft-firecracker-depot/infra/docker/native-runner.Dockerfile
+          platforms: linux/amd64
+          save: true
+          save-tag: native-runner-latest
+          push: false

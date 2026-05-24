@@ -1,0 +1,7 @@
+# Register this directory as a Unikraft "app" library named `appaegisprobe`
+# and tell the build to include main.c when this library is selected.
+# APPAEGISPROBE_BASE is set by addlib to this directory.
+
+$(eval $(call addlib,appaegisprobe))
+
+APPAEGISPROBE_SRCS-y += $(APPAEGISPROBE_BASE)/main.c
