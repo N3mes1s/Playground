@@ -7,8 +7,41 @@ stages:
 
 | Stage | Goal | Status |
 |-------|------|--------|
-| 1 | Boot the Unikraft `helloworld` unikernel under Firecracker on `depot-ubuntu-24.04`, capture the serial banner | scaffolded |
+| 1 | Boot the Unikraft `helloworld` unikernel under Firecracker on `depot-ubuntu-24.04`, capture the serial banner | **green** — 210 ms boot, 61 s CI wall (no cache yet) |
 | 2 | Boot a Node.js unikernel and run `require("lodash")`, surface a JSON verdict off ttyS0 | not started |
+
+### Stage 1 result (run `ghjzjb731b`)
+
+```
+Powered by
+o.   .o       _ _               __ _
+Oo   Oo  ___ (_) | __ __  __ _ ' _) :_
+oO   oO ' _ `| | |/ /  _)' _` | |_|  _)
+oOo oOO| | | | |   (| | | (_) |  _) :_
+ OoOoO ._, ._:_:_,\_._,  .__,_:_, \___)
+                  Ijiraq 0.21.0~87240a2
+
+Hello from Unikraft!
+elapsed_ms=210
+Firecracker exiting successfully. exit_code=0
+```
+
+Three non-obvious things were needed to drive Firecracker directly
+(beyond what `kraft run` does for you):
+
+1. Load `/unikraft/bin/kernel` (the 258 KB stripped ELF32 with
+   multiboot entry stub) — **not** `/unikraft/bin/kernel.dbg`. The
+   `.dbg` artifact is for symbol lookup, not booting; loading it
+   silently jumps to the wrong entry and hangs.
+2. Boot args follow Unikraft's `"<app_name> -- <app_args>"` format
+   (e.g. `"kernel -- "`). Linux-style args like
+   `"console=ttyS0 reboot=k panic=1"` silently break early Unikraft
+   boot.
+3. Allocate a PTY for `firecracker`'s stdout via
+   `script -qfec "firecracker --api-sock ..." serial.log` and route
+   FC's own structured logs to `--log-path` separately. Without a
+   PTY, guest serial output is dropped in non-interactive containers
+   (firecracker-microvm/firecracker#2729).
 
 Why: Unikraft images are 5–30 MB and boot in milliseconds.
 If the plumbing works, this is a much faster sandbox for
