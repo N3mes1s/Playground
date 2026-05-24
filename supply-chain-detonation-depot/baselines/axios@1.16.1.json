@@ -1,0 +1,27 @@
+{
+  "package": "axios@1.16.1",
+  "captured_from_run": "c2bp1vhg4k",
+  "captured_at": "2026-05-24T11:15:30Z",
+  "verdict_required": "OK",
+  "notes": "axios@1.16.1 pulls 26 transitive deps (form-data, mime-types, follow-redirects, the es-*/has-* chain). `npm install axios` inside the FC guest exercised all 27 install scripts in a single fingerprint. Observed pattern is identical to lodash/ms: localhost IPC + Cloudflare-fronted registry over TLS 443. No postinstall scripts, no out-of-tree network egress, no shell invocation, no suspicious execve. Reviewed and approved 2026-05-24.",
+  "execve_targets_allowlist": [
+    "/usr/local/sbin/npm",
+    "/usr/local/bin/npm",
+    "/usr/sbin/npm",
+    "/usr/bin/npm",
+    "/usr/local/sbin/node",
+    "/usr/local/bin/node",
+    "/usr/sbin/node",
+    "/usr/bin/node"
+  ],
+  "connect_peers_allowlist": [
+    { "kind": "loopback", "label": "npm internal IPC (v4+v6 localhost)" },
+    { "kind": "cidr", "range": "104.16.0.0/13",   "port": 443, "label": "Cloudflare (registry.npmjs.org) — primary v4 range" },
+    { "kind": "cidr", "range": "104.24.0.0/14",   "port": 443, "label": "Cloudflare (registry.npmjs.org)" },
+    { "kind": "cidr", "range": "172.64.0.0/13",   "port": 443, "label": "Cloudflare (registry.npmjs.org)" },
+    { "kind": "cidr", "range": "162.158.0.0/15",  "port": 443, "label": "Cloudflare" },
+    { "kind": "cidr", "range": "141.101.64.0/18", "port": 443, "label": "Cloudflare" },
+    { "kind": "cidr", "range": "108.162.192.0/18","port": 443, "label": "Cloudflare" },
+    { "kind": "cidr", "range": "2606:4700::/32",  "port": 443, "label": "Cloudflare (IPv6)" }
+  ]
+}
