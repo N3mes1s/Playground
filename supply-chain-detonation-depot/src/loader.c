@@ -395,10 +395,12 @@ int main(int argc, char **argv)
 	// outside the install root as "suspicious" (Stage 2 work).
 	setenv("HOME", "/install/.home", 1);
 	// PATH already set at top of main(); keep here as documentation.
-	setenv("npm_config_prefix",       "/install",            1);
-	setenv("npm_config_cache",        "/install/.npm-cache", 1);
-	setenv("npm_config_userconfig",   "/install/.npmrc",     1);
-	setenv("npm_config_globalconfig", "/install/.npmrc",     1);
+	setenv("npm_config_prefix",          "/install",            1);
+	setenv("npm_config_cache",           "/install/.npm-cache", 1);
+	setenv("npm_config_userconfig",      "/install/.npmrc",     1);
+	// Do NOT set npm_config_globalconfig to the same path —
+	// npm refuses to "double-load" the same file as both user and
+	// global config and exits before resolving the install.
 	setenv("npm_config_update_notifier", "false",            1);
 
 	long long t_install_start = now_ms();
