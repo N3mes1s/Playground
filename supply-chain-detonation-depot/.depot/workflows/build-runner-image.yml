@@ -1,0 +1,35 @@
+name: Build detonation runner image
+
+# Cross-compiles probe + static-musl loader, pulls a Linux 6.6 kernel
+# via lvh, builds an Alpine cpio initrd containing node + npm + our
+# /init, bakes everything plus firecracker into a runner image saved
+# to `registry.depot.dev/lmpn2xx8kz:detonation-runner-latest`.
+#
+# First build ~3 min (apk wires up an Alpine rootfs, lvh pulls a
+# kernel, libbpf static-link). Cached ~30 s.
+
+on:
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build detonation-runner image and save to Depot Registry
+        uses: depot/build-push-action@v1
+        with:
+          project: lmpn2xx8kz
+          token: ${{ secrets.AEGIS_DEPOT_TOKEN }}
+          context: supply-chain-detonation-depot
+          file: supply-chain-detonation-depot/infra/docker/detonation-runner.Dockerfile
+          platforms: linux/amd64
+          save: true
+          save-tag: detonation-runner-latest
+          push: false
