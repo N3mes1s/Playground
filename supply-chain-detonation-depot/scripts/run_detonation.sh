@@ -32,12 +32,15 @@ guest_mac="02:FC:00:00:00:$(printf '%02x' $((inst_id % 256)))"
 # We do NOT use the kernel's own `ip=` autoconfig — LVH kernels don't
 # all ship CONFIG_IP_PNP=y. The loader configures eth0 manually via
 # busybox `ip` from the Alpine rootfs.
-# `pci=nocrs`: Ubuntu kernels reserve PCI host-bridge windows via ACPI,
-# which on FC overlaps the virtio-mmio region (0xc0001000) and makes
-# the virtio_net probe fail with EBUSY. nocrs tells the kernel to skip
-# ACPI's resource reservations. We intentionally do NOT pass `pci=off`
-# (FC adds that itself, and combining them confuses the kernel).
-boot_args="${BOOT_ARGS:-console=ttyS0 reboot=k panic=1 root=/dev/ram0 rw pci=nocrs -- pkg=${package} guest_ip=${guest_ip} gw=${host_ip}}"
+# `acpi=off`: Ubuntu kernels parse ACPI tables and reserve the PCI
+# host-bridge windows in memory — including the range FC uses for
+# virtio-mmio (0xc0001000). With ACPI off, no reservation happens and
+# virtio_net probes cleanly. FC microVMs don't need ACPI for hardware
+# discovery; FC's command-line-driven device probe handles it.
+# We don't bother with `pci=off`/`pci=nocrs` because FC appends its
+# own `pci=off` regardless, and `acpi=off` short-circuits the issue
+# upstream of the PCI subsystem entirely.
+boot_args="${BOOT_ARGS:-console=ttyS0 reboot=k panic=1 root=/dev/ram0 rw acpi=off -- pkg=${package} guest_ip=${guest_ip} gw=${host_ip}}"
 
 for f in "$kernel" "$initrd"; do
   if [[ ! -f "$f" ]]; then
