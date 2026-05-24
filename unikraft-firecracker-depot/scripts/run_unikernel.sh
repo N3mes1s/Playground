@@ -20,6 +20,10 @@ set -euo pipefail
 kernel="${1:?missing kernel path}"
 pattern="${2:-Hello world}"
 wait_iters="${WAIT_ITERS:-300}"
+# Unikraft boot args use the "<app_name> -- <app_args>" convention.
+# Linux-style args like "console=ttyS0" silently break Unikraft boot.
+boot_args="${BOOT_ARGS:-kernel -- }"
+mem_mib="${MEM_MIB:-64}"
 
 if [[ ! -f "$kernel" ]]; then
   echo "ERROR: kernel not found at $kernel" >&2
@@ -79,15 +83,17 @@ if [[ ! -S "$sock" ]]; then
   exit 3
 fi
 
-curl -fsS --unix-socket "$sock" -X PUT \
-  'http://localhost/boot-source' \
-  -H 'Content-Type: application/json' \
-  -d "$(jq -nc --arg k "$kernel" '{kernel_image_path:$k, boot_args:"console=ttyS0 reboot=k panic=1"}')"
-
+# Send /machine-config BEFORE /boot-source — that's the order kraft uses
+# and the order Unikraft-on-FC expects.
 curl -fsS --unix-socket "$sock" -X PUT \
   'http://localhost/machine-config' \
   -H 'Content-Type: application/json' \
-  -d '{"vcpu_count":1,"mem_size_mib":64,"smt":false}'
+  -d "$(jq -nc --argjson m "$mem_mib" '{vcpu_count:1, mem_size_mib:$m, smt:false}')"
+
+curl -fsS --unix-socket "$sock" -X PUT \
+  'http://localhost/boot-source' \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -nc --arg k "$kernel" --arg b "$boot_args" '{kernel_image_path:$k, boot_args:$b}')"
 
 t0=$(date +%s%N)
 curl -fsS --unix-socket "$sock" -X PUT \

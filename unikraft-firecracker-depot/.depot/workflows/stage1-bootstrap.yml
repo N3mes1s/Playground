@@ -82,29 +82,21 @@ jobs:
           echo "=== /tmp/uk-extract tree ==="
           find /tmp/uk-extract -maxdepth 6 -type f -printf '%s\t%p\n' 2>/dev/null | sort -rn | head -50
 
-          # Prefer kernel.dbg (full ELF64 with symbols) over kernel (sometimes
-          # a stripped 32-bit multiboot artifact that does not boot under FC).
+          # Unikraft for FC uses /unikraft/bin/kernel as the bootable: a
+          # stripped 32-bit multiboot ELF stub that switches to 64-bit code
+          # at runtime. kernel.dbg is the same kernel WITH debug info; it's
+          # for symbol lookup, NOT for booting. (Verified by inspecting
+          # kraft run's API calls: kraft loads kernel, not kernel.dbg.)
           bin=""
-          for cand in /tmp/uk-extract/unikraft/bin/kernel.dbg \
-                      /tmp/uk-extract/unikraft/bin/kernel; do
+          for cand in /tmp/uk-extract/unikraft/bin/kernel \
+                      /tmp/uk-extract/unikraft/bin/kernel.dbg; do
             if [[ -f "$cand" ]]; then
-              ft="$(file -b "$cand" 2>/dev/null || true)"
-              case "$ft" in
-                *ELF*64-bit*x86-64*) bin="$cand"; break ;;
-              esac
+              bin="$cand"; break
             fi
           done
-          # Fallback: largest ELF64 anywhere in the extracted tree.
           if [[ -z "$bin" ]]; then
-            bin="$(find /tmp/uk-extract -type f -size +100k 2>/dev/null | while read -r f; do
-              ft="$(file -b "$f" 2>/dev/null || true)"
-              case "$ft" in
-                *ELF*64-bit*x86-64*) printf '%s\t%s\n' "$(stat -c%s "$f")" "$f" ;;
-              esac
-            done | sort -rn | head -1 | cut -f2)"
-          fi
-          if [[ -z "$bin" ]]; then
-            echo "ERROR: no ELF64 x86-64 candidate found after extraction" >&2
+            echo "ERROR: no Unikraft kernel binary found at /tmp/uk-extract/unikraft/bin/" >&2
+            find /tmp/uk-extract -type f >&2
             exit 1
           fi
 
