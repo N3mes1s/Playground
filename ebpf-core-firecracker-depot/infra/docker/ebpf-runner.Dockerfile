@@ -60,12 +60,14 @@ FROM alpine:3.20 AS build
 
 # Alpine bundles static .a archives inside the -dev packages
 # (libbpf-dev ships /usr/lib/libbpf.a, elfutils-dev ships libelf.a).
-# Only zlib has a separate -static apk.
+# libelf.a calls into zstd/xz/bz2 for compressed-ELF-section support,
+# so all three need static counterparts too.
 RUN apk add --no-cache \
         build-base clang lld llvm \
         libbpf-dev \
         elfutils-dev \
         zlib-dev zlib-static \
+        zstd-static xz-static bzip2-static \
         linux-headers bpftool \
         argp-standalone
 

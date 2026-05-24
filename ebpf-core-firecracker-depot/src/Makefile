@@ -23,9 +23,10 @@ BPF_CFLAGS = -O2 -g -Wall -Werror \
              -D__TARGET_ARCH_x86 \
              -I.
 
-# Static-musl userspace. -lbpf needs -lelf -lz transitively.
+# Static-musl userspace. -lbpf needs -lelf -lz transitively, and
+# libelf.a needs -lzstd -llzma -lbz2 for ELF compressed-section support.
 LOADER_CFLAGS = -O2 -Wall -Wextra
-LOADER_LDLIBS = -lbpf -lelf -lz
+LOADER_LDLIBS = -lbpf -lelf -lz -lzstd -llzma -lbz2
 LOADER_LDFLAGS = -static -no-pie
 
 .PHONY: all clean
