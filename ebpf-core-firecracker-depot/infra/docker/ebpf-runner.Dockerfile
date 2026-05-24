@@ -21,19 +21,18 @@ RUN sed -i 's|http://archive.ubuntu.com/ubuntu|http://mirror.facebook.net/ubuntu
         /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
-        ca-certificates curl xz-utils zstd lz4 lzop dpkg binutils file \
+        ca-certificates curl xz-utils zstd lz4 lzop binutils file \
+        linux-image-virtual \
  && rm -rf /var/lib/apt/lists/*
 
 # Ubuntu 24.04 (noble) ships kernel 6.8 with CONFIG_DEBUG_INFO_BTF=y so
 # /sys/kernel/btf/vmlinux exists in the running guest and libbpf can
-# resolve CO-RE relocations.  Pull a specific 6.8.x build for
-# reproducibility.
-ARG KERNEL_DEB_URL=https://launchpad.net/ubuntu/+source/linux/6.8.0-83.83/+build/31195822/+files/linux-image-unsigned-6.8.0-83-generic_6.8.0-83.83_amd64.deb
-RUN mkdir -p /work/deb \
- && curl -fsSL "$KERNEL_DEB_URL" -o /work/kernel.deb \
- && dpkg-deb -x /work/kernel.deb /work/deb \
- && ls -lh /work/deb/boot/vmlinuz* \
- && cp /work/deb/boot/vmlinuz-* /work/vmlinuz
+# resolve CO-RE relocations. `linux-image-virtual` pulls a minimal
+# variant suitable for KVM guests (still BTF-enabled).
+RUN mkdir -p /work \
+ && ls -lh /boot/vmlinuz-* \
+ && cp /boot/vmlinuz-*-generic /work/vmlinuz \
+ && file /work/vmlinuz
 
 # Decompress vmlinuz -> vmlinux ELF using the upstream extract-vmlinux
 # script (works whether the inner image is gzipped, zstd, lz4, lzop).
