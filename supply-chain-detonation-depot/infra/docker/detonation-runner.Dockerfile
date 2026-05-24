@@ -14,18 +14,31 @@
 # Built via .depot/workflows/build-runner-image.yml and consumed by
 # .depot/workflows/detonate-one.yml.
 
-# ----- Stage A: lvh CLI + pull a kernel -----------------------------
-FROM golang:1.25-alpine AS lvh-cli
-RUN apk add --no-cache git make build-base
-RUN go install github.com/cilium/little-vm-helper/cmd/lvh@latest \
- && /go/bin/lvh --help 2>&1 | head -3
+# ----- Stage A: Ubuntu linux-image-virtual --------------------------
+# LVH `kernel-images` 6.6-main was tried first but doesn't ship the
+# virtio_net driver — the guest's virtio-mmio NIC doesn't enumerate
+# and `ip link set eth0 up` fails with "Cannot find device". Ubuntu's
+# linux-image-virtual package is explicitly built for VM guests and
+# includes the full virtio stack.
+FROM ubuntu:24.04 AS kernel-collect
 
-FROM alpine:3.20 AS kernel-collect
-RUN apk add --no-cache ca-certificates curl file
-COPY --from=lvh-cli /go/bin/lvh /usr/local/bin/lvh
-WORKDIR /work
-RUN lvh kernels pull 6.6-main \
- && cp /work/6.6-main/boot/vmlinux-* /work/vmlinux \
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN sed -i 's|http://archive.ubuntu.com/ubuntu|http://mirror.facebook.net/ubuntu|g; s|http://security.ubuntu.com/ubuntu|http://mirror.facebook.net/ubuntu|g' \
+        /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends \
+        ca-certificates curl xz-utils zstd lz4 lzop binutils file \
+        linux-image-virtual \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /work \
+ && cp /boot/vmlinuz-*-generic /work/vmlinuz \
+ && file /work/vmlinuz
+
+RUN curl -fsSL https://raw.githubusercontent.com/torvalds/linux/v6.8/scripts/extract-vmlinux -o /usr/local/bin/extract-vmlinux \
+ && chmod +x /usr/local/bin/extract-vmlinux \
+ && extract-vmlinux /work/vmlinuz > /work/vmlinux \
  && file /work/vmlinux \
  && ls -lh /work/vmlinux
 
