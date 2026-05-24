@@ -46,20 +46,22 @@ jobs:
           set -uo pipefail
           ls -l /dev/kvm
 
-          # format: REF|expected-pattern (empty pattern == just-boot smoke)
-          # Tags verified via the unikraft/catalog repo: format is
-          # unikraft.org/<name>:<version>, no language-number suffix
-          # (i.e. python not python3, node:21 since :22 doesn't exist).
+          # Per-image expected-pattern: each image MUST print
+          # "Powered by Unikraft" on its serial console for the smoke
+          # to pass. helloworld also gets its banner asserted as a
+          # tighter check.
           IMAGES=(
             "unikraft.org/helloworld:latest|Hello from Unikraft"
-            "unikraft.org/node:21|"
-            "unikraft.org/python:3.12|"
-            "unikraft.org/nginx:1.25|"
-            "unikraft.org/redis:7.2|"
+            "unikraft.org/node:21|Powered by Unikraft"
+            "unikraft.org/python:3.12|Powered by Unikraft"
+            "unikraft.org/nginx:1.25|Powered by Unikraft"
+            "unikraft.org/redis:7.2|Powered by Unikraft"
           )
 
           mkdir -p /tmp/smoke
           declare -A status
+          declare -A pull_secs
+          declare -A run_secs
 
           for entry in "${IMAGES[@]}"; do
             ref="${entry%%|*}"
@@ -69,52 +71,51 @@ jobs:
 
             echo
             echo "========================================================"
-            echo "== $ref"
+            echo "== $ref  (expect: '$pattern')"
             echo "========================================================"
 
-            # Step 1: pull (separate so we can attribute failures cleanly)
+            # Step 1: pull
+            t0="$(date +%s)"
             if ! kraft pkg pull --plat fc --arch x86_64 "$ref" 2>&1 | tee "$log.pull"; then
               status["$ref"]="PULL_FAIL"
+              pull_secs["$ref"]="$(( $(date +%s) - t0 ))"
               echo "RESULT: $ref -> PULL_FAIL"
               continue
             fi
+            pull_secs["$ref"]="$(( $(date +%s) - t0 ))"
 
-            # Step 2: run (timeout — many of these are servers that don't self-halt)
+            # Step 2: run (timeout: server images don't self-halt)
+            t0="$(date +%s)"
             timeout --foreground 20 kraft run \
               --plat fc --arch x86_64 \
               --memory 256M --rm --detach=false \
               "$ref" 2>&1 | tee "$log" || true
+            run_secs["$ref"]="$(( $(date +%s) - t0 ))"
 
-            if [[ -n "$pattern" ]]; then
-              if grep -qF "$pattern" "$log"; then
-                status["$ref"]="PASS"
-              else
-                status["$ref"]="NO_PATTERN"
-              fi
+            if grep -qF "$pattern" "$log"; then
+              status["$ref"]="PASS"
             else
-              if grep -qE 'Firecracker|Unikraft|Powered by' "$log"; then
-                status["$ref"]="BOOTED"
-              else
-                status["$ref"]="BOOT_FAIL"
-              fi
+              status["$ref"]="NO_PATTERN"
             fi
-            echo "RESULT: $ref -> ${status[$ref]}"
+            echo "RESULT: $ref -> ${status[$ref]}  (pull=${pull_secs[$ref]}s run=${run_secs[$ref]}s)"
           done
 
           echo
           echo "========================================================"
           echo "== Summary"
           echo "========================================================"
-          for ref in "${!status[@]}"; do
-            printf '  %-40s %s\n' "$ref" "${status[$ref]}"
+          printf '  %-32s %-12s %-8s %-8s\n' IMAGE STATUS PULL RUN
+          fail=0
+          for entry in "${IMAGES[@]}"; do
+            ref="${entry%%|*}"
+            s="${status[$ref]:-MISSING}"
+            printf '  %-32s %-12s %-8s %-8s\n' \
+              "$ref" "$s" "${pull_secs[$ref]:-?}s" "${run_secs[$ref]:-?}s"
+            [[ "$s" == "PASS" ]] || fail=1
           done
 
-          # The job passes if at least helloworld matched its pattern;
-          # the other images are exploratory data, not gating.
-          if [[ "${status[unikraft.org/helloworld:latest]:-}" == "PASS" ]]; then
-            echo "OVERALL: helloworld confirmed; other images recorded above."
-            exit 0
-          else
-            echo "OVERALL: helloworld smoke failed (regression vs Stage 1)"
+          if (( fail )); then
+            echo "OVERALL: at least one image did not print 'Powered by Unikraft'"
             exit 1
           fi
+          echo "OVERALL: all images booted to the Unikraft banner"
