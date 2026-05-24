@@ -1,18 +1,18 @@
-name: Stage 1 — boot Unikraft helloworld (cached runner image)
+name: Boot helloworld (cached runner image)
 
-# This workflow uses the pre-built runner image from the Depot
-# Registry — firecracker, util-linux, the Unikraft helloworld
-# kernel, and the boot script are all baked in. Total wall time
-# is dominated by container pull + KVM init, not setup.
+# Uses the pre-built runner image — firecracker, util-linux, the
+# Unikraft helloworld kernel, and the boot script all baked in.
+# Total wall time is dominated by container pull + KVM init, ~11 s.
 #
-# Build the runner image with:
-#   depot build --project lmpn2xx8kz --save \
-#     --save-tag helloworld-runner-latest --platform linux/amd64 \
-#     -f unikraft-firecracker-depot/infra/docker/helloworld-runner.Dockerfile \
-#     unikraft-firecracker-depot
+# Build the image first with `build-helloworld-image.yml` (only
+# needed on a fresh project or after Dockerfile/script changes).
 
 on:
   workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   boot:

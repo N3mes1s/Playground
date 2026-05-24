@@ -8,12 +8,13 @@
 #   - the boot script at /opt/run_unikernel.sh
 #
 # Build context: the experiment root (unikraft-firecracker-depot/).
-# Built via `depot build --save --save-tag helloworld-runner-latest`
-# and consumed by .depot/workflows/run-stage1-cached.yml via
-# `container: image: registry.depot.dev/<PROJECT_ID>:helloworld-runner-latest`.
+# Built via .depot/workflows/build-helloworld-image.yml and consumed
+# by .depot/workflows/boot-helloworld-cached.yml.
 #
-# archive.ubuntu.com is Cloudflare-blocked from Depot egress, so the
-# apt sources are rewritten to mirror.facebook.net before apt-get.
+# The apt sources are rewritten to mirror.facebook.net as defense in
+# depth — the original aegis spec mentioned a Cloudflare HTTP-1010 on
+# archive.ubuntu.com from Depot egress, but we never observed it in
+# this experiment. Cheap to keep, in case the block returns.
 
 # ----- Stage 1: pull the Unikraft helloworld kernel via kraft ---------
 FROM buildpack-deps:24.04-scm AS uk-pull

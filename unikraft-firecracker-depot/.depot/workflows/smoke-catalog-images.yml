@@ -1,16 +1,23 @@
-name: Multi-image smoke test (official Unikraft catalog)
+name: Smoke-boot the official Unikraft catalog images
 
 # Smoke-boots multiple official Unikraft images via `kraft run --plat fc`
 # on a single Depot runner. For each image we record:
 #   - whether kraft pulled the fc/x86_64 variant successfully
-#   - whether firecracker booted to the point of printing something
-#   - whether the per-image expected pattern appeared on serial
+#   - per-image pull/run timing
+#   - whether "Powered by Unikraft" lands on the serial console
 #
-# Uses bootstrap-style install (no cached runner image) because the
-# whole point is to probe MANY images, not optimize one. ~2-4 min wall.
+# Bootstrap-style install (no cached runner image) — the whole point
+# is to probe many images, not optimize one. ~3 min wall.
+#
+# To probe additional images, edit the IMAGES list in the run step
+# below. Format: REF|expected-pattern.
 
 on:
   workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   smoke:

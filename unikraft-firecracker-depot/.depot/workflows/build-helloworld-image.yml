@@ -1,4 +1,4 @@
-name: Build cached runner image
+name: Build helloworld runner image
 
 # Builds infra/docker/helloworld-runner.Dockerfile on Depot's BuildKit
 # and saves it to the project's Depot Registry as
@@ -7,15 +7,14 @@ name: Build cached runner image
 # Trigger manually after changes to:
 #   - infra/docker/helloworld-runner.Dockerfile
 #   - scripts/run_unikernel.sh
-# Then run `run-stage1-cached.yml` to boot using the cached image.
-#
-# Run with:
-#   depot ci run --workflow \
-#     unikraft-firecracker-depot/.depot/workflows/build-runner-image.yml \
-#     --repo N3mes1s/Playground
+# Then run `boot-helloworld-cached.yml` to boot using the cached image.
 
 on:
   workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   build:

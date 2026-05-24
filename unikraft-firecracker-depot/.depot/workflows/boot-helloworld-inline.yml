@@ -1,13 +1,20 @@
-name: Stage 1 — boot Unikraft helloworld (bootstrap, no registry cache)
+name: Boot helloworld (inline install, no cached image)
 
-# This workflow installs firecracker + kraft inline on every run.
-# It exists so we can prove the boot path before a Depot project ID
-# (needed for registry caching) is available. Once the project ID is
-# wired in, prefer ci-base-image.yml + unikraft-helloworld.yml which
-# reuse a cached base image and unikernel binary.
+# Installs firecracker + kraft inline at runtime, pulls the prebuilt
+# Unikraft helloworld unikernel, boots it under Firecracker via the
+# REST API directly. ~61 s wall, every run.
+#
+# Useful when you do NOT have a Depot project ID provisioned (the
+# cached path needs one for registry caching). Once you have one,
+# prefer the cached pair `build-helloworld-image.yml` +
+# `boot-helloworld-cached.yml` which finish in ~11 s instead.
 
 on:
   workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   boot:

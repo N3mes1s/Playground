@@ -1,13 +1,20 @@
-name: Boot native Unikraft unikernel (aegis-probe, cached)
+name: Boot native unikernel (aegis-probe, cached)
 
 # Pulls the cached native-runner image and boots the aegis-probe
 # unikernel — a tiny native unikernel built from C source by
 # `kraft build`, with main.c linked directly into the unikernel ELF.
 # No rootfs, no Linux binary, no syscall translation: this is the
-# actual unikernel value prop (small image, sub-second boot).
+# actual unikernel value prop (small image, sub-second boot, ~10 s
+# CI wall total).
+#
+# Build the image first with `build-native-image.yml`.
 
 on:
   workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   boot:
