@@ -1,0 +1,27 @@
+{
+  "package": "ms@2.1.3",
+  "captured_from_run": "sp81gmmcnh",
+  "captured_at": "2026-05-24T10:58:50Z",
+  "verdict_required": "OK",
+  "notes": "ms is a 1.5 kB pure-JS time-string parser with no dependencies and no postinstall script. Same install-time shape as lodash — only legitimate network egress is to the npm registry over TLS 443.",
+  "execve_targets_allowlist": [
+    "/usr/local/sbin/npm",
+    "/usr/local/bin/npm",
+    "/usr/sbin/npm",
+    "/usr/bin/npm",
+    "/usr/local/sbin/node",
+    "/usr/local/bin/node",
+    "/usr/sbin/node",
+    "/usr/bin/node"
+  ],
+  "connect_peers_allowlist": [
+    { "kind": "loopback", "label": "npm internal IPC (v4+v6 localhost)" },
+    { "kind": "cidr", "range": "104.16.0.0/13",   "port": 443, "label": "Cloudflare (registry.npmjs.org) — primary v4 range" },
+    { "kind": "cidr", "range": "104.24.0.0/14",   "port": 443, "label": "Cloudflare (registry.npmjs.org)" },
+    { "kind": "cidr", "range": "172.64.0.0/13",   "port": 443, "label": "Cloudflare (registry.npmjs.org)" },
+    { "kind": "cidr", "range": "162.158.0.0/15",  "port": 443, "label": "Cloudflare" },
+    { "kind": "cidr", "range": "141.101.64.0/18", "port": 443, "label": "Cloudflare" },
+    { "kind": "cidr", "range": "108.162.192.0/18","port": 443, "label": "Cloudflare" },
+    { "kind": "cidr", "range": "2606:4700::/32",  "port": 443, "label": "Cloudflare (IPv6)" }
+  ]
+}
