@@ -18,14 +18,19 @@ usage() {
   cat <<EOF
 Usage: $(basename "$0") <command>
 
-  Commands:
-    build         Rebuild + cache the ebpf-runner image
+  Hand-rolled flavor (kernels fetched from Ubuntu apt):
+    build         Rebuild + cache the hand-rolled ebpf-runner image
                   (~3-5 min first time, ~30 s after).
-    boot          Boot a single Linux guest (6.8), load probe,
-                  capture verdict (~15 s wall after image cached).
-    matrix        Boot every kernel baked into the image (5.15,
-                  6.1, 6.8), load the same probe in each, print a
-                  per-kernel summary table.
+    boot          Boot one Linux 6.8 guest, load probe (~15 s wall).
+    matrix        Boot the 3 baked-in kernels (5.15, 6.1, 6.8) in
+                  sequence, print summary table.
+
+  LVH flavor (kernels pulled from quay.io/lvh-images/complexity-test):
+    build-lvh     Same as build, but uses LVH's pre-built kernel
+                  catalog. Ships 4 kernels (5.15, 6.1, 6.6, 6.12).
+    matrix-lvh    Run the LVH-backed matrix.
+
+  Common:
     list          Echo every available workflow path.
     status <id>   depot ci status passthrough.
     logs   <id>   depot ci logs passthrough.
@@ -52,9 +57,11 @@ run_wf() {
 
 cmd="${1:-}"
 case "$cmd" in
-  build)  run_wf build-runner-image.yml ;;
-  boot)   run_wf boot-single-kernel.yml ;;
-  matrix) run_wf matrix-kernels.yml ;;
+  build)      run_wf build-runner-image.yml ;;
+  boot)       run_wf boot-single-kernel.yml ;;
+  matrix)     run_wf matrix-kernels.yml ;;
+  build-lvh)  run_wf build-runner-lvh-image.yml ;;
+  matrix-lvh) run_wf matrix-kernels-lvh.yml ;;
   list)
     ls -1 "$REPO_ROOT/$WORKFLOWS_DIR_REL" | sed "s#^#$WORKFLOWS_DIR_REL/#"
     ;;

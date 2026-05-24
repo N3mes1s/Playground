@@ -1,0 +1,37 @@
+name: Build CO-RE eBPF runner image (LVH kernel source)
+
+# Same probe.bpf.o + same static-musl loader + same initrd, but
+# kernel ELFs come from Cilium's little-vm-helper kernel catalog at
+# quay.io/lvh-images/complexity-test:<version>-<timestamp> instead
+# of being hand-fetched from Ubuntu's apt archive.
+#
+# Saved as `registry.depot.dev/lmpn2xx8kz:ebpf-lvh-runner-latest`.
+#
+# Pulling 4 LVH images is ~1 GB of network on the first build; ~30 s
+# cached after.
+
+on:
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build LVH-backed runner image and save to Depot Registry
+        uses: depot/build-push-action@v1
+        with:
+          project: lmpn2xx8kz
+          token: ${{ secrets.AEGIS_DEPOT_TOKEN }}
+          context: ebpf-core-firecracker-depot
+          file: ebpf-core-firecracker-depot/infra/docker/ebpf-runner-lvh.Dockerfile
+          platforms: linux/amd64
+          save: true
+          save-tag: ebpf-lvh-runner-latest
+          push: false
