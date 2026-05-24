@@ -1,0 +1,136 @@
+name: Smoke-boot the official Unikraft catalog images
+
+# Smoke-boots multiple official Unikraft images via `kraft run --plat fc`
+# on a single Depot runner. For each image we record:
+#   - whether kraft pulled the fc/x86_64 variant successfully
+#   - per-image pull/run timing
+#   - whether "Powered by Unikraft" lands on the serial console
+#
+# Bootstrap-style install (no cached runner image) — the whole point
+# is to probe many images, not optimize one. ~3 min wall.
+#
+# To probe additional images, edit the IMAGES list in the run step
+# below. Format: REF|expected-pattern.
+
+on:
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  smoke:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 15
+    container:
+      image: buildpack-deps:24.04-scm
+      options: >-
+        --device=/dev/kvm
+        --cap-add=SYS_ADMIN
+        --security-opt seccomp=unconfined
+        --security-opt apparmor=unconfined
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install firecracker + kraft + util-linux
+        run: |
+          set -eux
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl jq xz-utils tar gzip file util-linux
+
+          curl -fsSL https://github.com/firecracker-microvm/firecracker/releases/download/v1.15.0/firecracker-v1.15.0-x86_64.tgz -o /tmp/fc.tgz
+          tar -xzf /tmp/fc.tgz -C /tmp
+          install -m 0755 /tmp/release-v1.15.0-x86_64/firecracker-v1.15.0-x86_64 /usr/local/bin/firecracker
+          firecracker --version
+
+          curl -sSf https://get.kraftkit.sh | sh -s -- -y
+          kraft version
+
+      - name: Boot each official Unikraft image via kraft run
+        run: |
+          set -uo pipefail
+          ls -l /dev/kvm
+
+          # Per-image expected-pattern: each image MUST print
+          # "Powered by Unikraft" on its serial console for the smoke
+          # to pass. helloworld also gets its banner asserted as a
+          # tighter check.
+          #
+          # NOTE: unikraft.org/node:21 is intentionally excluded.
+          # That package ships only the unikernel kernel; /usr/bin/node
+          # is expected to come from a user-supplied rootfs cpio.
+          # Without one, the unikernel aborts in libukcpio at 0.1 s,
+          # before the "Powered by Unikraft" splash. Smoking it with
+          # no rootfs is meaningless and staging the 100 MB node-rootfs
+          # defeats the unikernel value prop (out of scope for this
+          # experiment — see README).
+          IMAGES=(
+            "unikraft.org/helloworld:latest|Hello from Unikraft"
+            "unikraft.org/python:3.12|Powered by Unikraft"
+            "unikraft.org/nginx:1.25|Powered by Unikraft"
+            "unikraft.org/redis:7.2|Powered by Unikraft"
+          )
+
+          mkdir -p /tmp/smoke
+          declare -A status
+          declare -A pull_secs
+          declare -A run_secs
+
+          for entry in "${IMAGES[@]}"; do
+            ref="${entry%%|*}"
+            pattern="${entry#*|}"
+            slug="$(echo "$ref" | tr '/:' '__')"
+            log="/tmp/smoke/$slug.log"
+
+            echo
+            echo "========================================================"
+            echo "== $ref  (expect: '$pattern')"
+            echo "========================================================"
+
+            # Step 1: pull
+            t0="$(date +%s)"
+            if ! kraft pkg pull --plat fc --arch x86_64 "$ref" 2>&1 | tee "$log.pull"; then
+              status["$ref"]="PULL_FAIL"
+              pull_secs["$ref"]="$(( $(date +%s) - t0 ))"
+              echo "RESULT: $ref -> PULL_FAIL"
+              continue
+            fi
+            pull_secs["$ref"]="$(( $(date +%s) - t0 ))"
+
+            # Step 2: run (timeout: server images don't self-halt)
+            t0="$(date +%s)"
+            timeout --foreground 20 kraft run \
+              --plat fc --arch x86_64 \
+              --memory 256M --rm --detach=false \
+              "$ref" 2>&1 | tee "$log" || true
+            run_secs["$ref"]="$(( $(date +%s) - t0 ))"
+
+            if grep -qF "$pattern" "$log"; then
+              status["$ref"]="PASS"
+            else
+              status["$ref"]="NO_PATTERN"
+            fi
+            echo "RESULT: $ref -> ${status[$ref]}  (pull=${pull_secs[$ref]}s run=${run_secs[$ref]}s)"
+          done
+
+          echo
+          echo "========================================================"
+          echo "== Summary"
+          echo "========================================================"
+          printf '  %-32s %-12s %-8s %-8s\n' IMAGE STATUS PULL RUN
+          fail=0
+          for entry in "${IMAGES[@]}"; do
+            ref="${entry%%|*}"
+            s="${status[$ref]:-MISSING}"
+            printf '  %-32s %-12s %-8s %-8s\n' \
+              "$ref" "$s" "${pull_secs[$ref]:-?}s" "${run_secs[$ref]:-?}s"
+            [[ "$s" == "PASS" ]] || fail=1
+          done
+
+          if (( fail )); then
+            echo "OVERALL: at least one image did not print 'Powered by Unikraft'"
+            exit 1
+          fi
+          echo "OVERALL: all images booted to the Unikraft banner"

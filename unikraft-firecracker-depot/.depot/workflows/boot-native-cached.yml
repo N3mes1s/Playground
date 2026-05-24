@@ -1,0 +1,46 @@
+name: Boot native unikernel (aegis-probe, cached)
+
+# Pulls the cached native-runner image and boots the aegis-probe
+# unikernel — a tiny native unikernel built from C source by
+# `kraft build`, with main.c linked directly into the unikernel ELF.
+# No rootfs, no Linux binary, no syscall translation: this is the
+# actual unikernel value prop (small image, sub-second boot, ~10 s
+# CI wall total).
+#
+# Build the image first with `build-native-image.yml`.
+
+on:
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  boot:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 5
+    container:
+      image: registry.depot.dev/lmpn2xx8kz:native-runner-latest
+      credentials:
+        username: x-token
+        password: ${{ secrets.AEGIS_DEPOT_TOKEN }}
+      options: >-
+        --device=/dev/kvm
+        --cap-add=SYS_ADMIN
+        --security-opt seccomp=unconfined
+        --security-opt apparmor=unconfined
+    steps:
+      - name: Verify image and KVM passthrough
+        run: |
+          set -eux
+          ls -l /dev/kvm
+          firecracker --version
+          file /opt/unikraft/aegis-probe
+          ls -lh /opt/unikraft/aegis-probe /opt/run_unikernel.sh
+
+      - name: Boot aegis-probe under Firecracker
+        run: |
+          bash /opt/run_unikernel.sh \
+            /opt/unikraft/aegis-probe \
+            "DETONATE_JSON_END"

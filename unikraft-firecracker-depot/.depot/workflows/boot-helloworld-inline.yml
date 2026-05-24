@@ -1,0 +1,121 @@
+name: Boot helloworld (inline install, no cached image)
+
+# Installs firecracker + kraft inline at runtime, pulls the prebuilt
+# Unikraft helloworld unikernel, boots it under Firecracker via the
+# REST API directly. ~61 s wall, every run.
+#
+# Useful when you do NOT have a Depot project ID provisioned (the
+# cached path needs one for registry caching). Once you have one,
+# prefer the cached pair `build-helloworld-image.yml` +
+# `boot-helloworld-cached.yml` which finish in ~11 s instead.
+
+on:
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  boot:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 10
+    container:
+      # buildpack-deps:24.04-scm ships git so actions/checkout works
+      # without an extra install step.
+      image: buildpack-deps:24.04-scm
+      options: >-
+        --device=/dev/kvm
+        --cap-add=SYS_ADMIN
+        --security-opt seccomp=unconfined
+        --security-opt apparmor=unconfined
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use mirror.facebook.net for apt (archive.ubuntu.com is Cloudflare-blocked from Depot)
+        run: |
+          set -eux
+          sed -i 's|http://archive.ubuntu.com/ubuntu|http://mirror.facebook.net/ubuntu|g; s|http://security.ubuntu.com/ubuntu|http://mirror.facebook.net/ubuntu|g' \
+            /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl jq xz-utils tar gzip uuid-runtime file binutils \
+            util-linux bsdmainutils
+
+      - name: Verify KVM passthrough
+        run: |
+          set -eux
+          ls -l /dev/kvm
+          cat /proc/cpuinfo | grep -E '^(vmx|svm)' | head -n1 || true
+
+      - name: Install Firecracker v1.15.0
+        run: |
+          set -eux
+          curl -fsSL https://github.com/firecracker-microvm/firecracker/releases/download/v1.15.0/firecracker-v1.15.0-x86_64.tgz -o /tmp/fc.tgz
+          tar -xzf /tmp/fc.tgz -C /tmp
+          install -m 0755 /tmp/release-v1.15.0-x86_64/firecracker-v1.15.0-x86_64 /usr/local/bin/firecracker
+          firecracker --version
+
+      - name: Install KraftKit
+        run: |
+          set -eux
+          curl -sSf https://get.kraftkit.sh | sh -s -- -y
+          # KraftKit installer drops the binary under /usr/local/bin by default
+          which kraft
+          kraft version
+
+      - name: Pull and extract Unikraft helloworld binary (Firecracker platform)
+        run: |
+          set -eux
+          # kraft uses separate --plat and --arch flags (not plat/arch combo)
+          kraft pkg pull --plat fc --arch x86_64 unikraft.org/helloworld:latest \
+            || kraft pkg pull unikraft.org/helloworld:latest
+
+          # kraft 0.12 stores OCI layers as POSIX tar archives under
+          # ~/.local/share/kraftkit/runtime/oci/digests/sha256/<hash>.
+          # Extract every tar layer so we can find the kernel inside.
+          mkdir -p /tmp/uk-extract
+          for blob in $(find ~/.local/share/kraftkit /var/kraftkit /var/lib/kraftkit -type f 2>/dev/null); do
+            ft="$(file -b "$blob" 2>/dev/null || true)"
+            case "$ft" in
+              *"tar archive"*)
+                echo "--- tar contents of $blob ---"
+                tar -tvf "$blob" 2>/dev/null | head -20 || true
+                tar -xf "$blob" -C /tmp/uk-extract 2>/dev/null || true
+                ;;
+            esac
+          done
+
+          echo "=== /tmp/uk-extract tree ==="
+          find /tmp/uk-extract -maxdepth 6 -type f -printf '%s\t%p\n' 2>/dev/null | sort -rn | head -50
+
+          # Unikraft for FC uses /unikraft/bin/kernel as the bootable: a
+          # stripped 32-bit multiboot ELF stub that switches to 64-bit code
+          # at runtime. kernel.dbg is the same kernel WITH debug info; it's
+          # for symbol lookup, NOT for booting. (Verified by inspecting
+          # kraft run's API calls: kraft loads kernel, not kernel.dbg.)
+          bin=""
+          for cand in /tmp/uk-extract/unikraft/bin/kernel \
+                      /tmp/uk-extract/unikraft/bin/kernel.dbg; do
+            if [[ -f "$cand" ]]; then
+              bin="$cand"; break
+            fi
+          done
+          if [[ -z "$bin" ]]; then
+            echo "ERROR: no Unikraft kernel binary found at /tmp/uk-extract/unikraft/bin/" >&2
+            find /tmp/uk-extract -type f >&2
+            exit 1
+          fi
+
+          # Rename so the kernel path does not contain the banner string and
+          # produce a grep false-positive when firecracker logs the path.
+          cp "$bin" /tmp/uk-kernel
+          file /tmp/uk-kernel
+          ls -lh /tmp/uk-kernel
+          echo "--- 'Hello' strings embedded in the kernel ---"
+          strings /tmp/uk-kernel | grep -i 'hello' | head -5 || true
+
+      - name: Boot unikernel via direct Firecracker REST API
+        run: |
+          bash unikraft-firecracker-depot/scripts/run_unikernel.sh \
+            /tmp/uk-kernel "Hello from Unikraft"
