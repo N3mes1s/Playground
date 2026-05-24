@@ -17,9 +17,12 @@ Usage: $(basename "$0") <command>
   Commands:
     build         Rebuild + cache the detonation-runner image
                   (~3 min first time, ~30 s after).
-    detonate      Detonate lodash@4.17.21 (Stage 1 default).
-                  Boots a Linux guest, attaches the BPF probe, runs
-                  npm install, captures the syscall fingerprint.
+    detonate      Stage 1: detonate lodash@4.17.21. Boots a Linux
+                  guest, runs npm install, prints the fingerprint
+                  JSON. Doesn't diff against a baseline.
+    verify        Stage 2: detonate, then diff the captured
+                  fingerprint against the committed baseline. Fails
+                  the workflow if anything mutated.
     list          Echo every available workflow path.
     status <id>   depot ci status passthrough.
     logs   <id>   depot ci logs passthrough.
@@ -48,6 +51,7 @@ cmd="${1:-}"
 case "$cmd" in
   build)    run_wf build-runner-image.yml ;;
   detonate) run_wf detonate-one.yml ;;
+  verify)   run_wf verify-package.yml ;;
   list)
     ls -1 "$REPO_ROOT/$WORKFLOWS_DIR_REL" | sed "s#^#$WORKFLOWS_DIR_REL/#"
     ;;

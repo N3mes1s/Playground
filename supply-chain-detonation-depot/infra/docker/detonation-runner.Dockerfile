@@ -127,6 +127,7 @@ RUN sed -i 's|http://archive.ubuntu.com/ubuntu|http://mirror.facebook.net/ubuntu
         ca-certificates curl jq xz-utils tar gzip uuid-runtime file \
         util-linux bsdmainutils \
         iproute2 iptables \
+        python3 \
  && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL "https://github.com/firecracker-microvm/firecracker/releases/download/${FIRECRACKER_VERSION}/firecracker-${FIRECRACKER_VERSION}-x86_64.tgz" -o /tmp/fc.tgz \
@@ -138,9 +139,12 @@ RUN curl -fsSL "https://github.com/firecracker-microvm/firecracker/releases/down
 COPY --from=kernel-collect /work/vmlinux       /opt/guest/vmlinux
 COPY --from=rootfs-build  /tmp/initrd.cpio    /opt/guest/initrd.cpio
 COPY scripts/run_detonation.sh                /opt/run_detonation.sh
+COPY scripts/diff_fingerprint.py              /opt/diff_fingerprint.py
+COPY baselines/                                /opt/baselines/
 
-RUN chmod +x /opt/run_detonation.sh \
+RUN chmod +x /opt/run_detonation.sh /opt/diff_fingerprint.py \
  && file /opt/guest/vmlinux \
- && ls -lh /opt/guest/ /opt/run_detonation.sh
+ && ls -lh /opt/guest/ /opt/run_detonation.sh /opt/diff_fingerprint.py \
+ && ls -lh /opt/baselines/
 
 WORKDIR /opt

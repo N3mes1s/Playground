@@ -1,0 +1,71 @@
+name: Verify a package (Stage 2 — detonate + diff against baseline)
+
+# Runs Stage 1's detonation, then host-side diffs the captured
+# fingerprint against /opt/baselines/<pkg>.json. Exits non-zero if
+# any observation isn't covered by the baseline allowlists (unknown
+# execve target, unknown connect peer, or verdict mismatch).
+#
+# This is the actual CI-gate behaviour: a PR that bumps a dep would
+# trigger this workflow per added/bumped package; Stage 3 fans it
+# out across a lockfile diff.
+
+on:
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 5
+    container:
+      image: registry.depot.dev/lmpn2xx8kz:detonation-runner-latest
+      credentials:
+        username: x-token
+        password: ${{ secrets.AEGIS_DEPOT_TOKEN }}
+      options: >-
+        --device=/dev/kvm
+        --device=/dev/net/tun
+        --cap-add=SYS_ADMIN
+        --cap-add=NET_ADMIN
+        --cap-add=NET_RAW
+        --security-opt seccomp=unconfined
+        --security-opt apparmor=unconfined
+    steps:
+      - name: Verify image + capabilities
+        run: |
+          set -eux
+          ls -l /dev/kvm /dev/net/tun
+          firecracker --version
+          ls -lh /opt/guest/ /opt/run_detonation.sh /opt/diff_fingerprint.py /opt/baselines/
+
+      - name: Detonate lodash@4.17.21
+        id: detonate
+        run: |
+          set -uo pipefail
+          # Capture full output so we can extract the JSON marker block.
+          bash /opt/run_detonation.sh \
+            /opt/guest/vmlinux \
+            /opt/guest/initrd.cpio \
+            lodash@4.17.21 2>&1 | tee /tmp/detonate.log
+          # Pull the JSON between DETONATION_BEGIN/END.
+          awk '/DETONATION_BEGIN/{p=1; next} /DETONATION_END/{exit} p' \
+              /tmp/detonate.log \
+            | tr -d '\r' > /tmp/fingerprint.json
+          echo '--- captured fingerprint ---'
+          cat /tmp/fingerprint.json
+          # `verdict` field isn't emitted by the loader yet — it's
+          # implicit in exit_status:0. Make it explicit for the diff.
+          # (PASS if exit_status:0; FAIL otherwise.)
+          jq '. + { verdict: (if .exit_status == 0 then "OK" else "FAIL" end) }' \
+            /tmp/fingerprint.json > /tmp/fingerprint.aug.json
+          mv /tmp/fingerprint.aug.json /tmp/fingerprint.json
+
+      - name: Diff fingerprint vs baseline
+        run: |
+          set -eux
+          python3 /opt/diff_fingerprint.py \
+            /tmp/fingerprint.json \
+            /opt/baselines/lodash@4.17.21.json
