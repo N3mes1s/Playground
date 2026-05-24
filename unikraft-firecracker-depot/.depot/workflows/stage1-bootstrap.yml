@@ -56,32 +56,32 @@ jobs:
           which kraft
           kraft version
 
-      - name: Pull and locate Unikraft helloworld binary
+      - name: Pull and extract Unikraft helloworld binary
         run: |
           set -eux
           kraft pkg pull unikraft.org/helloworld:latest
 
-          echo "=== kraft pkg ls ==="
-          kraft pkg ls || true
+          # kraft 0.12 stores the unikernel as OCI layer blobs (POSIX tar
+          # archives) under ~/.local/share/kraftkit/runtime/oci/digests/
+          # sha256/<hash>. The kernel ELF lives INSIDE one of those tars.
+          mkdir -p /tmp/uk-extract
+          for blob in $(find ~/.local/share/kraftkit /var/kraftkit /var/lib/kraftkit -type f 2>/dev/null); do
+            ft="$(file -b "$blob" 2>/dev/null || true)"
+            case "$ft" in
+              *"tar archive"*)
+                echo "--- tar contents of $blob ---"
+                tar -tvf "$blob" 2>/dev/null | head -20 || true
+                tar -xf "$blob" -C /tmp/uk-extract 2>/dev/null || true
+                ;;
+            esac
+          done
 
-          echo "=== kraftkit storage tree (top 30 by size) ==="
-          for d in ~/.local/share/kraftkit ~/.config/kraftkit ~/.config/kraft ~/.kraftkit /var/kraftkit /var/lib/kraftkit; do
-            [[ -d "$d" ]] && find "$d" -type f -printf '%s\t%p\n' 2>/dev/null
-          done | sort -rn | head -30
-
-          # kraft 0.12 stores the unikernel as an OCI blob under
-          # ~/.local/share/kraftkit/oci/blobs/sha256/<hash>. Find it by
-          # content (ELF64 x86-64) rather than filename. Both fc-x86_64
-          # and qemu-x86_64 Unikraft builds are bootable by Firecracker.
-          mapfile -t candidates < <(
-            for d in ~/.local/share/kraftkit ~/.config/kraftkit ~/.config/kraft ~/.kraftkit /var/kraftkit /var/lib/kraftkit; do
-              [[ -d "$d" ]] && find "$d" -type f -size +100k 2>/dev/null
-            done
-          )
+          echo "=== /tmp/uk-extract tree ==="
+          find /tmp/uk-extract -maxdepth 6 -type f -printf '%s\t%p\n' 2>/dev/null | sort -rn | head -50
 
           bin=""
           best_size=0
-          for f in "${candidates[@]}"; do
+          while IFS= read -r f; do
             ft="$(file -b "$f" 2>/dev/null || true)"
             case "$ft" in
               *ELF*64-bit*x86-64*)
@@ -93,10 +93,10 @@ jobs:
                 fi
                 ;;
             esac
-          done
+          done < <(find /tmp/uk-extract -type f)
 
           if [[ -z "$bin" ]]; then
-            echo "ERROR: no ELF64 x86-64 candidate found under kraftkit storage" >&2
+            echo "ERROR: no ELF64 x86-64 candidate found after extraction" >&2
             exit 1
           fi
 
