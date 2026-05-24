@@ -32,7 +32,12 @@ guest_mac="02:FC:00:00:00:$(printf '%02x' $((inst_id % 256)))"
 # We do NOT use the kernel's own `ip=` autoconfig — LVH kernels don't
 # all ship CONFIG_IP_PNP=y. The loader configures eth0 manually via
 # busybox `ip` from the Alpine rootfs.
-boot_args="${BOOT_ARGS:-console=ttyS0 reboot=k panic=1 root=/dev/ram0 rw pci=off -- pkg=${package} guest_ip=${guest_ip} gw=${host_ip}}"
+# `pci=nocrs`: Ubuntu kernels reserve PCI host-bridge windows via ACPI,
+# which on FC overlaps the virtio-mmio region (0xc0001000) and makes
+# the virtio_net probe fail with EBUSY. nocrs tells the kernel to skip
+# ACPI's resource reservations. We intentionally do NOT pass `pci=off`
+# (FC adds that itself, and combining them confuses the kernel).
+boot_args="${BOOT_ARGS:-console=ttyS0 reboot=k panic=1 root=/dev/ram0 rw pci=nocrs -- pkg=${package} guest_ip=${guest_ip} gw=${host_ip}}"
 
 for f in "$kernel" "$initrd"; do
   if [[ ! -f "$f" ]]; then
