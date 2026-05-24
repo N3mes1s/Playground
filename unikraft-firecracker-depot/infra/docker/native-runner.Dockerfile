@@ -39,17 +39,14 @@ WORKDIR /app
 COPY apps/aegis-probe/ ./
 
 # `kraft build` resolves the Kraftfile, clones unikraft@stable into
-# workdir/unikraft, generates a defconfig, and runs make. Output ELF
-# lands at workdir/build/<name>_<plat>-<arch>.
+# .unikraft/, generates a defconfig, and runs make. Output ELF lands
+# at .unikraft/build/<name>_<plat>-<arch>.
 #
-# --no-update keeps the build hermetic; --no-cache forces a clean
-# build (depot-build-push caches Docker layers, so we still get
-# caching across runs without kraft's own per-build cache).
-RUN kraft build --plat fc --arch x86_64 --no-update 2>&1 | tail -200 \
- && echo "--- build output tree ---" \
- && find workdir/build -maxdepth 2 -type f -printf '%s\t%p\n' 2>/dev/null | sort -rn | head -20 \
- && echo "--- candidate unikernel ELFs ---" \
- && find workdir/build -maxdepth 2 -type f \( -name 'aegis-probe*' -o -name '*_fc-x86_64*' \) | head -10
+# --no-update keeps the build hermetic. We pipe via `bash -eo pipefail`
+# explicitly: Docker RUN uses /bin/sh by default, which has no
+# pipefail, so a plain `kraft build … | tail` would silently mask a
+# kraft non-zero exit if any output landed before the failure.
+RUN bash -eo pipefail -c "kraft build --plat fc --arch x86_64 --no-update 2>&1 | tail -200"
 
 # `kraft build` writes the unikernel ELF to .unikraft/build/<name>_<plat>-<arch>
 # alongside a .dbg debug-info variant. The stripped one (no .dbg suffix)

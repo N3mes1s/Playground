@@ -4,7 +4,9 @@
 # self-halt after printing its banner.
 #
 # Usage: run_unikernel.sh <kernel-path> [grep-pattern]
-#   grep-pattern defaults to "Hello world"
+#   grep-pattern defaults to "Hello from Unikraft" (the helloworld
+#   unikernel's banner). Callers using a different unikernel must
+#   pass an explicit pattern.
 #   WAIT_ITERS env var controls poll timeout (default 300 == 30s)
 #
 # Firecracker wires the guest's ttyS0 to its own stdout. When FC is
@@ -18,7 +20,7 @@
 set -euo pipefail
 
 kernel="${1:?missing kernel path}"
-pattern="${2:-Hello world}"
+pattern="${2:-Hello from Unikraft}"
 wait_iters="${WAIT_ITERS:-300}"
 # Unikraft boot args use the "<app_name> -- <app_args>" convention.
 # Linux-style args like "console=ttyS0" silently break Unikraft boot.
