@@ -1,0 +1,42 @@
+name: Stage 1 — boot Unikraft helloworld (cached runner image)
+
+# This workflow uses the pre-built runner image from the Depot
+# Registry — firecracker, util-linux, the Unikraft helloworld
+# kernel, and the boot script are all baked in. Total wall time
+# is dominated by container pull + KVM init, not setup.
+#
+# Build the runner image with:
+#   depot build --project lmpn2xx8kz --save \
+#     --save-tag helloworld-runner-latest --platform linux/amd64 \
+#     -f unikraft-firecracker-depot/infra/docker/helloworld-runner.Dockerfile \
+#     unikraft-firecracker-depot
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  boot:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 5
+    container:
+      image: registry.depot.dev/lmpn2xx8kz:helloworld-runner-latest
+      credentials:
+        username: depot
+        password: ${{ secrets.AEGIS_DEPOT_TOKEN }}
+      options: >-
+        --device=/dev/kvm
+        --cap-add=SYS_ADMIN
+        --security-opt seccomp=unconfined
+        --security-opt apparmor=unconfined
+    steps:
+      - name: Verify image and KVM passthrough
+        run: |
+          set -eux
+          ls -l /dev/kvm
+          firecracker --version
+          file /opt/unikraft/helloworld
+          ls -lh /opt/unikraft/helloworld /opt/run_unikernel.sh
+
+      - name: Boot the unikernel
+        run: |
+          bash /opt/run_unikernel.sh /opt/unikraft/helloworld "Hello from Unikraft"
