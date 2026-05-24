@@ -9,7 +9,8 @@ the kind of test that used to require bare-metal CI.
 | What | Status |
 |---|---|
 | Stage 1 — single kernel, single probe, end-to-end CO-RE load + event capture | **green — 14 ms to libbpf-load, sub-ms to first event, ~15 s CI wall (cached)** |
-| Stage 2 — kernel matrix (5.15 / 6.1 / 6.8) | **green — 3/3 kernels accepted the probe, ~45 s CI wall total** |
+| Stage 2 — kernel matrix (5.15 / 6.1 / 6.8), hand-rolled kernel-fetch | **green — 3/3 OK, ~45 s CI wall** |
+| Stage 2 (alt) — kernel matrix via Cilium's `lvh kernels pull` (5.15 / 6.1 / 6.6 / 6.12) | **green — 4/4 OK, ~45 s CI wall** |
 
 Built on top of the FC plumbing patterns from the sibling
 [`unikraft-firecracker-depot`](../unikraft-firecracker-depot) experiment
@@ -29,9 +30,14 @@ cd ebpf-core-firecracker-depot
 # lmpn2xx8kz (shared with the sibling experiment). AEGIS_DEPOT_TOKEN
 # is already provisioned on the org.
 
-./experiment.sh build      # ~90 s first time, ~30 s cached
-./experiment.sh boot       # ~15 s — boots Linux 6.8 guest, loads probe, prints JSON
-./experiment.sh matrix     # ~45 s — boots 5.15 + 6.1 + 6.8, per-kernel summary table
+./experiment.sh build       # ~90 s first time, ~30 s cached
+./experiment.sh boot        # ~15 s — boots Linux 6.8 guest, loads probe, prints JSON
+./experiment.sh matrix      # ~45 s — boots 5.15 + 6.1 + 6.8 (hand-rolled kernels)
+
+# Same probe, but the kernel ELFs come from lvh kernels pull instead
+# of our Ubuntu-apt-and-extract-vmlinux dance:
+./experiment.sh build-lvh   # ~90 s first time, ~30 s cached
+./experiment.sh matrix-lvh  # ~45 s — 5.15 + 6.1 + 6.6 + 6.12 via lvh
 ```
 
 `./experiment.sh --help` for the full command list.
@@ -66,7 +72,7 @@ Translation:
   `bpf_object__load()` returning success. Essentially the
   KVM-accelerated kernel boot plus libbpf's relocation pass.
 
-## Stage 2 result snapshot
+## Stage 2 result snapshot — hand-rolled kernel fetch
 
 ```
 == Matrix summary
@@ -79,32 +85,68 @@ OVERALL: all kernels accepted the probe
 ```
 
 Same `probe.bpf.o` (compiled against 6.8's BTF), same initrd, same
-loader — booted against three different kernel ABIs spanning ~3
-years of Linux kernel evolution. libbpf relocated each
-`BPF_CORE_READ` field access against the running kernel's BTF.
-5.15 is slightly slower to load (older BPF JIT path); 6.1 and 6.8
-are both ~12 ms.
+loader — booted against three different kernel ABIs. libbpf
+relocated each `BPF_CORE_READ` field access against the running
+kernel's BTF.
 
 A kernel that *fails* CO-RE here would show up with
 `STATUS=FAIL note=(stage=load)` and the workflow exits non-zero —
 which is the useful CI signal for "this probe needs updating to
 match a struct layout change upstream."
 
+## Stage 2 result snapshot — LVH-backed kernel fetch
+
+```
+== LVH matrix summary
+  KERNEL     STATUS       BOOT_TO_LOAD    EVENTS   NOTE
+  ------     ------       ------------    ------   ----
+  5.15       OK           41ms            1
+  6.1        OK           13ms            1
+  6.6        OK           19ms            1
+  6.12       OK           16ms            1
+OVERALL: all LVH kernels accepted the probe
+```
+
+Same probe, same loader, same initrd, but the four kernel ELFs were
+pulled by `lvh kernels pull <ver>-main` from
+`quay.io/lvh-images/kernel-images`. The Dockerfile delta is small —
+~10 lines of `lvh kernels pull` instead of ~50 lines of apt + curl +
+extract-vmlinux — and we gain newer kernels (6.6, 6.12) that aren't
+in Noble's apt archive.
+
+### Hand-rolled vs LVH-backed: when to use which
+
+| | Hand-rolled (`build` + `matrix`) | LVH-backed (`build-lvh` + `matrix-lvh`) |
+|---|---|---|
+| Kernel source | Ubuntu apt + `kernel.ubuntu.com/mainline` debs | `lvh kernels pull` from `quay.io/lvh-images/kernel-images` |
+| Kernel versions available here | 5.15, 6.1, 6.8 | 5.15, 6.1, 6.6, 6.12 (and many more — `lvh kernels catalog`) |
+| Lines of Dockerfile for kernel fetch | ~50 | ~10 |
+| Trust surface | Canonical / kernel.ubuntu.com | quay.io/lvh-images (Cilium maintains) |
+| Why it's here | Learning value: shows what `extract-vmlinux` does, what BTF generation looks like | Production-shaped: this is how Cilium does kernel-matrix BPF CI |
+
+Both produce identical JSON verdicts on the same compiled
+`probe.bpf.o`. Pick LVH for real CO-RE matrix work; the hand-rolled
+variant is in this repo to make the underlying mechanics visible.
+
 ## Layout
 
 ```
 ebpf-core-firecracker-depot/
 ├── .depot/workflows/
-│   ├── build-runner-image.yml       # build + cache ebpf-runner image
+│   ├── build-runner-image.yml       # build + cache hand-rolled runner image
 │   ├── boot-single-kernel.yml       # boot Linux 6.8 guest + load probe
-│   └── matrix-kernels.yml           # boot 5.15 + 6.1 + 6.8 in sequence
+│   ├── matrix-kernels.yml           # 5.15 + 6.1 + 6.8 (hand-rolled)
+│   ├── build-runner-lvh-image.yml   # build + cache LVH-backed runner image
+│   └── matrix-kernels-lvh.yml       # 5.15 + 6.1 + 6.6 + 6.12 (lvh kernels pull)
 ├── src/
 │   ├── probe.bpf.c                  # CO-RE eBPF probe
 │   ├── loader.c                     # static-musl PID 1 / libbpf loader
 │   └── Makefile                     # clang -target bpf, gcc -static
 ├── infra/docker/
-│   └── ebpf-runner.Dockerfile       # 5-stage: fetch kernel, gen vmlinux.h,
-│                                    # build probe+loader, build initrd, runtime
+│   ├── ebpf-runner.Dockerfile       # 5-stage hand-rolled: fetch kernels via
+│   │                                # apt + dpkg-deb + extract-vmlinux
+│   └── ebpf-runner-lvh.Dockerfile   # same shape, but kernels come from
+│                                    # `lvh kernels pull`
 ├── scripts/
 │   └── run_linux_guest.sh           # FC REST + PTY for serial, JSON marker parse
 ├── experiment.sh                    # ./experiment.sh boot | matrix
@@ -164,6 +206,10 @@ depot ci secrets list   # confirm AEGIS_DEPOT_TOKEN is set
   <https://github.com/libbpf/libbpf-bootstrap>
 - libbpf:
   <https://github.com/libbpf/libbpf>
+- **Cilium's little-vm-helper (LVH)** — the production tool for
+  matrix-BPF-testing across kernels. The `lvh-backed` variant here
+  uses it directly:
+  <https://github.com/cilium/little-vm-helper>
 - Firecracker boot-source API:
   <https://github.com/firecracker-microvm/firecracker/blob/main/docs/api_requests/actions.md>
 - CO-RE explainer (Andrii Nakryiko):
