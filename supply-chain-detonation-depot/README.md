@@ -135,10 +135,18 @@ Two paths exercised across two runs:
 
 Both packages produce the same fingerprint shape (pure-JS, only
 contacts the npm registry over TLS) because they have no
-postinstall scripts. The matrix wall time scales linearly with the
-number of added packages (~10 s each); Stage 3 runs sequentially in
-a single job but is straightforward to fan out as a true parallel
-matrix once that pays off.
+postinstall scripts.
+
+Both matrix workflows fan out via `xargs -P "$PARALLEL"` (default 8)
+against `scripts/detonate_one.sh`. Each worker boots its own FC
+microVM with a disjoint TAP / IP / MAC derived from its subshell
+PID (mod 254), and shares only the host-side MASQUERADE NAT rule
+which is `flock`-guarded against duplicates. Wall-clock scales as
+`ceil(direct_deps / PARALLEL) * per_detonation`; on the default
+runner (16 vCPU / 32 GB) the ceiling is ~12 concurrent guests
+before scheduling overhead bites. The aggregator prints a
+`TIMING: serial_sum=… wall_clock=… speedup=Nx` line so the win is
+measurable per run.
 
 ## Stage 3 — real-world `npm install axios`
 

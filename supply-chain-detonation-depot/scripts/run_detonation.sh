@@ -17,12 +17,16 @@ wait_iters="${WAIT_ITERS:-1200}"
 mem_mib="${MEM_MIB:-1024}"
 
 # Per-instance unique names so concurrent jobs on the same runner
-# don't stomp each other's tap / iptables rules.
+# don't stomp each other's tap / iptables rules. Subnet octet is the
+# full inst_id mod 254 (not the first digit — that collided for any
+# two PIDs sharing a leading char).
 inst_id="${INST_ID:-$$}"
+subnet=$(( inst_id % 254 ))
+(( subnet == 0 )) && subnet=1
 tap_dev="tap-fc${inst_id}"
-guest_ip="172.16.${inst_id:0:1}.2"
-host_ip="172.16.${inst_id:0:1}.1"
-guest_mac="02:FC:00:00:00:$(printf '%02x' $((inst_id % 256)))"
+guest_ip="172.16.${subnet}.2"
+host_ip="172.16.${subnet}.1"
+guest_mac="02:FC:00:00:00:$(printf '%02x' "$subnet")"
 
 # The loader scans /proc/cmdline for key=value pairs AFTER the " -- "
 # init-args separator. We pass:
@@ -83,7 +87,16 @@ ip link set "$tap_dev" up
 echo 1 > /proc/sys/net/ipv4/ip_forward 2>/dev/null \
   || sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
 
-iptables -t nat -A POSTROUTING -o "$egress" -j MASQUERADE 2>/dev/null || true
+# MASQUERADE is shared across all guests on this runner — guard the
+# check-then-add under a flock so parallel workers don't each append
+# their own duplicate rule. FORWARD rules are keyed by $tap_dev so
+# they're naturally unique per worker.
+(
+  flock -x 9
+  iptables -t nat -C POSTROUTING -o "$egress" -j MASQUERADE 2>/dev/null \
+    || iptables -t nat -A POSTROUTING -o "$egress" -j MASQUERADE 2>/dev/null \
+    || true
+) 9>/tmp/fc-iptables-masq.lock
 iptables -A FORWARD -i "$tap_dev" -o "$egress" -j ACCEPT 2>/dev/null || true
 iptables -A FORWARD -i "$egress" -o "$tap_dev" \
     -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true

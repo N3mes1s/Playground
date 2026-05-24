@@ -139,14 +139,17 @@ RUN curl -fsSL "https://github.com/firecracker-microvm/firecracker/releases/down
 COPY --from=kernel-collect /work/vmlinux       /opt/guest/vmlinux
 COPY --from=rootfs-build  /tmp/initrd.cpio    /opt/guest/initrd.cpio
 COPY scripts/run_detonation.sh                /opt/run_detonation.sh
+COPY scripts/detonate_one.sh                  /opt/detonate_one.sh
 COPY scripts/diff_fingerprint.py              /opt/diff_fingerprint.py
 COPY scripts/lockfile_diff.py                  /opt/lockfile_diff.py
 COPY baselines/                                /opt/baselines/
 COPY lockfile-fixtures/                        /opt/lockfile-fixtures/
 
-RUN chmod +x /opt/run_detonation.sh /opt/diff_fingerprint.py /opt/lockfile_diff.py \
+RUN chmod +x /opt/run_detonation.sh /opt/detonate_one.sh \
+              /opt/diff_fingerprint.py /opt/lockfile_diff.py \
  && file /opt/guest/vmlinux \
- && ls -lh /opt/guest/ /opt/run_detonation.sh /opt/diff_fingerprint.py /opt/lockfile_diff.py \
+ && ls -lh /opt/guest/ /opt/run_detonation.sh /opt/detonate_one.sh \
+           /opt/diff_fingerprint.py /opt/lockfile_diff.py \
  && ls -lh /opt/baselines/ /opt/lockfile-fixtures/
 
 WORKDIR /opt
