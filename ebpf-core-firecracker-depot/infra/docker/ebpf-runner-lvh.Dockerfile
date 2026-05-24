@@ -25,7 +25,7 @@
 # VM disks, not raw kernel artefacts.
 
 # ----- Stage A: install lvh CLI + pull kernels -----------------------
-FROM golang:1.23-alpine AS lvh-cli
+FROM golang:1.25-alpine AS lvh-cli
 RUN apk add --no-cache git make build-base
 RUN go install github.com/cilium/little-vm-helper/cmd/lvh@latest
 
