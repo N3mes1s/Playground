@@ -32,7 +32,7 @@ jobs:
             /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
           apt-get update
           apt-get install -y --no-install-recommends \
-            ca-certificates curl jq xz-utils tar gzip uuid-runtime
+            ca-certificates curl jq xz-utils tar gzip uuid-runtime file
 
       - name: Verify KVM passthrough
         run: |
@@ -56,22 +56,53 @@ jobs:
           which kraft
           kraft version
 
-      - name: Pull Unikraft helloworld unikernel
+      - name: Pull and locate Unikraft helloworld binary
         run: |
           set -eux
           kraft pkg pull unikraft.org/helloworld:latest
-          # Find the firecracker-arch build (fall back to qemu-arch — both are
-          # ELF64 vmlinux and boot under FC).
-          bin="$(find / -type f \( -name '*_fc-x86_64*' -o -name '*_qemu-x86_64*' \) 2>/dev/null | grep -v '/proc/' | head -n1 || true)"
+
+          echo "=== kraft pkg ls ==="
+          kraft pkg ls || true
+
+          echo "=== kraftkit storage tree (top 30 by size) ==="
+          for d in ~/.local/share/kraftkit ~/.config/kraftkit ~/.config/kraft ~/.kraftkit /var/kraftkit /var/lib/kraftkit; do
+            [[ -d "$d" ]] && find "$d" -type f -printf '%s\t%p\n' 2>/dev/null
+          done | sort -rn | head -30
+
+          # kraft 0.12 stores the unikernel as an OCI blob under
+          # ~/.local/share/kraftkit/oci/blobs/sha256/<hash>. Find it by
+          # content (ELF64 x86-64) rather than filename. Both fc-x86_64
+          # and qemu-x86_64 Unikraft builds are bootable by Firecracker.
+          mapfile -t candidates < <(
+            for d in ~/.local/share/kraftkit ~/.config/kraftkit ~/.config/kraft ~/.kraftkit /var/kraftkit /var/lib/kraftkit; do
+              [[ -d "$d" ]] && find "$d" -type f -size +100k 2>/dev/null
+            done
+          )
+
+          bin=""
+          best_size=0
+          for f in "${candidates[@]}"; do
+            ft="$(file -b "$f" 2>/dev/null || true)"
+            case "$ft" in
+              *ELF*64-bit*x86-64*)
+                sz="$(stat -c%s "$f")"
+                echo "ELF: $f  size=$sz  -- $ft"
+                if (( sz > best_size )); then
+                  best_size=$sz
+                  bin="$f"
+                fi
+                ;;
+            esac
+          done
+
           if [[ -z "$bin" ]]; then
-            echo "ERROR: could not locate a Unikraft helloworld binary" >&2
-            echo "--- kraft pkg ls ---" >&2
-            kraft pkg ls 2>&1 || true
+            echo "ERROR: no ELF64 x86-64 candidate found under kraftkit storage" >&2
             exit 1
           fi
+
           cp "$bin" /tmp/helloworld
+          file /tmp/helloworld
           ls -lh /tmp/helloworld
-          file /tmp/helloworld || true
 
       - name: Boot unikernel under Firecracker
         run: |
