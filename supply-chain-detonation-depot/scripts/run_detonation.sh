@@ -16,10 +16,20 @@ package="${3:-lodash@4.17.21}"
 wait_iters="${WAIT_ITERS:-1200}"
 mem_mib="${MEM_MIB:-1024}"
 
+# Per-instance unique names so concurrent jobs on the same runner
+# don't stomp each other's tap / iptables rules.
+inst_id="${INST_ID:-$$}"
+tap_dev="tap-fc${inst_id}"
+guest_ip="172.16.${inst_id:0:1}.2"
+host_ip="172.16.${inst_id:0:1}.1"
+guest_mac="02:FC:00:00:00:$(printf '%02x' $((inst_id % 256)))"
+
 # Linux init-args separator: everything after " -- " on the kernel
 # cmdline is passed to /init as argv. Our loader scans cmdline for
-# `pkg=...` after the separator.
-boot_args="${BOOT_ARGS:-console=ttyS0 reboot=k panic=1 root=/dev/ram0 rw pci=off -- pkg=${package}}"
+# `pkg=...` after the separator. The `ip=` arg before the separator
+# is parsed by the kernel itself — autoconfigure eth0 with our
+# static address before /init runs.
+boot_args="${BOOT_ARGS:-console=ttyS0 reboot=k panic=1 root=/dev/ram0 rw pci=off ip=${guest_ip}::${host_ip}:255.255.255.0::eth0:off -- pkg=${package}}"
 
 for f in "$kernel" "$initrd"; do
   if [[ ! -f "$f" ]]; then
@@ -42,8 +52,32 @@ cleanup() {
     fi
   done
   rm -f "$sock"
+  # Best-effort tap teardown; container is ephemeral but be tidy
+  ip link del "$tap_dev" 2>/dev/null || true
 }
 trap cleanup EXIT
+
+# Set up TAP for the guest + NAT through the container's egress.
+egress="$(ip route show default 2>/dev/null | awk '{print $5}' | head -1)"
+[[ -z "$egress" ]] && egress=eth0
+
+echo "--- network setup: tap=$tap_dev host=$host_ip guest=$guest_ip egress=$egress ---"
+ip link del "$tap_dev" 2>/dev/null || true
+ip tuntap add "$tap_dev" mode tap
+ip addr add "${host_ip}/24" dev "$tap_dev"
+ip link set "$tap_dev" up
+
+# Enable forwarding + NAT. Some container fs's symlink /proc/sys to
+# a read-only mount — fall back to sysctl if that's the case.
+echo 1 > /proc/sys/net/ipv4/ip_forward 2>/dev/null \
+  || sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+
+iptables -t nat -A POSTROUTING -o "$egress" -j MASQUERADE 2>/dev/null || true
+iptables -A FORWARD -i "$tap_dev" -o "$egress" -j ACCEPT 2>/dev/null || true
+iptables -A FORWARD -i "$egress" -o "$tap_dev" \
+    -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+ip route show
+ip addr show "$tap_dev" || true
 
 # PTY-wrap FC so guest serial isn't dropped (firecracker#2729).
 script -qfec "firecracker --api-sock '$sock' --log-path '$fc_log' --level Info" \
@@ -75,13 +109,13 @@ curl -fsS --unix-socket "$sock" -X PUT 'http://localhost/boot-source' \
   -d "$(jq -nc --arg k "$kernel" --arg i "$initrd" --arg b "$boot_args" \
         '{kernel_image_path:$k, initrd_path:$i, boot_args:$b}')"
 
-# FC needs a virtio-net device for the guest to do DNS / TCP. Stage 1
-# uses host-side bridged networking via a TAP device — but Depot's
-# job container has no network policy that lets the guest reach
-# registry.npmjs.org. Defer real network setup to Stage 2; for now
-# the npm install will fail with ENETUNREACH and we'll see that in
-# the fingerprint (which is useful — it proves the BPF probe captures
-# the connect attempts).
+# Wire up the virtio-net device backed by our tap. FC will expose it
+# as `eth0` inside the guest; the kernel's `ip=` boot arg statically
+# configures it before /init runs.
+curl -fsS --unix-socket "$sock" -X PUT 'http://localhost/network-interfaces/eth0' \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -nc --arg t "$tap_dev" --arg m "$guest_mac" \
+        '{iface_id:"eth0", host_dev_name:$t, guest_mac:$m}')"
 
 t0=$(date +%s%N)
 curl -fsS --unix-socket "$sock" -X PUT 'http://localhost/actions' \

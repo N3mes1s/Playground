@@ -31,7 +31,10 @@ jobs:
         password: ${{ secrets.AEGIS_DEPOT_TOKEN }}
       options: >-
         --device=/dev/kvm
+        --device=/dev/net/tun
         --cap-add=SYS_ADMIN
+        --cap-add=NET_ADMIN
+        --cap-add=NET_RAW
         --security-opt seccomp=unconfined
         --security-opt apparmor=unconfined
     steps:

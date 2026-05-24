@@ -85,6 +85,12 @@ COPY --from=build /src/loader      /rootfs/init
 COPY --from=build /src/probe.bpf.o /rootfs/probe.bpf.o
 RUN chmod +x /rootfs/init
 
+# Static DNS so the guest can resolve registry.npmjs.org via the
+# host-side NAT'd tap interface. /etc/resolv.conf in the initrd is
+# read by glibc/musl name resolution at runtime.
+RUN printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' > /rootfs/etc/resolv.conf \
+ && cat /rootfs/etc/resolv.conf
+
 # Package as a cpio newc archive. ~60-80 MiB initrd for this set of
 # packages; the FC guest sized at 1 GiB has plenty of headroom.
 RUN cd /rootfs \
@@ -105,6 +111,7 @@ RUN sed -i 's|http://archive.ubuntu.com/ubuntu|http://mirror.facebook.net/ubuntu
  && apt-get install -y --no-install-recommends \
         ca-certificates curl jq xz-utils tar gzip uuid-runtime file \
         util-linux bsdmainutils \
+        iproute2 iptables \
  && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL "https://github.com/firecracker-microvm/firecracker/releases/download/${FIRECRACKER_VERSION}/firecracker-${FIRECRACKER_VERSION}-x86_64.tgz" -o /tmp/fc.tgz \
