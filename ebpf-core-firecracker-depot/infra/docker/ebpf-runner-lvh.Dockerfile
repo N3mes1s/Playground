@@ -4,51 +4,54 @@
 #
 # Replaces the hand-rolled kernel-fetch in ebpf-runner.Dockerfile
 # (apt-install linux-image-virtual + curl+dpkg-deb pinned launchpad
-# debs + extract-vmlinux) with Cilium's little-vm-helper kernel
-# catalog at quay.io/lvh-images/complexity-test:<ver>-<timestamp>.
+# debs + extract-vmlinux) with Cilium's little-vm-helper CLI.
 #
-# Why bother:
-#   - LVH is the canonical "matrix BPF tests across kernel versions
-#     in CI" tooling — Cilium use it in their own production CI.
-#   - The images are pre-built with the BPF subsystems Cilium needs
-#     (BTF, all the verifier knobs, debug info). We don't have to
-#     trust an Ubuntu kernel's config or fish vmlinux out of vmlinuz.
-#   - Bumping to a new kernel == bump one tag string.
+# `lvh kernels pull <tag>` downloads kernel artefacts from
+# quay.io/lvh-images/kernel-images:<tag> and extracts them as
+#   ./<tag>/boot/vmlinux-X.Y.Z   (ELF, ready for Firecracker)
+#   ./<tag>/boot/vmlinuz-X.Y.Z   (compressed bzImage)
+#   ./<tag>/boot/btf-X.Y.Z       (raw BTF data)
+#   plus System.map, config, lib/modules/...
 #
-# Tags pinned to the timestamp Cilium's tests-datapath-verifier.yaml
-# uses on `main`. Renovate-bot rotates them upstream; bump here by
-# copy-pasting whatever cilium/cilium currently uses.
+# IMPORTANT: do NOT confuse `quay.io/lvh-images/kernel-images`
+# (raw kernel files, what we want) with the similar-named
+# `quay.io/lvh-images/complexity-test:<ver>` images (entire qcow2
+# VM disks for lvh's run command — different beast entirely; the
+# qcow2s contain `/data/images/*.qcow2.zst`, not /boot/vmlinux).
 
-# Use lvh CLI to pull kernels — it knows the registry URL convention
-# and handles whatever extraction is needed to surface vmlinuz/vmlinux
-# files. The complexity-test:<ver> images we tried directly are qcow2
-# VM disks, not raw kernel artefacts.
-
-# ----- Stage A: install lvh CLI + pull kernels -----------------------
+# ----- Stage A: build the lvh CLI -----------------------------------
+# Need go >= 1.25.7 for lvh; alpine 3.20 ships 1.22, so pin the image.
 FROM golang:1.25-alpine AS lvh-cli
 RUN apk add --no-cache git make build-base
-RUN go install github.com/cilium/little-vm-helper/cmd/lvh@latest
+RUN go install github.com/cilium/little-vm-helper/cmd/lvh@latest \
+ && /go/bin/lvh --help 2>&1 | head -3
 
+# ----- Stage B: pull kernels via lvh CLI -----------------------------
 FROM alpine:3.20 AS kernel-collect
 
-RUN apk add --no-cache ca-certificates curl file bash
+RUN apk add --no-cache ca-certificates curl file
 
 COPY --from=lvh-cli /go/bin/lvh /usr/local/bin/lvh
 
-# Probe what `lvh kernels pull` actually does with one version, then
-# dump the resulting tree so we know how to wire it for real.
-RUN lvh kernels --help 2>&1 | head -40 \
- && echo '--- pull help ---' \
- && lvh kernels pull --help 2>&1 | head -40
+# Pin to "-main" tags, which the LVH project rebuilds nightly. Bump
+# to a timestamp pin once you've picked a version known to work with
+# your probe (e.g. 6.6-20251015.123456).
+WORKDIR /work
+RUN lvh kernels pull 5.15-main \
+ && lvh kernels pull 6.1-main \
+ && lvh kernels pull 6.6-main \
+ && lvh kernels pull 6.12-main \
+ && ls -la /work/
 
-RUN lvh kernels pull 6.6-main 2>&1 | head -60 \
- && echo '--- pulled tree ---' \
- && find / -maxdepth 5 -iname '*vmlin*' 2>/dev/null | head -20 \
- && echo '--- ~/.config/lvh ---' \
- && find ~/.config -maxdepth 6 -type f 2>/dev/null | head -20 \
- && false # diagnostic: fail to surface the layout
+# Each tag dir has /boot/vmlinux-X.Y.Z and /boot/vmlinuz-X.Y.Z.
+# Take the uncompressed vmlinux ELF (Firecracker boots it directly).
+RUN for v in 5.15 6.1 6.6 6.12; do \
+      cp /work/$v-main/boot/vmlinux-* /work/vmlinux-$v; \
+      file /work/vmlinux-$v; \
+    done \
+ && ls -lh /work/vmlinux-*
 
-# ----- Stage B: generate vmlinux.h (from 6.12, newest of the matrix) -
+# ----- Stage C: generate vmlinux.h from the newest kernel ------------
 FROM alpine:3.20 AS btf-dump
 
 RUN apk add --no-cache bpftool file
@@ -59,7 +62,7 @@ RUN bpftool btf dump file /tmp/vmlinux format c > /tmp/vmlinux.h \
  && wc -l /tmp/vmlinux.h \
  && head -5 /tmp/vmlinux.h
 
-# ----- Stage C: build probe + static-musl loader ---------------------
+# ----- Stage D: build probe + static-musl loader ---------------------
 FROM alpine:3.20 AS build
 
 RUN apk add --no-cache \
@@ -79,7 +82,7 @@ RUN make -j$(nproc) all \
  && file probe.bpf.o loader \
  && ls -lh probe.bpf.o loader
 
-# ----- Stage D: initrd cpio ------------------------------------------
+# ----- Stage E: initrd cpio ------------------------------------------
 FROM alpine:3.20 AS initrd-build
 
 RUN apk add --no-cache cpio
@@ -92,7 +95,7 @@ RUN chmod +x /initrd/init \
  && find . -print0 | cpio -o -H newc --null > /tmp/initrd.cpio \
  && ls -lh /tmp/initrd.cpio
 
-# ----- Stage E: final runtime image ----------------------------------
+# ----- Stage F: final runtime image ----------------------------------
 FROM buildpack-deps:24.04-scm
 
 ENV DEBIAN_FRONTEND=noninteractive
