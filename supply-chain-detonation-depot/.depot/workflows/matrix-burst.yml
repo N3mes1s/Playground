@@ -66,6 +66,21 @@ jobs:
 
           wall_ms=$(( ($(date +%s) - t0_wall) * 1000 ))
 
+          # Dump every captured fingerprint to stdout so a reviewer
+          # can extract baselines from the run log. Bracketed with a
+          # unique marker so it's grep-friendly.
+          echo
+          echo "============================================================"
+          echo "== Captured fingerprints (for baseline review)"
+          echo "============================================================"
+          for fp in /tmp/matrix/*.fp.json; do
+            [[ -f "$fp" ]] || continue
+            slug=$(basename "$fp" .fp.json)
+            echo "BASELINE_BEGIN $slug"
+            jq -c . "$fp"
+            echo "BASELINE_END $slug"
+          done
+
           echo
           echo "============================================================"
           echo "== Per-direct-dep matrix (burst10 fixture, parallel=$PARALLEL)"
