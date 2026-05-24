@@ -1,0 +1,37 @@
+name: Build cached runner image
+
+# Builds infra/docker/helloworld-runner.Dockerfile on Depot's BuildKit
+# and saves it to the project's Depot Registry as
+# `registry.depot.dev/lmpn2xx8kz:helloworld-runner-latest`.
+#
+# Trigger manually after changes to:
+#   - infra/docker/helloworld-runner.Dockerfile
+#   - scripts/run_unikernel.sh
+# Then run `run-stage1-cached.yml` to boot using the cached image.
+#
+# Run with:
+#   depot ci run --workflow \
+#     unikraft-firecracker-depot/.depot/workflows/build-runner-image.yml \
+#     --repo N3mes1s/Playground
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build helloworld-runner image and save to Depot Registry
+        uses: depot/build-push-action@v1
+        with:
+          project: lmpn2xx8kz
+          token: ${{ secrets.AEGIS_DEPOT_TOKEN }}
+          context: unikraft-firecracker-depot
+          file: unikraft-firecracker-depot/infra/docker/helloworld-runner.Dockerfile
+          platforms: linux/amd64
+          save: true
+          save-tag: helloworld-runner-latest
+          push: false
