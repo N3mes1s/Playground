@@ -9,7 +9,7 @@ the kind of test that used to require bare-metal CI.
 | What | Status |
 |---|---|
 | Stage 1 — single kernel, single probe, end-to-end CO-RE load + event capture | **green — 14 ms to libbpf-load, sub-ms to first event, ~15 s CI wall (cached)** |
-| Stage 2 — kernel matrix (same probe against multiple kernel versions) | not started |
+| Stage 2 — kernel matrix (5.15 / 6.1 / 6.8) | **green — 3/3 kernels accepted the probe, ~45 s CI wall total** |
 
 Built on top of the FC plumbing patterns from the sibling
 [`unikraft-firecracker-depot`](../unikraft-firecracker-depot) experiment
@@ -30,7 +30,8 @@ cd ebpf-core-firecracker-depot
 # is already provisioned on the org.
 
 ./experiment.sh build      # ~90 s first time, ~30 s cached
-./experiment.sh boot       # ~15 s — boots Linux guest, loads probe, prints JSON
+./experiment.sh boot       # ~15 s — boots Linux 6.8 guest, loads probe, prints JSON
+./experiment.sh matrix     # ~45 s — boots 5.15 + 6.1 + 6.8, per-kernel summary table
 ```
 
 `./experiment.sh --help` for the full command list.
@@ -65,13 +66,38 @@ Translation:
   `bpf_object__load()` returning success. Essentially the
   KVM-accelerated kernel boot plus libbpf's relocation pass.
 
+## Stage 2 result snapshot
+
+```
+== Matrix summary
+  KERNEL     STATUS       BOOT_TO_LOAD    EVENTS   NOTE
+  ------     ------       ------------    ------   ----
+  5.15       OK           43ms            1
+  6.1        OK           12ms            1
+  6.8        OK           13ms            1
+OVERALL: all kernels accepted the probe
+```
+
+Same `probe.bpf.o` (compiled against 6.8's BTF), same initrd, same
+loader — booted against three different kernel ABIs spanning ~3
+years of Linux kernel evolution. libbpf relocated each
+`BPF_CORE_READ` field access against the running kernel's BTF.
+5.15 is slightly slower to load (older BPF JIT path); 6.1 and 6.8
+are both ~12 ms.
+
+A kernel that *fails* CO-RE here would show up with
+`STATUS=FAIL note=(stage=load)` and the workflow exits non-zero —
+which is the useful CI signal for "this probe needs updating to
+match a struct layout change upstream."
+
 ## Layout
 
 ```
 ebpf-core-firecracker-depot/
 ├── .depot/workflows/
 │   ├── build-runner-image.yml       # build + cache ebpf-runner image
-│   └── boot-single-kernel.yml       # boot Linux guest + load probe
+│   ├── boot-single-kernel.yml       # boot Linux 6.8 guest + load probe
+│   └── matrix-kernels.yml           # boot 5.15 + 6.1 + 6.8 in sequence
 ├── src/
 │   ├── probe.bpf.c                  # CO-RE eBPF probe
 │   ├── loader.c                     # static-musl PID 1 / libbpf loader
@@ -81,8 +107,7 @@ ebpf-core-firecracker-depot/
 │                                    # build probe+loader, build initrd, runtime
 ├── scripts/
 │   └── run_linux_guest.sh           # FC REST + PTY for serial, JSON marker parse
-├── kernels/                         # (stage 2: per-kernel manifest goes here)
-├── experiment.sh                    # ./experiment.sh boot
+├── experiment.sh                    # ./experiment.sh boot | matrix
 ├── .dockerignore
 ├── depot.json                       # { "id": "lmpn2xx8kz" }
 ├── SPEC.md                          # the original spec for this experiment
