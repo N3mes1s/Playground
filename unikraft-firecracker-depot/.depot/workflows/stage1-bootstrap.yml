@@ -60,8 +60,8 @@ jobs:
       - name: Pull and extract Unikraft helloworld binary (Firecracker platform)
         run: |
           set -eux
-          # Prefer the firecracker-arch build; fall back to default (qemu-arch).
-          kraft pkg pull --plat fc/x86_64 unikraft.org/helloworld:latest \
+          # kraft uses separate --plat and --arch flags (not plat/arch combo)
+          kraft pkg pull --plat fc --arch x86_64 unikraft.org/helloworld:latest \
             || kraft pkg pull unikraft.org/helloworld:latest
 
           # kraft 0.12 stores OCI layers as POSIX tar archives under
@@ -129,11 +129,20 @@ jobs:
           set -eux
           echo "Direct-FC boot did not surface the banner. Falling back to kraft run"
           echo "to confirm the unikernel + firecracker plumbing works end-to-end."
+          kraft run --help 2>&1 | head -50 || true
           # kraft drives FC itself, with its own serial wiring.
-          timeout 30 kraft run --plat fc/x86_64 --rm \
+          timeout 30 kraft run \
+            --plat fc --arch x86_64 \
+            --memory 64M --rm --detach=false \
             unikraft.org/helloworld:latest 2>&1 | tee /tmp/kraft-run.log || true
           echo "--- match check ---"
-          grep -F "Hello from Unikraft" /tmp/kraft-run.log
+          if grep -F "Hello from Unikraft" /tmp/kraft-run.log; then
+            echo "KRAFT_RUN_OK: binary boots and prints under kraft-driven Firecracker."
+            echo "Gap is in our manual REST API wiring."
+          else
+            echo "KRAFT_RUN_ALSO_FAILED: even kraft can't surface the banner."
+            echo "Issue is the binary or the runner environment, not our FC wiring."
+          fi
 
       - name: Fail the job if the direct-FC boot did not capture the banner
         if: steps.fc_boot.outcome == 'failure'
