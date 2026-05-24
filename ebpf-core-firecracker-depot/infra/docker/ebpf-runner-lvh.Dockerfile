@@ -37,14 +37,11 @@ RUN sed -i 's|http://archive.ubuntu.com/ubuntu|http://mirror.facebook.net/ubuntu
         ca-certificates curl xz-utils zstd lz4 lzop binutils file \
  && rm -rf /var/lib/apt/lists/*
 
-# LVH images put the bootable kernel at /boot/vmlinuz-X.Y.Z. Some
-# variants also expose a pre-extracted /boot/vmlinux-X.Y.Z. We copy
-# the whole /boot/ dir from each LVH stage and pick the right file
-# in the next RUN.
-COPY --from=lvh-5.15  /boot/ /tmp/k-5.15/
-COPY --from=lvh-6.1   /boot/ /tmp/k-6.1/
-COPY --from=lvh-6.6   /boot/ /tmp/k-6.6/
-COPY --from=lvh-6.12  /boot/ /tmp/k-6.12/
+# Diagnostic: dump the full root of the smallest LVH image so we
+# can find where the bootable kernel actually lives in this image
+# family. (First pass assumed /boot/ which doesn't exist; this
+# unblocks figuring out the real path.)
+COPY --from=lvh-5.15  / /tmp/k-5.15/
 
 # extract-vmlinux is the canonical kernel.org script that strips
 # the bootloader wrapper from a compressed bzImage. It groks gzip,
@@ -52,19 +49,15 @@ COPY --from=lvh-6.12  /boot/ /tmp/k-6.12/
 RUN curl -fsSL https://raw.githubusercontent.com/torvalds/linux/v6.8/scripts/extract-vmlinux -o /usr/local/bin/extract-vmlinux \
  && chmod +x /usr/local/bin/extract-vmlinux
 
-RUN mkdir -p /work && set -e && \
-    for v in 5.15 6.1 6.6 6.12; do \
-      echo "=== LVH kernel $v boot dir ==="; \
-      ls -la /tmp/k-$v/ || true; \
-      vmlinuz="$(ls /tmp/k-$v/vmlinuz-* 2>/dev/null | head -1)"; \
-      if [ -z "$vmlinuz" ]; then \
-        echo "ERROR: no vmlinuz found for $v" >&2; \
-        exit 1; \
-      fi; \
-      extract-vmlinux "$vmlinuz" > /work/vmlinux-$v; \
-      file /work/vmlinux-$v; \
-    done; \
-    ls -lh /work/vmlinux-*
+RUN echo '=== top-level dirs of LVH 5.15 image ===' && \
+    ls -la /tmp/k-5.15/ && \
+    echo '=== any file with "vmlin" in name ===' && \
+    find /tmp/k-5.15 -maxdepth 6 -iname '*vmlin*' 2>/dev/null | head -30 && \
+    echo '=== any large ELF (likely kernel) ===' && \
+    find /tmp/k-5.15 -maxdepth 6 -type f -size +1M 2>/dev/null | head -30 && \
+    echo '=== /data dirs ===' && \
+    find /tmp/k-5.15 -maxdepth 3 -type d 2>/dev/null | head -40 && \
+    false # fail intentionally so we get the logs
 
 # ----- Stage B: generate vmlinux.h (from 6.12, newest of the matrix) -
 FROM alpine:3.20 AS btf-dump
