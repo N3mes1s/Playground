@@ -1,0 +1,122 @@
+name: Attack simulation — synthesize axios@1.14.1 fingerprint, run the gate
+
+# Demonstrates what the gate output looks like when a PR bumps axios
+# to a malicious version. We DO NOT run the actual compromised
+# package — there's no value in pulling adversary tooling into a
+# managed-CI runner just for a demo, and the malicious versions are
+# already removed from the registry (StepSecurity advisory, April
+# 2026). Instead we hand-craft a fingerprint that matches the
+# DOCUMENTED IoCs of the March 2026 axios@1.14.1 / 0.30.4 compromise
+# (Elastic Security Labs writeup, 1 April 2026; attributed by Mandiant
+# to UNC1069, by Microsoft to Sapphire Sleet — same DPRK-aligned
+# actor cluster) and run the REAL diff_fingerprint.py gate against
+# the REAL committed axios@1.16.1 baseline.
+#
+# Concretely the synthetic fingerprint contains:
+#   - /bin/sh and /usr/bin/curl in execve_targets — the postinstall
+#     reportedly forks a shell to fetch a second-stage payload
+#   - 142.11.206.73:8000 in connect_peers — the published C2 IP
+#     for sfrclak.com:8000 (also Telegram & Pastebin variants in the
+#     same campaign)
+#
+# Expected gate output: DIFF with the C2 IP and the shell execve
+# called out as unknown items, exit 1, "would block PR".
+
+on:
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  attack:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 5
+    container:
+      image: registry.depot.dev/lmpn2xx8kz:detonation-runner-latest
+      credentials:
+        username: x-token
+        password: ${{ secrets.AEGIS_DEPOT_TOKEN }}
+    steps:
+      - name: Verify image (no microVM needed for the gate check)
+        run: |
+          set -eux
+          ls -lh /opt/diff_fingerprint.py /opt/baselines/axios@1.16.1.json
+
+      - name: Write synthetic fingerprint matching axios@1.14.1 IoCs
+        run: |
+          set -eu
+          mkdir -p /tmp/attack
+          cat > /tmp/attack/axios_1.14.1.fp.json <<'EOF'
+          {
+            "package": "axios@1.14.1",
+            "exit_status": 0,
+            "duration_ms": 6234,
+            "boot_to_install_ms": 162,
+            "events_total": 31,
+            "ringbuf_drops": 0,
+            "execve_targets": [
+              "/usr/local/sbin/npm",
+              "/usr/local/bin/npm",
+              "/usr/sbin/npm",
+              "/usr/bin/npm",
+              "/usr/local/sbin/node",
+              "/usr/local/bin/node",
+              "/usr/sbin/node",
+              "/usr/bin/node",
+              "/bin/sh",
+              "/usr/bin/curl"
+            ],
+            "connect_peers": [
+              "127.0.0.1:65535",
+              "0:0:0:0:0:0:0:1:65535",
+              "104.16.2.34:443",
+              "142.11.206.73:8000"
+            ],
+            "verdict": "OK"
+          }
+          EOF
+          echo "--- synthetic fingerprint ---"
+          jq . /tmp/attack/axios_1.14.1.fp.json
+
+      - name: Run the gate (diff against committed axios@1.16.1 baseline)
+        run: |
+          set -uo pipefail
+          echo "--- baseline ---"
+          jq '{package, captured_from_run, execve_targets_allowlist, connect_peers_allowlist}' \
+            /opt/baselines/axios@1.16.1.json
+
+          echo
+          echo "--- gate output (diff_fingerprint.py) ---"
+          if python3 /opt/diff_fingerprint.py \
+                /tmp/attack/axios_1.14.1.fp.json \
+                /opt/baselines/axios@1.16.1.json \
+              > /tmp/attack/diff.json; then
+            echo
+            echo "============================================================"
+            echo "GATE OUTPUT: PASS  (THIS IS THE WRONG ANSWER — TEST IS BROKEN)"
+            echo "============================================================"
+            jq . /tmp/attack/diff.json
+            exit 1
+          fi
+
+          echo
+          jq . /tmp/attack/diff.json
+          echo
+          echo "============================================================"
+          echo "GATE OUTPUT: DIFF — would BLOCK the PR"
+          echo "============================================================"
+          ue=$(jq -r '.unknown_execve_targets | length' /tmp/attack/diff.json)
+          uc=$(jq -r '.unknown_connect_peers | length' /tmp/attack/diff.json)
+          echo "  unknown execve targets: $ue"
+          jq -r '.unknown_execve_targets[]' /tmp/attack/diff.json | sed 's/^/    /'
+          echo "  unknown connect peers: $uc"
+          jq -r '.unknown_connect_peers[]' /tmp/attack/diff.json | sed 's/^/    /'
+          echo
+          echo "Indicators of compromise (per Elastic Security Labs, 1 April 2026):"
+          echo "  - Shell spawn during npm install (axios is pure-JS, no postinstall)"
+          echo "  - TCP egress to 142.11.206.73:8000 — C2 for sfrclak.com"
+          echo "  - Attributed to UNC1069 / Sapphire Sleet (DPRK-aligned)"
+          echo
+          echo "Gate result: DETECTED.  Expected: DIFF."
