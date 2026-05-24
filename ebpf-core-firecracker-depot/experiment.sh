@@ -21,8 +21,11 @@ Usage: $(basename "$0") <command>
   Commands:
     build         Rebuild + cache the ebpf-runner image
                   (~3-5 min first time, ~30 s after).
-    boot          Boot the Linux guest, load probe, capture verdict
-                  (~10 s wall after the image is cached).
+    boot          Boot a single Linux guest (6.8), load probe,
+                  capture verdict (~15 s wall after image cached).
+    matrix        Boot every kernel baked into the image (5.15,
+                  6.1, 6.8), load the same probe in each, print a
+                  per-kernel summary table.
     list          Echo every available workflow path.
     status <id>   depot ci status passthrough.
     logs   <id>   depot ci logs passthrough.
@@ -51,6 +54,7 @@ cmd="${1:-}"
 case "$cmd" in
   build)  run_wf build-runner-image.yml ;;
   boot)   run_wf boot-single-kernel.yml ;;
+  matrix) run_wf matrix-kernels.yml ;;
   list)
     ls -1 "$REPO_ROOT/$WORKFLOWS_DIR_REL" | sed "s#^#$WORKFLOWS_DIR_REL/#"
     ;;

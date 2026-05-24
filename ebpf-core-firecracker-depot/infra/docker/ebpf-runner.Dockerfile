@@ -21,33 +21,58 @@ RUN sed -i 's|http://archive.ubuntu.com/ubuntu|http://mirror.facebook.net/ubuntu
         /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
-        ca-certificates curl xz-utils zstd lz4 lzop binutils file \
+        ca-certificates curl xz-utils zstd lz4 lzop binutils file dpkg \
         linux-image-virtual \
  && rm -rf /var/lib/apt/lists/*
 
-# Ubuntu 24.04 (noble) ships kernel 6.8 with CONFIG_DEBUG_INFO_BTF=y so
-# /sys/kernel/btf/vmlinux exists in the running guest and libbpf can
-# resolve CO-RE relocations. `linux-image-virtual` pulls a minimal
-# variant suitable for KVM guests (still BTF-enabled).
-RUN mkdir -p /work \
- && ls -lh /boot/vmlinuz-* \
- && cp /boot/vmlinuz-*-generic /work/vmlinuz \
- && file /work/vmlinuz
+# Three Linux kernels with CONFIG_DEBUG_INFO_BTF=y so /sys/kernel/btf/
+# vmlinux exists in the guest and libbpf can resolve CO-RE relocations
+# at load time:
+#
+#   6.8  — Ubuntu noble's stock kernel (from apt linux-image-virtual)
+#   6.1  — kernel.ubuntu.com mainline build of vanilla v6.1.0
+#   5.15 — kernel.ubuntu.com mainline build of vanilla v5.15.0
+#
+# Three different upstream layouts of struct task_struct => CO-RE
+# field-offset relocations actually have to do work.
+#
+# These mainline URLs are pinned to specific point releases (the
+# date-stamped filename is the artefact ID); they don't move.
 
-# Decompress vmlinuz -> vmlinux ELF using the upstream extract-vmlinux
-# script (works whether the inner image is gzipped, zstd, lz4, lzop).
+ARG KERNEL_6_1_URL=http://kernel.ubuntu.com/mainline/v6.1/amd64/linux-image-unsigned-6.1.0-060100-generic_6.1.0-060100.202303090726_amd64.deb
+ARG KERNEL_5_15_URL=http://kernel.ubuntu.com/mainline/v5.15/amd64/linux-image-unsigned-5.15.0-051500-generic_5.15.0-051500.202110312130_amd64.deb
+
+RUN mkdir -p /work \
+ && cp /boot/vmlinuz-*-generic /work/vmlinuz-6.8 \
+ && curl -fsSL "$KERNEL_6_1_URL"  -o /work/k61.deb \
+ && curl -fsSL "$KERNEL_5_15_URL" -o /work/k515.deb \
+ && dpkg-deb -x /work/k61.deb  /work/k61 \
+ && dpkg-deb -x /work/k515.deb /work/k515 \
+ && cp /work/k61/boot/vmlinuz-*-generic  /work/vmlinuz-6.1 \
+ && cp /work/k515/boot/vmlinuz-*-generic /work/vmlinuz-5.15 \
+ && rm -rf /work/k61 /work/k515 /work/*.deb \
+ && ls -lh /work/vmlinuz-*
+
+# Decompress each vmlinuz -> vmlinux ELF. extract-vmlinux handles
+# gzip / zstd / lz4 / lzop / xz wrappers.
 RUN curl -fsSL https://raw.githubusercontent.com/torvalds/linux/v6.8/scripts/extract-vmlinux -o /usr/local/bin/extract-vmlinux \
  && chmod +x /usr/local/bin/extract-vmlinux \
- && extract-vmlinux /work/vmlinuz > /work/vmlinux \
- && file /work/vmlinux \
- && ls -lh /work/vmlinux
+ && for v in 5.15 6.1 6.8; do \
+      extract-vmlinux /work/vmlinuz-$v > /work/vmlinux-$v; \
+      file /work/vmlinux-$v; \
+    done \
+ && ls -lh /work/vmlinux-*
 
 # ----- Stage B: generate vmlinux.h from the kernel's BTF --------------
 FROM alpine:3.20 AS btf-dump
 
 RUN apk add --no-cache bpftool file
 
-COPY --from=kernel-fetch /work/vmlinux /tmp/vmlinux
+# Generate vmlinux.h from the NEWEST kernel (6.8). That's the BTF
+# headers the probe will be compiled against. CO-RE relocations at
+# load time will rewrite field offsets when the probe runs against
+# the older 6.1 / 5.15 guest kernels.
+COPY --from=kernel-fetch /work/vmlinux-6.8 /tmp/vmlinux
 
 # bpftool reads BTF straight from the ELF .BTF section. If the kernel
 # was built without CONFIG_DEBUG_INFO_BTF this will fail loudly.
@@ -120,12 +145,19 @@ RUN curl -fsSL "https://github.com/firecracker-microvm/firecracker/releases/down
  && rm -rf /tmp/fc.tgz "/tmp/release-${FIRECRACKER_VERSION}-x86_64" \
  && firecracker --version
 
-COPY --from=kernel-fetch /work/vmlinux       /opt/guest/vmlinux
+# Stage 1 expects /opt/guest/vmlinux (the 6.8 default).
+# Stage 2 picks one of the per-version files under /opt/guest/.
+COPY --from=kernel-fetch /work/vmlinux-5.15  /opt/guest/vmlinux-5.15
+COPY --from=kernel-fetch /work/vmlinux-6.1   /opt/guest/vmlinux-6.1
+COPY --from=kernel-fetch /work/vmlinux-6.8   /opt/guest/vmlinux-6.8
 COPY --from=initrd-build /tmp/initrd.cpio    /opt/guest/initrd.cpio
 COPY scripts/run_linux_guest.sh              /opt/run_linux_guest.sh
 
-RUN chmod +x /opt/run_linux_guest.sh \
- && file /opt/guest/vmlinux \
- && ls -lh /opt/guest/vmlinux /opt/guest/initrd.cpio /opt/run_linux_guest.sh
+# /opt/guest/vmlinux is a symlink to 6.8 so the Stage 1 workflow that
+# hardcoded the path keeps working.
+RUN ln -s vmlinux-6.8 /opt/guest/vmlinux \
+ && chmod +x /opt/run_linux_guest.sh \
+ && for v in 5.15 6.1 6.8; do file /opt/guest/vmlinux-$v; done \
+ && ls -lh /opt/guest/ /opt/run_linux_guest.sh
 
 WORKDIR /opt
