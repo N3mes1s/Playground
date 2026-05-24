@@ -116,20 +116,20 @@ depot ci run --repo N3mes1s/Playground \
 - microVM exits cleanly → `exit_code=0` ✓
 - script-reported boot+exec time is **< 1 s** → **209 ms** ✓
 
-## Known gotchas (carried over from aegis + discovered here)
+## Known gotchas (verified in this experiment)
 
-1. **archive.ubuntu.com is Cloudflare-blocked** from Depot egress
-   (HTTP 1010). Dockerfile rewrites apt sources to
-   `mirror.facebook.net` before any `apt-get`.
-2. **Secret names can't start with `DEPOT_`.** We use
-   `AEGIS_DEPOT_TOKEN`; inject as `DEPOT_TOKEN` env var inside steps
-   where the depot CLI needs it.
-3. **Depot Registry username is `x-token`** (not `depot`, not the
-   project ID). Password is any depot token.
-4. **`depot projects list`/`delete` need elevated scope** the org
+1. **Depot Registry username is `x-token`** (not `depot`, not the
+   project ID). Password is any depot token. The obvious
+   `username: depot` returns HTTP 401 with no useful hint.
+2. **`depot projects list` / `delete` need elevated scope** the org
    token lacks, but `depot projects create` works. Test projects
-   that get created can only be cleaned up via the Depot UI.
-5. **Unikraft on FC quirks** — see the three bullets above.
+   created during iteration can only be cleaned up via the Depot UI.
+3. **Unikraft on FC has three non-obvious wiring requirements** —
+   see the three bullets at the top of this file (kernel file
+   selection, boot_args format, PTY for guest serial).
+4. **`unikraft.org` catalog refs are `unikraft.org/<name>:<version>`**
+   — no `library/`, `runtime/`, or `native/` prefix. (The spec
+   mentioned those prefixes; the actual registry uses none.)
 
 ## Reference
 

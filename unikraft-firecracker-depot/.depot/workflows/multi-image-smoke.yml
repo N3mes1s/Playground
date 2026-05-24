@@ -1,0 +1,117 @@
+name: Multi-image smoke test (official Unikraft catalog)
+
+# Smoke-boots multiple official Unikraft images via `kraft run --plat fc`
+# on a single Depot runner. For each image we record:
+#   - whether kraft pulled the fc/x86_64 variant successfully
+#   - whether firecracker booted to the point of printing something
+#   - whether the per-image expected pattern appeared on serial
+#
+# Uses bootstrap-style install (no cached runner image) because the
+# whole point is to probe MANY images, not optimize one. ~2-4 min wall.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  smoke:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 15
+    container:
+      image: buildpack-deps:24.04-scm
+      options: >-
+        --device=/dev/kvm
+        --cap-add=SYS_ADMIN
+        --security-opt seccomp=unconfined
+        --security-opt apparmor=unconfined
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install firecracker + kraft + util-linux
+        run: |
+          set -eux
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl jq xz-utils tar gzip file util-linux
+
+          curl -fsSL https://github.com/firecracker-microvm/firecracker/releases/download/v1.15.0/firecracker-v1.15.0-x86_64.tgz -o /tmp/fc.tgz
+          tar -xzf /tmp/fc.tgz -C /tmp
+          install -m 0755 /tmp/release-v1.15.0-x86_64/firecracker-v1.15.0-x86_64 /usr/local/bin/firecracker
+          firecracker --version
+
+          curl -sSf https://get.kraftkit.sh | sh -s -- -y
+          kraft version
+
+      - name: Boot each official Unikraft image via kraft run
+        run: |
+          set -uo pipefail
+          ls -l /dev/kvm
+
+          # format: REF|expected-pattern (empty pattern == just-boot smoke)
+          IMAGES=(
+            "unikraft.org/helloworld:latest|Hello from Unikraft"
+            "unikraft.org/node:22|"
+            "unikraft.org/python3:3.11|"
+            "unikraft.org/nginx:1.25|"
+            "unikraft.org/redis:7.2|"
+          )
+
+          mkdir -p /tmp/smoke
+          declare -A status
+
+          for entry in "${IMAGES[@]}"; do
+            ref="${entry%%|*}"
+            pattern="${entry#*|}"
+            slug="$(echo "$ref" | tr '/:' '__')"
+            log="/tmp/smoke/$slug.log"
+
+            echo
+            echo "========================================================"
+            echo "== $ref"
+            echo "========================================================"
+
+            # Step 1: pull (separate so we can attribute failures cleanly)
+            if ! kraft pkg pull --plat fc --arch x86_64 "$ref" 2>&1 | tee "$log.pull"; then
+              status["$ref"]="PULL_FAIL"
+              echo "RESULT: $ref -> PULL_FAIL"
+              continue
+            fi
+
+            # Step 2: run (timeout — many of these are servers that don't self-halt)
+            timeout --foreground 20 kraft run \
+              --plat fc --arch x86_64 \
+              --memory 256M --rm --detach=false \
+              "$ref" 2>&1 | tee "$log" || true
+
+            if [[ -n "$pattern" ]]; then
+              if grep -qF "$pattern" "$log"; then
+                status["$ref"]="PASS"
+              else
+                status["$ref"]="NO_PATTERN"
+              fi
+            else
+              if grep -qE 'Firecracker|Unikraft|Powered by' "$log"; then
+                status["$ref"]="BOOTED"
+              else
+                status["$ref"]="BOOT_FAIL"
+              fi
+            fi
+            echo "RESULT: $ref -> ${status[$ref]}"
+          done
+
+          echo
+          echo "========================================================"
+          echo "== Summary"
+          echo "========================================================"
+          for ref in "${!status[@]}"; do
+            printf '  %-40s %s\n' "$ref" "${status[$ref]}"
+          done
+
+          # The job passes if at least helloworld matched its pattern;
+          # the other images are exploratory data, not gating.
+          if [[ "${status[unikraft.org/helloworld:latest]:-}" == "PASS" ]]; then
+            echo "OVERALL: helloworld confirmed; other images recorded above."
+            exit 0
+          else
+            echo "OVERALL: helloworld smoke failed (regression vs Stage 1)"
+            exit 1
+          fi
