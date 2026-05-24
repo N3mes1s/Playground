@@ -1,21 +1,34 @@
 # ebpf-core-firecracker-depot
 
-Load a CO-RE (Compile Once, Run Everywhere) eBPF probe inside a real
-Linux microVM under Firecracker on a [Depot](https://depot.dev)
-nested-virt CI runner. The point: validate that the probe's
-`BPF_CORE_READ` relocations resolve against the guest kernel's BTF —
-the kind of test that used to require bare-metal CI.
+Load a CO-RE (Compile Once, Run Everywhere) eBPF probe inside real
+Linux microVMs under Firecracker on a [Depot](https://depot.dev)
+nested-virt CI runner, then matrix-test the same compiled `.bpf.o`
+against several guest kernel ABIs.
 
-| What | Status |
-|---|---|
-| Stage 1 — single kernel, single probe, end-to-end CO-RE load + event capture | **green — 14 ms to libbpf-load, sub-ms to first event, ~15 s CI wall (cached)** |
-| Stage 2 — kernel matrix (5.15 / 6.1 / 6.8), hand-rolled kernel-fetch | **green — 3/3 OK, ~45 s CI wall** |
-| Stage 2 (alt) — kernel matrix via Cilium's `lvh kernels pull` (5.15 / 6.1 / 6.6 / 6.12) | **green — 4/4 OK, ~45 s CI wall** |
+The technical pattern (FC microVMs + matrix BPF testing) **is not
+new** — Cilium's [little-vm-helper](https://github.com/cilium/little-vm-helper)
+(LVH) does exactly this and is what real projects reach for. What's
+incrementally new is doing it inside a *managed* CI service without
+self-hosting bare metal or `*.metal`-class instances. This experiment
+ships both:
 
-Built on top of the FC plumbing patterns from the sibling
-[`unikraft-firecracker-depot`](../unikraft-firecracker-depot) experiment
-(PR #18) — the PTY-for-FC-stdout trick, the `x-token` Depot Registry
-auth, the multi-stage Dockerfile-then-runner-image pattern, all of it.
+- a **hand-rolled** FC + initrd + apt-fetch-kernel pipeline
+  (educational; shows the mechanics LVH hides), and
+- the same pipeline with **`lvh kernels pull`** swapped in for the
+  kernel-fetch step (recommended for real work; ~10 lines of
+  Dockerfile instead of ~50).
+
+| Stage | Path | Result |
+|---|---|---|
+| 1 — single kernel, single probe, end-to-end CO-RE load + event capture | hand-rolled, kernel 6.8 | **green** — 14 ms to libbpf-load, sub-ms to first event, ~15 s CI wall (cached) |
+| 2 — kernel matrix 5.15 / 6.1 / 6.8 | hand-rolled | **green** — 3/3 OK, ~45 s CI wall |
+| 2 — kernel matrix 5.15 / 6.1 / 6.6 / 6.12 | LVH | **green** — 4/4 OK, ~45 s CI wall |
+
+FC plumbing patterns (PTY-for-stdout, `x-token` Depot Registry auth,
+multi-stage Dockerfile → cached runner image) are inherited from the
+sibling [`unikraft-firecracker-depot`](../unikraft-firecracker-depot)
+experiment (PR #18) — see its README for the firsthand-discovered
+quirks.
 
 ## Quickstart
 
@@ -168,37 +181,66 @@ export DEPOT_TOKEN='depot_org_...'
 depot ci secrets list   # confirm AEGIS_DEPOT_TOKEN is set
 ```
 
-## What this proves about Depot's nested-virt runners
+## What's actually demonstrated here
 
-- The guest kernel is a real, full-fat Ubuntu 6.8 — not the runner's
-  kernel — booted under KVM acceleration. We control the version,
-  the config, the BTF.
-- libbpf's CO-RE relocator ran against the guest BTF at load time
-  and resolved every field access in the probe. If you swap in a
-  different kernel version (Stage 2), failures here would mean
-  "your probe's field accesses don't translate" — the same signal
-  you'd get from running on the real production kernel of a
-  different host.
-- Total wall time per kernel boot+probe-load+halt: ~1 second
-  in-guest, ~15 seconds CI overhead. Cheap enough to matrix-test
-  across many kernel versions in a single CI workflow.
+- **Same `probe.bpf.o` runs on four different guest kernel ABIs**
+  spanning ~3 years of Linux evolution (5.15 → 6.12). Each guest's
+  libbpf resolved every `BPF_CORE_READ` field access against its
+  own kernel's BTF at load time. That's CO-RE working empirically,
+  not in theory.
+- **LVH integration in a managed CI runner.** `lvh kernels pull`
+  in a build stage, kernel ELFs baked into the runner image, FC +
+  initrd + boot script the same as PR #18. No bare metal involved.
+- **The hand-rolled mechanics are visible** so you can see what
+  LVH hides: Ubuntu kernel deb extraction, `extract-vmlinux` on
+  the vmlinuz, `bpftool btf dump file` for vmlinux.h, cpio newc
+  for the initrd, FC REST + PTY for serial capture.
+- **Per-kernel wall time: ~1 s in-guest, ~12 s CI overhead.** Most
+  of the wall is container pull + KVM init, not the boot itself.
+  Cheap enough that a per-PR multi-kernel CO-RE check is realistic.
 
-## Known gotchas (carried over from PR #18 + discovered here)
+### What is NOT new here
 
-1. **Depot Registry username is `x-token`**, not `depot`.
-2. **Static linking libbpf on Alpine** needs the dev packages PLUS
-   `zlib-static zstd-static xz-static bzip2-static`. The `libbpf-dev`
-   and `elfutils-dev` packages bundle the `.a` archives themselves;
-   there are no separate `-static` packages for those two. libelf
-   transitively calls into all four compression libraries for
-   compressed-ELF-section support.
-3. **`apt-get` doesn't know the latest kernel deb filename in advance** —
-   don't hardcode a launchpad URL. Use `apt-get install linux-image-virtual`
-   and read whatever `/boot/vmlinuz-*-generic` ended up there.
-4. Same FC-on-CI quirks as the sibling experiment: PTY for guest serial
-   (firecracker-microvm/firecracker#2729), Depot CI secrets can't start
-   with `DEPOT_`, container needs KVM passthrough + SYS_ADMIN +
-   seccomp/apparmor unconfined.
+- **Matrix BPF testing under microVMs** — Cilium has been doing
+  this in production with LVH for years.
+- **Loading eBPF in CI** — privileged Linux runners with BTF have
+  been able to do that on the host kernel for years (GitHub
+  Actions, GitLab, etc.).
+- **The CO-RE relocation pattern itself** — libbpf shipped this
+  with v1.0 in 2022.
+
+What is new: doing it on a **shared/managed CI service** without
+owning bare-metal infrastructure. That's a CI delivery-model
+change, not a kernel/BPF capability one.
+
+## Known gotchas (verified in this experiment)
+
+1. **LVH ships two OCI image families with confusingly similar names.**
+   - `quay.io/lvh-images/complexity-test:<ver>-<timestamp>` is a
+     whole-VM **qcow2 disk image** for use with `lvh run`. The
+     filesystem of the OCI image contains
+     `/data/images/complexity-test_<ver>.qcow2.zst` — no
+     `/boot/vmlinux` directly accessible.
+   - `quay.io/lvh-images/kernel-images:<ver>-main` is what
+     `lvh kernels pull` defaults to. The OCI image extracts as
+     `./<tag>/boot/vmlinux-X.Y.Z` (raw ELF, ready for FC).
+   - Reach for `kernel-images` if you want kernels; reach for
+     `complexity-test` only if you want LVH to run the whole VM.
+2. **`lvh` requires Go ≥ 1.25.7** to `go install`. Use
+   `golang:1.25-alpine` or later as the build stage base.
+3. **Depot Registry username is `x-token`**, not `depot`.
+4. **Static linking libbpf on Alpine** needs the dev packages PLUS
+   `zlib-static zstd-static xz-static bzip2-static`. `libbpf-dev`
+   and `elfutils-dev` bundle their `.a` archives themselves (no
+   separate `-static` apk). libelf transitively calls into all four
+   compression libraries for compressed-ELF-section support.
+5. **Don't hardcode launchpad URLs for kernel debs** — they 404 as
+   versions roll over. `apt-get install linux-image-virtual` and
+   read whatever `/boot/vmlinuz-*-generic` lands.
+6. Same FC-on-CI quirks as the sibling experiment: PTY for guest
+   serial (firecracker-microvm/firecracker#2729), Depot CI secrets
+   can't start with `DEPOT_`, container needs KVM passthrough +
+   SYS_ADMIN + seccomp/apparmor unconfined.
 
 ## Reference
 
