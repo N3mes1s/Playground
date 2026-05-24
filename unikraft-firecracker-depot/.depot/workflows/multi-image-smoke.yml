@@ -47,10 +47,13 @@ jobs:
           ls -l /dev/kvm
 
           # format: REF|expected-pattern (empty pattern == just-boot smoke)
+          # Tags verified via the unikraft/catalog repo: format is
+          # unikraft.org/<name>:<version>, no language-number suffix
+          # (i.e. python not python3, node:21 since :22 doesn't exist).
           IMAGES=(
             "unikraft.org/helloworld:latest|Hello from Unikraft"
-            "unikraft.org/node:22|"
-            "unikraft.org/python3:3.11|"
+            "unikraft.org/node:21|"
+            "unikraft.org/python:3.12|"
             "unikraft.org/nginx:1.25|"
             "unikraft.org/redis:7.2|"
           )
