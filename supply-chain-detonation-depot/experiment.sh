@@ -23,6 +23,9 @@ Usage: $(basename "$0") <command>
     verify        Stage 2: detonate, then diff the captured
                   fingerprint against the committed baseline. Fails
                   the workflow if anything mutated.
+    matrix        Stage 3: read lockfile-fixtures/{base,head}.json,
+                  detonate+verify each added/bumped package, print a
+                  per-package summary table.
     list          Echo every available workflow path.
     status <id>   depot ci status passthrough.
     logs   <id>   depot ci logs passthrough.
@@ -52,6 +55,7 @@ case "$cmd" in
   build)    run_wf build-runner-image.yml ;;
   detonate) run_wf detonate-one.yml ;;
   verify)   run_wf verify-package.yml ;;
+  matrix)   run_wf matrix-lockfile.yml ;;
   list)
     ls -1 "$REPO_ROOT/$WORKFLOWS_DIR_REL" | sed "s#^#$WORKFLOWS_DIR_REL/#"
     ;;
