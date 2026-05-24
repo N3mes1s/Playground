@@ -1,25 +1,147 @@
-# ebpf-core-firecracker-depot — placeholder
+# ebpf-core-firecracker-depot
 
-> **This directory is a scaffold for a future experiment that hasn't
-> been built yet.** The full spec lives in [`SPEC.md`](SPEC.md). Read
-> that first; it links back to a sibling experiment in this same
-> repo (`unikraft-firecracker-depot/`, PR #18) which already shipped
-> the Firecracker plumbing patterns you'll reuse here.
+Load a CO-RE (Compile Once, Run Everywhere) eBPF probe inside a real
+Linux microVM under Firecracker on a [Depot](https://depot.dev)
+nested-virt CI runner. The point: validate that the probe's
+`BPF_CORE_READ` relocations resolve against the guest kernel's BTF —
+the kind of test that used to require bare-metal CI.
 
-## What this is
+| What | Status |
+|---|---|
+| Stage 1 — single kernel, single probe, end-to-end CO-RE load + event capture | **green — 14 ms to libbpf-load, sub-ms to first event, ~15 s CI wall (cached)** |
+| Stage 2 — kernel matrix (same probe against multiple kernel versions) | not started |
 
-A planned experiment to demonstrate CO-RE (Compile Once, Run Everywhere)
-eBPF probe loading **across multiple Linux kernel versions** inside
-Firecracker microVMs on Depot CI's nested-virt runners. The "kernel
-matrix in regular CI" capability is the genuinely new thing the
-nested-virt runners unlock; everything else has been possible on
-privileged CI containers for years.
+Built on top of the FC plumbing patterns from the sibling
+[`unikraft-firecracker-depot`](../unikraft-firecracker-depot) experiment
+(PR #18) — the PTY-for-FC-stdout trick, the `x-token` Depot Registry
+auth, the multi-stage Dockerfile-then-runner-image pattern, all of it.
 
-## How to start
+## Quickstart
 
-Open a new coding session in this repo, point it at this directory,
-and feed it `SPEC.md`. The spec is self-contained and references the
-sibling PR for any plumbing pattern that's already proven.
+```bash
+curl -L https://depot.dev/install-cli.sh | sh
+export PATH=$HOME/.depot/bin:$PATH
+export DEPOT_TOKEN='depot_org_...'
 
-Sibling experiment (FC plumbing already shipped, read this for patterns):
-<https://github.com/N3mes1s/Playground/pull/18>
+cd ebpf-core-firecracker-depot
+
+# One-time per Depot org. depot.json already points at project
+# lmpn2xx8kz (shared with the sibling experiment). AEGIS_DEPOT_TOKEN
+# is already provisioned on the org.
+
+./experiment.sh build      # ~90 s first time, ~30 s cached
+./experiment.sh boot       # ~15 s — boots Linux guest, loads probe, prints JSON
+```
+
+`./experiment.sh --help` for the full command list.
+
+## Stage 1 result snapshot
+
+```
+--- guest serial ---
+[    0.000000] Command line: console=ttyS0 reboot=k panic=1 root=/dev/ram0 rw pci=off
+[    0.023686] Kernel command line: console=ttyS0 reboot=k panic=1 ...
+[    0.609691] Loaded X.509 cert 'Canonical Ltd. Kernel Module Signing 2025 Kmod ...'
+BPF_RESULT_BEGIN
+{"verdict":"OK","events":1,"pid":75,"ppid":1,"comm":"init",
+ "core_relocs":"resolved","boot_to_load_ms":14,"load_to_event_ms":0}
+BPF_RESULT_END
+Firecracker exiting successfully. exit_code=0
+```
+
+Translation:
+
+- `core_relocs:"resolved"` — libbpf successfully resolved every
+  `BPF_CORE_READ` in `probe.bpf.c` against the kernel's BTF at load
+  time. CO-RE guarantee made empirical.
+- `events:1` — the probe fired on the loader's own `execve` (we
+  intentionally exec a path that doesn't exist; the tracepoint is
+  at syscall entry, before the lookup fails).
+- `pid:75, ppid:1, comm:"init"` — fields read from
+  `task_struct.{pid, real_parent.pid, comm}` via CO-RE. PID 1 is
+  the loader; PID 75 is the forked child whose `execve()` triggered
+  the probe.
+- `boot_to_load_ms:14` — wall time from PID 1 starting to
+  `bpf_object__load()` returning success. Essentially the
+  KVM-accelerated kernel boot plus libbpf's relocation pass.
+
+## Layout
+
+```
+ebpf-core-firecracker-depot/
+├── .depot/workflows/
+│   ├── build-runner-image.yml       # build + cache ebpf-runner image
+│   └── boot-single-kernel.yml       # boot Linux guest + load probe
+├── src/
+│   ├── probe.bpf.c                  # CO-RE eBPF probe
+│   ├── loader.c                     # static-musl PID 1 / libbpf loader
+│   └── Makefile                     # clang -target bpf, gcc -static
+├── infra/docker/
+│   └── ebpf-runner.Dockerfile       # 5-stage: fetch kernel, gen vmlinux.h,
+│                                    # build probe+loader, build initrd, runtime
+├── scripts/
+│   └── run_linux_guest.sh           # FC REST + PTY for serial, JSON marker parse
+├── kernels/                         # (stage 2: per-kernel manifest goes here)
+├── experiment.sh                    # ./experiment.sh boot
+├── .dockerignore
+├── depot.json                       # { "id": "lmpn2xx8kz" }
+├── SPEC.md                          # the original spec for this experiment
+└── README.md
+```
+
+## Setup (one-time, per Depot org)
+
+```bash
+export DEPOT_TOKEN='depot_org_...'
+
+# Reuses the sibling experiment's project (lmpn2xx8kz). Tags are
+# scoped per-tag, not per-project, so there's no clash with
+# helloworld-runner-latest / native-runner-latest.
+
+depot ci secrets list   # confirm AEGIS_DEPOT_TOKEN is set
+```
+
+## What this proves about Depot's nested-virt runners
+
+- The guest kernel is a real, full-fat Ubuntu 6.8 — not the runner's
+  kernel — booted under KVM acceleration. We control the version,
+  the config, the BTF.
+- libbpf's CO-RE relocator ran against the guest BTF at load time
+  and resolved every field access in the probe. If you swap in a
+  different kernel version (Stage 2), failures here would mean
+  "your probe's field accesses don't translate" — the same signal
+  you'd get from running on the real production kernel of a
+  different host.
+- Total wall time per kernel boot+probe-load+halt: ~1 second
+  in-guest, ~15 seconds CI overhead. Cheap enough to matrix-test
+  across many kernel versions in a single CI workflow.
+
+## Known gotchas (carried over from PR #18 + discovered here)
+
+1. **Depot Registry username is `x-token`**, not `depot`.
+2. **Static linking libbpf on Alpine** needs the dev packages PLUS
+   `zlib-static zstd-static xz-static bzip2-static`. The `libbpf-dev`
+   and `elfutils-dev` packages bundle the `.a` archives themselves;
+   there are no separate `-static` packages for those two. libelf
+   transitively calls into all four compression libraries for
+   compressed-ELF-section support.
+3. **`apt-get` doesn't know the latest kernel deb filename in advance** —
+   don't hardcode a launchpad URL. Use `apt-get install linux-image-virtual`
+   and read whatever `/boot/vmlinuz-*-generic` ended up there.
+4. Same FC-on-CI quirks as the sibling experiment: PTY for guest serial
+   (firecracker-microvm/firecracker#2729), Depot CI secrets can't start
+   with `DEPOT_`, container needs KVM passthrough + SYS_ADMIN +
+   seccomp/apparmor unconfined.
+
+## Reference
+
+- libbpf-bootstrap (canonical CO-RE skeleton):
+  <https://github.com/libbpf/libbpf-bootstrap>
+- libbpf:
+  <https://github.com/libbpf/libbpf>
+- Firecracker boot-source API:
+  <https://github.com/firecracker-microvm/firecracker/blob/main/docs/api_requests/actions.md>
+- CO-RE explainer (Andrii Nakryiko):
+  <https://nakryiko.com/posts/bpf-portability-and-co-re/>
+- Sibling experiment PR #18 (FC plumbing patterns reused here):
+  <https://github.com/N3mes1s/Playground/pull/18>
