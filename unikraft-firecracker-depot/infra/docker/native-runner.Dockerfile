@@ -51,29 +51,14 @@ RUN kraft build --plat fc --arch x86_64 --no-update 2>&1 | tail -200 \
  && echo "--- candidate unikernel ELFs ---" \
  && find workdir/build -maxdepth 2 -type f \( -name 'aegis-probe*' -o -name '*_fc-x86_64*' \) | head -10
 
-# Find the built unikernel — kraft names it deterministically but the
-# exact path can vary by version. Prefer non-debug variants.
-RUN bin="" \
- && for cand in \
-      workdir/build/aegis-probe_fc-x86_64 \
-      workdir/build/aegis-probe_firecracker-x86_64 \
-      workdir/build/aegis-probe_kvm-x86_64; do \
-      [[ -f "$cand" ]] && bin="$cand" && break; \
-    done; \
-    if [[ -z "$bin" ]]; then \
-      bin="$(find workdir/build -maxdepth 2 -type f \
-              \( -name 'aegis-probe*' -o -name '*_fc-x86_64*' \) \
-              ! -name '*.dbg' ! -name '*.o' ! -name '*.gz' \
-              | head -1)"; \
-    fi; \
-    if [[ -z "$bin" ]]; then \
-      echo "ERROR: kraft build did not produce a unikernel binary" >&2; \
-      find workdir/build -maxdepth 3 -type f >&2 | head -50; \
-      exit 1; \
-    fi; \
-    cp "$bin" /tmp/aegis-probe \
+# `kraft build` writes the unikernel ELF to .unikraft/build/<name>_<plat>-<arch>
+# alongside a .dbg debug-info variant. The stripped one (no .dbg suffix)
+# is the bootable.
+RUN cp .unikraft/build/aegis-probe_fc-x86_64 /tmp/aegis-probe \
  && file /tmp/aegis-probe \
- && ls -lh /tmp/aegis-probe
+ && ls -lh /tmp/aegis-probe \
+              .unikraft/build/aegis-probe_fc-x86_64 \
+              .unikraft/build/aegis-probe_fc-x86_64.dbg
 
 # ----- Stage B: final runtime image -----------------------------------
 FROM buildpack-deps:24.04-scm
