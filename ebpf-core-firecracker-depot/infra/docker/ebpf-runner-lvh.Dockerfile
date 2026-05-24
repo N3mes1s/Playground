@@ -19,45 +19,34 @@
 # uses on `main`. Renovate-bot rotates them upstream; bump here by
 # copy-pasting whatever cilium/cilium currently uses.
 
-# ----- LVH kernel "source" images ------------------------------------
-FROM quay.io/lvh-images/complexity-test:5.15-20260310.122539 AS lvh-5.15
-FROM quay.io/lvh-images/complexity-test:6.1-20260310.122539  AS lvh-6.1
-FROM quay.io/lvh-images/complexity-test:6.6-20260310.122539  AS lvh-6.6
-FROM quay.io/lvh-images/complexity-test:6.12-20260310.122539 AS lvh-6.12
+# Use lvh CLI to pull kernels — it knows the registry URL convention
+# and handles whatever extraction is needed to surface vmlinuz/vmlinux
+# files. The complexity-test:<ver> images we tried directly are qcow2
+# VM disks, not raw kernel artefacts.
 
-# ----- Stage A: extract one vmlinux per kernel -----------------------
-FROM ubuntu:24.04 AS kernel-collect
+# ----- Stage A: install lvh CLI + pull kernels -----------------------
+FROM golang:1.23-alpine AS lvh-cli
+RUN apk add --no-cache git make build-base
+RUN go install github.com/cilium/little-vm-helper/cmd/lvh@latest
 
-ENV DEBIAN_FRONTEND=noninteractive
+FROM alpine:3.20 AS kernel-collect
 
-RUN sed -i 's|http://archive.ubuntu.com/ubuntu|http://mirror.facebook.net/ubuntu|g; s|http://security.ubuntu.com/ubuntu|http://mirror.facebook.net/ubuntu|g' \
-        /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true \
- && apt-get update \
- && apt-get install -y --no-install-recommends \
-        ca-certificates curl xz-utils zstd lz4 lzop binutils file \
- && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache ca-certificates curl file bash
 
-# Diagnostic: dump the full root of the smallest LVH image so we
-# can find where the bootable kernel actually lives in this image
-# family. (First pass assumed /boot/ which doesn't exist; this
-# unblocks figuring out the real path.)
-COPY --from=lvh-5.15  / /tmp/k-5.15/
+COPY --from=lvh-cli /go/bin/lvh /usr/local/bin/lvh
 
-# extract-vmlinux is the canonical kernel.org script that strips
-# the bootloader wrapper from a compressed bzImage. It groks gzip,
-# zstd, lz4, lzop, xz.
-RUN curl -fsSL https://raw.githubusercontent.com/torvalds/linux/v6.8/scripts/extract-vmlinux -o /usr/local/bin/extract-vmlinux \
- && chmod +x /usr/local/bin/extract-vmlinux
+# Probe what `lvh kernels pull` actually does with one version, then
+# dump the resulting tree so we know how to wire it for real.
+RUN lvh kernels --help 2>&1 | head -40 \
+ && echo '--- pull help ---' \
+ && lvh kernels pull --help 2>&1 | head -40
 
-RUN echo '=== top-level dirs of LVH 5.15 image ===' && \
-    ls -la /tmp/k-5.15/ && \
-    echo '=== any file with "vmlin" in name ===' && \
-    find /tmp/k-5.15 -maxdepth 6 -iname '*vmlin*' 2>/dev/null | head -30 && \
-    echo '=== any large ELF (likely kernel) ===' && \
-    find /tmp/k-5.15 -maxdepth 6 -type f -size +1M 2>/dev/null | head -30 && \
-    echo '=== /data dirs ===' && \
-    find /tmp/k-5.15 -maxdepth 3 -type d 2>/dev/null | head -40 && \
-    false # fail intentionally so we get the logs
+RUN lvh kernels pull 6.6-main 2>&1 | head -60 \
+ && echo '--- pulled tree ---' \
+ && find / -maxdepth 5 -iname '*vmlin*' 2>/dev/null | head -20 \
+ && echo '--- ~/.config/lvh ---' \
+ && find ~/.config -maxdepth 6 -type f 2>/dev/null | head -20 \
+ && false # diagnostic: fail to surface the layout
 
 # ----- Stage B: generate vmlinux.h (from 6.12, newest of the matrix) -
 FROM alpine:3.20 AS btf-dump
