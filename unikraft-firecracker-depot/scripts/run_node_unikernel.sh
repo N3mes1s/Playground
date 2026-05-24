@@ -20,7 +20,10 @@ set -euo pipefail
 
 kernel="${1:?missing kernel path}"
 initrd="${2:?missing initrd path}"
-boot_args="${BOOT_ARGS:-runtime/node -- node /detonate.js}"
+# boot_args matches the form kraft produces for node:21 (confirmed via the
+# multi-image smoke run): "kernel" as the app name, full path to the node
+# binary inside the rootfs, full path to the script.
+boot_args="${BOOT_ARGS:-kernel -- /usr/bin/node /usr/src/detonate.js}"
 mem_mib="${MEM_MIB:-256}"
 wait_iters="${WAIT_ITERS:-900}"
 
