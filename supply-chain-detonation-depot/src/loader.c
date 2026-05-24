@@ -229,7 +229,7 @@ static void halt(void)
 
 // Read the value of a `key=value` argument from /proc/cmdline after
 // the "--" init-args separator. Returns a malloc'd copy or NULL.
-static char *cmdline_pkg(void)
+static char *cmdline_kv(const char *key)
 {
 	int fd = open("/proc/cmdline", O_RDONLY);
 	if (fd < 0) return NULL;
@@ -239,15 +239,18 @@ static char *cmdline_pkg(void)
 	if (n <= 0) return NULL;
 	buf[n] = '\0';
 
-	// Find " -- " separator
 	char *sep = strstr(buf, " -- ");
 	if (!sep) return NULL;
 	sep += 4;
 
-	// Look for pkg=... (we'll use this convention rather than positional)
-	char *p = strstr(sep, "pkg=");
+	size_t klen = strlen(key);
+	char needle[64];
+	if (klen + 2 > sizeof(needle)) return NULL;
+	snprintf(needle, sizeof(needle), "%s=", key);
+
+	char *p = strstr(sep, needle);
 	if (!p) return NULL;
-	p += 4;
+	p += strlen(needle);
 	char *end = strpbrk(p, " \n\r\t");
 	size_t len = end ? (size_t)(end - p) : strlen(p);
 	if (len == 0) return NULL;
@@ -256,6 +259,45 @@ static char *cmdline_pkg(void)
 	memcpy(out, p, len);
 	out[len] = '\0';
 	return out;
+}
+
+// Fork+exec a command, wait, return exit status. Used to bring up
+// the guest network via busybox `ip` from the Alpine rootfs.
+static int run_cmd(char *const argv[])
+{
+	pid_t p = fork();
+	if (p < 0) return -1;
+	if (p == 0) {
+		execvp(argv[0], argv);
+		_exit(127);
+	}
+	int status;
+	if (waitpid(p, &status, 0) < 0) return -1;
+	return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+
+// Configure eth0 using the guest_ip / host_ip / interface passed via
+// cmdline kv pairs (ip=..., gw=...). Returns 0 on full success.
+static int setup_network(void)
+{
+	char *guest_ip = cmdline_kv("guest_ip");
+	char *gw       = cmdline_kv("gw");
+	const char *iface = "eth0";
+	if (!guest_ip || !gw) {
+		fprintf(stderr, "setup_network: missing guest_ip or gw cmdline kv\n");
+		free(guest_ip); free(gw);
+		return -1;
+	}
+	char ip_cidr[64];
+	snprintf(ip_cidr, sizeof(ip_cidr), "%s/24", guest_ip);
+
+	int rc = 0;
+	rc |= run_cmd((char *[]){"ip", "link", "set", (char *)iface, "up", NULL});
+	rc |= run_cmd((char *[]){"ip", "addr", "add", ip_cidr, "dev", (char *)iface, NULL});
+	rc |= run_cmd((char *[]){"ip", "route", "add", "default", "via", gw, NULL});
+
+	free(guest_ip); free(gw);
+	return rc;
 }
 
 static int libbpf_print_fn(enum libbpf_print_level level,
@@ -294,8 +336,14 @@ int main(int argc, char **argv)
 	mount("tmpfs", "/install", "tmpfs", 0, "size=512m");
 	mkdir("/install/.home", 0755);
 
+	// Bring up the guest network. LVH kernels don't necessarily have
+	// CONFIG_IP_PNP=y so we can't rely on the kernel's `ip=` boot arg;
+	// configure eth0 manually via busybox `ip` from the Alpine rootfs.
+	int net_rc = setup_network();
+	fprintf(stderr, "setup_network rc=%d\n", net_rc);
+
 	// Determine which package to install
-	char *pkg = cmdline_pkg();
+	char *pkg = cmdline_kv("pkg");
 	const char *package = pkg ? pkg : "lodash@4.17.21";
 
 	libbpf_set_print(libbpf_print_fn);

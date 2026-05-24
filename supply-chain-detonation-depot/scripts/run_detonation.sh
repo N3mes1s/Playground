@@ -24,12 +24,15 @@ guest_ip="172.16.${inst_id:0:1}.2"
 host_ip="172.16.${inst_id:0:1}.1"
 guest_mac="02:FC:00:00:00:$(printf '%02x' $((inst_id % 256)))"
 
-# Linux init-args separator: everything after " -- " on the kernel
-# cmdline is passed to /init as argv. Our loader scans cmdline for
-# `pkg=...` after the separator. The `ip=` arg before the separator
-# is parsed by the kernel itself — autoconfigure eth0 with our
-# static address before /init runs.
-boot_args="${BOOT_ARGS:-console=ttyS0 reboot=k panic=1 root=/dev/ram0 rw pci=off ip=${guest_ip}::${host_ip}:255.255.255.0::eth0:off -- pkg=${package}}"
+# The loader scans /proc/cmdline for key=value pairs AFTER the " -- "
+# init-args separator. We pass:
+#   pkg=<spec>      the package to detonate
+#   guest_ip=<ip>   address to set on eth0 inside the guest
+#   gw=<ip>         default gateway (the host side of the tap)
+# We do NOT use the kernel's own `ip=` autoconfig — LVH kernels don't
+# all ship CONFIG_IP_PNP=y. The loader configures eth0 manually via
+# busybox `ip` from the Alpine rootfs.
+boot_args="${BOOT_ARGS:-console=ttyS0 reboot=k panic=1 root=/dev/ram0 rw pci=off -- pkg=${package} guest_ip=${guest_ip} gw=${host_ip}}"
 
 for f in "$kernel" "$initrd"; do
   if [[ ! -f "$f" ]]; then
@@ -76,6 +79,9 @@ iptables -t nat -A POSTROUTING -o "$egress" -j MASQUERADE 2>/dev/null || true
 iptables -A FORWARD -i "$tap_dev" -o "$egress" -j ACCEPT 2>/dev/null || true
 iptables -A FORWARD -i "$egress" -o "$tap_dev" \
     -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+echo '--- iptables -t nat -L POSTROUTING -n ---'
+iptables -t nat -L POSTROUTING -n 2>&1 | head -10 || true
+echo '--- ip route ---'
 ip route show
 ip addr show "$tap_dev" || true
 
