@@ -8,11 +8,11 @@ attacks (xz-utils-style, eslint-scope-style) by diffing the
 fingerprint of every added/bumped dependency against a committed
 baseline.
 
-| What | Status |
-|---|---|
-| Stage 1 — one package, one kernel, fingerprint to JSON, real `npm install` over the network | **green — 867 ms install, ~15 s CI wall (cached)** |
-| Stage 2 — baseline + fingerprint diff in CI | not started |
-| Stage 3 — multi-package matrix from a lockfile diff | not started |
+| Stage | What | Status |
+|---|---|---|
+| 1 | One package, one kernel, fingerprint to JSON, real `npm install` over the network | **green — 867 ms install, ~15 s CI wall** |
+| 2 | Baseline + fingerprint diff with CIDR-based connect-peer matching | **green — gate PASSes when baseline allowlists hold, blocks PR on mutation** |
+| 3 | Multi-package matrix from a lockfile diff, per-package PASS/DIFF/NEW/FAIL table | **green — 2/2 PASS, ~30 s wall for two packages** |
 
 Built on top of the FC plumbing patterns from the sibling
 [`unikraft-firecracker-depot`](../unikraft-firecracker-depot) (PR #18)
@@ -39,7 +39,10 @@ cd supply-chain-detonation-depot
 # AEGIS_DEPOT_TOKEN secret already provisioned on the org.
 
 ./experiment.sh build      # ~90 s first time, ~30 s cached
-./experiment.sh detonate   # ~15 s — boots Linux guest, runs npm install
+./experiment.sh detonate   # ~15 s — Stage 1: npm install + fingerprint JSON
+./experiment.sh verify     # ~15 s — Stage 2: detonate + diff against baseline
+./experiment.sh matrix     # ~30 s — Stage 3: detonate+verify every package
+                           #         added/bumped between two lockfiles
 ```
 
 `./experiment.sh --help` for the full command list.
@@ -81,6 +84,57 @@ Translation:
     TLS. This is the real install-time network egress.
 - `duration_ms: 867` — wall time from `npm install` fork to exit.
 
+## Stage 2 result snapshot (verify run `0qsgw8l5nq`)
+
+```json
+{
+  "package": "lodash@4.17.21",
+  "verdict": "PASS",
+  "fingerprint_verdict": "OK",
+  "violations": [],
+  "unknown_execve_targets": [],
+  "unknown_connect_peers": [],
+  "matched_connect_peers": [
+    {"peer": "127.0.0.1:65535", "matched_label": "npm internal IPC (v4+v6 localhost)"},
+    {"peer": "0:0:0:0:0:0:0:1:65535", "matched_label": "npm internal IPC (v4+v6 localhost)"},
+    {"peer": "104.16.6.34:443", "matched_label": "Cloudflare (registry.npmjs.org) — primary v4 range"}
+  ]
+}
+```
+
+Notable: the registry IP this run was `104.16.6.34`; the baseline
+was captured with `104.16.3.34`. A naive byte-equality baseline
+would have failed here, but our CIDR-based allowlist
+(`104.16.0.0/13`, port 443) recognises both as legitimate
+Cloudflare-fronted registry endpoints. **That's the whole reason
+the baseline format is semantic — Cloudflare rotates IPs inside
+its ASN range across requests.**
+
+## Stage 3 result snapshot (matrix run `pjnz4rvgg2`)
+
+```
+== Per-package matrix
+  PACKAGE                          STATUS WALL_MS    NOTE
+  -------                          ------ -------    ----
+  lodash@4.17.21                   PASS   10000ms
+  ms@2.1.3                         PASS   9000ms
+OVERALL: all packages PASS
+```
+
+Two paths exercised across two runs:
+
+- **`sp81gmmcnh`** — only `lodash` had a baseline; `ms` got status
+  `NEW` and the job exited 1, blocking the PR pending review.
+- **`pjnz4rvgg2`** — after committing `baselines/ms@2.1.3.json`,
+  re-run goes 2/2 PASS, exit 0.
+
+Both packages produce the same fingerprint shape (pure-JS, only
+contacts the npm registry over TLS) because they have no
+postinstall scripts. The matrix wall time scales linearly with the
+number of added packages (~10 s each); Stage 3 runs sequentially in
+a single job but is straightforward to fan out as a true parallel
+matrix once that pays off.
+
 ## How it works
 
 1. `experiment.sh build` saves
@@ -117,7 +171,9 @@ Translation:
 supply-chain-detonation-depot/
 ├── .depot/workflows/
 │   ├── build-runner-image.yml      # build + cache detonation-runner image
-│   └── detonate-one.yml            # boot guest, npm install, fingerprint
+│   ├── detonate-one.yml            # Stage 1: boot guest, npm install, fingerprint
+│   ├── verify-package.yml          # Stage 2: detonate + diff vs baseline
+│   └── matrix-lockfile.yml         # Stage 3: matrix per lockfile-diff package
 ├── src/
 │   ├── probe.bpf.c                 # multi-tracepoint CO-RE BPF probe
 │   ├── loader.c                    # static-musl PID 1 / aggregator
@@ -126,9 +182,16 @@ supply-chain-detonation-depot/
 │   └── detonation-runner.Dockerfile  # 5-stage: kernel, BTF, probe+loader,
 │                                    # Alpine+node+npm initrd, runtime
 ├── scripts/
-│   └── run_detonation.sh           # tap+NAT setup, FC REST, JSON parse
-├── baselines/                      # (Stage 2: per-package expected fingerprints)
-├── experiment.sh                   # ./experiment.sh detonate
+│   ├── run_detonation.sh           # tap+NAT setup, FC REST, JSON parse
+│   ├── diff_fingerprint.py         # Stage 2 diff tool, CIDR + loopback matching
+│   └── lockfile_diff.py            # Stage 3 helper: extract added/bumped pkgs
+├── baselines/                      # per-package expected-fingerprint allowlists
+│   ├── lodash@4.17.21.json
+│   └── ms@2.1.3.json
+├── lockfile-fixtures/              # demo input for Stage 3
+│   ├── base.json                   # empty deps
+│   └── head.json                   # adds lodash + ms (the matrix target)
+├── experiment.sh                   # ./experiment.sh build|detonate|verify|matrix
 ├── depot.json                      # { "id": "lmpn2xx8kz" }
 ├── SPEC.md                         # original spec for this experiment
 ├── .dockerignore
