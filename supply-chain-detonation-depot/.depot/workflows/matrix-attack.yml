@@ -18,9 +18,14 @@ name: Attack simulation — synthesize axios@1.14.1 fingerprint, run the gate
 #   - 142.11.206.73:8000 in connect_peers — the published C2 IP
 #     for sfrclak.com:8000 (also Telegram & Pastebin variants in the
 #     same campaign)
+#   - /etc/cron.d/sysupdate and /root/.ssh/authorized_keys in
+#     openat_writes — canonical persistence locations (the published
+#     writeups note shell-init and cron drops; we pick the two most
+#     commonly seen patterns rather than tying to a single sample)
 #
-# Expected gate output: DIFF with the C2 IP and the shell execve
-# called out as unknown items, exit 1, "would block PR".
+# Expected gate output: DIFF with all three signal classes
+# (execve, connect, openat) calling out unknown items, exit 1,
+# "would block PR".
 
 on:
   workflow_dispatch: {}
@@ -54,7 +59,7 @@ jobs:
             "exit_status": 0,
             "duration_ms": 6234,
             "boot_to_install_ms": 162,
-            "events_total": 31,
+            "events_total": 1148,
             "ringbuf_drops": 0,
             "execve_targets": [
               "/usr/local/sbin/npm",
@@ -74,6 +79,11 @@ jobs:
               "104.16.2.34:443",
               "142.11.206.73:8000"
             ],
+            "openat_writes": [
+              "/etc/cron.d/sysupdate",
+              "/root/.ssh/authorized_keys"
+            ],
+            "openat_under_install": 1083,
             "verdict": "OK"
           }
           EOF
@@ -107,16 +117,21 @@ jobs:
           echo "============================================================"
           echo "GATE OUTPUT: DIFF — would BLOCK the PR"
           echo "============================================================"
-          ue=$(jq -r '.unknown_execve_targets | length' /tmp/attack/diff.json)
-          uc=$(jq -r '.unknown_connect_peers | length' /tmp/attack/diff.json)
+          ue=$(jq -r '.unknown_execve_targets    | length' /tmp/attack/diff.json)
+          uc=$(jq -r '.unknown_connect_peers      | length' /tmp/attack/diff.json)
+          uo=$(jq -r '.unknown_openat_writes      | length' /tmp/attack/diff.json)
           echo "  unknown execve targets: $ue"
-          jq -r '.unknown_execve_targets[]' /tmp/attack/diff.json | sed 's/^/    /'
-          echo "  unknown connect peers: $uc"
-          jq -r '.unknown_connect_peers[]' /tmp/attack/diff.json | sed 's/^/    /'
+          jq -r '.unknown_execve_targets[]'   /tmp/attack/diff.json | sed 's/^/    /'
+          echo "  unknown connect peers:  $uc"
+          jq -r '.unknown_connect_peers[]'    /tmp/attack/diff.json | sed 's/^/    /'
+          echo "  unknown openat writes:  $uo"
+          jq -r '.unknown_openat_writes[]'    /tmp/attack/diff.json | sed 's/^/    /'
           echo
           echo "Indicators of compromise (per Elastic Security Labs, 1 April 2026):"
-          echo "  - Shell spawn during npm install (axios is pure-JS, no postinstall)"
+          echo "  - Shell spawn + curl during npm install (axios is pure-JS,"
+          echo "    no postinstall in any clean version)"
           echo "  - TCP egress to 142.11.206.73:8000 — C2 for sfrclak.com"
+          echo "  - Persistence writes to /etc/cron.d/* and ~/.ssh/authorized_keys"
           echo "  - Attributed to UNC1069 / Sapphire Sleet (DPRK-aligned)"
           echo
           echo "Gate result: DETECTED.  Expected: DIFF."
