@@ -1,0 +1,45 @@
+name: Debug — single detonation with full serial output
+
+# Runs one detonation and pipes the full guest serial log to
+# stdout. Used to see libbpf attach errors that detonate_one.sh
+# would otherwise hide in a per-package log file.
+
+on:
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  debug:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 5
+    container:
+      image: registry.depot.dev/lmpn2xx8kz:detonation-runner-latest
+      credentials:
+        username: x-token
+        password: ${{ secrets.AEGIS_DEPOT_TOKEN }}
+      options: >-
+        --device=/dev/kvm
+        --device=/dev/net/tun
+        --cap-add=SYS_ADMIN
+        --cap-add=NET_ADMIN
+        --cap-add=NET_RAW
+        --security-opt seccomp=unconfined
+        --security-opt apparmor=unconfined
+    steps:
+      - run: |
+          set -uo pipefail
+          echo "=== kernel tracepoints sanity ==="
+          ls /sys/kernel/tracing/events/syscalls/ 2>/dev/null \
+            | grep -E '^sys_enter_(openat|execve|connect)$' || true
+          echo
+          echo "=== full guest serial of single detonation (lodash) ==="
+          INST_ID=1 bash /opt/run_detonation.sh \
+            /opt/guest/vmlinux /opt/guest/initrd.cpio \
+            "lodash@4.17.21" 2>&1 | tee /tmp/guest.log
+          echo
+          echo "=== libbpf-relevant lines ==="
+          grep -iE 'libbpf|attach|verifier|cap_|tracepoint|sys_enter_openat|failed' /tmp/guest.log || \
+            echo "(no libbpf-pattern lines found in guest serial)"

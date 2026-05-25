@@ -1,0 +1,54 @@
+name: Detonate one package (Stage 1)
+
+# Pulls the cached detonation-runner image, boots a Linux guest under
+# Firecracker, attaches the BPF probe, runs `npm install <pkg>`
+# (default lodash@4.17.21), captures the fingerprint, halts.
+#
+# Stage 1 acceptance: DETONATION_BEGIN/END markers appear with a
+# parseable JSON fingerprint containing execve_targets + connect_peers.
+#
+# Note: Stage 1 does NOT wire up guest networking — the npm install
+# will fail with ENETUNREACH (no route to registry.npmjs.org). That's
+# expected; it proves the BPF probe captures connect() attempts even
+# when they fail. Stage 2 will add tap-network so the install
+# actually completes.
+
+on:
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  detonate:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 5
+    container:
+      image: registry.depot.dev/lmpn2xx8kz:detonation-runner-latest
+      credentials:
+        username: x-token
+        password: ${{ secrets.AEGIS_DEPOT_TOKEN }}
+      options: >-
+        --device=/dev/kvm
+        --device=/dev/net/tun
+        --cap-add=SYS_ADMIN
+        --cap-add=NET_ADMIN
+        --cap-add=NET_RAW
+        --security-opt seccomp=unconfined
+        --security-opt apparmor=unconfined
+    steps:
+      - name: Verify image + KVM passthrough
+        run: |
+          set -eux
+          ls -l /dev/kvm
+          firecracker --version
+          file /opt/guest/vmlinux
+          ls -lh /opt/guest/ /opt/run_detonation.sh
+
+      - name: Detonate lodash@4.17.21
+        run: |
+          bash /opt/run_detonation.sh \
+            /opt/guest/vmlinux \
+            /opt/guest/initrd.cpio \
+            lodash@4.17.21

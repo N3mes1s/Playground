@@ -1,0 +1,127 @@
+name: Burst matrix — 10-direct-dep fixture to exercise parallel fan-out
+
+# Same scaffolding as matrix-realworld.yml, but with a 10-direct-dep
+# fixture deliberately chosen to put real load on the within-job
+# parallel fan-out (xargs -P "$PARALLEL"). Pure-JS packages only so
+# the install scripts stay quick and the cost-per-detonation is
+# uniform — what's being measured here is wall-clock vs serial-sum,
+# not per-package install time.
+#
+# Expect 3 PASS (lodash, ms, axios — committed baselines) and 7 NEW
+# (no baselines yet). The TIMING: line still prints before the gate
+# decision, so the parallel speedup is visible regardless of outcome.
+
+on:
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  matrix:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 15
+    container:
+      image: registry.depot.dev/lmpn2xx8kz:detonation-runner-latest
+      credentials:
+        username: x-token
+        password: ${{ secrets.AEGIS_DEPOT_TOKEN }}
+      options: >-
+        --device=/dev/kvm
+        --device=/dev/net/tun
+        --cap-add=SYS_ADMIN
+        --cap-add=NET_ADMIN
+        --cap-add=NET_RAW
+        --security-opt seccomp=unconfined
+        --security-opt apparmor=unconfined
+    steps:
+      - name: Verify image
+        run: |
+          set -eux
+          ls -l /dev/kvm /dev/net/tun
+          firecracker --version
+          ls -lh /opt/lockfile-fixtures/burst10/
+          ls -l /opt/detonate_one.sh
+
+      - name: Compute direct added/bumped packages
+        run: |
+          set -eux
+          python3 /opt/lockfile_diff.py --direct \
+            /opt/lockfile-fixtures/burst10/base.json \
+            /opt/lockfile-fixtures/burst10/head.json \
+            | tee /tmp/added.txt
+          echo "--- $(wc -l </tmp/added.txt) direct package(s) to detonate ---"
+
+      - name: Detonate + verify each direct package (parallel burst)
+        env:
+          PARALLEL: "10"
+        run: |
+          set -uo pipefail
+          mkdir -p /tmp/matrix
+          t0_wall=$(date +%s)
+
+          xargs -a /tmp/added.txt -P "$PARALLEL" -I{} \
+            bash -c 'bash /opt/detonate_one.sh "$1" "$$"' _ {}
+
+          wall_ms=$(( ($(date +%s) - t0_wall) * 1000 ))
+
+          # Dump every captured fingerprint to stdout so a reviewer
+          # can extract baselines from the run log. Bracketed with a
+          # unique marker so it's grep-friendly.
+          echo
+          echo "============================================================"
+          echo "== Captured fingerprints (for baseline review)"
+          echo "============================================================"
+          for fp in /tmp/matrix/*.fp.json; do
+            [[ -f "$fp" ]] || continue
+            slug=$(basename "$fp" .fp.json)
+            echo "BASELINE_BEGIN $slug"
+            jq -c . "$fp"
+            echo "BASELINE_END $slug"
+          done
+
+          echo
+          echo "============================================================"
+          echo "== Per-direct-dep matrix (burst10 fixture, parallel=$PARALLEL)"
+          echo "============================================================"
+          printf '  %-32s %-6s %-10s %s\n' PACKAGE STATUS WALL_MS NOTE
+          printf '  %-32s %-6s %-10s %s\n' ------- ------ ------- ----
+          fail=0
+          sum_ms=0
+          n=0
+          while read -r spec; do
+            [[ -z "$spec" ]] && continue
+            slug="$(echo "$spec" | tr '/@:' '___')"
+            s=$(cat "/tmp/matrix/$slug.status" 2>/dev/null || echo '?')
+            d=$(cat "/tmp/matrix/$slug.duration_ms" 2>/dev/null || echo '?')
+            note=$(cat "/tmp/matrix/$slug.note" 2>/dev/null || echo '')
+            printf '  %-32s %-6s %-10s %s\n' "$spec" "$s" "${d}ms" "$note"
+            [[ "$s" == "PASS" || "$s" == "NEW" ]] || fail=1
+            [[ "$d" =~ ^[0-9]+$ ]] && { sum_ms=$((sum_ms + d)); n=$((n + 1)); }
+          done </tmp/added.txt
+
+          echo
+          if (( n > 0 )); then
+            speedup=$(awk -v s="$sum_ms" -v w="$wall_ms" \
+              'BEGIN { if (w==0) print "n/a"; else printf "%.1fx", s/w }')
+            echo "TIMING: serial_sum=${sum_ms}ms  wall_clock=${wall_ms}ms  speedup=${speedup}  workers=$PARALLEL"
+          fi
+
+          # Show one PASS package's matched_connect_peers so the
+          # hostname-based labeling is visible in the run log.
+          sample=$(ls /tmp/matrix/*.diff.json 2>/dev/null | head -1)
+          if [[ -n "$sample" ]]; then
+            slug=$(basename "$sample" .diff.json)
+            echo
+            echo "============================================================"
+            echo "== Sample matched_connect_peers (hostname labels) — $slug"
+            echo "============================================================"
+            jq '{matched_connect_peers, dns_map_entries}' "$sample"
+          fi
+
+          if (( fail )); then
+            echo "OVERALL: at least one detonation outright FAILED (npm exit nonzero or no fingerprint)"
+            exit 1
+          fi
+          echo "OVERALL: all detonations produced fingerprints (PASS or NEW)"
