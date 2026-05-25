@@ -59,13 +59,21 @@ fc_log="$(mktemp -t fc-internal-XXXXXX)"
 : > "$serial_log"
 : > "$fc_log"
 
+dns_proxy_port=$(( 5300 + (inst_id % 256) ))
+dns_log="$(mktemp -t fc-dns-XXXXXX.log)"
+: > "$dns_log"
+dns_proxy_pid=""
+
 cleanup() {
-  for pid in "${fc_pid:-}" "${script_pid:-}"; do
+  for pid in "${fc_pid:-}" "${script_pid:-}" "${dns_proxy_pid:-}"; do
     if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
       kill "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
     fi
   done
+  # Remove the per-TAP iptables redirect rule we added (best-effort)
+  iptables -t nat -D PREROUTING -i "$tap_dev" -p udp --dport 53 \
+    -j REDIRECT --to-port "$dns_proxy_port" 2>/dev/null || true
   rm -f "$sock"
   # Best-effort tap teardown; container is ephemeral but be tidy
   ip link del "$tap_dev" 2>/dev/null || true
@@ -100,6 +108,24 @@ echo 1 > /proc/sys/net/ipv4/ip_forward 2>/dev/null \
 iptables -A FORWARD -i "$tap_dev" -o "$egress" -j ACCEPT 2>/dev/null || true
 iptables -A FORWARD -i "$egress" -o "$tap_dev" \
     -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+
+# DNS capture: spawn a per-worker UDP forwarding proxy and REDIRECT
+# this TAP's outbound UDP/53 to it. The proxy parses A/AAAA records
+# out of upstream responses and writes (ip, hostname) tuples to
+# $dns_log; we emit the resulting map between DNS_MAP_BEGIN/END
+# markers so downstream tooling can do hostname-based baselining.
+python3 /opt/dns_proxy.py "$dns_proxy_port" "$dns_log" \
+  >/dev/null 2>&1 &
+dns_proxy_pid=$!
+# Wait briefly for the socket to bind before installing the REDIRECT
+for _ in $(seq 1 20); do
+  ss -lun "sport = :$dns_proxy_port" 2>/dev/null | grep -q ":$dns_proxy_port" \
+    && break
+  sleep 0.05
+done
+iptables -t nat -I PREROUTING -i "$tap_dev" -p udp --dport 53 \
+  -j REDIRECT --to-port "$dns_proxy_port" 2>/dev/null || true
+echo "--- dns proxy: port=$dns_proxy_port log=$dns_log pid=$dns_proxy_pid ---"
 echo '--- iptables -t nat -L POSTROUTING -n ---'
 iptables -t nat -L POSTROUTING -n 2>&1 | head -10 || true
 echo '--- ip route ---'
@@ -179,4 +205,12 @@ echo "$json" | jq . 2>/dev/null || echo "$json"
 # scripts/diff_fingerprint.sh.
 exit_status="$(echo "$json" | jq -r '.exit_status // -999' 2>/dev/null || echo -999)"
 echo "exit_status_in_json=$exit_status"
+
+# Emit the DNS capture map between markers so downstream tooling
+# (detonate_one.sh, diff_fingerprint.py) can pick it up. We do this
+# AFTER the fingerprint so the per-package log files include both.
+echo "DNS_MAP_BEGIN"
+python3 /opt/dns_log_to_json.py "$dns_log" 2>/dev/null || echo '{}'
+echo "DNS_MAP_END"
+
 exit 0

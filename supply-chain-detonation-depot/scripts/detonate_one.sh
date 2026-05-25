@@ -50,6 +50,13 @@ echo $(( (t1 - t0) * 1000 )) > "$dur_file"
 awk '/DETONATION_BEGIN/{p=1;next} /DETONATION_END/{exit} p' "$log" \
   | tr -d '\r' > "$fp.raw" || true
 
+# Extract the DNS map (emitted between DNS_MAP_BEGIN/END markers
+# after the fingerprint) so we can do hostname-based baselining.
+dns_map="$matrix_dir/$slug.dns.json"
+awk '/DNS_MAP_BEGIN/{p=1;next} /DNS_MAP_END/{exit} p' "$log" \
+  | tr -d '\r' > "$dns_map" || true
+[[ -s "$dns_map" ]] || echo '{}' > "$dns_map"
+
 if [[ ! -s "$fp.raw" ]]; then
   record FAIL "no DETONATION markers"
   exit 0
@@ -73,12 +80,14 @@ if [[ ! -f "$baseline" ]]; then
   exit 0
 fi
 
-if python3 "$differ" "$fp" "$baseline" > "$matrix_dir/$slug.diff.json"; then
+if python3 "$differ" --dns-map "$dns_map" "$fp" "$baseline" \
+     > "$matrix_dir/$slug.diff.json"; then
   record PASS ""
 else
   ue=$(jq -r '.unknown_execve_targets | length' "$matrix_dir/$slug.diff.json")
   uc=$(jq -r '.unknown_connect_peers | length' "$matrix_dir/$slug.diff.json")
-  record DIFF "unknown execve=$ue connect=$uc"
+  uo=$(jq -r '.unknown_openat_writes // [] | length' "$matrix_dir/$slug.diff.json" 2>/dev/null || echo 0)
+  record DIFF "unknown execve=$ue connect=$uc openat=$uo"
 fi
 
 exit 0

@@ -142,14 +142,18 @@ COPY scripts/run_detonation.sh                /opt/run_detonation.sh
 COPY scripts/detonate_one.sh                  /opt/detonate_one.sh
 COPY scripts/diff_fingerprint.py              /opt/diff_fingerprint.py
 COPY scripts/lockfile_diff.py                  /opt/lockfile_diff.py
+COPY scripts/dns_proxy.py                      /opt/dns_proxy.py
+COPY scripts/dns_log_to_json.py                /opt/dns_log_to_json.py
 COPY baselines/                                /opt/baselines/
 COPY lockfile-fixtures/                        /opt/lockfile-fixtures/
 
 RUN chmod +x /opt/run_detonation.sh /opt/detonate_one.sh \
               /opt/diff_fingerprint.py /opt/lockfile_diff.py \
+              /opt/dns_proxy.py /opt/dns_log_to_json.py \
  && file /opt/guest/vmlinux \
  && ls -lh /opt/guest/ /opt/run_detonation.sh /opt/detonate_one.sh \
            /opt/diff_fingerprint.py /opt/lockfile_diff.py \
+           /opt/dns_proxy.py /opt/dns_log_to_json.py \
  && ls -lh /opt/baselines/ /opt/lockfile-fixtures/
 
 WORKDIR /opt

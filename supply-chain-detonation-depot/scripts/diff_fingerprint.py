@@ -4,7 +4,8 @@
 # Diff a per-package detonation fingerprint against a committed
 # baseline. Used by the verify-package.yml workflow to gate a PR.
 #
-# Usage: diff_fingerprint.py <fingerprint.json> <baseline.json>
+# Usage: diff_fingerprint.py [--dns-map <ip-to-hostnames.json>]
+#                            <fingerprint.json> <baseline.json>
 #
 # Exit codes:
 #   0  PASS — every observed execve target / connect peer matches
@@ -33,6 +34,9 @@
 #   - loopback: matches 127.0.0.0/8 + ::1, any port
 #   - cidr:     matches `range` (v4 or v6), optionally restricted to `port`
 #   - exact:    matches a specific `ip` + optional `port`
+#   - hostname: matches an IP if it resolves from `hostname_pattern`
+#               (literal or glob like `*.npmjs.org`). Requires
+#               --dns-map to be supplied; ignored otherwise.
 #
 # Openat-writes allowlist entry kinds:
 #   - exact:  full path equality
@@ -43,6 +47,7 @@
 # is unknown — that's the right default ("no writes outside the
 # install root are expected unless you've explicitly approved them").
 
+import fnmatch
 import ipaddress
 import json
 import sys
@@ -65,7 +70,7 @@ def parse_peer(s):
     return ip, port
 
 
-def match_peer(ip, port, allowlist):
+def match_peer(ip, port, allowlist, dns_map):
     """Return label of the first matching allowlist entry, or None."""
     for entry in allowlist:
         kind = entry.get("kind")
@@ -88,6 +93,18 @@ def match_peer(ip, port, allowlist):
                 ep = entry.get("port")
                 if ep is None or ep == port:
                     return entry.get("label", f"{ip}:{port}")
+        elif kind == "hostname":
+            pat = entry.get("hostname_pattern", "")
+            if not pat:
+                continue
+            ep = entry.get("port")
+            if ep is not None and ep != port:
+                continue
+            hostnames = dns_map.get(str(ip), [])
+            for h in hostnames:
+                if fnmatch.fnmatchcase(h, pat):
+                    label = entry.get("label", pat)
+                    return f"{label} ({h})"
     return None
 
 
@@ -106,19 +123,32 @@ def match_openat(path, allowlist):
 
 
 def main():
-    if len(sys.argv) != 3:
-        print("usage: diff_fingerprint.py <fingerprint.json> <baseline.json>",
+    args = sys.argv[1:]
+    dns_map = {}
+    if args and args[0] == "--dns-map":
+        if len(args) < 2:
+            print("--dns-map requires a path", file=sys.stderr)
+            sys.exit(2)
+        try:
+            dns_map = json.load(open(args[1]))
+        except Exception as e:
+            print(f"dns-map parse failed: {e}", file=sys.stderr)
+            sys.exit(2)
+        args = args[2:]
+    if len(args) != 2:
+        print("usage: diff_fingerprint.py [--dns-map <map>] "
+              "<fingerprint.json> <baseline.json>",
               file=sys.stderr)
         sys.exit(2)
 
     try:
-        fp = json.load(open(sys.argv[1]))
+        fp = json.load(open(args[0]))
     except Exception as e:
         print(f"fingerprint parse failed: {e}", file=sys.stderr)
         sys.exit(2)
 
     try:
-        bl = json.load(open(sys.argv[2]))
+        bl = json.load(open(args[1]))
     except Exception as e:
         print(f"baseline parse failed: {e}", file=sys.stderr)
         sys.exit(2)
@@ -151,7 +181,7 @@ def main():
         if ip is None:
             unknown_connect.append(f"{p} (unparseable)")
             continue
-        label = match_peer(ip, port, allow_connect)
+        label = match_peer(ip, port, allow_connect, dns_map)
         if label is None:
             unknown_connect.append(p)
         else:
@@ -182,6 +212,7 @@ def main():
         "matched_openat_writes": matched_openat,
         "events_total": fp.get("events_total"),
         "ringbuf_drops": fp.get("ringbuf_drops"),
+        "dns_map_entries": len(dns_map),
     }
     print(json.dumps(report, indent=2))
     sys.exit(0 if verdict == "PASS" else 1)
