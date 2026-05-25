@@ -440,11 +440,22 @@ int main(int argc, char **argv)
 		halt();
 	}
 
-	// Attach every program in the object
+	// Attach every program in the object. Log each result to stderr
+	// (serial console) — silent attach failures are the worst kind
+	// of bug because the fingerprint just looks "quiet" instead of
+	// failing loudly.
 	struct bpf_program *prog;
 	bpf_object__for_each_program(prog, obj) {
+		const char *pname = bpf_program__name(prog);
 		struct bpf_link *link = bpf_program__attach(prog);
-		(void)link;  // intentionally leaked; we halt the VM at the end
+		long err = link ? libbpf_get_error(link) : -1;
+		if (err) {
+			fprintf(stderr, "[loader] attach %s FAILED err=%ld\n",
+			        pname ? pname : "(null)", err);
+		} else {
+			fprintf(stderr, "[loader] attach %s ok\n",
+			        pname ? pname : "(null)");
+		}
 	}
 
 	struct bpf_map *map = bpf_object__find_map_by_name(obj, "events");
