@@ -40,8 +40,9 @@
 
 #include <bpf/libbpf.h>
 
-#define EV_EXECVE  1
-#define EV_CONNECT 2
+#define EV_EXECVE        1
+#define EV_CONNECT       2
+#define EV_OPENAT_WRITE  3
 
 #define AF_INET    2
 #define AF_INET6  10
@@ -60,13 +61,18 @@ struct event {
 			uint8_t  addr_v4[4];
 			uint8_t  addr_v6[16];
 		} conn;
+		struct {
+			uint32_t flags;
+			char     path[128];
+		} openat;
 	};
 };
 
 // ---- aggregation state ----
 
-#define MAX_EXEC 256
-#define MAX_CONN  64
+#define MAX_EXEC    256
+#define MAX_CONN     64
+#define MAX_OPENAT  256
 
 static struct {
 	char filename[128];
@@ -79,8 +85,27 @@ static struct {
 } conn_events[MAX_CONN];
 static int n_conn;
 
+static struct {
+	char     path[128];
+	uint32_t flags;
+} openat_events[MAX_OPENAT];
+static int n_openat;
+
 static uint64_t total_events;
 static uint64_t ringbuf_drops;
+static uint64_t openat_under_install;   // legitimate, not surfaced
+
+// Paths under /install/ are the package's own workspace — npm cache,
+// node_modules, .npmrc, the install temp dir. Everything else is
+// "outside the install root" and gets surfaced as an openat_write.
+static int path_under_install(const char *path)
+{
+	if (strcmp(path, "/install") == 0)
+		return 1;
+	if (strncmp(path, "/install/", 9) == 0)
+		return 1;
+	return 0;
+}
 
 static int handle_event(void *ctx, void *data, size_t data_sz)
 {
@@ -125,6 +150,25 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 		}
 		conn_events[n_conn].port = e->conn.port;
 		n_conn++;
+	} else if (e->type == EV_OPENAT_WRITE) {
+		// Only surface absolute paths outside the install root.
+		// Relative paths can't be reliably classified without
+		// knowing the calling thread's CWD; npm install runs with
+		// CWD=/install almost universally so relatives are noise.
+		if (e->openat.path[0] != '/')
+			return 0;
+		if (path_under_install(e->openat.path)) {
+			openat_under_install++;
+			return 0;
+		}
+		if (n_openat >= MAX_OPENAT) {
+			ringbuf_drops++;
+			return 0;
+		}
+		memcpy(openat_events[n_openat].path, e->openat.path, 128);
+		openat_events[n_openat].path[127] = '\0';
+		openat_events[n_openat].flags = e->openat.flags;
+		n_openat++;
 	}
 	return 0;
 }
@@ -161,6 +205,14 @@ static int already_seen_conn(int idx)
 	for (int j = 0; j < idx; j++)
 		if (strcmp(conn_events[j].addr_str, conn_events[idx].addr_str) == 0
 		    && conn_events[j].port == conn_events[idx].port)
+			return 1;
+	return 0;
+}
+
+static int already_seen_openat(int idx)
+{
+	for (int j = 0; j < idx; j++)
+		if (strcmp(openat_events[j].path, openat_events[idx].path) == 0)
 			return 1;
 	return 0;
 }
@@ -202,7 +254,25 @@ static void emit_fingerprint(const char *pkg, int exit_status,
 		       conn_events[i].port);
 		printed++;
 	}
-	printf("]");
+	printf("],");
+
+	// Writes outside the install root. Anything legitimate (npm
+	// cache, node_modules, install temp dir) was filtered out
+	// upstream; what's left is by definition outside-of-install and
+	// either gets explicitly allowlisted in the baseline or trips
+	// the gate.
+	printf("\"openat_writes\":[");
+	printed = 0;
+	for (int i = 0; i < n_openat; i++) {
+		if (already_seen_openat(i)) continue;
+		char escaped[260];
+		json_escape(openat_events[i].path, escaped, sizeof(escaped));
+		printf("%s\"%s\"", printed ? "," : "", escaped);
+		printed++;
+	}
+	printf("],");
+	printf("\"openat_under_install\":%llu",
+	       (unsigned long long)openat_under_install);
 
 	printf("}\n");
 	printf("DETONATION_END\n");

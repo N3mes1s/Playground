@@ -22,13 +22,26 @@
 #       {"kind": "loopback", "label": "npm IPC"},
 #       {"kind": "cidr", "range": "104.16.0.0/13", "port": 443,
 #        "label": "Cloudflare (registry.npmjs.org)"}
+#     ],
+#     "openat_writes_allowlist": [
+#       {"kind": "exact",  "path": "/dev/null"},
+#       {"kind": "prefix", "path": "/tmp/v8-compile-cache-"}
 #     ]
 #   }
 #
-# Allowlist entry kinds:
+# Connect-peer allowlist entry kinds:
 #   - loopback: matches 127.0.0.0/8 + ::1, any port
 #   - cidr:     matches `range` (v4 or v6), optionally restricted to `port`
 #   - exact:    matches a specific `ip` + optional `port`
+#
+# Openat-writes allowlist entry kinds:
+#   - exact:  full path equality
+#   - prefix: path startswith `path`
+#
+# If a fingerprint emits `openat_writes` and the baseline has no
+# `openat_writes_allowlist` (or an empty one), every captured write
+# is unknown — that's the right default ("no writes outside the
+# install root are expected unless you've explicitly approved them").
 
 import ipaddress
 import json
@@ -78,6 +91,20 @@ def match_peer(ip, port, allowlist):
     return None
 
 
+def match_openat(path, allowlist):
+    """Return label of the first matching allowlist entry, or None."""
+    for entry in allowlist:
+        kind = entry.get("kind")
+        if kind == "exact":
+            if path == entry.get("path"):
+                return entry.get("label", path)
+        elif kind == "prefix":
+            p = entry.get("path", "")
+            if p and path.startswith(p):
+                return entry.get("label", p)
+    return None
+
+
 def main():
     if len(sys.argv) != 3:
         print("usage: diff_fingerprint.py <fingerprint.json> <baseline.json>",
@@ -100,6 +127,8 @@ def main():
     unknown_execve = []
     unknown_connect = []
     matched_connect = []  # (peer_string, label)
+    unknown_openat = []
+    matched_openat = []   # (path, label)
 
     # Verdict check
     required = bl.get("verdict_required")
@@ -128,8 +157,17 @@ def main():
         else:
             matched_connect.append({"peer": p, "matched_label": label})
 
+    # openat writes outside the install root
+    allow_openat = bl.get("openat_writes_allowlist", [])
+    for path in fp.get("openat_writes", []):
+        label = match_openat(path, allow_openat)
+        if label is None:
+            unknown_openat.append(path)
+        else:
+            matched_openat.append({"path": path, "matched_label": label})
+
     verdict = "PASS"
-    if violations or unknown_execve or unknown_connect:
+    if violations or unknown_execve or unknown_connect or unknown_openat:
         verdict = "DIFF"
 
     report = {
@@ -140,6 +178,8 @@ def main():
         "unknown_execve_targets": unknown_execve,
         "unknown_connect_peers": unknown_connect,
         "matched_connect_peers": matched_connect,
+        "unknown_openat_writes": unknown_openat,
+        "matched_openat_writes": matched_openat,
         "events_total": fp.get("events_total"),
         "ringbuf_drops": fp.get("ringbuf_drops"),
     }
