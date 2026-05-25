@@ -1,0 +1,134 @@
+name: Cross-job matrix — one Depot runner per package
+
+# Cross-job parallelism: each package detonation lands on its own
+# fresh Depot runner via `strategy.matrix`. Trades cost (per-job
+# cold-start ~10-15s × N) for stronger isolation (per-runner kernel)
+# and wall-clock independence from within-job parallelism limits.
+#
+# For the burst10 fixture this is OVER-engineered — within-job
+# xargs -P 10 already finishes in one wave (~24s wall, ~0.4 runner-min).
+# Cross-job pays cold start per package; expected ~30s wall but
+# ~5.5 runner-min total. Crossover point where cross-job wins on
+# wall-clock is roughly N > $PARALLEL (matrix exceeds within-job
+# capacity); cross-job is always more expensive per-second.
+#
+# This workflow is here to make the comparison real, not because
+# it's the right choice for a 10-package matrix.
+
+on:
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  compute:
+    name: Compute package list
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 5
+    container:
+      image: registry.depot.dev/lmpn2xx8kz:detonation-runner-latest
+      credentials:
+        username: x-token
+        password: ${{ secrets.AEGIS_DEPOT_TOKEN }}
+    outputs:
+      packages: ${{ steps.diff.outputs.packages }}
+    steps:
+      - id: diff
+        name: Extract direct added/bumped packages
+        run: |
+          set -eux
+          packages_json=$(python3 /opt/lockfile_diff.py --direct \
+            /opt/lockfile-fixtures/burst10/base.json \
+            /opt/lockfile-fixtures/burst10/head.json \
+            | jq -R -s -c 'split("\n") | map(select(length>0))')
+          echo "packages=$packages_json" >> "$GITHUB_OUTPUT"
+          echo "::notice::matrix = $packages_json"
+
+  detonate:
+    name: ${{ matrix.package }}
+    needs: compute
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.compute.outputs.packages) }}
+    container:
+      image: registry.depot.dev/lmpn2xx8kz:detonation-runner-latest
+      credentials:
+        username: x-token
+        password: ${{ secrets.AEGIS_DEPOT_TOKEN }}
+      options: >-
+        --device=/dev/kvm
+        --device=/dev/net/tun
+        --cap-add=SYS_ADMIN
+        --cap-add=NET_ADMIN
+        --cap-add=NET_RAW
+        --security-opt seccomp=unconfined
+        --security-opt apparmor=unconfined
+    steps:
+      - name: Detonate
+        env:
+          PKG: ${{ matrix.package }}
+        run: |
+          set -uo pipefail
+          mkdir -p /tmp/matrix
+          # INST_ID=$$ is unique per job since each job is a fresh
+          # container — no cross-VM TAP/IP collision risk in cross-job
+          # mode (unlike within-job xargs fan-out).
+          bash /opt/detonate_one.sh "$PKG" "$$"
+          slug=$(echo "$PKG" | tr '/@:' '___')
+          status=$(cat "/tmp/matrix/$slug.status")
+          duration=$(cat "/tmp/matrix/$slug.duration_ms")
+          note=$(cat "/tmp/matrix/$slug.note" 2>/dev/null || echo "")
+
+          echo
+          echo "============================================================"
+          echo "PACKAGE:  $PKG"
+          echo "STATUS:   $status"
+          echo "DURATION: ${duration}ms"
+          echo "NOTE:     $note"
+          echo "============================================================"
+
+          # Match the gate semantics: PASS+NEW exit 0 (NEW means
+          # baseline-capture mode, reviewer takes it from here),
+          # DIFF+FAIL exit 1.
+          if [[ "$status" == "PASS" || "$status" == "NEW" ]]; then
+            exit 0
+          fi
+          exit 1
+
+  summary:
+    name: Aggregate
+    needs: detonate
+    if: always()
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Per-package outcome from matrix
+        env:
+          MATRIX_RESULT: ${{ needs.detonate.result }}
+        run: |
+          # GitHub Actions doesn't expose per-matrix-job durations
+          # to the summary job, only the aggregate result. To get
+          # per-job wall-clock, query `depot ci status <run-id>
+          # --output json` from outside this workflow. The job-name
+          # column in the Depot UI already shows duration per package.
+          echo "============================================================"
+          echo "Matrix overall outcome: $MATRIX_RESULT"
+          echo "============================================================"
+          echo
+          echo "Per-job timings: see the Depot UI matrix view (each"
+          echo "package name is a clickable job with its own log and"
+          echo "duration). Or from the host running 'depot ci':"
+          echo
+          echo "  depot ci status <run-id> --output json | jq '...'"
+          echo
+          if [[ "$MATRIX_RESULT" == "success" ]]; then
+            echo "OVERALL: all detonations produced fingerprints (PASS or NEW)"
+          else
+            echo "OVERALL: at least one detonation FAILED or hit DIFF"
+            exit 1
+          fi
