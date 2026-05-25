@@ -143,33 +143,53 @@ int on_connect(struct trace_event_raw_sys_enter *ctx)
 	return 0;
 }
 
-// DEBUG: emit a sentinel EV_EXECVE event so we can prove from
-// userspace whether the kernel is actually dispatching to this
-// program. If "OPENAT_FIRED" lands in execve_targets, the probe
-// is being called. If not, the attach succeeded but the
-// tracepoint never reaches this code.
-SEC("tp/syscalls/sys_enter_openat")
-int on_openat(struct trace_event_raw_sys_enter *ctx)
+// Capture write-intent file opens via a kprobe on do_sys_openat2 —
+// the VFS handler called by both the regular openat() syscall and
+// the io_uring async openat path. Plain tp/syscalls/sys_enter_openat
+// attached cleanly on Ubuntu 6.8 but never received dispatches in
+// practice (load_ok + attach_ok + zero events from any process,
+// verified with a sentinel-event smoke test). Hooking the kernel
+// function directly is independent of which userspace entry was used.
+//
+// do_sys_openat2 signature:
+//   long do_sys_openat2(int dfd, const char __user *filename,
+//                       struct open_how *how);
+// open_how layout (since 5.6):
+//   struct open_how {
+//       __u64 flags;
+//       __u64 mode;
+//       __u64 resolve;
+//   };
+SEC("kprobe/do_sys_openat2")
+int on_openat(struct pt_regs *ctx)
 {
-	(void)ctx;
+	const char *filename = (const char *)PT_REGS_PARM2(ctx);
+	void *how = (void *)PT_REGS_PARM3(ctx);
+	if (!how)
+		return 0;
+
+	__u64 flags = 0;
+	if (bpf_probe_read_kernel(&flags, sizeof(flags), how) != 0)
+		return 0;
+	if ((flags & (__u64)O_ACCMODE) == (__u64)O_RDONLY)
+		return 0;  // pure read, not interesting
+
 	struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
 	if (!e)
 		return 0;
+
 	__builtin_memset(e, 0, sizeof(*e));
-	e->type = EV_EXECVE;
-	e->execve.filename[0] = 'O';
-	e->execve.filename[1] = 'P';
-	e->execve.filename[2] = 'E';
-	e->execve.filename[3] = 'N';
-	e->execve.filename[4] = 'A';
-	e->execve.filename[5] = 'T';
-	e->execve.filename[6] = '_';
-	e->execve.filename[7] = 'F';
-	e->execve.filename[8] = 'I';
-	e->execve.filename[9] = 'R';
-	e->execve.filename[10] = 'E';
-	e->execve.filename[11] = 'D';
-	e->execve.filename[12] = 0;
+	e->type = EV_OPENAT_WRITE;
+	struct task_struct *t = (struct task_struct *)bpf_get_current_task();
+	e->pid  = BPF_CORE_READ(t, pid);
+	e->ppid = BPF_CORE_READ(t, real_parent, pid);
+	bpf_get_current_comm(&e->comm, sizeof(e->comm));
+	e->openat.flags = (__u32)flags;
+
+	bpf_probe_read_user_str(&e->openat.path,
+	                        sizeof(e->openat.path),
+	                        filename);
+
 	bpf_ringbuf_submit(e, 0);
 	return 0;
 }
