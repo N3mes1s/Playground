@@ -1,0 +1,22 @@
+{
+  "package": "node-ipc@9.2.1",
+  "captured_from_run": "hand-crafted for matrix-attack demo",
+  "captured_at": "2026-05-25T00:00:00Z",
+  "verdict_required": "OK",
+  "notes": "Hand-crafted baseline for the node-ipc supply-chain attack simulation. Represents a hypothetical 'pre-compromise' baseline that a team running node-ipc@9.2.1 might have committed before the May 2026 attack on later versions. Pure-Node IPC library, same install shape as other pure-JS packages (npm/node execve + loopback + registry over TLS). This baseline doesn't reflect a real captured fingerprint — node-ipc@9.2.1 was never run in our environment — but the allowlists match what a clean npm install would produce.",
+  "execve_targets_allowlist": [
+    "/usr/local/sbin/npm",
+    "/usr/local/bin/npm",
+    "/usr/sbin/npm",
+    "/usr/bin/npm",
+    "/usr/local/sbin/node",
+    "/usr/local/bin/node",
+    "/usr/sbin/node",
+    "/usr/bin/node"
+  ],
+  "connect_peers_allowlist": [
+    { "kind": "loopback", "label": "npm internal IPC (v4+v6 localhost)" },
+    { "kind": "hostname", "hostname_pattern": "registry.npmjs.org", "port": 443, "label": "registry.npmjs.org (DNS-mapped)" },
+    { "kind": "cidr", "range": "104.16.0.0/13", "port": 443, "label": "Cloudflare fallback" }
+  ]
+}

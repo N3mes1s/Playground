@@ -1,16 +1,24 @@
-name: Attack simulation — synthesize axios@1.14.1 fingerprint, run the gate
+name: Attack simulation — synthesize compromised-package fingerprints, run the gate
 
-# Demonstrates what the gate output looks like when a PR bumps axios
-# to a malicious version. We DO NOT run the actual compromised
-# package — there's no value in pulling adversary tooling into a
+# Demonstrates what the gate output looks like when a PR bumps a
+# dep to a malicious version. We DO NOT run the actual compromised
+# packages — there's no value in pulling adversary tooling into a
 # managed-CI runner just for a demo, and the malicious versions are
-# already removed from the registry (StepSecurity advisory, April
-# 2026). Instead we hand-craft a fingerprint that matches the
-# DOCUMENTED IoCs of the March 2026 axios@1.14.1 / 0.30.4 compromise
-# (Elastic Security Labs writeup, 1 April 2026; attributed by Mandiant
-# to UNC1069, by Microsoft to Sapphire Sleet — same DPRK-aligned
-# actor cluster) and run the REAL diff_fingerprint.py gate against
-# the REAL committed axios@1.16.1 baseline.
+# already removed from the registry. Instead we hand-craft fingerprints
+# that match the DOCUMENTED IoCs of two real 2026 attacks:
+#
+#   1. axios@1.14.1 / 0.30.4 — March 2026, DPRK/UNC1069/Sapphire Sleet,
+#      C2 sfrclak.com:8000 (142.11.206.73:8000). Per Elastic Security
+#      Labs writeup 1 April 2026.
+#
+#   2. node-ipc@12.0.1 — May 14 2026, C2 sh.azurestaticprovider.net:443
+#      (37.16.75.69:443). Notable because the C2 uses port 443
+#      specifically to blend with legitimate registry HTTPS traffic
+#      — port-based filtering wouldn't help; IP-or-hostname-based
+#      allowlisting is what catches it.
+#
+# Expected gate output for each: DIFF with all signal classes (execve,
+# connect, openat) calling out unknown items, exit 1, "would block PR".
 #
 # Concretely the synthetic fingerprint contains:
 #   - /bin/sh and /usr/bin/curl in execve_targets — the postinstall
@@ -90,7 +98,7 @@ jobs:
           echo "--- synthetic fingerprint ---"
           jq . /tmp/attack/axios_1.14.1.fp.json
 
-      - name: Run the gate (diff against committed axios@1.16.1 baseline)
+      - name: Run the gate against axios baseline
         run: |
           set -uo pipefail
           echo "--- baseline ---"
@@ -115,7 +123,7 @@ jobs:
           jq . /tmp/attack/diff.json
           echo
           echo "============================================================"
-          echo "GATE OUTPUT: DIFF — would BLOCK the PR"
+          echo "AXIOS@1.14.1 GATE OUTPUT: DIFF — would BLOCK the PR"
           echo "============================================================"
           ue=$(jq -r '.unknown_execve_targets    | length' /tmp/attack/diff.json)
           uc=$(jq -r '.unknown_connect_peers      | length' /tmp/attack/diff.json)
@@ -133,5 +141,102 @@ jobs:
           echo "  - TCP egress to 142.11.206.73:8000 — C2 for sfrclak.com"
           echo "  - Persistence writes to /etc/cron.d/* and ~/.ssh/authorized_keys"
           echo "  - Attributed to UNC1069 / Sapphire Sleet (DPRK-aligned)"
+
+      - name: Write synthetic fingerprint matching node-ipc@12.0.1 IoCs
+        run: |
+          set -eu
+          # node-ipc compromise: C2 over port 443 (looks like normal
+          # HTTPS), no shell spawn (the payload is JS — uses node's
+          # built-in `https` module so curl/sh never get exec'd).
+          # The signal that catches it is the connect destination IP,
+          # not the port or the binaries. With our hostname allowlist
+          # for registry.npmjs.org, 37.16.75.69 doesn't resolve from
+          # an allowed hostname and lands as unknown.
+          cat > /tmp/attack/node-ipc_12.0.1.fp.json <<'EOF'
+          {
+            "package": "node-ipc@12.0.1",
+            "exit_status": 0,
+            "duration_ms": 4892,
+            "boot_to_install_ms": 178,
+            "events_total": 1204,
+            "ringbuf_drops": 0,
+            "execve_targets": [
+              "/usr/local/sbin/npm",
+              "/usr/local/bin/npm",
+              "/usr/sbin/npm",
+              "/usr/bin/npm",
+              "/usr/local/sbin/node",
+              "/usr/local/bin/node",
+              "/usr/sbin/node",
+              "/usr/bin/node"
+            ],
+            "connect_peers": [
+              "127.0.0.1:65535",
+              "0:0:0:0:0:0:0:1:65535",
+              "104.16.5.34:443",
+              "37.16.75.69:443"
+            ],
+            "openat_writes": [],
+            "openat_under_install": 1098,
+            "verdict": "OK"
+          }
+          EOF
+          # The DNS map for node-ipc would contain registry.npmjs.org
+          # → Cloudflare IPs (legit). 37.16.75.69 doesn't appear
+          # because the attacker hardcoded the IP (or used a
+          # non-A-record path) to avoid leaving a DNS trail.
+          cat > /tmp/attack/node-ipc_dns_map.json <<'EOF'
+          {
+            "104.16.5.34": ["registry.npmjs.org"]
+          }
+          EOF
+          echo "--- synthetic fingerprint ---"
+          jq . /tmp/attack/node-ipc_12.0.1.fp.json
+          echo "--- synthetic DNS map ---"
+          jq . /tmp/attack/node-ipc_dns_map.json
+
+      - name: Run the gate against node-ipc baseline
+        run: |
+          set -uo pipefail
+          echo "--- baseline ---"
+          jq '{package, connect_peers_allowlist}' \
+            /opt/baselines/node-ipc@9.2.1.json
+
+          echo
+          echo "--- gate output (diff_fingerprint.py with DNS map) ---"
+          if python3 /opt/diff_fingerprint.py \
+                --dns-map /tmp/attack/node-ipc_dns_map.json \
+                /tmp/attack/node-ipc_12.0.1.fp.json \
+                /opt/baselines/node-ipc@9.2.1.json \
+              > /tmp/attack/diff-nodeipc.json; then
+            echo
+            echo "============================================================"
+            echo "GATE OUTPUT: PASS  (THIS IS THE WRONG ANSWER — TEST IS BROKEN)"
+            echo "============================================================"
+            jq . /tmp/attack/diff-nodeipc.json
+            exit 1
+          fi
+          echo
+          jq . /tmp/attack/diff-nodeipc.json
+          echo
+          echo "============================================================"
+          echo "NODE-IPC@12.0.1 GATE OUTPUT: DIFF — would BLOCK the PR"
+          echo "============================================================"
+          uc=$(jq -r '.unknown_connect_peers | length' /tmp/attack/diff-nodeipc.json)
+          echo "  unknown connect peers:  $uc"
+          jq -r '.unknown_connect_peers[]' /tmp/attack/diff-nodeipc.json | sed 's/^/    /'
+          echo
+          echo "  matched_connect_peers (registry, allowed):"
+          jq -r '.matched_connect_peers[] | "    \(.peer) → \(.matched_label)"' \
+            /tmp/attack/diff-nodeipc.json
+          echo
+          echo "Indicators of compromise (per StepSecurity, 14 May 2026):"
+          echo "  - TCP egress to 37.16.75.69:443 — C2 for sh.azurestaticprovider.net"
+          echo "  - C2 deliberately uses port 443 to blend with registry HTTPS;"
+          echo "    a port-based filter would not have caught this. The gate"
+          echo "    fires because the IP doesn't resolve from an allowlisted"
+          echo "    hostname (registry.npmjs.org) in the DNS map for this run."
+          echo "  - No /bin/sh execve — payload uses node's built-in https"
+          echo "    module, no shell needed; execve channel stays clean."
           echo
           echo "Gate result: DETECTED.  Expected: DIFF."
