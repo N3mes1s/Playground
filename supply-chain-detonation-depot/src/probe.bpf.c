@@ -147,12 +147,17 @@ int on_connect(struct trace_event_raw_sys_enter *ctx)
 // the ringbuf has cheap reservations and userspace already has the
 // `/install/` prefix knowledge to drop boring entries. Filtering in
 // BPF would couple the probe to the loader's mount layout.
+//
+// DEBUG: filter temporarily disabled to verify the tracepoint is
+// being called at all. Userspace will see floods of openat events
+// if it is; zero events if the tracepoint isn't being dispatched
+// to this program despite a successful attach.
 SEC("tp/syscalls/sys_enter_openat")
 int on_openat(struct trace_event_raw_sys_enter *ctx)
 {
 	int flags = (int)ctx->args[2];
-	if ((flags & O_ACCMODE) == O_RDONLY)
-		return 0;  // pure read, not interesting
+	// if ((flags & O_ACCMODE) == O_RDONLY)
+	//	return 0;  // pure read, not interesting
 
 	struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
 	if (!e)
