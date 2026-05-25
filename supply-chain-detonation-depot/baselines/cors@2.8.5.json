@@ -20,6 +20,12 @@
       "label": "npm internal IPC (v4+v6 localhost)"
     },
     {
+      "kind": "hostname",
+      "hostname_pattern": "registry.npmjs.org",
+      "port": 443,
+      "label": "registry.npmjs.org (DNS-mapped)"
+    },
+    {
       "kind": "cidr",
       "range": "104.16.0.0/13",
       "port": 443,

@@ -15,13 +15,57 @@
     "/usr/bin/node"
   ],
   "connect_peers_allowlist": [
-    { "kind": "loopback", "label": "npm internal IPC (v4+v6 localhost)" },
-    { "kind": "cidr", "range": "104.16.0.0/13",   "port": 443, "label": "Cloudflare (registry.npmjs.org) — primary v4 range" },
-    { "kind": "cidr", "range": "104.24.0.0/14",   "port": 443, "label": "Cloudflare (registry.npmjs.org)" },
-    { "kind": "cidr", "range": "172.64.0.0/13",   "port": 443, "label": "Cloudflare (registry.npmjs.org)" },
-    { "kind": "cidr", "range": "162.158.0.0/15",  "port": 443, "label": "Cloudflare" },
-    { "kind": "cidr", "range": "141.101.64.0/18", "port": 443, "label": "Cloudflare" },
-    { "kind": "cidr", "range": "108.162.192.0/18","port": 443, "label": "Cloudflare" },
-    { "kind": "cidr", "range": "2606:4700::/32",  "port": 443, "label": "Cloudflare (IPv6)" }
+    {
+      "kind": "loopback",
+      "label": "npm internal IPC (v4+v6 localhost)"
+    },
+    {
+      "kind": "hostname",
+      "hostname_pattern": "registry.npmjs.org",
+      "port": 443,
+      "label": "registry.npmjs.org (DNS-mapped)"
+    },
+    {
+      "kind": "cidr",
+      "range": "104.16.0.0/13",
+      "port": 443,
+      "label": "Cloudflare (registry.npmjs.org) \u2014 primary v4 range"
+    },
+    {
+      "kind": "cidr",
+      "range": "104.24.0.0/14",
+      "port": 443,
+      "label": "Cloudflare (registry.npmjs.org)"
+    },
+    {
+      "kind": "cidr",
+      "range": "172.64.0.0/13",
+      "port": 443,
+      "label": "Cloudflare (registry.npmjs.org)"
+    },
+    {
+      "kind": "cidr",
+      "range": "162.158.0.0/15",
+      "port": 443,
+      "label": "Cloudflare"
+    },
+    {
+      "kind": "cidr",
+      "range": "141.101.64.0/18",
+      "port": 443,
+      "label": "Cloudflare"
+    },
+    {
+      "kind": "cidr",
+      "range": "108.162.192.0/18",
+      "port": 443,
+      "label": "Cloudflare"
+    },
+    {
+      "kind": "cidr",
+      "range": "2606:4700::/32",
+      "port": 443,
+      "label": "Cloudflare (IPv6)"
+    }
   ]
 }
