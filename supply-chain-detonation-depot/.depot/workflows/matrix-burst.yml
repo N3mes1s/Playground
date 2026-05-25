@@ -108,6 +108,18 @@ jobs:
             echo "TIMING: serial_sum=${sum_ms}ms  wall_clock=${wall_ms}ms  speedup=${speedup}  workers=$PARALLEL"
           fi
 
+          # Show one PASS package's matched_connect_peers so the
+          # hostname-based labeling is visible in the run log.
+          sample=$(ls /tmp/matrix/*.diff.json 2>/dev/null | head -1)
+          if [[ -n "$sample" ]]; then
+            slug=$(basename "$sample" .diff.json)
+            echo
+            echo "============================================================"
+            echo "== Sample matched_connect_peers (hostname labels) — $slug"
+            echo "============================================================"
+            jq '{matched_connect_peers, dns_map_entries}' "$sample"
+          fi
+
           if (( fail )); then
             echo "OVERALL: at least one detonation outright FAILED (npm exit nonzero or no fingerprint)"
             exit 1
