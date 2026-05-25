@@ -143,39 +143,33 @@ int on_connect(struct trace_event_raw_sys_enter *ctx)
 	return 0;
 }
 
-// Capture every write-intent openat. We don't filter by path here —
-// the ringbuf has cheap reservations and userspace already has the
-// `/install/` prefix knowledge to drop boring entries. Filtering in
-// BPF would couple the probe to the loader's mount layout.
-//
-// DEBUG: filter temporarily disabled to verify the tracepoint is
-// being called at all. Userspace will see floods of openat events
-// if it is; zero events if the tracepoint isn't being dispatched
-// to this program despite a successful attach.
+// DEBUG: emit a sentinel EV_EXECVE event so we can prove from
+// userspace whether the kernel is actually dispatching to this
+// program. If "OPENAT_FIRED" lands in execve_targets, the probe
+// is being called. If not, the attach succeeded but the
+// tracepoint never reaches this code.
 SEC("tp/syscalls/sys_enter_openat")
 int on_openat(struct trace_event_raw_sys_enter *ctx)
 {
-	int flags = (int)ctx->args[2];
-	// if ((flags & O_ACCMODE) == O_RDONLY)
-	//	return 0;  // pure read, not interesting
-
+	(void)ctx;
 	struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
 	if (!e)
 		return 0;
-
 	__builtin_memset(e, 0, sizeof(*e));
-	e->type = EV_OPENAT_WRITE;
-	struct task_struct *t = (struct task_struct *)bpf_get_current_task();
-	e->pid  = BPF_CORE_READ(t, pid);
-	e->ppid = BPF_CORE_READ(t, real_parent, pid);
-	bpf_get_current_comm(&e->comm, sizeof(e->comm));
-	e->openat.flags = (__u32)flags;
-
-	void *path_ptr = (void *)ctx->args[1];
-	bpf_probe_read_user_str(&e->openat.path,
-	                        sizeof(e->openat.path),
-	                        path_ptr);
-
+	e->type = EV_EXECVE;
+	e->execve.filename[0] = 'O';
+	e->execve.filename[1] = 'P';
+	e->execve.filename[2] = 'E';
+	e->execve.filename[3] = 'N';
+	e->execve.filename[4] = 'A';
+	e->execve.filename[5] = 'T';
+	e->execve.filename[6] = '_';
+	e->execve.filename[7] = 'F';
+	e->execve.filename[8] = 'I';
+	e->execve.filename[9] = 'R';
+	e->execve.filename[10] = 'E';
+	e->execve.filename[11] = 'D';
+	e->execve.filename[12] = 0;
 	bpf_ringbuf_submit(e, 0);
 	return 0;
 }
