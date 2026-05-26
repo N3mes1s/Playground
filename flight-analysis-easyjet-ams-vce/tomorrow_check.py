@@ -139,9 +139,13 @@ def main() -> None:
                     return
 
         except urllib.error.HTTPError as e:
-            if e.code == 429:
-                emit("[poll info] rate-limited (429), backing off 2x")
-                time.sleep(POLL_S)  # extra sleep
+            # 400 is expected while the target date is still in the future
+            # (FR24 rejects future-date queries on /flight-summary). Silent.
+            # 404 is also "no data yet". Silent.
+            if e.code in (400, 404):
+                pass
+            elif e.code == 429:
+                time.sleep(POLL_S)  # extra sleep, silent backoff
             else:
                 emit(f"[poll error] HTTP {e.code}: {e.reason}")
         except Exception as e:
