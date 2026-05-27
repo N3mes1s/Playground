@@ -7,4 +7,3 @@ data/**
 !data/backtests/
 !data/backtests/*/
 !data/backtests/*/summary.json
-!data/backtests/*/playbook.md
