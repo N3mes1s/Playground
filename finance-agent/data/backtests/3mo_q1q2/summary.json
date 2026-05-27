@@ -1,0 +1,154 @@
+{
+  "run_id": "3mo_q1q2",
+  "start": "2026-02-26",
+  "end": "2026-05-26",
+  "trading_days": 62,
+  "starting_cash": 10000.0,
+  "final_value": 10224.15,
+  "total_return": 0.0224,
+  "weekly_marks": [
+    {
+      "week_start": "2026-02-26",
+      "week_end": "2026-02-27",
+      "start_value": 10000.0,
+      "end_value": 10000.0,
+      "weekly_return": 0.0,
+      "summary": "**Week 1 summary (2026-02-23 \u2192 2026-02-27):** P&L flat at $0.00 / 0.00% on a $10k book \u2014 no fills, no positions, 100% cash. Onboarded Friday afternoon into a bearish SPY outside-reversal bar (693\u2192689 on rising volume), which is exactly the tape where the seed playbook says don't initiate. Best decisions: respecting Friday-PM no-add, leading with macro context, and pre-scripting a Monday trigger. Misses: didn't read VIX, didn't pull histories on watchlist names for level-prep, and defined a trigger without a paired invalidation level. Playbook now mandates VIX in every macro check, requires trigger + invalidation on every plan, and codifies the stop ladder (\u22124% hard / BE at +3% / \u22125% trail at +6% / \u22128% at +10%). Monday plan: SPY 8% tranche if 682 holds in the first 30 minutes with stop at 678; otherwise stay flat and let the range resolve.",
+      "duration_sec": 69.7
+    },
+    {
+      "week_start": "2026-03-02",
+      "week_end": "2026-03-06",
+      "start_value": 10000.0,
+      "end_value": 9948.14,
+      "weekly_return": -0.0052,
+      "summary": "**Week 2 summary for operator:** Closed \u2212$51.86 / \u22120.52% on the $10k book \u2014 a small red week, mandate-violating in the strictest \"green every week\" reading but well within capital-preservation tolerance. We took three fills (SPY starter 3/2, SPY add + META starter 3/4) and cut SPY on 3/6 for a \u2212$29 realized loss when 680 support broke decisively (4 of 5 closes below). META still held, 1 share \u22123.4%, inside its \u22124% hard stop at 641.02. The exit discipline worked; the entry discipline didn't \u2014 specifically, adding to SPY on a *reclaim* of 680 rather than a *breakout* of 693 was buying inside a range that then resolved lower, and initiating META the same day doubled correlated risk. Playbook now requires range *breaks* for adds (not bounces), one new risk add per day across the book, regime-aware sizing (5\u20137% starters in chop, 8\u201310% only in confirmed trend), and written/resting stops rather than mental ones. Cash 93.5% into Monday, defensive bias, only re-engaging SPY on a 680 reclaim with volume or a 659\u2013665 capitulation reversal; META exits at open if it gaps under 641. Watchlist gaining IWM, SMH, TLT, XLF, and a working VIX feed; dropping TSLA for inactivity.",
+      "duration_sec": 96.5
+    },
+    {
+      "week_start": "2026-03-09",
+      "week_end": "2026-03-13",
+      "start_value": 9950.67,
+      "end_value": 9947.4,
+      "weekly_return": -0.0003,
+      "summary": "**Week 3 summary for operator:** Closed \u2212$0.74 / \u22120.01% on $9,948 \u2014 a functionally flat week in a tape that broke down hard (SPY 678\u2192662, QQQ 608\u2192594, fresh range lows on heavy volume). Three fills: SPY capitulation-reversal starter 3/9 @ 678.27, META time-stop 3/11 @ 654.86 (\u2212$12.87), SPY close-breakdown exit 3/12 @ 666.06 (\u2212$10.74). Net realized \u2212$23.61, but META's mark-to-market recovered ~$10 from the prior week's unrealized hole, leaving the week flat. Two of three exits were the *sharpened-from-last-week* close-breakdown rule firing exactly as designed \u2014 that discipline saved real capital. The miss was the SPY 3/9 entry: a single-day capitulation reversal got starter-size instead of scout-size, and I held it three days without the required Day-2 close >680 confirmation. Playbook updates: capitulation reversals are now scout-only (3\u20135%) until Day-2 confirmation; every ticket needs a written Day-2 weakness criterion alongside the hard stop; in confirmed TREND-DOWN the active trade is defensive ETFs (TLT/GLD/SHY), not 100% cash. Watchlist adds: TLT, GLD, SHY/BIL, VIXY (3-week VIX feed miss \u2014 fix Monday), XLF. Drop: TSLA. Book is 100% cash going into Monday with a defensive bias; no new single-stock longs until SPY reclaims 670 with volume or flushes to 650\u2013659 with multi-day reversal.",
+      "duration_sec": 117.3
+    },
+    {
+      "week_start": "2026-03-16",
+      "week_end": "2026-03-20",
+      "start_value": 9947.4,
+      "end_value": 9947.4,
+      "weekly_return": 0.0,
+      "summary": "## Week 4 Summary for Operator\n\n**Closed flat at $0.00 / 0.00% on $9,947.40, 100% cash, zero fills.** SPY fell 662 \u2192 648 (\u22122.1%) on the week with fresh range lows Friday on the heaviest volume of the month (163M, close near LoD). Doing nothing was the trade \u2014 the mandate of \"flat beats red\" was met cleanly in a TREND-DOWN tape that offered only bear traps. Three correct passes: didn't chase the 3/17 weak bounce to 670.79 (volume failed the \"regime flip\" test), didn't scout the marginal 3/19 capitulation candle (Thu-into-Fri made Day-2 confirmation impossible), and didn't manufacture a setup just because four weeks had passed. The two open process bugs are now in stark relief: the VIX feed is unresolved for a fourth straight week (Monday tick-1 priority is to batch-test `VXX/UVXY/^VIX9D/^VVIX` until one returns data), and last week's \"defensive ETFs are the active trade in TREND-DOWN\" rule fell apart because TLT/GLD/SHY/VIXY all return empty in this harness \u2014 playbook now caveats that rule with \"if and only if data exists; otherwise cash is the defensive position.\" Watchlist pruned: dropping AAPL/MSFT/GOOGL/AMZN/AMD from active monitoring (zero analytical attention in 3+ weeks); keeping SPY/QQQ/IWM/SMH/NVDA/META active. Monday trigger ladder: SPY >665 reclaim is a \"bounce-alive\" check (not entry), 630-640 flush with upper-half close on >110M vol = 3-5% scout, otherwise hold 100% cash.",
+      "duration_sec": 108.6
+    },
+    {
+      "week_start": "2026-03-23",
+      "week_end": "2026-03-27",
+      "start_value": 9947.4,
+      "end_value": 9947.4,
+      "weekly_return": 0.0,
+      "summary": "**Week 5 summary for operator:** Closed flat at **$0.00 / 0.00%** on $9,947.40, 100% cash, zero fills \u2014 third flat week out of five, second consecutive in TREND-DOWN. SPY fell 648 \u2192 634 (\u22122.2%) with a failed bounce 3/23-3/25 topping at 656 (well below the 665 reclaim trigger) and a fresh weekly low Friday at the close on 103M volume. The three correct passes were: (1) closing the 4-week-old defensive-ticker availability bug on Monday tick 1 by batch-testing every plausible vol/bond/gold/alt proxy \u2014 all empty, so cash is officially the only defensive expression and that rule is now baked in; (2) reading 3/23's gap-up-and-fade as distribution (heavy vol + lower-half close), not reversal, and watching Day-2 confirm the bearish read; (3) refusing to \"round down\" Friday's capitulation criteria when SPY tagged the trigger zone but closed at LoD on insufficient volume. The misses were process: I re-tested empty tickers 4 separate ticks after Monday's conclusive answer (wasted budget), did zero level-prep on the names I'd actually buy when regime flips (slow reaction loop), and never explicitly flagged the watchlist prune as an operator action. Playbook now mandates a weekly Level Prep Tick Tue/Wed on the active watchlist, codifies symmetric Day-2 invalidation for scouts, and retires both the VIX feed agenda and the \"defensive ETF\" rule for good. **Operator ask: please remove AAPL/MSFT/GOOGL/AMZN/TSLA/AMD from the active watchlist** \u2014 three weeks of zero analytical attention. Monday triggers: SPY >665 close on >90M vol = bounce-alive check; flush to 615-625 with upper-half close on >110M vol = 3-5% scout; otherwise 100% cash.",
+      "duration_sec": 108.5
+    },
+    {
+      "week_start": "2026-03-30",
+      "week_end": "2026-04-10",
+      "start_value": 9947.4,
+      "end_value": 9962.99,
+      "weekly_return": 0.0016,
+      "summary": "**Week 6 summary for operator:** Closed **+$15.59 / +0.16%** on $9,962.99 \u2014 the first green week in six, modest but on the right side of the mandate. Two fills, both buys, both in SPY: a 3.3% capitulation-reversal scout on 3/31 @ $650.34 after a clean 2-day V at the 629-640 support zone on 152M volume, and a 2.1% add on 4/8 @ $676.01 when SPY gapped and broke out of a 5-day 655-660 base on 93M volume with QQQ confirming. The position closed Friday at $679.46, +2.95% unrealized, with a BE stop active. The regime flip TREND-DOWN \u2192 early TREND-UP printed as the textbook 3-step sequence (capitulation candle + base + breakout-on-volume) my playbook describes, and the scout discipline (pattern over strict trigger spec, no add on weak base volume, written invalidation on every ticket) held cleanly. The honest miss was sizing \u2014 playbook says 8-10% starter in TREND-UP and I only got to 5.4%, leaving setup-quality return on the table \u2014 and zero diversification despite QQQ visibly leading; that's where Monday's plan focuses. Process gap repeating: the mandatory Tuesday Level Prep Tick still hasn't been executed, so QQQ/SMH/IWM/NVDA/META levels are stale. Playbook now adds an explicit single-position-concentration warning in TREND-UP and softens the strict gap-down filter for capitulation triggers. **Operator ask (3rd week running):** please swap AAPL/MSFT/GOOGL/AMZN/TSLA/AMD off the active watchlist for **IWM and SMH** \u2014 those are the actual rotation candidates now.",
+      "duration_sec": 119.1
+    },
+    {
+      "week_start": "2026-04-13",
+      "week_end": "2026-04-17",
+      "start_value": 9968.3,
+      "end_value": 9987.53,
+      "weekly_return": 0.0019,
+      "summary": "## Operator summary \u2014 Week 7 (2026-04-13 \u2192 2026-04-17)\n\nClosed **+$24.54 / +0.25%** on $9,987.53, second consecutive green week, lifetime now \u22120.12% (essentially scratch from the \u22120.53% hole three weeks ago). Zero fills \u2014 the entire week's gain came from holding the 3/31+4/8 SPY scout (0.8 sh @ 659.97) through a 5-day vertical melt-up (SPY 679 \u2192 710, +4.5%; QQQ +6.2%; NVDA/META parabolic), advancing the trail stop with each new high while never panic-trimming. Three correct passes: held the winner, refused to chase the 4/13 light-vol HOD close, refused to chase the 4/16 Day-4 parabolic into Friday. The big miss is the same one as last week \u2014 book is still a single 5.7% SPY position in a confirmed TREND-UP where QQQ and tech leaders ran without me; the soft \"concentration warning\" got documented and ignored a second time. Playbook now converts that warning into a mechanical forcing rule (N=1 in TREND-UP for >1 tick = mandatory leader scout or written veto), adds an explicit \"Day-2 of regime flip = scout leader at open\" branch so vertical tapes that never offer pullbacks still get participation, and requires every Level Prep Tick to terminate in action/trigger/veto per name rather than bare level documentation. Monday is Day-5+ of vertical; new full-size adds are suspended until the first red day. **Operator ask (fourth week running):** please swap AAPL/MSFT/GOOGL/AMZN/TSLA/AMD off the active watchlist for IWM and SMH.",
+      "duration_sec": 125.6
+    },
+    {
+      "week_start": "2026-04-20",
+      "week_end": "2026-04-24",
+      "start_value": 9986.4,
+      "end_value": 9994.96,
+      "weekly_return": 0.0009,
+      "summary": "**Week 8 summary (2026-04-20 \u2192 2026-04-24):** Closed **+$7.43 / +0.07%** on $9,994.96, third consecutive green week, lifetime now flat at \u22120.05%. One fill \u2014 the QQQ 0.5sh @ 655.11 leader scout on 4/22 that finally converted the concentration forcing rule from a documented two-week miss into a real position via Tuesday's pre-written trigger (QQQ test 642 hold + upper-half reversal close). SPY 0.8sh held cleanly through Thursday's outside-day-down (HH+lower close = mixed, not strict NEG-NEG \u2192 hold), then printed fresh ATH 713.94 Friday with QQQ confirming breakout to 663.88. Three correct passes: executed the concentration rule via paired trigger, terminated Tuesday Level Prep in per-name action/trigger/veto (process loop closed end-to-end for the first time), and read Thursday's pullback structurally instead of trimming. The honest miss is the same one that's run for three weeks now \u2014 gross book exposure is only **9%** in a confirmed TREND-UP week 3 while the tape did +0.7% SPY / +2.6% QQQ this week; the concentration rule moved me from N=1 to N=2 but didn't size me up. Playbook now adds an explicit **gross-exposure floor by regime** (TREND-UP \u226530%, target 50-70%) as a mechanical forcing rule, retires the fixed \"scout = 3-5%\" sizing in favor of setup-quality sizing (confirmed regime + clean trigger = 6-8% starter), and codifies strict NEG-NEG for Day-2 scout exits plus structure-band reading for \"upper/lower half\" trigger language. Monday 4/27 enters with a live forcing condition: gross floor breach must resolve into a leader add or written veto. **Operator standing ask (5th week):** please swap AAPL/MSFT/GOOGL/AMZN/TSLA/AMD off the active watchlist for IWM and SMH.",
+      "duration_sec": 132.5
+    },
+    {
+      "week_start": "2026-04-27",
+      "week_end": "2026-05-01",
+      "start_value": 9996.12,
+      "end_value": 10038.12,
+      "weekly_return": 0.0042,
+      "summary": "**Week 9 close 2026-05-01: +$43.16 / +0.43% on $10,038.12. Fourth consecutive green week; lifetime now positive +0.38% (first time above water).** Two positions: SPY 2.13sh @ 693.59 (+3.9%), QQQ 2.55sh @ 661.17 (+2.0%); gross 32.4% at the TREND-UP floor; cash 67.6%. The week's win was mechanical: the new gross-exposure-floor forcing rule from last week's playbook actually fired \u2014 Mon SPY starter, Tue QQQ trigger prep, Wed-Thu paired tranches on shakeout reversal and 3-day-base breakout \u2014 and rebuilt gross from 9% to 32% in four sessions while the tape printed fresh ATHs on both SPY (724.87) and QQQ. Setup-quality sizing (5-7% tranches, not reflexive 3% scouts) added real dollars vs. the prior weeks' under-sizing. Two honest misses: (1) Wednesday took two correlated adds in one tick, technically breaking \"one risk add per day\" \u2014 playbook now permits same-day correlated tranches under live floor-breach with size/concentration guardrails; (2) zero single-name diversification for a fifth week despite NVDA/META/AMD all running on the actual watchlist, so the new rule is \"stop waiting on operator watchlist updates, trade what's available.\" Friday closed lower-quartile on lighter vol at ATH \u2014 first distribution whiff \u2014 so Monday plan includes a written trim trigger if SPY can't reclaim 720 midday. Standing operator ask (6th week): IWM/SMH on the active watchlist would help diversification, but I'll stop blocking on it.",
+      "duration_sec": 100.2
+    },
+    {
+      "week_start": "2026-05-04",
+      "week_end": "2026-05-08",
+      "start_value": 10029.26,
+      "end_value": 10177.68,
+      "weekly_return": 0.0148,
+      "summary": "**Week 10 close 2026-05-08: +$139.56 / +1.39% on $10,177.68.** Fifth consecutive green week, lifetime now **+1.78%** \u2014 best week and highest lifetime mark since onboarding. Three positions all green: SPY 1.83sh +6.35%/+$80.57, QQQ 2.55sh +7.57%/+$127.65, NVDA 2sh +3.55%/+$14.74; gross 35.3% above the 30% TREND-UP floor with room to ~50%. The week's real wins were process: the Fri-written Mon-trim protocol fired exactly as scripted (locked $7 on the SPY add tranche before Tue's ATH rip), the 6-week-old single-name concentration finally broke via a textbook NVDA capitulation\u2192base\u2192breakout entry on 188M-vol gap day, and Thu's lower-third close got correctly read as digestion (not distribution) rather than triggering a reflexive trim. The honest misses are sizing and reconciliation: NVDA went in at 4% when the new setup-quality rule says 6-8% for confirmed-regime + clean-trigger + watchlist-prepped names (under-sized for the third week running), and the GOOGL trigger written into Tuesday's level prep never got checked Wednesday because NVDA's setup was easier to act on. Playbook now adds a forcing test on size defaults, a mandatory Wed trigger-reconciliation step before new ideas, same-tick trail-ladder advancement instead of Friday batch, and retires the mood-based \"yellow flag\" labeling in favor of strict distribution criteria (heavy vol AND lower-half close). Monday's plan: NVDA Day-3 confirmation upsize is mandatory per the size rule, GOOGL/META base setups get Tue level prep, and no chasing the vertical QQQ at +7.57%.",
+      "duration_sec": 162.0
+    },
+    {
+      "week_start": "2026-05-11",
+      "week_end": "2026-05-15",
+      "start_value": 10194.48,
+      "end_value": 10194.95,
+      "weekly_return": 0.0,
+      "summary": "**Week 11 operator summary (2026-05-11 \u2192 2026-05-15):** Closed **+$17.27 / +0.17%** on $10,194.95 \u2014 sixth consecutive green week, lifetime now +1.95% (new high), but the thinnest green of the streak after Friday gave back nearly all of Thursday's ATH push. Three fills, all buys: NVDA upsize 1.5sh @ 219.44 Mon executing last week's setup-quality rule cleanly (no timidity, 7.5% size on Day-3 confirmation), and GOOGL starter 1.5sh @ 402.62 Wed firing exactly through the Tue-write/Wed-reconcile process loop that closed two weeks ago's bug. Same-tick trail-ladder advancement ran four sessions clean (SPY/QQQ/NVDA all ratcheting through +3/+6/+10 crossings as they printed) \u2014 no Friday-batch panic. Three honest misses: GOOGL entry was a HoD chase on an extended breakout bar (currently -1.45%, would have been ~2% better via a base-retest limit), no same-day trim on Friday's QQQ strict-distribution + NVDA outside-reversal (deferred to Mon when same-day partial-trim was warranted), and gross exposure peaked at only 45% in TREND-UP wk6 when the target is 50%+. Playbook gains three new rules: (1) breakout-entry tactic \u2014 extended-bar breakouts get a Day-2 limit at base-edge+0.5%, not market at HoD; (2) Friday strict-distribution at vertical ATH wk5+ with position +6% permits same-day partial trim (the blanket \"no Fri initiations\" rule retired and replaced with \"no Fri adds, trims permitted on defined warrants\"); (3) gross-exposure *target* forcing rule pushing +5-7% per week toward 50% in confirmed TREND-UP wk4+ with no distribution. Vertical Day-5+ trails tighten to -3%. Monday's pre-committed trigger ladder is loaded: NVDA Day-2 NEG-NEG check, QQQ noon-reclaim test, GOOGL invalidation watch, no new initiations until Tue.",
+      "duration_sec": 214.6
+    },
+    {
+      "week_start": "2026-05-18",
+      "week_end": "2026-05-22",
+      "start_value": 10175.96,
+      "end_value": 10183.55,
+      "weekly_return": 0.0007,
+      "summary": "**Week 12 summary for operator (2026-05-18 \u2192 2026-05-22):** Closed **\u2212$11.40 / \u22120.11%** on $10,183.55 \u2014 the first red week in seven, but only just, and structurally one realized loss (GOOGL \u2212$29.47 on Fri hard-stop exit from a bad entry last week) absorbed almost entirely by SPY/QQQ mark-up (+$95 / +$144). Lifetime now +1.84%, off the +1.95% prior-week high. Two fills, both sells: NVDA Day-2 strict NEG-NEG trim Mon 5/18 @ 222.32 (1.5sh, pre-committed trigger fired clean), and GOOGL full exit Fri 5/22 @ 382.97 on \u22124.88% hard-stop + 385 invalidation break. The week's process wins were three: the Fri-write/Mon-execute loop closed cleanly for a third consecutive week (NVDA trim), QQQ's Tue 5/19 intraday trail breach (low 695.25 vs \u22123% trail @ 698) was held through correctly on the close-stop rule and the position recovered +2.3%, and Fri's GOOGL exit followed the rule book on a busted entry with no debate about weekend gap risk. The honest miss was under-deployment Wed-Thu: SPY printed clean 740+ ATH reclaim days post-Tue distribution and I held cash 59% \u2014 the 0.3sh SPY tranche I had trimmed 5/4 should have been re-added on the reclaim, but I didn't have a pre-written re-add trigger. Playbook now adds: (1) **trimmed-tranche re-add \u2260 new initiation**, pre-write the re-add trigger at time of trim, (2) **intraday-trail-breach with close-back-above** = hold + Day-2 watch + tighten next ratchet by 1% (resolves the close-vs-intraday ambiguity), (3) **hard stops execute Fri same-day, no exception**, and retires the standalone gross-push +5-7%/wk rule in favor of a conditional version requiring 5+ distribution-free sessions AND a clean base-retest entry available (prevents the GOOGL-style chase-bar pressure). Monday loads with NVDA Day-2 NEG-NEG check, an SPY re-add trigger >743, and no new single-name initiations until Tue level prep.",
+      "duration_sec": 161.6
+    },
+    {
+      "week_start": "2026-05-26",
+      "week_end": "2026-05-26",
+      "start_value": 10224.15,
+      "end_value": 10224.15,
+      "weekly_return": 0.0,
+      "summary": "**Week 13 operator summary (2026-05-26 short week):** Closed **+$40.60 / +0.40%** on $10,224.15 \u2014 green week resumed immediately after wk12's \u2212$11.40 break, lifetime now **+2.24% (new high)**. One fill: NVDA full exit 2sh @ 214.86 Tue post-holiday on strict Day-2 NEG-NEG vs Fri 5/22 (H 218.18<221.01 AND C 214.86<215.33), pre-committed trigger firing clean for the 4th consecutive week (promoted to standard process). SPY and QQQ both ramped to fresh ATHs every session \u2014 SPY 745.64\u2192750.59 (+0.66%), QQQ 717.54\u2192730.28 (+1.78%) \u2014 driving combined unrealized to +$280; QQQ crossed +10% so trail advanced same-tick to \u22128% @ 672.68. Three correct passes: NEG-NEG exit on schedule, held SPY/QQQ through last Fri's distribution into this week's ATH ramp (rule said hold, rule was right), and honored the strict vol gate on the SPY tiered re-add when Tue's 40.96M vol failed 47M 20d avg. The honest miss is the same one for the third week running \u2014 the 0.3sh SPY trim from 5/4 has now cost ~$10 of foregone restoration while the strict price+vol gate stays unfired in a vertical-extension regime where vol naturally compresses. Playbook now adds **tiered tranche re-add** (price-only = 50% size, price+vol = 100%), a **vertical-extension exception** for the gross-push conditional (tiered re-adds count as deployable when no base-retest entry exists), and an **ATR%-conditional sizing gate** (>2.5% ATR = starter-only, no upsize tranches \u2014 NVDA's 3-week campaign netted only +$18 because mechanical triggers exit at the noise floor on volatile names). Standing operator ask (8th week): IWM/SMH on active watchlist would help diversification.",
+      "duration_sec": 196.3
+    }
+  ],
+  "green_weeks": 6,
+  "red_weeks": 2,
+  "flat_weeks": 5,
+  "best_week": {
+    "week_start": "2026-05-04",
+    "week_end": "2026-05-08",
+    "start_value": 10029.26,
+    "end_value": 10177.68,
+    "weekly_return": 0.0148,
+    "summary": "**Week 10 close 2026-05-08: +$139.56 / +1.39% on $10,177.68.** Fifth consecutive green week, lifetime now **+1.78%** \u2014 best week and highest lifetime mark since onboarding. Three positions all green: SPY 1.83sh +6.35%/+$80.57, QQQ 2.55sh +7.57%/+$127.65, NVDA 2sh +3.55%/+$14.74; gross 35.3% above the 30% TREND-UP floor with room to ~50%. The week's real wins were process: the Fri-written Mon-trim protocol fired exactly as scripted (locked $7 on the SPY add tranche before Tue's ATH rip), the 6-week-old single-name concentration finally broke via a textbook NVDA capitulation\u2192base\u2192breakout entry on 188M-vol gap day, and Thu's lower-third close got correctly read as digestion (not distribution) rather than triggering a reflexive trim. The honest misses are sizing and reconciliation: NVDA went in at 4% when the new setup-quality rule says 6-8% for confirmed-regime + clean-trigger + watchlist-prepped names (under-sized for the third week running), and the GOOGL trigger written into Tuesday's level prep never got checked Wednesday because NVDA's setup was easier to act on. Playbook now adds a forcing test on size defaults, a mandatory Wed trigger-reconciliation step before new ideas, same-tick trail-ladder advancement instead of Friday batch, and retires the mood-based \"yellow flag\" labeling in favor of strict distribution criteria (heavy vol AND lower-half close). Monday's plan: NVDA Day-3 confirmation upsize is mandatory per the size rule, GOOGL/META base setups get Tue level prep, and no chasing the vertical QQQ at +7.57%.",
+    "duration_sec": 162.0
+  },
+  "worst_week": {
+    "week_start": "2026-03-02",
+    "week_end": "2026-03-06",
+    "start_value": 10000.0,
+    "end_value": 9948.14,
+    "weekly_return": -0.0052,
+    "summary": "**Week 2 summary for operator:** Closed \u2212$51.86 / \u22120.52% on the $10k book \u2014 a small red week, mandate-violating in the strictest \"green every week\" reading but well within capital-preservation tolerance. We took three fills (SPY starter 3/2, SPY add + META starter 3/4) and cut SPY on 3/6 for a \u2212$29 realized loss when 680 support broke decisively (4 of 5 closes below). META still held, 1 share \u22123.4%, inside its \u22124% hard stop at 641.02. The exit discipline worked; the entry discipline didn't \u2014 specifically, adding to SPY on a *reclaim* of 680 rather than a *breakout* of 693 was buying inside a range that then resolved lower, and initiating META the same day doubled correlated risk. Playbook now requires range *breaks* for adds (not bounces), one new risk add per day across the book, regime-aware sizing (5\u20137% starters in chop, 8\u201310% only in confirmed trend), and written/resting stops rather than mental ones. Cash 93.5% into Monday, defensive bias, only re-engaging SPY on a 680 reclaim with volume or a 659\u2013665 capitulation reversal; META exits at open if it gaps under 641. Watchlist gaining IWM, SMH, TLT, XLF, and a working VIX feed; dropping TSLA for inactivity.",
+    "duration_sec": 96.5
+  },
+  "total_tokens": {
+    "input": 850554,
+    "output": 188016,
+    "cache_read": 2025881
+  }
+}
