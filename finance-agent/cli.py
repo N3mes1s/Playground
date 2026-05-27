@@ -3,7 +3,7 @@ import json
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import agent
 import config
@@ -103,6 +103,24 @@ def cmd_weekly_close(_: argparse.Namespace) -> None:
     print(json.dumps(result, indent=2, default=str))
 
 
+def cmd_backtest(args: argparse.Namespace) -> None:
+    import backtest
+    start = date.fromisoformat(args.start)
+    end = date.fromisoformat(args.end)
+    watchlist = [s.strip().upper() for s in args.watchlist.split(",") if s.strip()]
+    summary = backtest.run(
+        start=start,
+        end=end,
+        starting_cash=args.starting_cash,
+        watchlist=watchlist,
+        run_id=args.run_id,
+    )
+    print("\n" + "=" * 60)
+    print("BACKTEST SUMMARY")
+    print("=" * 60)
+    print(json.dumps(summary, indent=2, default=str))
+
+
 def cmd_reset(args: argparse.Namespace) -> None:
     for path in [config.PORTFOLIO_PATH, config.JOURNAL_PATH, config.TICK_LOG_PATH]:
         if path.exists():
@@ -138,6 +156,15 @@ def main() -> None:
 
     p_close = sub.add_parser("weekly-close", help="Run the weekly retrospective + playbook rewrite.")
     p_close.set_defaults(func=cmd_weekly_close)
+
+    p_bt = sub.add_parser("backtest", help="Run a historical backtest.")
+    p_bt.add_argument("--start", type=str, required=True, help="YYYY-MM-DD")
+    p_bt.add_argument("--end", type=str, required=True, help="YYYY-MM-DD")
+    p_bt.add_argument("--starting-cash", type=float, default=10000)
+    p_bt.add_argument("--watchlist", type=str,
+                      default="SPY,QQQ,AAPL,MSFT,NVDA,GOOGL,META,AMZN,TSLA,AMD")
+    p_bt.add_argument("--run-id", type=str, default=None)
+    p_bt.set_defaults(func=cmd_backtest)
 
     p_reset = sub.add_parser("reset", help="Wipe portfolio, journal, tick log.")
     p_reset.add_argument("--with-playbook", action="store_true",

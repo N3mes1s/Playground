@@ -2,7 +2,9 @@
 .venv/
 __pycache__/
 *.pyc
-data/*.json
-data/*.jsonl
-data/*.md
+data/**
 !data/.gitkeep
+!data/backtests/
+!data/backtests/*/
+!data/backtests/*/summary.json
+!data/backtests/*/playbook.md

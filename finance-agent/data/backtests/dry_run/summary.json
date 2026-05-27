@@ -1,0 +1,46 @@
+{
+  "run_id": "dry_run",
+  "start": "2026-05-18",
+  "end": "2026-05-22",
+  "trading_days": 5,
+  "starting_cash": 10000.0,
+  "final_value": 10008.84,
+  "total_return": 0.0009,
+  "weekly_marks": [
+    {
+      "week_start": "2026-05-18",
+      "week_end": "2026-05-22",
+      "start_value": 10000.0,
+      "end_value": 10008.84,
+      "weekly_return": 0.0009,
+      "summary": "### Weekly summary for the operator\n\nClosed the week at **$10,008.84, +0.09% / +$8.84** \u2014 green, mandate met. SPY (2.3 sh, +1.2%) and QQQ (2.0 sh, +1.4%) are working as planned after disciplined 2-tranche entries on pullbacks in a confirmed uptrend; both contributed ~$41 of gains. NVDA (4 sh, \u22123.6%, \u2212$33) is the blemish \u2014 the starter entry on 5/20 was one reversal bar too early in a still-distributing name, and I failed to honor my own journaled \"trim if 217 breaks\" trigger on Friday because I conflated \"no Friday adds\" with \"no Friday actions.\" Cash held at 60% all week, which kept the NVDA wobble immaterial at book level. Key heuristic upgrades going forward: single-name pullback entries demand 2\u20133 days of base or MA reclaim (not just a reversal bar); written stops get executed mechanically on close; Friday is for trimming, not freezing. Monday plan: trim half NVDA unless it gaps and holds >222; hold SPY/QQQ cores; consider adding SMH/IWM/GLD to the watchlist for cleaner thematic and hedging expressions.",
+      "duration_sec": 59.5
+    }
+  ],
+  "green_weeks": 1,
+  "red_weeks": 0,
+  "flat_weeks": 0,
+  "best_week": {
+    "week_start": "2026-05-18",
+    "week_end": "2026-05-22",
+    "start_value": 10000.0,
+    "end_value": 10008.84,
+    "weekly_return": 0.0009,
+    "summary": "### Weekly summary for the operator\n\nClosed the week at **$10,008.84, +0.09% / +$8.84** \u2014 green, mandate met. SPY (2.3 sh, +1.2%) and QQQ (2.0 sh, +1.4%) are working as planned after disciplined 2-tranche entries on pullbacks in a confirmed uptrend; both contributed ~$41 of gains. NVDA (4 sh, \u22123.6%, \u2212$33) is the blemish \u2014 the starter entry on 5/20 was one reversal bar too early in a still-distributing name, and I failed to honor my own journaled \"trim if 217 breaks\" trigger on Friday because I conflated \"no Friday adds\" with \"no Friday actions.\" Cash held at 60% all week, which kept the NVDA wobble immaterial at book level. Key heuristic upgrades going forward: single-name pullback entries demand 2\u20133 days of base or MA reclaim (not just a reversal bar); written stops get executed mechanically on close; Friday is for trimming, not freezing. Monday plan: trim half NVDA unless it gaps and holds >222; hold SPY/QQQ cores; consider adding SMH/IWM/GLD to the watchlist for cleaner thematic and hedging expressions.",
+    "duration_sec": 59.5
+  },
+  "worst_week": {
+    "week_start": "2026-05-18",
+    "week_end": "2026-05-22",
+    "start_value": 10000.0,
+    "end_value": 10008.84,
+    "weekly_return": 0.0009,
+    "summary": "### Weekly summary for the operator\n\nClosed the week at **$10,008.84, +0.09% / +$8.84** \u2014 green, mandate met. SPY (2.3 sh, +1.2%) and QQQ (2.0 sh, +1.4%) are working as planned after disciplined 2-tranche entries on pullbacks in a confirmed uptrend; both contributed ~$41 of gains. NVDA (4 sh, \u22123.6%, \u2212$33) is the blemish \u2014 the starter entry on 5/20 was one reversal bar too early in a still-distributing name, and I failed to honor my own journaled \"trim if 217 breaks\" trigger on Friday because I conflated \"no Friday adds\" with \"no Friday actions.\" Cash held at 60% all week, which kept the NVDA wobble immaterial at book level. Key heuristic upgrades going forward: single-name pullback entries demand 2\u20133 days of base or MA reclaim (not just a reversal bar); written stops get executed mechanically on close; Friday is for trimming, not freezing. Monday plan: trim half NVDA unless it gaps and holds >222; hold SPY/QQQ cores; consider adding SMH/IWM/GLD to the watchlist for cleaner thematic and hedging expressions.",
+    "duration_sec": 59.5
+  },
+  "total_tokens": {
+    "input": 94373,
+    "output": 8884,
+    "cache_read": 66931
+  }
+}

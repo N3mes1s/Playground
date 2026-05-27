@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
+import clock
 import config
 
 
@@ -55,11 +56,11 @@ class State:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return clock.iso()
 
 
 def _today() -> str:
-    return datetime.now(timezone.utc).date().isoformat()
+    return clock.today().isoformat()
 
 
 def load() -> State:

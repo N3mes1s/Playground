@@ -3,6 +3,7 @@ import json
 
 from anthropic import beta_tool
 
+import clock
 import journal
 import market_data
 import playbook
@@ -105,6 +106,12 @@ def search_news(objective: str, max_results: int = 6) -> dict:
             "latest CPI release reaction".
         max_results: Up to 10.
     """
+    if clock.is_simulated():
+        return {
+            "error": "news search disabled in backtest mode (parallel.ai returns current "
+                     "news, which would be lookahead for a historical simulation). Rely on "
+                     "price/volume action and the playbook."
+        }
     return research.search(objective, max_results=min(max_results, 10))
 
 

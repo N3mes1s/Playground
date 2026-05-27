@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 import anthropic
 
+import clock
 import config
 import journal
 import market_data
@@ -52,14 +53,22 @@ the durable record; chat text is just for the operator scanning logs.
 
 
 def _ts() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return clock.iso()
 
 
 def _tick_user_prompt() -> str:
     state = pf.load()
     quotes_map = {sym: market_data.quotes([sym]).get(sym.upper()) for sym in state.watchlist}
+    backtest_banner = ""
+    if clock.is_simulated():
+        backtest_banner = (
+            f"\n\n*** BACKTEST MODE ***\n"
+            f"This is a historical simulation as of the close of {clock.today().isoformat()}.\n"
+            f"`search_news` is disabled — rely on price action and the playbook.\n"
+            f"You do not know what happened after this date. Trade as if it's the close of that day.\n"
+        )
     return (
-        f"Tick at {_ts()}. Market open: {market_data.market_is_open()}.\n\n"
+        f"Tick at {_ts()}. Market open: {market_data.market_is_open()}.{backtest_banner}\n\n"
         f"Watchlist quote snapshot (use get_quote for fresh data before trading):\n"
         f"{json.dumps(quotes_map, default=str)}\n\n"
         f"Run the tick. End with a brief one-paragraph summary of your decision."
