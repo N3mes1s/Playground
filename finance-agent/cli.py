@@ -103,6 +103,15 @@ def cmd_weekly_close(_: argparse.Namespace) -> None:
     print(json.dumps(result, indent=2, default=str))
 
 
+def cmd_index_news(args: argparse.Namespace) -> None:
+    import news_index
+    start = date.fromisoformat(args.start)
+    end = date.fromisoformat(args.end)
+    watchlist = [s.strip().upper() for s in args.watchlist.split(",") if s.strip()]
+    stats = news_index.build_range(start, end, watchlist, force=args.force)
+    print(json.dumps(stats, indent=2))
+
+
 def cmd_backtest(args: argparse.Namespace) -> None:
     import backtest
     start = date.fromisoformat(args.start)
@@ -156,6 +165,16 @@ def main() -> None:
 
     p_close = sub.add_parser("weekly-close", help="Run the weekly retrospective + playbook rewrite.")
     p_close.set_defaults(func=cmd_weekly_close)
+
+    p_idx = sub.add_parser("index-news",
+                           help="Pre-fetch historical news from parallel.ai for backtest dates.")
+    p_idx.add_argument("--start", type=str, required=True, help="YYYY-MM-DD")
+    p_idx.add_argument("--end", type=str, required=True, help="YYYY-MM-DD")
+    p_idx.add_argument("--watchlist", type=str,
+                       default="SPY,QQQ,AAPL,MSFT,NVDA,GOOGL,META,AMZN,TSLA,AMD")
+    p_idx.add_argument("--force", action="store_true",
+                       help="Re-fetch even if cache exists.")
+    p_idx.set_defaults(func=cmd_index_news)
 
     p_bt = sub.add_parser("backtest", help="Run a historical backtest.")
     p_bt.add_argument("--start", type=str, required=True, help="YYYY-MM-DD")

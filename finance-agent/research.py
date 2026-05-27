@@ -15,7 +15,7 @@ def search(objective: str, max_results: int = 8) -> dict:
     payload = {
         "objective": objective,
         "max_results": max_results,
-        "mode": "base",
+        "mode": "fast",
     }
     headers = {
         "x-api-key": config.PARALLEL_API_KEY,

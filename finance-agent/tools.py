@@ -6,6 +6,7 @@ from anthropic import beta_tool
 import clock
 import journal
 import market_data
+import news_index
 import playbook
 import portfolio as pf
 import research
@@ -107,10 +108,15 @@ def search_news(objective: str, max_results: int = 6) -> dict:
         max_results: Up to 10.
     """
     if clock.is_simulated():
+        cached = news_index.historical_news_for(clock.simulated_date())
+        if "error" in cached:
+            return cached
         return {
-            "error": "news search disabled in backtest mode (parallel.ai returns current "
-                     "news, which would be lookahead for a historical simulation). Rely on "
-                     "price/volume action and the playbook."
+            "note": f"backtest mode: returning ALL pre-indexed scans for "
+                    f"{cached['date']} (your objective is ignored — every "
+                    f"scan from that day is included).",
+            "objective_provided": objective,
+            "indexed_queries": cached.get("queries", {}),
         }
     return research.search(objective, max_results=min(max_results, 10))
 
@@ -121,11 +127,14 @@ def scan_macro_and_policy() -> dict:
     per tick before deciding on any new entry. Covers political commentary on
     stocks/sectors, Fed/Powell statements, tariff and trade news, executive
     orders, and any major SEC/DOJ regulatory action affecting watchlist names.
+
+    In backtest mode, returns the pre-indexed scans for the simulated date.
     """
     if clock.is_simulated():
-        return {
-            "error": "news search disabled in backtest mode — rely on price action and the playbook."
-        }
+        cached = news_index.historical_news_for(clock.simulated_date())
+        if "error" in cached:
+            return cached
+        return {"scans": cached.get("queries", {}), "date": cached.get("date")}
     queries = [
         "Trump statements on specific US stocks or sectors in the last 48 hours",
         "Federal Reserve or Powell statements on rates or markets in the last 48 hours",
