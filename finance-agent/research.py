@@ -33,11 +33,18 @@ def search(objective: str, max_results: int = 8) -> dict:
     results = data.get("results") or data.get("data") or []
     trimmed = []
     for r in results[:max_results]:
+        excerpts = r.get("excerpts") or []
+        if isinstance(excerpts, list):
+            content = " … ".join(excerpts)
+        else:
+            content = str(excerpts)
+        if not content:
+            content = r.get("snippet") or r.get("excerpt") or r.get("content") or ""
         trimmed.append(
             {
                 "title": r.get("title") or r.get("name"),
                 "url": r.get("url") or r.get("link"),
-                "snippet": (r.get("snippet") or r.get("excerpt") or r.get("content") or "")[:600],
+                "content": content[:1500],
             }
         )
-    return {"results": trimmed}
+    return {"results": trimmed, "usage": data.get("usage")}
