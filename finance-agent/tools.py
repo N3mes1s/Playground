@@ -1,3 +1,6 @@
+import functools
+import json
+
 from anthropic import beta_tool
 
 import journal
@@ -13,7 +16,17 @@ def _quotes_for(state: pf.State) -> dict[str, float]:
     return market_data.quotes(sorted(symbols))
 
 
-@beta_tool
+def _json_tool(fn):
+    """Wrap a function returning dict/list/etc. so beta_tool sees a JSON string."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        return json.dumps(fn(*args, **kwargs), default=str)
+
+    return beta_tool(wrapper)
+
+
+@_json_tool
 def get_portfolio_snapshot() -> dict:
     """Return current cash, positions (with unrealized P&L), open orders, and risk metrics."""
     state = pf.load()
@@ -54,7 +67,7 @@ def get_portfolio_snapshot() -> dict:
     }
 
 
-@beta_tool
+@_json_tool
 def get_quote(symbol: str) -> dict:
     """Get the latest price snapshot for a single ticker (last, prev close, day high/low).
 
@@ -67,7 +80,7 @@ def get_quote(symbol: str) -> dict:
         return {"error": str(e), "symbol": symbol}
 
 
-@beta_tool
+@_json_tool
 def get_history(symbol: str, period: str = "1mo", interval: str = "1d") -> dict:
     """Get OHLCV history for a ticker.
 
@@ -83,7 +96,7 @@ def get_history(symbol: str, period: str = "1mo", interval: str = "1d") -> dict:
         return {"error": str(e), "symbol": symbol}
 
 
-@beta_tool
+@_json_tool
 def search_news(objective: str, max_results: int = 6) -> dict:
     """Search the web for current news, filings, or analyst commentary via parallel.ai.
 
@@ -95,7 +108,7 @@ def search_news(objective: str, max_results: int = 6) -> dict:
     return research.search(objective, max_results=min(max_results, 10))
 
 
-@beta_tool
+@_json_tool
 def place_order(
     symbol: str,
     side: str,
@@ -172,7 +185,7 @@ def place_order(
     return {"ok": True, "filled": False, "order_id": order.id, "status": "open"}
 
 
-@beta_tool
+@_json_tool
 def cancel_order(order_id: str) -> dict:
     """Cancel an open limit order by id.
 
@@ -190,7 +203,7 @@ def cancel_order(order_id: str) -> dict:
     return {"ok": False, "error": f"no open order with id {order_id}"}
 
 
-@beta_tool
+@_json_tool
 def add_journal_note(note: str, tags: list[str] | None = None) -> dict:
     """Add a free-form note to the trade journal (your own scratchpad — visible to your
     future self during weekly close).
@@ -203,7 +216,7 @@ def add_journal_note(note: str, tags: list[str] | None = None) -> dict:
     return {"ok": True}
 
 
-@beta_tool
+@_json_tool
 def rewrite_playbook(content: str) -> dict:
     """Replace the playbook with new content. Only call this during weekly close.
 

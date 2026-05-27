@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -9,6 +10,23 @@ import config
 import market_data
 import portfolio as pf
 import risk
+
+
+def cmd_whoami(_: argparse.Namespace) -> None:
+    try:
+        creds = config.resolve_anthropic_credentials()
+        source = "ANTHROPIC_API_KEY env" if "api_key" in creds else (
+            "ANTHROPIC_AUTH_TOKEN env" if os.getenv("ANTHROPIC_AUTH_TOKEN")
+            else "Claude Code session ingress token"
+        )
+        anthropic_status = {"ok": True, "source": source, "model": config.MODEL}
+    except RuntimeError as e:
+        anthropic_status = {"ok": False, "error": str(e)}
+    print(json.dumps({
+        "anthropic": anthropic_status,
+        "parallel_ai": {"ok": bool(config.PARALLEL_API_KEY)},
+        "data_dir": str(config.DATA_DIR),
+    }, indent=2))
 
 
 def cmd_init(args: argparse.Namespace) -> None:
@@ -97,6 +115,9 @@ def cmd_reset(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="finance-agent")
     sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_who = sub.add_parser("whoami", help="Show which Anthropic credential is in use.")
+    p_who.set_defaults(func=cmd_whoami)
 
     p_init = sub.add_parser("init", help="Create a new paper portfolio.")
     p_init.add_argument("--starting-cash", type=float, default=10000)

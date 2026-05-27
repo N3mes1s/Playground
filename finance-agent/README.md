@@ -66,9 +66,22 @@ cd finance-agent
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# fill in ANTHROPIC_API_KEY and PARALLEL_API_KEY
+# fill in ANTHROPIC_API_KEY and PARALLEL_API_KEY (see "Credentials" below)
 python cli.py init --starting-cash 10000 --watchlist SPY,QQQ,AAPL,MSFT,NVDA,GOOGL,META,AMZN,TSLA,AMD
+python cli.py whoami   # verify which credential is in use
 ```
+
+## Credentials
+
+The agent resolves Anthropic credentials in this order:
+
+1. **`ANTHROPIC_API_KEY`** — standard developer key (`sk-ant-api-...`). Best for production / your laptop.
+2. **`ANTHROPIC_AUTH_TOKEN`** — any Bearer token. Useful if you've minted an OAuth token elsewhere.
+3. **Claude Code session ingress token** — if `CLAUDE_SESSION_INGRESS_TOKEN_FILE` is set in the environment (it is, inside a Claude Code remote-execution session), the agent reads it and uses it as a Bearer credential against `/v1/messages`. **This means the agent runs out-of-the-box inside Claude Code on the web with no separate key.**
+
+`python cli.py whoami` prints which source is active.
+
+`PARALLEL_API_KEY` is only required for the `search_news` tool. Without it, `search_news` returns an error to the agent and the agent works around it (decides on price-action signals only). Get a key at [parallel.ai](https://parallel.ai).
 
 ## Run
 

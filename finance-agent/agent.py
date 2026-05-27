@@ -99,7 +99,7 @@ def _build_system() -> list[dict]:
 
 
 def _client() -> anthropic.Anthropic:
-    return anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    return anthropic.Anthropic(**config.resolve_anthropic_credentials())
 
 
 def run_tick() -> dict:
