@@ -1,0 +1,8 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+data/*.json
+data/*.jsonl
+data/*.md
+!data/.gitkeep

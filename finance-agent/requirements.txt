@@ -1,0 +1,4 @@
+anthropic>=0.92.0
+yfinance>=0.2.40
+requests>=2.32.0
+python-dotenv>=1.0.0
