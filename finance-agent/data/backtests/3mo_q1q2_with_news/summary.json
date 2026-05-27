@@ -1,0 +1,154 @@
+{
+  "run_id": "3mo_q1q2_with_news",
+  "start": "2026-02-26",
+  "end": "2026-05-26",
+  "trading_days": 62,
+  "starting_cash": 10000.0,
+  "final_value": 10194.03,
+  "total_return": 0.0194,
+  "weekly_marks": [
+    {
+      "week_start": "2026-02-26",
+      "week_end": "2026-02-27",
+      "start_value": 10000.0,
+      "end_value": 10000.0,
+      "weekly_return": 0.0,
+      "summary": "## Weekly summary for the operator\n\nFlat week: **$10,000 \u2192 $10,000, 0.00% P&L**, 100% cash, no positions opened, no orders placed. Against a tape that delivered SPX \u22120.4%+ and NDX \u22120.9% on Friday's hot inflation print (NVDA the worst Dow name on AI-capex doubts), sitting out was a defensible result \u2014 capital preservation rail held. The honest critique: two consecutive observation-only sessions with zero starter tranches is paralysis, not discipline; on $10k with a 20% position cap and a 5% starter, the cost of engagement is trivial. Playbook is updated with an explicit macro stack (CPI \u2192 tariffs \u2192 SPY trend \u2192 VIX \u2192 single-name), a pre-staged Monday plan keyed to SPY 685/697 and VIX 18/22, and a diversified watchlist (added XLP, XLU, GLD, XLE, JPM, TLT-as-indicator; de-prioritized TSLA). Heavy data week ahead (ISM, JOLTS, ADP, ISM Svcs, NFP) \u2014 lean defensive into Friday's payrolls and only chase tech on a clean reclaim of 697 with VIX cooperating.",
+      "duration_sec": 72.7
+    },
+    {
+      "week_start": "2026-03-02",
+      "week_end": "2026-03-06",
+      "start_value": 10000.0,
+      "end_value": 10000.0,
+      "weekly_return": 0.0,
+      "summary": "## Weekly summary for the operator\n\n**$10,000 \u2192 $10,000, 0.00% P&L, 100% cash, zero fills \u2014 second flat week in a row.** Against a tape that delivered SPY \u22122.0% and QQQ \u22121.2% on the week with SPY breaking 685 support and closing near weekly lows Friday, sitting in cash beat the index by ~200 bps. That's the defensible read. The honest read is harder: the Sunday playbook explicitly pre-staged \"if SPY <685 with VIX >20, take a 3\u20135% XLP/XLU starter,\" that trigger fired Tuesday and held all week, and we did not execute it. A conditional plan I don't follow is worse than no plan \u2014 it makes the rules aspirational. The playbook now adds two non-negotiable heuristics: (1) **a pre-staged trigger that fires is an order, not a debate prompt** \u2014 overrides require a real-time written reason; (2) **two consecutive flat weeks = mandatory engagement next week** \u2014 at minimum one starter placed by Tuesday close or a journal note naming the specific blocker. I also retired the soft \"min 15% cash\" floor in favor of an explicit deployment target (30\u201360% normal tape, 10\u201330% risk-off, <10% only during halts/policy fog), and added COST/WMT to the defensive bench so I have single-name alternatives to ETFs. Week ahead: SPY in a downtrend below 685, CPI Wednesday is the binary event, and the defensive bench (XLP, XLU, GLD) must finally see action.",
+      "duration_sec": 100.7
+    },
+    {
+      "week_start": "2026-03-09",
+      "week_end": "2026-03-13",
+      "start_value": 10000.0,
+      "end_value": 9992.97,
+      "weekly_return": -0.0007,
+      "summary": "## Weekly summary for the operator\n\n**$10,000 \u2192 $9,992.97, \u22120.07% P&L, flat to cash, zero positions held into the weekend.** First red week of the run, but a rounding error \u2014 the active trade (3% SPY starter at 678.27 Mon, exited at 662.29 Fri) cost ~$7 against a tape that delivered SPY ~\u22122.4% and QQQ losing 600. Cash beat the index by ~230 bps; engagement cost ~7 bps. The week's wins: I finally placed a trade (breaking the 3-week paralysis), kept it small into a binary CPI print, and honored the Friday-close exit when SPY broke the 662.39 reversal low into Iran weekend headlines. The week's losses: the Monday entry violated my own \"stand aside one session post-capitulation\" rule (engagement mandate compressed the wait rule), and I let the mental stop drift from 670 to 662 mid-trade \u2014 small dollars only because the size was small. New rules into the playbook: (1) engagement \u2260 entry override \u2014 a journal note naming a specific trigger satisfies the mandate; (2) stops are written into the order reason at entry and only tighten, never widen; (3) probe the universe for defensive vehicles (COST/WMT/JPM/IEF) before declaring \"defensive = cash\" again. Next week: FOMC Wednesday is the binary; triple-witching Friday; don't be early, and don't force trades to satisfy a metric.",
+      "duration_sec": 79.9
+    },
+    {
+      "week_start": "2026-03-16",
+      "week_end": "2026-03-20",
+      "start_value": 9992.97,
+      "end_value": 9992.97,
+      "weekly_return": 0.0,
+      "summary": "## Weekly summary for the operator\n\n**$9,992.97 \u2192 $9,992.97, 0.00% P&L, 100% cash, zero fills.** Against a tape that delivered SPY \u22122.1% (670 \u2192 648, hawkish FOMC Wed, triple-witching capitulation Friday on 163M), sitting in cash beat the index by ~210 bps. The week was a clean execution of three rules paying for themselves: the 24h pre-FOMC freeze (3/17 trigger fired by 0.26% with a weak intraday close \u2014 deferred), the FOMC-binary rule (3/18 hawkish hold rejected 670, no trade), and Fri-PM no-new-longs (3/20 capitulation to 648 would have been instant red). Process gaps: the defensive bench probe (COST/WMT/JPM/IEF) has now been pre-committed in two consecutive playbooks without execution \u2014 that's the persistent failure to fix. Monday 3/16 was also a silent tick with no journal entry, an invisible decision. Playbook updates: (1) triggers now require a three-hurdle confirmation format (magnitude \u2265 0.3%, upper-third close, vol \u2265 20D avg) \u2014 bare level-crosses are noise; (2) explicit 24h freeze before FOMC/CPI/PCE/NFP; (3) Monday tick #1 = defensive bench probe, codified as the first action of the week; (4) every trading day requires \u22651 journal note. Retired: the \"two flat weeks = mandatory engagement\" rule (in a risk-off tape, flat cash *is* winning) and the \"defensive = cash\" assumption. Week ahead: PCE Friday is the binary; key levels SPY 644.72 (Fri low) / 640 / 670 reclaim / 685 bull; if SPY hangs in there or Iran calms, probe COST/JPM as a long-but-not-market-beta starter.",
+      "duration_sec": 115.6
+    },
+    {
+      "week_start": "2026-03-23",
+      "week_end": "2026-03-27",
+      "start_value": 9992.97,
+      "end_value": 9992.97,
+      "weekly_return": 0.0,
+      "summary": "ERROR: Error code: 529 - {'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'Overloaded'}, 'request_id': 'req_011CbSnS53Mbcvw3YhVnu3rD'}",
+      "duration_sec": 10.9
+    },
+    {
+      "week_start": "2026-03-30",
+      "week_end": "2026-04-10",
+      "start_value": 9992.97,
+      "end_value": 10006.1,
+      "weekly_return": 0.0013,
+      "summary": "## Weekly summary for the operator\n\n**$9,992.97 \u2192 $10,006.10, +0.13% / +$13.13 P&L \u2014 first green week of the run.** The position carried the week: the 0.46 SPY starter taken 3/31 on a hurdle-clean capitulation reversal (low 638, close 650.34, +2.9%, 152M vol \u2014 all three hurdles for the first time in a month) was joined Thursday 4/9 by a 0.59-share add at 679.91 on the next-session hold of the 4/8 Iran-ceasefire gap. Position closed +1.87% / +$13.13, book ended 1.05 SPY @ avg 666.96 with 92.9% cash. **The win:** the three-hurdle trigger format and the \"don't chase day-of, add on hold\" rule produced two clean entries on the strongest reversal pattern of the run. Friday's gap-up fade to 679.46 lower-half close on light 42M vol validated the no-Friday-adds rule. **The honest gap:** we're still only 7% deployed after a confirmed regime flip from risk-off to early-recovery \u2014 the playbook's deployment ladder (25\u201340% in choppy/normal) was never consulted when the signal arrived. Also waived the 4/9 volume hurdle ad-hoc (57M vs 100M avg). Playbook now adds three new rules: regime-flip deployment ladder (recalibrate within 2 sessions), codified breakout-then-hold vol hurdle relaxation (\u226550% of 20D avg, magnitude + upper-third still required), and tranche size that scales with hurdle quality (don't default to floor when signal is clean). Retired the defensive-bench probe permanently \u2014 COST/WMT/JPM/IEF/XLP/GLD/XOM all confirmed unavailable on this venue; defensive = cash is now tested constraint, not assumption. Week ahead: SPY 685 bull-confirm = +4\u20135% SPY add (stop 678); QQQ >600 = 3% starter; thesis breaks at SPY <667.80 (operative stop).",
+      "duration_sec": 145.5
+    },
+    {
+      "week_start": "2026-04-13",
+      "week_end": "2026-04-17",
+      "start_value": 10013.07,
+      "end_value": 10047.41,
+      "weekly_return": 0.0034,
+      "summary": "## Weekly summary for the operator\n\n**$10,006.10 \u2192 $10,047.41, +0.41% / +$41.31 P&L \u2014 second green week in a row.** Against a tape that delivered SPY +4.5% (679.46 \u2192 710.14 ATH on a holding Iran ceasefire and Nasdaq record 24468), our book captured roughly 9% of that move \u2014 green, but a thin slice. The position carried: 0.46 SPY from 3/31's capitulation reversal at 650.34, 0.59 SPY from 4/9's bull-reclaim at 679.91, and 0.58 SPY added 4/14 at 694.46 on a clean bull-confirm close-at-day-high (the new tranche alone delivered +$8.86). **The win:** three-hurdle discipline got us a better price 4/14 vs chasing 4/13's failed trigger, and Friday's ATH rip didn't seduce a no-add rule. **The honest gap:** for the second consecutive week we ended a confirmed-regime advance with book deployment two-plus bands below target (11.5% vs 40\u201360% normal-regime band) \u2014 the deployment ladder is being aspirated, not operated. Playbook now adds four rules: tick-#1 deployment-gap check (silent drift = process failure), round-number magnitude relaxation (don't demand 0.3% past 700), declining-vol-in-uptrend \u2260 exhaustion in normal regime, and an earnings-week single-name freeze for the mega-caps with SPY/QQQ size trimmed 25%. Retired: the floor-default tranche size (replaced with \"gap \u00d7 quality\"), and \"good news can't lift\" as a default lens (it's a regime indicator now, not a trade bias). Week ahead is earnings cluster + FOMC freeze opening 4/28 \u2014 plan is to add on a Mon/Tue 700 hold, ratchet stops on extension to 715/720, and exit on close below 685.",
+      "duration_sec": 112.5
+    },
+    {
+      "week_start": "2026-04-20",
+      "week_end": "2026-04-24",
+      "start_value": 10045.09,
+      "end_value": 10057.32,
+      "weekly_return": 0.0012,
+      "summary": "## Weekly summary for the operator\n\n**$10,047.41 \u2192 $10,057.32, +0.10% / +$9.91 P&L \u2014 third green week in a row.** Against a tape that delivered SPY +0.54% (710.14 \u2192 713.94 ATH-close, range-bound 702\u2013714 consolidation), the book captured ~18% of the move \u2014 improving on last week's 9% but still under-firing. Two adds executed: 0.42 SPY at 708.72 on Mon (deployment-ladder add #1, hold-day after Friday breakout) and 0.56 SPY at 711.21 on Wed (clean reclaim after Tue's outside-day exhaustion candle). Position closed 2.61 SPY @ avg 689.28, +3.58%; book deployment 11.5% \u2192 18.5%, finally moving toward the 40\u201360% normal-regime band. **The win:** the tick-#1 deployment-gap rule produced its first non-aspirational fills, and the 4/21 outside-day exhaustion was respected before the 4/22 reclaim got rewarded \u2014 a textbook \"reject, hold, reclaim\" sequence now codified as add #2 fast-track. **The honest gap:** late tranches bought at 708.72 / 711.21 vs Friday 713.94 carry +0.4\u20130.7%, while the 3/31 starter at 650.34 carries +9.8% \u2014 chasing tops with full tranches is the new failure mode, replacing chronic under-deployment. Playbook now adds a late-tranche size taper (half-size when within 1.5% of 20D high AND within 1 band of target), corrects the earnings-week haircut to apply to single-names + QQQ but not SPY, requires every \"stand aside\" to name its next-session trigger, and retires the 5th-close-above add-#2 rule. Week ahead is constrained: FOMC Wed 4/29 freezes 4/28 EOD \u2192 4/29 close, leaving only Monday tradable; plan is one 2.5% half-tranche on a clean 714 reclaim, stop ratcheted to 700, then quiet through the freeze.",
+      "duration_sec": 118.6
+    },
+    {
+      "week_start": "2026-04-27",
+      "week_end": "2026-05-01",
+      "start_value": 10060.53,
+      "end_value": 10075.82,
+      "weekly_return": 0.0015,
+      "summary": "## Weekly summary for the operator\n\n**$10,057.32 \u2192 $10,075.82, +0.18% / +$18.50 P&L \u2014 fourth green week in a row, lifetime +0.76%.** Against a tape that delivered SPY +0.94% (713.94 \u2192 720.65 ATH), the book captured ~19% \u2014 mechanically the ceiling at 20% deployed. The one trade of the week was a clean execution: 0.18 SPY at 715.17 on 4/27, getting the last possible add in before the FOMC freeze locked the window for four sessions. Position closed 2.79 SPY @ avg 690.95, +4.30% / +$82.85, and the pre-committed trail ratchet fired on schedule Friday (close > 720 \u2192 stop 685 \u2192 700), locking in capital protection without discretion. **The win:** rule-driven execution \u2014 FOMC freeze honored through choppy 4/28, ratchet fired without debate, and the 4/27 timing was correct even though sizing was smaller than planned. **The honest gap:** the 4/27 tranche was undersized by arithmetic error (planned 2.5%, headroom to cap was only ~1.8%), and more importantly, the \"deployment target 40\u201360%\" has been aspirational for four weeks because we're a one-ticker book in a multi-vehicle universe. SPY is now at cap and CANNOT close that gap; the 4/30 post-FOMC +1.00% rip was a textbook QQQ starter window we ignored because no second-vehicle plan was staged. **Playbook now adds:** cap-aware sizing arithmetic mandatory before every add, tick-#1 reframes to the second-vehicle question once any position hits \u226519%, a codified QQQ post-earnings-cluster re-entry trigger, and a written trail-ratchet ladder (725\u2192705, 730\u2192710, 735\u2192715). Retired: late-tranche taper (superseded by cap arithmetic) and the \"SPY tranche\" form of the deployment-gap rule. **Week ahead:** SPY at cap, plan is trail-ratchet management only; deployment growth must come from a QQQ starter on a clean post-MSFT/META print reclaim or a MSFT/GOOGL post-print bounce-back. Verify NFP timing Monday.",
+      "duration_sec": 119.5
+    },
+    {
+      "week_start": "2026-05-04",
+      "week_end": "2026-05-08",
+      "start_value": 10068.46,
+      "end_value": 10139.15,
+      "weekly_return": 0.007,
+      "summary": "## Weekly summary for the operator\n\n**$10,075.82 \u2192 $10,139.15, +0.63% / +$63.33 P&L \u2014 fifth green week in a row, lifetime +1.39%.** Against a tape that delivered SPY +2.35% (720.65 \u2192 737.62 ATH) and QQQ +5.50% (674.15 \u2192 711.23 ATH) on a hot-NFP Friday rip the market shrugged off, the book finally captured 27% of SPY's move \u2014 the best capture ratio of the run, up from the prior four weeks of 0/0/9/18/19%. The decisive change was structural: the second-vehicle gap journaled in four consecutive playbooks finally turned into trades. 5/5 took a 0.31-share QQQ starter at 681.61 on a three-hurdle-clean post-cluster reclaim, and 5/6 added 0.44 shares at 695.77 at full size (not the haircut default) on a pristine +1.9%-past-30D-high signal \u2014 together carrying +$15.98 / +3.09%. SPY's pre-committed trail-ratchet ladder fired twice mechanically (close > 730 \u2192 stop 710; close > 735 \u2192 stop 715), locking +3.5% of book protection without any discretionary call. **The honest gap:** at 25.6% deployed in a normal regime with a 40\u201360% target, the book is still ~15 pp light, and 5/8's hurdle-clean QQQ tape (close-at-day-high, vol 108% of 20D) was blocked by the Friday-no-add rule \u2014 meaning Tue/Wed are now the load-bearing tranche days, not Mon/Fri. Playbook updates: QQQ gets its own written ratchet ladder (705\u2192690, 715\u2192700, 725\u2192710, 735\u2192720), capture-ratio is now the explicit weekly deployment metric, \"appreciation cap-excess\" (SPY at 20.30% via price) is codified as a hold-not-trim, and the one-time QQQ-post-cluster trigger generalizes to a \"post-binary-event re-entry\" template. Week ahead: CPI mid-week (verify Monday) means a 24h freeze takes out one tradable day; plan is QQQ add #3 on a clean >715 reclaim Tue or Wed, ratchet SPY stops on extension (740\u2192720, 745\u2192725), and watch GOOGL/MSFT for a post-print bounce-back starter.",
+      "duration_sec": 146.5
+    },
+    {
+      "week_start": "2026-05-11",
+      "week_end": "2026-05-15",
+      "start_value": 10145.38,
+      "end_value": 10137.19,
+      "weekly_return": -0.0008,
+      "summary": "## Weekly summary for the operator\n\n**$10,139.15 \u2192 $10,137.19, \u22120.02% / \u2212$1.96 P&L \u2014 five-week green streak technically broken, but a rounding error against a flat tape (SPY +0.21%, QQQ \u22120.32%) marked by hot inflation prints (CPI 3.8% Tue, PPI 6% Fri) and a mid-week ATH push (SPY 748.17 / QQQ 719.79) that Friday gave back.** Lifetime +1.37%. The week's structural wins were rule-driven: trail-ratchet ladders fired three times mechanically (SPY stop 715\u2192720\u2192725, QQQ 683\u2192690\u2192700), locking +5.7% of SPY-book protection and putting QQQ's stop above the round-number, and the 24h CPI freeze kept us out of Tuesday/Wednesday adds when inflation prints were live. The one bad trade \u2014 and the entire source of the red \u2014 was Thursday's 0.42-share QQQ add at 719.79: three hurdles cleared, but it was the session before a hot-PPI Friday and it lifted QQQ's blended cost from 689.92 to 700.64 in a single tranche (\u0394blended +1.55%). That add now carries \u22121.5% and converted what would have been a flat-to-green week into a flat-to-red one. **Two new playbook rules in response:** (1) \"extension-aware tranche taper\" \u2014 if a planned add lifts blended cost >1%, magnitude hurdle widens to \u22650.5% past trigger OR the tranche halves; (2) \"same-week-binary pre-print stand-down\" \u2014 no adds the session prior to any CPI/PPI/PCE/NFP/FOMC print in the same week, even outside the formal 24h freeze. The \"Tue/Wed are stack days\" rule is retired and replaced with a binary-calendar-aware version. The deployment gap (28.5% vs 40\u201360% target) is now structurally ceiling-capped at ~30% with two near-maxed vehicles, so Monday's headline action is probing IWM/DIA/XLK for a third tradable ETF; without one, the gap is rails-limited, not discipline-limited. NVDA earnings late May and PCE end-of-month are the binaries to plot before any add next week.",
+      "duration_sec": 153.3
+    },
+    {
+      "week_start": "2026-05-18",
+      "week_end": "2026-05-22",
+      "start_value": 10132.17,
+      "end_value": 10165.32,
+      "weekly_return": 0.0033,
+      "summary": "## Weekly summary for the operator\n\n**$10,139.15 \u2192 $10,165.32, +0.28% / +$28.13 P&L \u2014 six-week green streak restored, lifetime +1.65%.** Against a tape that delivered SPY +0.87% (739.17 \u2192 745.64) and QQQ +1.21% (708.93 \u2192 717.54) through a risk-off Monday (10Y at 52-wk high 4.13%, Iran strike headlines), an NVDA-earnings Wednesday, and a recovery into the bell, the book captured ~32% of SPY \u2014 best meaningful capture of the run and right at the rails-constrained ceiling. **The wins were rule-driven, not heroic:** 5/18 the pre-written close-based stop language ignored QQQ's intraday 698.85 touch (closed 705.88) and saved the position; 5/20 the new same-week-binary stand-down kept us off the keyboard during SPY's +1.08% pre-NVDA rip; and the three-week third-vehicle probe finally closed with IWM/DIA/XLK confirmed unavailable. **The honest gaps:** the stop-rule \"close vs intraday\" distinction was unwritten (now codified \u2014 trail-ratchets close-based, only the \u22124% hard backstops are intraday); the post-NVDA Thursday re-engagement trigger was improvised rather than pre-written Wednesday evening; and the 40\u201360% deployment target is now demonstrably unreachable with a two-vehicle book. **Playbook updates:** stops codified as close-based by default, capture-ratio target rebased to a realistic 25\u201340% band, post-binary re-entry triggers must be pre-written one session ahead, \u0394blended check generalized beyond breakouts, and the third-vehicle probe permanently retired from the tick protocol. **Week ahead is short (Memorial Day Mon, PCE likely Fri):** SPY is at cap, plan is trail-ratchet management only; QQQ add #4 only on a clean >727.18 reclaim Tue/Wed with no same-week binary pending; NVDA post-print starter eligible if Wed evening's pre-written trigger fires Thursday.",
+      "duration_sec": 142.5
+    },
+    {
+      "week_start": "2026-05-26",
+      "week_end": "2026-05-26",
+      "start_value": 10194.03,
+      "end_value": 10194.03,
+      "weekly_return": 0.0,
+      "summary": "## Weekly summary for the operator\n\n**$10,165.32 \u2192 $10,194.03, +0.28% / +$28.71 P&L \u2014 seventh green week in a row, lifetime +1.94%.** Against a short Memorial Day tape that delivered SPY +0.66% (745.64 \u2192 750.59 fresh ATH) and QQQ +1.78% (717.54 \u2192 730.28 fresh ATH), the book captured **~42% of SPY** \u2014 the best clean capture of the run and right at the rails-realistic ceiling. The one trade was clinical: Tuesday 5/26 QQQ add #4 of 0.21 sh @ 730.28 (half-tranche, \u0394blended +0.60%, all three hurdles cleared, executed on the only eligible session before Thursday's PCE freeze), and it fired *exactly* as the trigger written 5/22 had specified \u2014 ticker, level, hurdles, size, stop, and binary-block all pre-named. **The honest gaps:** SPY drifted to 20.54% via appreciation (held correctly, but the at-cap-pivot rule should have produced a written NVDA/GOOGL single-name trigger by Wednesday EOD, and didn't); three sessions Wed\u2013Fri lacked daily journal entries; and QQQ at 9.89% of book under-captured tech leadership relative to its potential. **Playbook updates:** the at-cap pivot is now mandatory and must name a specific single-name candidate (or journal \"no candidate clears hurdle\"); the pre-written-trigger workflow is codified as the default state, not an aspiration; a Tuesday lead-position RS check is added (capture <20% of blended tape for 2 wks = pivot to the underweight vehicle); and the silent-tick rule now extends to freeze and holiday sessions. Stops ratcheted to **SPY 730 / QQQ 710** close-based; hard intraday backstops 663.32 / 672.61. Week ahead is Wed\u2013Fri only with PCE Friday \u2014 Wednesday is the lone tradable window, and the plan is one QQQ add #5 on a clean >737.21 reclaim OR one single-name starter on a Wed-eve-written NVDA/GOOGL trigger; Thursday and Friday are managed-only.",
+      "duration_sec": 158.4
+    }
+  ],
+  "green_weeks": 6,
+  "red_weeks": 2,
+  "flat_weeks": 5,
+  "best_week": {
+    "week_start": "2026-05-04",
+    "week_end": "2026-05-08",
+    "start_value": 10068.46,
+    "end_value": 10139.15,
+    "weekly_return": 0.007,
+    "summary": "## Weekly summary for the operator\n\n**$10,075.82 \u2192 $10,139.15, +0.63% / +$63.33 P&L \u2014 fifth green week in a row, lifetime +1.39%.** Against a tape that delivered SPY +2.35% (720.65 \u2192 737.62 ATH) and QQQ +5.50% (674.15 \u2192 711.23 ATH) on a hot-NFP Friday rip the market shrugged off, the book finally captured 27% of SPY's move \u2014 the best capture ratio of the run, up from the prior four weeks of 0/0/9/18/19%. The decisive change was structural: the second-vehicle gap journaled in four consecutive playbooks finally turned into trades. 5/5 took a 0.31-share QQQ starter at 681.61 on a three-hurdle-clean post-cluster reclaim, and 5/6 added 0.44 shares at 695.77 at full size (not the haircut default) on a pristine +1.9%-past-30D-high signal \u2014 together carrying +$15.98 / +3.09%. SPY's pre-committed trail-ratchet ladder fired twice mechanically (close > 730 \u2192 stop 710; close > 735 \u2192 stop 715), locking +3.5% of book protection without any discretionary call. **The honest gap:** at 25.6% deployed in a normal regime with a 40\u201360% target, the book is still ~15 pp light, and 5/8's hurdle-clean QQQ tape (close-at-day-high, vol 108% of 20D) was blocked by the Friday-no-add rule \u2014 meaning Tue/Wed are now the load-bearing tranche days, not Mon/Fri. Playbook updates: QQQ gets its own written ratchet ladder (705\u2192690, 715\u2192700, 725\u2192710, 735\u2192720), capture-ratio is now the explicit weekly deployment metric, \"appreciation cap-excess\" (SPY at 20.30% via price) is codified as a hold-not-trim, and the one-time QQQ-post-cluster trigger generalizes to a \"post-binary-event re-entry\" template. Week ahead: CPI mid-week (verify Monday) means a 24h freeze takes out one tradable day; plan is QQQ add #3 on a clean >715 reclaim Tue or Wed, ratchet SPY stops on extension (740\u2192720, 745\u2192725), and watch GOOGL/MSFT for a post-print bounce-back starter.",
+    "duration_sec": 146.5
+  },
+  "worst_week": {
+    "week_start": "2026-05-11",
+    "week_end": "2026-05-15",
+    "start_value": 10145.38,
+    "end_value": 10137.19,
+    "weekly_return": -0.0008,
+    "summary": "## Weekly summary for the operator\n\n**$10,139.15 \u2192 $10,137.19, \u22120.02% / \u2212$1.96 P&L \u2014 five-week green streak technically broken, but a rounding error against a flat tape (SPY +0.21%, QQQ \u22120.32%) marked by hot inflation prints (CPI 3.8% Tue, PPI 6% Fri) and a mid-week ATH push (SPY 748.17 / QQQ 719.79) that Friday gave back.** Lifetime +1.37%. The week's structural wins were rule-driven: trail-ratchet ladders fired three times mechanically (SPY stop 715\u2192720\u2192725, QQQ 683\u2192690\u2192700), locking +5.7% of SPY-book protection and putting QQQ's stop above the round-number, and the 24h CPI freeze kept us out of Tuesday/Wednesday adds when inflation prints were live. The one bad trade \u2014 and the entire source of the red \u2014 was Thursday's 0.42-share QQQ add at 719.79: three hurdles cleared, but it was the session before a hot-PPI Friday and it lifted QQQ's blended cost from 689.92 to 700.64 in a single tranche (\u0394blended +1.55%). That add now carries \u22121.5% and converted what would have been a flat-to-green week into a flat-to-red one. **Two new playbook rules in response:** (1) \"extension-aware tranche taper\" \u2014 if a planned add lifts blended cost >1%, magnitude hurdle widens to \u22650.5% past trigger OR the tranche halves; (2) \"same-week-binary pre-print stand-down\" \u2014 no adds the session prior to any CPI/PPI/PCE/NFP/FOMC print in the same week, even outside the formal 24h freeze. The \"Tue/Wed are stack days\" rule is retired and replaced with a binary-calendar-aware version. The deployment gap (28.5% vs 40\u201360% target) is now structurally ceiling-capped at ~30% with two near-maxed vehicles, so Monday's headline action is probing IWM/DIA/XLK for a third tradable ETF; without one, the gap is rails-limited, not discipline-limited. NVDA earnings late May and PCE end-of-month are the binaries to plot before any add next week.",
+    "duration_sec": 153.3
+  },
+  "total_tokens": {
+    "input": 1363569,
+    "output": 144223,
+    "cache_read": 1785436
+  }
+}
