@@ -116,6 +116,33 @@ def search_news(objective: str, max_results: int = 6) -> dict:
 
 
 @_json_tool
+def scan_macro_and_policy() -> dict:
+    """Bundle the standard market-moving news scans into one call. Run this once
+    per tick before deciding on any new entry. Covers political commentary on
+    stocks/sectors, Fed/Powell statements, tariff and trade news, executive
+    orders, and any major SEC/DOJ regulatory action affecting watchlist names.
+    """
+    if clock.is_simulated():
+        return {
+            "error": "news search disabled in backtest mode — rely on price action and the playbook."
+        }
+    queries = [
+        "Trump statements on specific US stocks or sectors in the last 48 hours",
+        "Federal Reserve or Powell statements on rates or markets in the last 48 hours",
+        "tariff trade China semiconductor news US equities last 48 hours",
+        "executive orders or regulatory actions affecting US stocks last 48 hours",
+        "biggest US equity market-moving news today",
+    ]
+    out = {}
+    for q in queries:
+        try:
+            out[q] = research.search(q, max_results=4)
+        except Exception as e:
+            out[q] = {"error": str(e)}
+    return {"scans": out}
+
+
+@_json_tool
 def place_order(
     symbol: str,
     side: str,
@@ -242,6 +269,7 @@ TICK_TOOLS = [
     get_quote,
     get_history,
     search_news,
+    scan_macro_and_policy,
     place_order,
     cancel_order,
     add_journal_note,
