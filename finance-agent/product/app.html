@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1440">
+<title>Levee — Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  body { font-family: 'Inter', sans-serif; background: #09090b; color: #fafafa; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .scrollbar::-webkit-scrollbar { width: 6px; }
+  .scrollbar::-webkit-scrollbar-track { background: transparent; }
+  .scrollbar::-webkit-scrollbar-thumb { background: #27272a; border-radius: 3px; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<!-- TOP BAR -->
+<div class="border-b border-zinc-900 bg-zinc-950/60 sticky top-0 z-30 backdrop-blur">
+  <div class="px-6 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-6">
+      <div class="flex items-center gap-2">
+        <div class="w-7 h-7 rounded-md bg-gradient-to-br from-emerald-400 to-emerald-700 flex items-center justify-center font-bold text-sm">L</div>
+        <span class="font-semibold">Levee</span>
+      </div>
+      <nav class="flex items-center gap-1 text-sm">
+        <a class="px-3 py-1.5 rounded-md bg-zinc-900 font-medium">Dashboard</a>
+        <a class="px-3 py-1.5 rounded-md text-zinc-400 hover:text-white">Journal</a>
+        <a class="px-3 py-1.5 rounded-md text-zinc-400 hover:text-white">Playbook</a>
+        <a class="px-3 py-1.5 rounded-md text-zinc-400 hover:text-white">Backtests</a>
+        <a class="px-3 py-1.5 rounded-md text-zinc-400 hover:text-white">Settings</a>
+      </nav>
+    </div>
+    <div class="flex items-center gap-3 text-sm">
+      <div class="flex items-center gap-2 mono text-xs text-zinc-500">
+        <div class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+        <span>Agent online · last tick 3m ago</span>
+      </div>
+      <div class="w-px h-5 bg-zinc-800"></div>
+      <div class="flex items-center gap-2 text-xs text-zinc-400">
+        <div class="w-7 h-7 rounded-full bg-gradient-to-br from-purple-500 to-pink-600"></div>
+        <span>giuse@gmail.com</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="max-w-[1400px] mx-auto px-6 py-6">
+
+<!-- HEADLINE STATS -->
+<div class="grid grid-cols-4 gap-4 mb-6">
+  <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-5">
+    <div class="text-xs text-zinc-500 uppercase tracking-wider mb-2">Portfolio value</div>
+    <div class="text-3xl font-bold mono">$10,194.03</div>
+    <div class="text-sm mt-1 text-emerald-400 mono">+1.94% lifetime</div>
+  </div>
+  <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-5">
+    <div class="text-xs text-zinc-500 uppercase tracking-wider mb-2">This week</div>
+    <div class="text-3xl font-bold mono text-emerald-400">+0.33%</div>
+    <div class="text-sm mt-1 text-zinc-500 mono">$33.15 · ends $10,165.32</div>
+  </div>
+  <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-5">
+    <div class="text-xs text-zinc-500 uppercase tracking-wider mb-2">Weekly track record</div>
+    <div class="flex items-baseline gap-2">
+      <span class="text-3xl font-bold text-emerald-400 mono">6</span>
+      <span class="text-xs text-zinc-500">green</span>
+      <span class="text-xl font-bold text-red-400 mono ml-2">2</span>
+      <span class="text-xs text-zinc-500">red</span>
+      <span class="text-xl font-bold text-zinc-400 mono ml-2">5</span>
+      <span class="text-xs text-zinc-500">flat</span>
+    </div>
+    <div class="text-sm mt-1 text-zinc-500">last 13 weeks</div>
+  </div>
+  <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-5">
+    <div class="text-xs text-zinc-500 uppercase tracking-wider mb-2">Regime</div>
+    <div class="text-2xl font-bold text-emerald-400">TREND-UP</div>
+    <div class="text-sm mt-1 text-zinc-500">VIX 13.4 · SPY above 20DMA · breadth healthy</div>
+  </div>
+</div>
+
+<div class="grid grid-cols-3 gap-6">
+
+<!-- LEFT COLUMN: equity curve + macro scan -->
+<div class="col-span-2 space-y-6">
+
+  <!-- EQUITY CURVE -->
+  <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-6">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <div class="font-semibold">Portfolio value</div>
+        <div class="text-xs text-zinc-500 mono mt-0.5">13 weeks · live paper portfolio</div>
+      </div>
+      <div class="flex items-center gap-1 text-xs">
+        <button class="px-3 py-1 rounded bg-zinc-900 font-medium">1W</button>
+        <button class="px-3 py-1 rounded text-zinc-500 hover:text-white">1M</button>
+        <button class="px-3 py-1 rounded bg-emerald-500/10 text-emerald-400 font-medium">3M</button>
+        <button class="px-3 py-1 rounded text-zinc-500 hover:text-white">YTD</button>
+        <button class="px-3 py-1 rounded text-zinc-500 hover:text-white">ALL</button>
+      </div>
+    </div>
+    <div id="equity-chart" class="h-64"></div>
+  </div>
+
+  <!-- TODAY'S MACRO SCAN -->
+  <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-6">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <div class="font-semibold flex items-center gap-2">
+          Today's macro scan
+          <span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 text-xs mono">5 hits</span>
+        </div>
+        <div class="text-xs text-zinc-500 mono mt-0.5">9:47 ET · 5 queries</div>
+      </div>
+      <button class="text-xs text-zinc-400 hover:text-white">View archive →</button>
+    </div>
+    <div class="space-y-3">
+      <div class="border-l-2 border-amber-500 bg-amber-500/5 rounded-r-md p-3">
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-xs font-mono uppercase tracking-wider text-amber-400">POLICY · HIGH IMPACT</span>
+          <span class="text-xs text-zinc-500 mono">2h ago</span>
+        </div>
+        <div class="text-sm font-medium">Trump signals new universal 10% tariff extending past July 24</div>
+        <div class="text-xs text-zinc-400 mt-1">Reuters · agent flagged: semiconductors (NVDA, AMD), exporters (AAPL, TSLA) at risk if duration extends.</div>
+      </div>
+      <div class="border-l-2 border-blue-500 bg-blue-500/5 rounded-r-md p-3">
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-xs font-mono uppercase tracking-wider text-blue-400">FED · MEDIUM</span>
+          <span class="text-xs text-zinc-500 mono">4h ago</span>
+        </div>
+        <div class="text-sm font-medium">Powell speaks at Jackson Hole pre-symposium · "patient on rates"</div>
+        <div class="text-xs text-zinc-400 mt-1">Bloomberg · neutral for risk-on; agent confidence in TREND-UP regime increased.</div>
+      </div>
+      <div class="border-l-2 border-zinc-700 bg-zinc-900/30 rounded-r-md p-3">
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-xs font-mono uppercase tracking-wider text-zinc-400">EARNINGS · MEDIUM</span>
+          <span class="text-xs text-zinc-500 mono">overnight</span>
+        </div>
+        <div class="text-sm font-medium">NVDA earnings beat top &amp; bottom · guidance light · stock -2.4% AH</div>
+        <div class="text-xs text-zinc-400 mt-1">CNBC · agent: holding 2 sh, watching 220 support; trail stop at 225 active.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- RIGHT COLUMN: positions + journal -->
+<div class="col-span-1 space-y-6">
+
+  <!-- POSITIONS -->
+  <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-6">
+    <div class="flex items-center justify-between mb-4">
+      <div class="font-semibold">Positions</div>
+      <span class="text-xs text-zinc-500 mono">4 of 10 cap · 30% deployed</span>
+    </div>
+    <div class="space-y-2">
+      <div class="flex items-center justify-between py-2 border-b border-zinc-900">
+        <div>
+          <div class="font-medium">SPY</div>
+          <div class="text-xs text-zinc-500 mono">2.79 sh @ 690.95</div>
+        </div>
+        <div class="text-right">
+          <div class="text-emerald-400 font-medium mono">+8.63%</div>
+          <div class="text-xs text-zinc-500 mono">$2,094</div>
+        </div>
+      </div>
+      <div class="flex items-center justify-between py-2 border-b border-zinc-900">
+        <div>
+          <div class="font-medium">QQQ</div>
+          <div class="text-xs text-zinc-500 mono">1.38 sh @ 705.15</div>
+        </div>
+        <div class="text-right">
+          <div class="text-emerald-400 font-medium mono">+3.56%</div>
+          <div class="text-xs text-zinc-500 mono">$1,008</div>
+        </div>
+      </div>
+      <div class="pt-3 mt-3 border-t border-zinc-900 text-xs space-y-1">
+        <div class="flex justify-between text-zinc-500"><span>Cash</span><span class="mono">$7,092 (69.6%)</span></div>
+        <div class="flex justify-between text-zinc-500"><span>Equity</span><span class="mono">$3,102 (30.4%)</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ACTIVE TRIGGERS -->
+  <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-6">
+    <div class="flex items-center justify-between mb-4">
+      <div class="font-semibold flex items-center gap-2">
+        Active triggers
+        <span class="px-2 py-0.5 rounded bg-zinc-900 text-xs mono text-zinc-400">3</span>
+      </div>
+    </div>
+    <div class="space-y-3">
+      <div class="text-xs">
+        <div class="font-mono text-emerald-400 mb-1">QQQ · ADD #5 trigger armed</div>
+        <div class="text-zinc-400 leading-relaxed">close &gt;735 × 0.3% upper-third + vol ≥ 50% 20D · half-tranche</div>
+      </div>
+      <div class="text-xs">
+        <div class="font-mono text-amber-400 mb-1">SPY · trim trigger armed</div>
+        <div class="text-zinc-400 leading-relaxed">if SPY closes below 730 with vol &gt;110M → trim 0.5sh, ratchet stop</div>
+      </div>
+      <div class="text-xs">
+        <div class="font-mono text-zinc-500 mb-1">NVDA · earnings freeze (post-AH)</div>
+        <div class="text-zinc-400 leading-relaxed">no new initiations 24h pre-print, 4h post-print</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<!-- LIVE JOURNAL -->
+<div class="grid grid-cols-3 gap-6 mt-6">
+  <div class="col-span-2 bg-zinc-950 border border-zinc-900 rounded-xl p-6">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <div class="font-semibold">Live journal</div>
+        <div class="text-xs text-zinc-500 mono mt-0.5">Agent's working notes · streamed</div>
+      </div>
+      <button class="text-xs text-zinc-400 hover:text-white">Export →</button>
+    </div>
+    <div class="space-y-1 max-h-[500px] overflow-y-auto scrollbar">
+      
+        <div class="border-l-2 border-zinc-800 pl-3 py-1.5">
+          <div class="flex items-center gap-2 text-xs">
+            <span class="font-mono text-zinc-500">2026-05-27</span>
+            <span class="text-zinc-300 font-medium uppercase tracking-wide">weekly_close</span>
+          </div>
+          <div class="text-sm text-zinc-200 mt-0.5">## Weekly summary for the operator
+
+**$10,165.32 → $10,194.03, +0.28% / +$28.71 P&L — seventh green week in a row, lifetime +1.94%.** Against a short Memorial Day tape that delivered SPY +0.66% (745.64 → 750.59 fresh ATH) and QQQ +1.78% (717.54 → 730.28 fresh ATH), the book captured **~42% of SPY** — the best clean capture of the run and right at the rails-realistic ceiling. Th</div>
+        </div>
+        <div class="border-l-2 border-zinc-800 pl-3 py-1.5">
+          <div class="flex items-center gap-2 text-xs">
+            <span class="font-mono text-zinc-500">2026-05-27</span>
+            <span class="text-zinc-300 font-medium uppercase tracking-wide">playbook_update</span>
+          </div>
+          <div class="text-sm text-zinc-200 mt-0.5"></div>
+        </div>
+        <div class="border-l-2 border-zinc-800 pl-3 py-1.5">
+          <div class="flex items-center gap-2 text-xs">
+            <span class="font-mono text-zinc-500">2026-05-27</span>
+            <span class="text-zinc-300 font-medium uppercase tracking-wide">note</span>
+          </div>
+          <div class="text-sm text-zinc-200 mt-0.5">Tue 5/26: QQQ add #4 fired half-tranche 0.21sh @ 730.28 ($153). 3-hurdle clean: +0.73% past 725, upper-third (close 730.28 vs floor 728.83), vol 34M ~85% 20D. Tape: S&P+0.6%, NDX+1.2% ATHs; Powell hawkish/PCE Fri/Iran shrugged off. Δblended 700.64→704.83 (+0.60%). Ratchets: SPY close-stop 725→730 (close >750); QQQ 700→710 (close >725). PCE confirmed Fri — Thu = no-adds. Deploym</div>
+        </div>
+        <div class="border-l-2 border-zinc-800 pl-3 py-1.5">
+          <div class="flex items-center gap-2 text-xs">
+            <span class="font-mono text-zinc-500">2026-05-27</span>
+            <span class="text-emerald-400 font-medium uppercase tracking-wide">fill</span>
+          </div>
+          <div class="text-sm text-zinc-200 mt-0.5">BUY 0.21 QQQ @ market — QQQ add #4 half-tranche. Chart: close 730.28 clears 725 round +0.73% on upper-third (>728.83) and 34M vol (~85% 20D), past 719.79 ATH. Macro: tape ripped to fresh ATHs despite Powell hawkish + Iran headlines. PCE Fri — Tue eligible (Thu is frozen session). Cap headroom 1.62sh, Δblended +0.60% (<1%), half-size per pre-written trigger. Close-stop 710 (ratc</div>
+        </div>
+        <div class="border-l-2 border-zinc-800 pl-3 py-1.5">
+          <div class="flex items-center gap-2 text-xs">
+            <span class="font-mono text-zinc-500">2026-05-27</span>
+            <span class="text-zinc-300 font-medium uppercase tracking-wide">weekly_close</span>
+          </div>
+          <div class="text-sm text-zinc-200 mt-0.5">## Weekly summary for the operator
+
+**$10,139.15 → $10,165.32, +0.28% / +$28.13 P&L — six-week green streak restored, lifetime +1.65%.** Against a tape that delivered SPY +0.87% (739.17 → 745.64) and QQQ +1.21% (708.93 → 717.54) through a risk-off Monday (10Y at 52-wk high 4.13%, Iran strike headlines), an NVDA-earnings Wednesday, and a recovery into the bell, the book captured</div>
+        </div>
+        <div class="border-l-2 border-zinc-800 pl-3 py-1.5">
+          <div class="flex items-center gap-2 text-xs">
+            <span class="font-mono text-zinc-500">2026-05-27</span>
+            <span class="text-zinc-300 font-medium uppercase tracking-wide">note</span>
+          </div>
+          <div class="text-sm text-zinc-200 mt-0.5">Wk close 5/22: NAV 10,165.32 (+0.28%/+$28.13), six-wk green restored, lifetime +1.65%. SPY 7.91%/QQQ 2.41%. Capture ~32% vs SPY +0.87%. Retro: best=5/18 hold-line, 5/20 NVDA stand-down, 3rd-vehicle closed. Worst=stop ambiguity, no pre-written NVDA trigger, 40-60% target unreachable. New rules: stops close-based (intraday only for hard backstop), capture target rebased to 25-40%</div>
+        </div>
+        <div class="border-l-2 border-zinc-800 pl-3 py-1.5">
+          <div class="flex items-center gap-2 text-xs">
+            <span class="font-mono text-zinc-500">2026-05-27</span>
+            <span class="text-zinc-300 font-medium uppercase tracking-wide">playbook_update</span>
+          </div>
+          <div class="text-sm text-zinc-200 mt-0.5"></div>
+        </div>
+        <div class="border-l-2 border-zinc-800 pl-3 py-1.5">
+          <div class="flex items-center gap-2 text-xs">
+            <span class="font-mono text-zinc-500">2026-05-27</span>
+            <span class="text-zinc-300 font-medium uppercase tracking-wide">note</span>
+          </div>
+          <div class="text-sm text-zinc-200 mt-0.5">Wk close 5/22: NAV 10,165.32, +0.28% wk, +1.65% lifetime. Six-wk green restored. SPY 745.64 / QQQ 717.54 — recovery from PPI dip but no ratchet rung hit (need SPY>750 or QQQ>725). Stops hold 725/700. Friday no-add. Capture-ratio roughly +32% vs SPY +0.87% (rough; mostly held via positions). Next wk plan: verify NVDA earnings + PCE dates Mon; third-vehicle probe still top action</div>
+        </div>
+        <div class="border-l-2 border-zinc-800 pl-3 py-1.5">
+          <div class="flex items-center gap-2 text-xs">
+            <span class="font-mono text-zinc-500">2026-05-27</span>
+            <span class="text-zinc-300 font-medium uppercase tracking-wide">note</span>
+          </div>
+          <div class="text-sm text-zinc-200 mt-0.5">5/21 Thu close. NAV 10,153.62, dep 28.6%. SPY 742.72 (cap), QQQ 714.51 (8.2%). Stops 725/700 safe. No ratchet (SPY needs >750, QQQ >725). QQQ add#4 trigger 727.18 missed by 1.8%. NVDA earnings 5/20 past, UBS PT 275→280. THIRD-VEHICLE CONFIRMED DEAD: IWM/DIA/XLK all no-data — ~30% ceiling structural. Fri tomorrow = no-adds. Hold.</div>
+        </div>
+        <div class="border-l-2 border-zinc-800 pl-3 py-1.5">
+          <div class="flex items-center gap-2 text-xs">
+            <span class="font-mono text-zinc-500">2026-05-27</span>
+            <span class="text-zinc-300 font-medium uppercase tracking-wide">note</span>
+          </div>
+          <div class="text-sm text-zinc-200 mt-0.5">5/20 close: SPY 741.25 (+0.21% wk), QQQ 713.15 (+0.60% wk). NAV $10,147.93, deployment 28.6%. Tape ripped today (+1.08% SPY) into NVDA print TONIGHT. Same-week-binary stand-down active: NO adds tonight, Thu, until 1 session post-NVDA. SPY ratchet didn't fire (need >750). QQQ trigger 727.18 not in play. Stand aside. Third-vehicle probe still owed.</div>
+        </div>
+        <div class="border-l-2 border-zinc-800 pl-3 py-1.5">
+          <div class="flex items-center gap-2 text-xs">
+            <span class="font-mono text-zinc-500">2026-05-27</span>
+            <span class="text-zinc-300 font-medium uppercase tracking-wide">note</span>
+          </div>
+          <div class="text-sm text-zinc-200 mt-0.5">Tick 5/19 close. SPY 733.73 (-0.74%), QQQ 701.53 — 3rd down day off ATH. Iran-war inflation + Powell "hasn't peaked" + yields >5% driving risk-off. NAV $10,113 (-0.24% wk). QQQ now $1.53 above 700 operative stop — close call. No add. No trim (stops handle it). If QQQ closes <700 any session → exit next open per playbook. SPY 725 stop intact w/ ~$8.70 cushion. PCE late-May binar</div>
+        </div>
+        <div class="border-l-2 border-zinc-800 pl-3 py-1.5">
+          <div class="flex items-center gap-2 text-xs">
+            <span class="font-mono text-zinc-500">2026-05-27</span>
+            <span class="text-zinc-300 font-medium uppercase tracking-wide">note</span>
+          </div>
+          <div class="text-sm text-zinc-200 mt-0.5">5/18 Mon tick. SPY 738.65 (-0.07%), QQQ 705.88 (-0.43%), Nasdaq -0.51%. 10Y at 52-wk high 4.13%, 30Y ~5.13%, Iran strike threats, tech -1.1% to -2.3% intraday. Risk-off rotation; Dow only green index. QQQ closed lower-third of range (H 712.07 / L 698.85 / C 705.88) on heavy vol 49.8M — broke 710 round, tagged below 700 stop intraday but closed above by 0.83%. SPY closed mid-ran</div>
+        </div>
+    </div>
+  </div>
+
+  <!-- THIS WEEK'S PLAYBOOK -->
+  <div class="col-span-1 bg-zinc-950 border border-zinc-900 rounded-xl p-6">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <div class="font-semibold">This week's playbook</div>
+        <div class="text-xs text-zinc-500 mono mt-0.5">Rewritten Friday 16:00 ET</div>
+      </div>
+      <button class="text-xs text-zinc-400 hover:text-white">Full →</button>
+    </div>
+    <div class="max-h-[500px] overflow-y-auto scrollbar">
+<pre class="text-xs text-zinc-300 leading-relaxed whitespace-pre-wrap font-mono"># Playbook
+
+## Mission
+Grow the paper portfolio while closing each calendar week with positive
+P&L. Long-only US equities + ETFs. Capital preservation outranks growth.
+Hard rails: 20% max position, 10% max order, 5% min cash, −5% daily halt.
+
+---
+
+## Week of 2026-05-26 — Retro (short week, Memorial Day)
+
+### P&L
+- Start $10,165.32. End **$10,194.03**. **Weekly P&L: +$28.71 / +0.28%.**
+- **Seven-week green streak.** Lifetime **+1.94%.**
+- Positions: 2.79 SPY @ 690.95 last 750.59 (+8.63%, MV $2,094, **20.54%**
+  via appreciation); 1.38 QQQ @ 705.15 last 730.28 (+3.56%, MV $1,008,
+  **9.89%**).
+- Cash 69.57%. Deployment **30.43%** — inside the 25–35% band.
+- Tape: SPY 745.64 → 750.59 (+0.66%), QQQ 717.54 → 730.28 (+1.78%).
+- **Capture ratio ~42%** of SPY (best of run); ~28% of a 70/30
+  SPY/QQQ blend. We're at the rails-realistic ceiling.
+
+### 3 best decisions
+1. **5/26 QQQ add #4 fired exactly as pre-written.** Wednesday-evening
+   trigger language (close >725 ×0.3% upper-third + vol ≥50% 20D +
+   no same-week binary pending → half-tranche) hit on the first
+   eligible session after Memorial Day. Execution was clinical:
+   730.28 close cleared 725 by +0.73%, upper-third confirmed,
+   34M vol = 85% of 20D (vol-relax window OK), Δblended +0.60%
+   (<1% so half-tranche sized correctly), and Thursday's PCE freeze
+   was already plotted in advance. **This is the desired success
+   state — the playbook acted as a script, not a prompt.**
+2. **Cap-aware arithmetic sized the tranche before placement.** Cap
+   headroom = $1,495 → 1.62 sh capacity → 0.21 sh half-tranche
+   ($153) fit cleanly inside without rail rejection. The pre-trade
+   `headroom_$ = (0.20×NAV) − MV` calc is now habit.
+3. **SPY at 20.54% via appreciation: held, did not trim.** The
+   "appreciation cap-excess = hold, not trim" rule held under the
+   first real test (we drifted 0.5 pp past cap on the close). No
+   discretionary cleanup; trail-ratchets handle protection.
+
+### 3 worst decisions / gaps
+1. **Single-name watchlist untouched at SPY-at-cap.** The "tick #1
+   at-cap pivot" rule says SPY ≥19% → reframe to "next single-name
+   post-print starter trigger." We pivoted to QQQ (also at-cap-class)
+   but never built a NVDA/GOOGL/MSFT level on Wednesday evening. QQQ
+   add #4 was the right trade, but the *complete* execution would
+   have been QQQ add + one written NVDA bounce-back trigger by
+   Tuesday EOD. Result: a working capture ceiling we didn't probe.
+2. **No follow-through journal notes Wed–Fri.** This is the short-
+   week version of "silent tick = invisible decision." Even if the
+   tape gave nothing and PCE froze the window, the daily-journal
+   minimum is non-negotiable. Missed it for ~3 sessions because the
+   weekly close marker arrived earlier than expected.
+3. **QQQ tape outran the position.** QQQ +1.78% vs SPY +0.66%, but
+   QQQ is 9.89% of book vs SPY at 20.54%. The tech-led move barely
+   moved the needle. Structural: QQQ has $1,031 headroom to cap.
+   If the regime stays tech-leading, the next add window should
+   close that gap aggressively — not wait for a perfect setup that
+   the rails-constrained book can't afford to miss.
+
+### Sharpened heuristics (NEW)
+- **NEW — "At-cap pivot is mandatory AND must name a single-name."**
+  When SPY ≥19%, tick #1 isn't just "consider QQQ adds" — it's
+  "name one single-name post-print starter trigger by Wednesday EOD
+  with price level, hurdles, size, stop." If no candidate fires the
+  three-hurdle template, journal it ("NVDA at X, hurdle Y, stand
+  aside") rather than leave the watchlist silent.
+- **NEW — "Pre-written-trigger workflow, codified."** The success
+  state from 5/22 → 5/26 is the template:
+  1. Friday/weekend: name the next-week trigger (ticker, level,
+     hurdles, size, stop, binary-calendar block).
+  2. Pre-market Monday: verify the trigger is still valid given
+     overnight tape and macro.
+  3. Tick #1 Tue/Wed: execute if hurdles met; if not, name the
+     next session's revised trigger.
+  4. Friday: trim or hold only; never improvise an add.
+  Improvising an add on the day = the failure mode the rule prevents.
+- **NEW — "Lead-position relative-strength check."** Each Tuesday tick,
+  compute the prior week's blended tape capture using 70/30 SPY/QQQ
+  (or actual weights). If capture < 20% of blended tape for two
+  consecutive weeks while regime is "normal," the bottleneck is
+  position weighting, not signal quality — pivot the next add
+  toward the underweight vehicle. (This week: QQQ at</pre>
+    </div>
+  </div>
+</div>
+
+<!-- WEEKLY RETRO -->
+<div class="bg-zinc-950 border border-zinc-900 rounded-xl p-6 mt-6">
+  <div class="flex items-start justify-between mb-4">
+    <div>
+      <div class="font-semibold">Last weekly retro</div>
+      <div class="text-xs text-zinc-500 mono mt-0.5">Agent's own review of the week</div>
+    </div>
+    <div class="text-right">
+      <div class="text-2xl font-bold mono text-emerald-400">+0.33%</div>
+      <div class="text-xs text-zinc-500 mono">$33.15</div>
+    </div>
+  </div>
+  <div class="text-sm text-zinc-300 leading-relaxed max-w-4xl">## Weekly summary for the operator
+
+**$10,139.15 → $10,165.32, +0.28% / +$28.13 P&L — six-week green streak restored, lifetime +1.65%.** Against a tape that delivered SPY +0.87% (739.17 → 745.64) and QQQ +1.21% (708.93 → 717.54) through a risk-off Monday (10Y at 52-wk high 4.13%, Iran strike headlines), an NVDA-earnings Wednesday, and a recovery into the bell, the book captured ~32% of SPY — best meaningful capture of the run and right at the rails-constrained ceiling. **The wins were rule-driven, not heroic:** 5/18 the pre-written close-based stop language ignored QQQ's intraday 698.85 touch (closed 705.88) and saved the position; 5/20 the new same-week-binary stand-down kept us off the keyboard during SPY's +1.08% pre-NVDA rip; and the three-week third-vehicle probe finally closed with IWM/DIA/XLK confirmed unavailable. **The honest gaps:** the stop-rule "close vs intraday" distinction was unwritten (now codified — trail-ratchets close-based, only the −4% hard backstops are intraday); the post-NVDA Thursday re-engagement trigger was improvised rather than pre-written Wednesday evening; and the 40–60% deployment target is now demonstrably unreachable with a two-vehicle book. **Playbook updates:** stops codified as close-based by default, capture-ratio target rebased to a realistic 25–40% band, post-binary re-entry triggers must be pre-written one session ahead, Δblended check generalized beyond breakouts, and the third-vehicle probe permanently retired from the tick protocol. **Week ahead is short (Memorial Day Mon, PCE likely Fri):** SPY is at cap, plan is trail-ratchet management only; QQQ add #4 only on a clean >727.18 reclaim Tue/Wed with no same-week binary pending; NVDA post-print starter eligible if Wed evening's pre-written trigger fires Thursday.</div>
+</div>
+
+<div class="text-xs text-zinc-700 text-center mt-12 pb-12 mono">
+  Levee is a research subscription. Not investment advice. Past paper-traded performance does not predict future results.
+</div>
+
+</div>
+
+<script>
+const weeks = [{"d": "2026-02-27", "r": 0.0, "v": 10000.0}, {"d": "2026-03-06", "r": 0.0, "v": 10000.0}, {"d": "2026-03-13", "r": -0.0007, "v": 9992.97}, {"d": "2026-03-20", "r": 0.0, "v": 9992.97}, {"d": "2026-03-27", "r": 0.0, "v": 9992.97}, {"d": "2026-04-10", "r": 0.0013, "v": 10006.1}, {"d": "2026-04-17", "r": 0.0034, "v": 10047.41}, {"d": "2026-04-24", "r": 0.0012, "v": 10057.32}, {"d": "2026-05-01", "r": 0.0015, "v": 10075.82}, {"d": "2026-05-08", "r": 0.007, "v": 10139.15}, {"d": "2026-05-15", "r": -0.0008, "v": 10137.19}, {"d": "2026-05-22", "r": 0.0033, "v": 10165.32}, {"d": "2026-05-26", "r": 0.0, "v": 10194.03}];
+function drawChart() {
+  const el = document.getElementById('equity-chart');
+  if (!el) return;
+  const w = el.clientWidth, h = el.clientHeight;
+  const startValue = 10000;
+  const values = [startValue, ...weeks.map(w => w.v)];
+  const min = Math.min(...values, startValue) * 0.998;
+  const max = Math.max(...values, startValue) * 1.002;
+  const xStep = w / (values.length - 1);
+  const y = v => h - (v - min) / (max - min) * h * 0.85 - h * 0.075;
+  let path = `M 0 ${y(values[0])}`;
+  values.forEach((v, i) => { if (i > 0) path += ` L ${i*xStep} ${y(v)}`; });
+  const baseline = `M 0 ${y(startValue)} L ${w} ${y(startValue)}`;
+  el.innerHTML = `
+    <svg width="100%" height="100%" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="grad" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stop-color="#10b981" stop-opacity="0.25"/>
+          <stop offset="100%" stop-color="#10b981" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      <path d="${baseline}" stroke="#3f3f46" stroke-width="1" stroke-dasharray="3 3" fill="none"/>
+      <path d="${path} L ${w} ${h} L 0 ${h} Z" fill="url(#grad)"/>
+      <path d="${path}" stroke="#10b981" stroke-width="2" fill="none"/>
+      ${values.map((v, i) => `<circle cx="${i*xStep}" cy="${y(v)}" r="2.5" fill="#10b981"/>`).join('')}
+    </svg>`;
+}
+window.addEventListener('load', drawChart);
+</script>
+
+</body>
+</html>

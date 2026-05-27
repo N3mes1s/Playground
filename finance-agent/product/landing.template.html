@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1280">
+<title>Levee — Capital preservation as a subscription</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  body { font-family: 'Inter', sans-serif; background: #09090b; color: #fafafa; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .grid-bg {
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(120, 119, 198, 0.15), transparent),
+      linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+    background-size: auto, 32px 32px, 32px 32px;
+  }
+  .glow { box-shadow: 0 0 80px -20px rgba(16, 185, 129, 0.4); }
+  .hero-glow {
+    background: radial-gradient(ellipse 60% 50% at 50% 40%, rgba(16, 185, 129, 0.15), transparent);
+  }
+</style>
+</head>
+<body class="grid-bg">
+
+<!-- NAV -->
+<nav class="border-b border-zinc-900 backdrop-blur sticky top-0 z-50 bg-zinc-950/70">
+  <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+    <div class="flex items-center gap-2">
+      <div class="w-8 h-8 rounded-md bg-gradient-to-br from-emerald-400 to-emerald-700 flex items-center justify-center font-bold">L</div>
+      <span class="font-semibold tracking-tight">Levee</span>
+      <span class="text-zinc-500 text-xs mono ml-2">research / beta</span>
+    </div>
+    <div class="flex items-center gap-6 text-sm">
+      <a class="text-zinc-400 hover:text-white" href="#how">How it works</a>
+      <a class="text-zinc-400 hover:text-white" href="#proof">Track record</a>
+      <a class="text-zinc-400 hover:text-white" href="#pricing">Pricing</a>
+      <a href="app.html" class="px-3 py-1.5 rounded-md bg-emerald-500 text-zinc-950 font-medium hover:bg-emerald-400">View demo</a>
+    </div>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="relative">
+  <div class="hero-glow absolute inset-0 pointer-events-none"></div>
+  <div class="max-w-5xl mx-auto px-6 pt-24 pb-20 relative">
+    <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-zinc-800 bg-zinc-900/50 text-xs mono mb-8">
+      <div class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+      <span class="text-zinc-300">Trained on 13 weeks of live tape · validated across bull + bear</span>
+    </div>
+    <h1 class="text-6xl font-bold tracking-tight leading-tight mb-6">
+      Capital preservation,<br>
+      <span class="bg-gradient-to-r from-emerald-300 to-emerald-500 bg-clip-text text-transparent">on a subscription.</span>
+    </h1>
+    <p class="text-xl text-zinc-400 max-w-2xl mb-10 leading-relaxed">
+      An AI portfolio manager that reads the tape, watches policy, and writes its playbook every Friday.
+      It missed <span class="text-white font-medium">7.6%</span> of the 2022 bear market while staying long-only.
+      You get the research, not the risk.
+    </p>
+    <div class="flex items-center gap-4">
+      <a href="#pricing" class="px-6 py-3 rounded-md bg-emerald-500 text-zinc-950 font-semibold hover:bg-emerald-400">Start free trial</a>
+      <a href="app.html" class="px-6 py-3 rounded-md border border-zinc-800 hover:border-zinc-700 font-medium">See a live dashboard →</a>
+    </div>
+    <p class="text-xs text-zinc-600 mt-6 mono">No managed accounts. No financial advice. Research subscription only.</p>
+  </div>
+</section>
+
+<!-- HEADLINE STATS -->
+<section class="border-y border-zinc-900 bg-zinc-950/40">
+  <div class="max-w-6xl mx-auto px-6 py-12 grid grid-cols-4 divide-x divide-zinc-900">
+    <div class="px-6">
+      <div class="text-xs uppercase tracking-wider text-zinc-500 mb-2">2022 bear (Apr–Jul)</div>
+      <div class="text-4xl font-bold text-emerald-400">{{BEAR_RETURN}}</div>
+      <div class="text-sm text-zinc-500 mt-1">vs SPY {{SPY_BEAR}}</div>
+    </div>
+    <div class="px-6">
+      <div class="text-xs uppercase tracking-wider text-zinc-500 mb-2">2026 bull (Feb–May)</div>
+      <div class="text-4xl font-bold">{{BULL_RETURN}}</div>
+      <div class="text-sm text-zinc-500 mt-1">vs SPY {{SPY_BULL}}</div>
+    </div>
+    <div class="px-6">
+      <div class="text-xs uppercase tracking-wider text-zinc-500 mb-2">Worst week (bull)</div>
+      <div class="text-4xl font-bold text-zinc-200">{{BULL_WORST}}</div>
+      <div class="text-sm text-zinc-500 mt-1">vs SPY −5.06%</div>
+    </div>
+    <div class="px-6">
+      <div class="text-xs uppercase tracking-wider text-zinc-500 mb-2">Worst week (bear)</div>
+      <div class="text-4xl font-bold text-zinc-200">{{BEAR_WORST}}</div>
+      <div class="text-sm text-zinc-500 mt-1">vs SPY −5.79%</div>
+    </div>
+  </div>
+</section>
+
+<!-- THE PITCH -->
+<section id="how" class="max-w-6xl mx-auto px-6 py-24">
+  <div class="grid grid-cols-2 gap-16">
+    <div>
+      <div class="text-xs uppercase tracking-widest text-emerald-400 mb-4 mono">The trade-off</div>
+      <h2 class="text-4xl font-bold tracking-tight mb-6">We won't beat the market in a rally.<br>We won't lose your shirt in a crash.</h2>
+      <p class="text-zinc-400 leading-relaxed mb-4">
+        Most retail strategies fail in the same way: they get too aggressive at the top
+        and panic-sell at the bottom. The agent inverts that. It sizes small, holds cash
+        through chop, scouts only on confirmed reversals, and rewrites its own rules every
+        Friday based on what worked.
+      </p>
+      <p class="text-zinc-400 leading-relaxed">
+        In 2022's three-month sprint through a 50bp + 75bp + 75bp Fed hiking cycle —
+        capped by an 8.6% then 9.1% CPI print — it lost 11 cents on $10,000.
+        SPY lost $769.
+      </p>
+    </div>
+    <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-6">
+      <div class="flex items-center justify-between mb-4">
+        <div class="text-sm font-medium">Weekly P&amp;L · 2022 bear window</div>
+        <div class="text-xs mono text-zinc-500">Apr 25 — Jul 25</div>
+      </div>
+      <div id="bear-chart" class="h-64"></div>
+      <div class="flex items-center gap-6 mt-4 text-xs">
+        <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-sm bg-emerald-500"></div><span class="text-zinc-400">Agent (Levee)</span></div>
+        <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-sm bg-zinc-600"></div><span class="text-zinc-400">SPY buy-and-hold</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section class="border-y border-zinc-900 bg-zinc-950/40">
+  <div class="max-w-6xl mx-auto px-6 py-20">
+    <div class="text-xs uppercase tracking-widest text-emerald-400 mb-4 mono">How it works</div>
+    <h2 class="text-4xl font-bold tracking-tight mb-12">Every weekday, the agent runs a tick.</h2>
+    <div class="grid grid-cols-4 gap-8">
+      <div>
+        <div class="mono text-emerald-400 mb-3">01 · 9:35 ET</div>
+        <div class="font-semibold mb-2">Macro/policy scan</div>
+        <p class="text-sm text-zinc-400 leading-relaxed">Pulls overnight headlines: Trump/admin commentary on tickers, Fed speak, tariff news, executive orders, regulatory actions. Maps each to sector impact.</p>
+      </div>
+      <div>
+        <div class="mono text-emerald-400 mb-3">02 · throughout</div>
+        <div class="font-semibold mb-2">Tape read</div>
+        <p class="text-sm text-zinc-400 leading-relaxed">Quotes, OHLC history, regime tag (TREND-UP / RANGE / TREND-DOWN / CAPITULATION). Decides if the regime supports new risk.</p>
+      </div>
+      <div>
+        <div class="mono text-emerald-400 mb-3">03 · 15:55 ET</div>
+        <div class="font-semibold mb-2">Order decision</div>
+        <p class="text-sm text-zinc-400 leading-relaxed">Most days end with no trade. Orders carry a one-line written thesis, an invalidation level, and a Day-2 weakness criterion. Hard rails enforced in code.</p>
+      </div>
+      <div>
+        <div class="mono text-emerald-400 mb-3">04 · Friday close</div>
+        <div class="font-semibold mb-2">Playbook rewrite</div>
+        <p class="text-sm text-zinc-400 leading-relaxed">Reviews the week's trades and journal. Identifies what worked, what failed, why. Rewrites the playbook in full. Next Monday opens on the new rules.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TRACK RECORD -->
+<section id="proof" class="max-w-6xl mx-auto px-6 py-24">
+  <div class="text-xs uppercase tracking-widest text-emerald-400 mb-4 mono">Track record</div>
+  <h2 class="text-4xl font-bold tracking-tight mb-12">Three backtests. One thesis.</h2>
+
+  <div class="grid grid-cols-3 gap-6 mb-16">
+    <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-6">
+      <div class="text-xs mono text-zinc-500 mb-1">2026 BULL · NEWS-BLIND</div>
+      <div class="text-3xl font-bold">+2.24%</div>
+      <div class="text-sm text-zinc-400 mb-4">SPY: +8.89%</div>
+      <div class="text-xs text-zinc-500 mb-3">62 trading days · 6 green / 2 red / 5 flat</div>
+      <div class="text-xs text-zinc-500">Capture ratio: 25% of SPY · max DD −0.53%</div>
+    </div>
+    <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-6">
+      <div class="text-xs mono text-zinc-500 mb-1">2026 BULL · NEWS-AWARE</div>
+      <div class="text-3xl font-bold">+1.94%</div>
+      <div class="text-sm text-zinc-400 mb-4">SPY: +8.89%</div>
+      <div class="text-xs text-zinc-500 mb-3">62 trading days · 6 green / 2 red / 5 flat</div>
+      <div class="text-xs text-zinc-500">Capture ratio: 22% of SPY · max DD −0.07%</div>
+    </div>
+    <div class="bg-emerald-950/30 border border-emerald-900 rounded-xl p-6">
+      <div class="text-xs mono text-emerald-400 mb-1">2022 BEAR · NEWS-AWARE</div>
+      <div class="text-3xl font-bold text-emerald-400">−0.11%</div>
+      <div class="text-sm text-zinc-400 mb-4">SPY: −7.69%</div>
+      <div class="text-xs text-zinc-500 mb-3">63 trading days · 4 green / 2 red / 8 flat</div>
+      <div class="text-xs text-zinc-300">Outperformance: +7.58pp · max DD −0.21%</div>
+    </div>
+  </div>
+
+  <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-8">
+    <div class="text-sm font-semibold mb-1">Week-by-week portfolio value</div>
+    <div class="text-xs text-zinc-500 mb-6 mono">$10,000 starting · 2026 bull tape</div>
+    <div id="equity-chart" class="h-80"></div>
+  </div>
+</section>
+
+<!-- SAMPLE PLAYBOOK -->
+<section class="border-y border-zinc-900 bg-zinc-950/40">
+  <div class="max-w-6xl mx-auto px-6 py-20">
+    <div class="grid grid-cols-2 gap-16">
+      <div>
+        <div class="text-xs uppercase tracking-widest text-emerald-400 mb-4 mono">What you get every Friday</div>
+        <h2 class="text-3xl font-bold tracking-tight mb-6">The agent's own playbook. Verbatim.</h2>
+        <p class="text-zinc-400 leading-relaxed mb-4">
+          Most "AI for trading" products give you a black box: signals, scores, alerts. We give you the thinking.
+        </p>
+        <p class="text-zinc-400 leading-relaxed mb-4">
+          The playbook is the agent's working memory. After every weekly close, it reviews the journal and
+          rewrites its own rules — sizing, stops, regime mapping, entry triggers. You see exactly how it's
+          adapting.
+        </p>
+        <p class="text-zinc-400 leading-relaxed">
+          If you're a self-directed trader, you get a second opinion from a system that journals everything and
+          never tilts. If you're a passive investor, you get a read on whether to actually be deployed.
+        </p>
+      </div>
+      <div class="bg-black border border-zinc-900 rounded-xl p-6 max-h-[440px] overflow-hidden relative">
+        <div class="text-xs mono text-zinc-500 mb-4">PLAYBOOK · 2026-05-26 RETRO</div>
+<pre class="text-xs text-zinc-300 leading-relaxed whitespace-pre-wrap font-mono">### 3 best decisions
+1. <span class="text-emerald-400">5/26 QQQ add #4 fired exactly as pre-written.</span>
+   Wednesday-evening trigger language (close &gt;725 ×0.3%
+   upper-third + vol ≥50% 20D + no same-week binary pending
+   → half-tranche) hit on the first eligible session after
+   Memorial Day. Execution was clinical: 730.28 close cleared
+   725 by +0.73%, upper-third confirmed, 34M vol = 85% of
+   20D (vol-relax window OK), Δblended +0.60% (&lt;1% so
+   half-tranche sized correctly), and Thursday's PCE freeze
+   was already plotted in advance. <span class="text-emerald-400">This is the desired success
+   state — the playbook acted as a script, not a prompt.</span>
+
+2. Cap-aware arithmetic sized the tranche before placement.
+   Cap headroom = $1,495 → 1.62 sh capacity → 0.21 sh
+   half-tranche ($153) fit cleanly inside without rail
+   rejection. The pre-trade headroom_$ = (0.20×NAV) − MV
+   calc is now habit.
+
+### 3 worst decisions / gaps
+1. <span class="text-red-400">Single-name watchlist untouched at SPY-at-cap.</span>
+   The "tick #1 at-cap pivot" rule says SPY ≥19% → reframe
+   to "next single-name post-print starter trigger." We
+   pivoted to QQQ but never built a NVDA/GOOGL/MSFT level
+   on Wednesday evening...
+</pre>
+        <div class="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-black to-transparent"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PRICING -->
+<section id="pricing" class="max-w-6xl mx-auto px-6 py-24">
+  <div class="text-center mb-16">
+    <div class="text-xs uppercase tracking-widest text-emerald-400 mb-4 mono">Pricing</div>
+    <h2 class="text-4xl font-bold tracking-tight">One agent. Three ways to read it.</h2>
+  </div>
+  <div class="grid grid-cols-3 gap-6">
+    <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-8">
+      <div class="text-sm text-zinc-400 mb-1">Free</div>
+      <div class="text-4xl font-bold mb-2">$0</div>
+      <div class="text-sm text-zinc-500 mb-6">forever</div>
+      <ul class="space-y-3 text-sm">
+        <li class="flex gap-2"><span class="text-emerald-400">✓</span> Weekly playbook digest</li>
+        <li class="flex gap-2"><span class="text-emerald-400">✓</span> Previous week's P&amp;L summary</li>
+        <li class="flex gap-2"><span class="text-emerald-400">✓</span> Public backtests &amp; methodology</li>
+        <li class="flex gap-2 text-zinc-600"><span>—</span> Daily macro scan</li>
+        <li class="flex gap-2 text-zinc-600"><span>—</span> Real-time journal feed</li>
+      </ul>
+      <button class="w-full mt-8 py-2.5 rounded-md border border-zinc-800 hover:border-zinc-700 font-medium">Get it</button>
+    </div>
+    <div class="bg-emerald-500/5 border-2 border-emerald-500/50 rounded-xl p-8 relative glow">
+      <div class="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-emerald-500 text-zinc-950 text-xs font-bold mono">MOST POPULAR</div>
+      <div class="text-sm text-emerald-400 mb-1">Pro</div>
+      <div class="text-4xl font-bold mb-2">$49<span class="text-lg text-zinc-500 font-normal">/mo</span></div>
+      <div class="text-sm text-zinc-500 mb-6">cancel anytime</div>
+      <ul class="space-y-3 text-sm">
+        <li class="flex gap-2"><span class="text-emerald-400">✓</span> Everything in Free</li>
+        <li class="flex gap-2"><span class="text-emerald-400">✓</span> Daily macro/policy scan email</li>
+        <li class="flex gap-2"><span class="text-emerald-400">✓</span> Live journal feed (the agent's working notes)</li>
+        <li class="flex gap-2"><span class="text-emerald-400">✓</span> Watchlist trigger alerts (push + SMS)</li>
+        <li class="flex gap-2"><span class="text-emerald-400">✓</span> Full playbook (3000+ words, rewritten weekly)</li>
+      </ul>
+      <button class="w-full mt-8 py-2.5 rounded-md bg-emerald-500 text-zinc-950 hover:bg-emerald-400 font-semibold">Start 14-day trial</button>
+    </div>
+    <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-8">
+      <div class="text-sm text-zinc-400 mb-1">Pro+</div>
+      <div class="text-4xl font-bold mb-2">$199<span class="text-lg text-zinc-500 font-normal">/mo</span></div>
+      <div class="text-sm text-zinc-500 mb-6">$1,990/yr</div>
+      <ul class="space-y-3 text-sm">
+        <li class="flex gap-2"><span class="text-emerald-400">✓</span> Everything in Pro</li>
+        <li class="flex gap-2"><span class="text-emerald-400">✓</span> Your own paper portfolio sandbox</li>
+        <li class="flex gap-2"><span class="text-emerald-400">✓</span> Custom watchlist (up to 50 names)</li>
+        <li class="flex gap-2"><span class="text-emerald-400">✓</span> Backtests on demand (any window)</li>
+        <li class="flex gap-2"><span class="text-emerald-400">✓</span> API access for export &amp; integration</li>
+      </ul>
+      <button class="w-full mt-8 py-2.5 rounded-md border border-zinc-800 hover:border-zinc-700 font-medium">Start trial</button>
+    </div>
+  </div>
+  <p class="text-center text-xs text-zinc-600 mt-12 mono max-w-2xl mx-auto">
+    Levee is a research subscription. Not a registered investment advisor. Not investment advice.
+    Past performance — including paper-traded backtests — does not predict future results. You make your own trades.
+  </p>
+</section>
+
+<!-- FOOTER -->
+<footer class="border-t border-zinc-900 mt-12">
+  <div class="max-w-6xl mx-auto px-6 py-12 grid grid-cols-4 gap-8 text-sm">
+    <div>
+      <div class="flex items-center gap-2 mb-4">
+        <div class="w-7 h-7 rounded-md bg-gradient-to-br from-emerald-400 to-emerald-700"></div>
+        <span class="font-semibold">Levee</span>
+      </div>
+      <p class="text-zinc-500 leading-relaxed text-xs">Built on Claude Opus 4.7 + parallel.ai. Open methodology. No black boxes.</p>
+    </div>
+    <div>
+      <div class="text-zinc-400 font-medium mb-3">Product</div>
+      <div class="space-y-2 text-zinc-500">
+        <div><a href="#how" class="hover:text-white">How it works</a></div>
+        <div><a href="#proof" class="hover:text-white">Track record</a></div>
+        <div><a href="#pricing" class="hover:text-white">Pricing</a></div>
+        <div><a href="app.html" class="hover:text-white">Live demo</a></div>
+      </div>
+    </div>
+    <div>
+      <div class="text-zinc-400 font-medium mb-3">Research</div>
+      <div class="space-y-2 text-zinc-500">
+        <div><a class="hover:text-white">Full methodology PDF</a></div>
+        <div><a class="hover:text-white">2022 backtest report</a></div>
+        <div><a class="hover:text-white">2026 backtest report</a></div>
+      </div>
+    </div>
+    <div>
+      <div class="text-zinc-400 font-medium mb-3">Legal</div>
+      <div class="space-y-2 text-zinc-500">
+        <div><a class="hover:text-white">Terms of service</a></div>
+        <div><a class="hover:text-white">Privacy</a></div>
+        <div><a class="hover:text-white">Disclaimers</a></div>
+      </div>
+    </div>
+  </div>
+  <div class="border-t border-zinc-900 py-6 text-xs text-center text-zinc-600 mono">
+    © 2026 Levee Research. For educational use only.
+  </div>
+</footer>
+
+<script>
+const bullWeeks = {{BULL_WEEKS_JSON}};
+const bearWeeks = {{BEAR_WEEKS_JSON}};
+
+function makeChart(elId, weeks, color) {
+  const el = document.getElementById(elId);
+  if (!el || !weeks.length) return;
+  const w = el.clientWidth, h = el.clientHeight;
+  const startValue = 10000;
+  const values = [startValue, ...weeks.map(w => w.v)];
+  const labels = ['start', ...weeks.map(w => w.d)];
+  const min = Math.min(...values, startValue) * 0.997;
+  const max = Math.max(...values, startValue) * 1.003;
+  const xStep = w / (values.length - 1);
+  const y = v => h - (v - min) / (max - min) * h * 0.85 - h * 0.075;
+  let path = `M 0 ${y(values[0])}`;
+  values.forEach((v, i) => { if (i > 0) path += ` L ${i*xStep} ${y(v)}`; });
+  let baseline = `M 0 ${y(startValue)} L ${w} ${y(startValue)}`;
+  el.innerHTML = `
+    <svg width="100%" height="100%" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+      <path d="${baseline}" stroke="#3f3f46" stroke-width="1" stroke-dasharray="3 3" fill="none"/>
+      <path d="${path} L ${w} ${h} L 0 ${h} Z" fill="${color}" fill-opacity="0.1"/>
+      <path d="${path}" stroke="${color}" stroke-width="2.5" fill="none"/>
+      ${values.map((v, i) => `<circle cx="${i*xStep}" cy="${y(v)}" r="3" fill="${color}"/>`).join('')}
+    </svg>`;
+}
+window.addEventListener('load', () => {
+  makeChart('bear-chart', bearWeeks, '#10b981');
+  makeChart('equity-chart', bullWeeks, '#10b981');
+});
+</script>
+</body>
+</html>

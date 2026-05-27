@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1440">
+<title>Levee — Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  body { font-family: 'Inter', sans-serif; background: #09090b; color: #fafafa; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .scrollbar::-webkit-scrollbar { width: 6px; }
+  .scrollbar::-webkit-scrollbar-track { background: transparent; }
+  .scrollbar::-webkit-scrollbar-thumb { background: #27272a; border-radius: 3px; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<!-- TOP BAR -->
+<div class="border-b border-zinc-900 bg-zinc-950/60 sticky top-0 z-30 backdrop-blur">
+  <div class="px-6 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-6">
+      <div class="flex items-center gap-2">
+        <div class="w-7 h-7 rounded-md bg-gradient-to-br from-emerald-400 to-emerald-700 flex items-center justify-center font-bold text-sm">L</div>
+        <span class="font-semibold">Levee</span>
+      </div>
+      <nav class="flex items-center gap-1 text-sm">
+        <a class="px-3 py-1.5 rounded-md bg-zinc-900 font-medium">Dashboard</a>
+        <a class="px-3 py-1.5 rounded-md text-zinc-400 hover:text-white">Journal</a>
+        <a class="px-3 py-1.5 rounded-md text-zinc-400 hover:text-white">Playbook</a>
+        <a class="px-3 py-1.5 rounded-md text-zinc-400 hover:text-white">Backtests</a>
+        <a class="px-3 py-1.5 rounded-md text-zinc-400 hover:text-white">Settings</a>
+      </nav>
+    </div>
+    <div class="flex items-center gap-3 text-sm">
+      <div class="flex items-center gap-2 mono text-xs text-zinc-500">
+        <div class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+        <span>Agent online · last tick 3m ago</span>
+      </div>
+      <div class="w-px h-5 bg-zinc-800"></div>
+      <div class="flex items-center gap-2 text-xs text-zinc-400">
+        <div class="w-7 h-7 rounded-full bg-gradient-to-br from-purple-500 to-pink-600"></div>
+        <span>giuse@gmail.com</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="max-w-[1400px] mx-auto px-6 py-6">
+
+<!-- HEADLINE STATS -->
+<div class="grid grid-cols-4 gap-4 mb-6">
+  <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-5">
+    <div class="text-xs text-zinc-500 uppercase tracking-wider mb-2">Portfolio value</div>
+    <div class="text-3xl font-bold mono">{{TOTAL_VALUE}}</div>
+    <div class="text-sm mt-1 {{TOTAL_RETURN_COLOR}} mono">{{TOTAL_RETURN}} lifetime</div>
+  </div>
+  <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-5">
+    <div class="text-xs text-zinc-500 uppercase tracking-wider mb-2">This week</div>
+    <div class="text-3xl font-bold mono {{LAST_WEEK_COLOR}}">{{LAST_WEEK_PCT}}</div>
+    <div class="text-sm mt-1 text-zinc-500 mono">{{LAST_WEEK_DOLLAR}} · ends {{LAST_WEEK_VALUE}}</div>
+  </div>
+  <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-5">
+    <div class="text-xs text-zinc-500 uppercase tracking-wider mb-2">Weekly track record</div>
+    <div class="flex items-baseline gap-2">
+      <span class="text-3xl font-bold text-emerald-400 mono">{{GREEN_WEEKS}}</span>
+      <span class="text-xs text-zinc-500">green</span>
+      <span class="text-xl font-bold text-red-400 mono ml-2">{{RED_WEEKS}}</span>
+      <span class="text-xs text-zinc-500">red</span>
+      <span class="text-xl font-bold text-zinc-400 mono ml-2">{{FLAT_WEEKS}}</span>
+      <span class="text-xs text-zinc-500">flat</span>
+    </div>
+    <div class="text-sm mt-1 text-zinc-500">last 13 weeks</div>
+  </div>
+  <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-5">
+    <div class="text-xs text-zinc-500 uppercase tracking-wider mb-2">Regime</div>
+    <div class="text-2xl font-bold text-emerald-400">TREND-UP</div>
+    <div class="text-sm mt-1 text-zinc-500">VIX 13.4 · SPY above 20DMA · breadth healthy</div>
+  </div>
+</div>
+
+<div class="grid grid-cols-3 gap-6">
+
+<!-- LEFT COLUMN: equity curve + macro scan -->
+<div class="col-span-2 space-y-6">
+
+  <!-- EQUITY CURVE -->
+  <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-6">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <div class="font-semibold">Portfolio value</div>
+        <div class="text-xs text-zinc-500 mono mt-0.5">13 weeks · live paper portfolio</div>
+      </div>
+      <div class="flex items-center gap-1 text-xs">
+        <button class="px-3 py-1 rounded bg-zinc-900 font-medium">1W</button>
+        <button class="px-3 py-1 rounded text-zinc-500 hover:text-white">1M</button>
+        <button class="px-3 py-1 rounded bg-emerald-500/10 text-emerald-400 font-medium">3M</button>
+        <button class="px-3 py-1 rounded text-zinc-500 hover:text-white">YTD</button>
+        <button class="px-3 py-1 rounded text-zinc-500 hover:text-white">ALL</button>
+      </div>
+    </div>
+    <div id="equity-chart" class="h-64"></div>
+  </div>
+
+  <!-- TODAY'S MACRO SCAN -->
+  <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-6">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <div class="font-semibold flex items-center gap-2">
+          Today's macro scan
+          <span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 text-xs mono">5 hits</span>
+        </div>
+        <div class="text-xs text-zinc-500 mono mt-0.5">9:47 ET · 5 queries</div>
+      </div>
+      <button class="text-xs text-zinc-400 hover:text-white">View archive →</button>
+    </div>
+    <div class="space-y-3">
+      <div class="border-l-2 border-amber-500 bg-amber-500/5 rounded-r-md p-3">
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-xs font-mono uppercase tracking-wider text-amber-400">POLICY · HIGH IMPACT</span>
+          <span class="text-xs text-zinc-500 mono">2h ago</span>
+        </div>
+        <div class="text-sm font-medium">Trump signals new universal 10% tariff extending past July 24</div>
+        <div class="text-xs text-zinc-400 mt-1">Reuters · agent flagged: semiconductors (NVDA, AMD), exporters (AAPL, TSLA) at risk if duration extends.</div>
+      </div>
+      <div class="border-l-2 border-blue-500 bg-blue-500/5 rounded-r-md p-3">
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-xs font-mono uppercase tracking-wider text-blue-400">FED · MEDIUM</span>
+          <span class="text-xs text-zinc-500 mono">4h ago</span>
+        </div>
+        <div class="text-sm font-medium">Powell speaks at Jackson Hole pre-symposium · "patient on rates"</div>
+        <div class="text-xs text-zinc-400 mt-1">Bloomberg · neutral for risk-on; agent confidence in TREND-UP regime increased.</div>
+      </div>
+      <div class="border-l-2 border-zinc-700 bg-zinc-900/30 rounded-r-md p-3">
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-xs font-mono uppercase tracking-wider text-zinc-400">EARNINGS · MEDIUM</span>
+          <span class="text-xs text-zinc-500 mono">overnight</span>
+        </div>
+        <div class="text-sm font-medium">NVDA earnings beat top &amp; bottom · guidance light · stock -2.4% AH</div>
+        <div class="text-xs text-zinc-400 mt-1">CNBC · agent: holding 2 sh, watching 220 support; trail stop at 225 active.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- RIGHT COLUMN: positions + journal -->
+<div class="col-span-1 space-y-6">
+
+  <!-- POSITIONS -->
+  <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-6">
+    <div class="flex items-center justify-between mb-4">
+      <div class="font-semibold">Positions</div>
+      <span class="text-xs text-zinc-500 mono">4 of 10 cap · 30% deployed</span>
+    </div>
+    <div class="space-y-2">
+      <div class="flex items-center justify-between py-2 border-b border-zinc-900">
+        <div>
+          <div class="font-medium">SPY</div>
+          <div class="text-xs text-zinc-500 mono">2.79 sh @ 690.95</div>
+        </div>
+        <div class="text-right">
+          <div class="text-emerald-400 font-medium mono">+8.63%</div>
+          <div class="text-xs text-zinc-500 mono">$2,094</div>
+        </div>
+      </div>
+      <div class="flex items-center justify-between py-2 border-b border-zinc-900">
+        <div>
+          <div class="font-medium">QQQ</div>
+          <div class="text-xs text-zinc-500 mono">1.38 sh @ 705.15</div>
+        </div>
+        <div class="text-right">
+          <div class="text-emerald-400 font-medium mono">+3.56%</div>
+          <div class="text-xs text-zinc-500 mono">$1,008</div>
+        </div>
+      </div>
+      <div class="pt-3 mt-3 border-t border-zinc-900 text-xs space-y-1">
+        <div class="flex justify-between text-zinc-500"><span>Cash</span><span class="mono">$7,092 (69.6%)</span></div>
+        <div class="flex justify-between text-zinc-500"><span>Equity</span><span class="mono">$3,102 (30.4%)</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ACTIVE TRIGGERS -->
+  <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-6">
+    <div class="flex items-center justify-between mb-4">
+      <div class="font-semibold flex items-center gap-2">
+        Active triggers
+        <span class="px-2 py-0.5 rounded bg-zinc-900 text-xs mono text-zinc-400">3</span>
+      </div>
+    </div>
+    <div class="space-y-3">
+      <div class="text-xs">
+        <div class="font-mono text-emerald-400 mb-1">QQQ · ADD #5 trigger armed</div>
+        <div class="text-zinc-400 leading-relaxed">close &gt;735 × 0.3% upper-third + vol ≥ 50% 20D · half-tranche</div>
+      </div>
+      <div class="text-xs">
+        <div class="font-mono text-amber-400 mb-1">SPY · trim trigger armed</div>
+        <div class="text-zinc-400 leading-relaxed">if SPY closes below 730 with vol &gt;110M → trim 0.5sh, ratchet stop</div>
+      </div>
+      <div class="text-xs">
+        <div class="font-mono text-zinc-500 mb-1">NVDA · earnings freeze (post-AH)</div>
+        <div class="text-zinc-400 leading-relaxed">no new initiations 24h pre-print, 4h post-print</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<!-- LIVE JOURNAL -->
+<div class="grid grid-cols-3 gap-6 mt-6">
+  <div class="col-span-2 bg-zinc-950 border border-zinc-900 rounded-xl p-6">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <div class="font-semibold">Live journal</div>
+        <div class="text-xs text-zinc-500 mono mt-0.5">Agent's working notes · streamed</div>
+      </div>
+      <button class="text-xs text-zinc-400 hover:text-white">Export →</button>
+    </div>
+    <div class="space-y-1 max-h-[500px] overflow-y-auto scrollbar">
+      {{JOURNAL_ENTRIES}}
+    </div>
+  </div>
+
+  <!-- THIS WEEK'S PLAYBOOK -->
+  <div class="col-span-1 bg-zinc-950 border border-zinc-900 rounded-xl p-6">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <div class="font-semibold">This week's playbook</div>
+        <div class="text-xs text-zinc-500 mono mt-0.5">Rewritten Friday 16:00 ET</div>
+      </div>
+      <button class="text-xs text-zinc-400 hover:text-white">Full →</button>
+    </div>
+    <div class="max-h-[500px] overflow-y-auto scrollbar">
+<pre class="text-xs text-zinc-300 leading-relaxed whitespace-pre-wrap font-mono">{{PLAYBOOK_EXCERPT}}</pre>
+    </div>
+  </div>
+</div>
+
+<!-- WEEKLY RETRO -->
+<div class="bg-zinc-950 border border-zinc-900 rounded-xl p-6 mt-6">
+  <div class="flex items-start justify-between mb-4">
+    <div>
+      <div class="font-semibold">Last weekly retro</div>
+      <div class="text-xs text-zinc-500 mono mt-0.5">Agent's own review of the week</div>
+    </div>
+    <div class="text-right">
+      <div class="text-2xl font-bold mono {{LAST_WEEK_COLOR}}">{{LAST_WEEK_PCT}}</div>
+      <div class="text-xs text-zinc-500 mono">{{LAST_WEEK_DOLLAR}}</div>
+    </div>
+  </div>
+  <div class="text-sm text-zinc-300 leading-relaxed max-w-4xl">{{LAST_WEEK_SUMMARY}}</div>
+</div>
+
+<div class="text-xs text-zinc-700 text-center mt-12 pb-12 mono">
+  Levee is a research subscription. Not investment advice. Past paper-traded performance does not predict future results.
+</div>
+
+</div>
+
+<script>
+const weeks = {{WEEKS_JSON}};
+function drawChart() {
+  const el = document.getElementById('equity-chart');
+  if (!el) return;
+  const w = el.clientWidth, h = el.clientHeight;
+  const startValue = 10000;
+  const values = [startValue, ...weeks.map(w => w.v)];
+  const min = Math.min(...values, startValue) * 0.998;
+  const max = Math.max(...values, startValue) * 1.002;
+  const xStep = w / (values.length - 1);
+  const y = v => h - (v - min) / (max - min) * h * 0.85 - h * 0.075;
+  let path = `M 0 ${y(values[0])}`;
+  values.forEach((v, i) => { if (i > 0) path += ` L ${i*xStep} ${y(v)}`; });
+  const baseline = `M 0 ${y(startValue)} L ${w} ${y(startValue)}`;
+  el.innerHTML = `
+    <svg width="100%" height="100%" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="grad" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stop-color="#10b981" stop-opacity="0.25"/>
+          <stop offset="100%" stop-color="#10b981" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      <path d="${baseline}" stroke="#3f3f46" stroke-width="1" stroke-dasharray="3 3" fill="none"/>
+      <path d="${path} L ${w} ${h} L 0 ${h} Z" fill="url(#grad)"/>
+      <path d="${path}" stroke="#10b981" stroke-width="2" fill="none"/>
+      ${values.map((v, i) => `<circle cx="${i*xStep}" cy="${y(v)}" r="2.5" fill="#10b981"/>`).join('')}
+    </svg>`;
+}
+window.addEventListener('load', drawChart);
+</script>
+
+</body>
+</html>

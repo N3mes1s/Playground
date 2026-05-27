@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  body { margin: 0; padding: 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f4f4f5; color: #18181b; }
+  .email { max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+  .header { padding: 24px 32px; border-bottom: 1px solid #e4e4e7; display: flex; align-items: center; justify-content: space-between; }
+  .logo { display: flex; align-items: center; gap: 8px; }
+  .logo-mark { width: 28px; height: 28px; border-radius: 6px; background: linear-gradient(135deg, #34d399, #047857); color: white; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .logo-text { font-weight: 600; font-size: 17px; }
+  .meta { font-size: 12px; color: #71717a; font-family: 'SF Mono', monospace; }
+  .pl-card { padding: 32px; text-align: center; background: linear-gradient(180deg, #fafafa, white); border-bottom: 1px solid #e4e4e7; }
+  .pl-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px; color: #71717a; margin-bottom: 8px; }
+  .pl-number { font-size: 48px; font-weight: 700; color: #10b981; font-family: 'SF Mono', monospace; line-height: 1; }
+  .pl-dollar { font-size: 18px; color: #52525b; margin-top: 6px; font-family: 'SF Mono', monospace; }
+  .pl-meta { font-size: 13px; color: #71717a; margin-top: 12px; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; background: #10b981; color: white; margin-left: 8px; vertical-align: middle; }
+  .body { padding: 24px 32px; font-size: 14px; line-height: 1.65; color: #27272a; }
+  .body h3 { margin: 20px 0 8px; font-size: 14px; font-weight: 600; }
+  .footer { padding: 24px 32px; background: #fafafa; border-top: 1px solid #e4e4e7; font-size: 11px; color: #71717a; line-height: 1.5; }
+  .cta { background: #10b981; color: white; padding: 10px 18px; border-radius: 6px; text-decoration: none; display: inline-block; font-weight: 600; font-size: 13px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="email">
+  <div class="header">
+    <div class="logo">
+      <div class="logo-mark">L</div>
+      <div class="logo-text">Levee</div>
+    </div>
+    <div class="meta">2026-05-22 · weekly retro</div>
+  </div>
+
+  <div class="pl-card">
+    <div class="pl-label">Week 2026-05-18 → 2026-05-22<span class="tag">GREEN</span></div>
+    <div class="pl-number">+0.33%</div>
+    <div class="pl-dollar">$33.15</div>
+    <div class="pl-meta">Portfolio now $10,165.32</div>
+  </div>
+
+  <div class="body">
+    <div style="font-size: 12px; color: #71717a; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 14px;">The agent's own write-up</div>
+    <div>## Weekly summary for the operator<br><br>**$10,139.15 → $10,165.32, +0.28% / +$28.13 P&L — six-week green streak restored, lifetime +1.65%.** Against a tape that delivered SPY +0.87% (739.17 → 745.64) and QQQ +1.21% (708.93 → 717.54) through a risk-off Monday (10Y at 52-wk high 4.13%, Iran strike headlines), an NVDA-earnings Wednesday, and a recovery into the bell, the book captured ~32% of SPY — best meaningful capture of the run and right at the rails-constrained ceiling. **The wins were rule-driven, not heroic:** 5/18 the pre-written close-based stop language ignored QQQ's intraday 698.85 touch (closed 705.88) and saved the position; 5/20 the new same-week-binary stand-down kept us off the keyboard during SPY's +1.08% pre-NVDA rip; and the three-week third-vehicle probe finally closed with IWM/DIA/XLK confirmed unavailable. **The honest gaps:** the stop-rule "close vs intraday" distinction was unwritten (now codified — trail-ratchets close-based, only the −4% hard backstops are intraday); the post-NVDA Thursday re-engagement trigger was improvised rather than pre-written Wednesday evening; and the 40–60% deployment target is now demonstrably unreachable with a two-vehicle book. **Playbook updates:** stops codified as close-based by default, capture-ratio target rebased to a realistic 25–40% band, post-binary re-entry triggers must be pre-written one session ahead, Δblended check generalized beyond breakouts, and the third-vehicle probe permanently retired from the tick protocol. **Week ahead is short (Memorial Day Mon, PCE likely Fri):** SPY is at cap, plan is trail-ratchet management only; QQQ add #4 only on a clean >727.18 reclaim Tue/Wed with no same-week binary pending; NVDA post-print starter eligible if Wed evening's pre-written trigger fires Thursday.</div>
+    <div style="margin-top: 28px;">
+      <a class="cta" href="#">View live dashboard →</a>
+    </div>
+  </div>
+
+  <div class="footer">
+    <p style="margin: 0 0 8px;"><strong>You're reading:</strong> Levee Weekly Retro · Pro tier ($49/mo)</p>
+    <p style="margin: 0 0 8px;">This is the agent's verbatim self-review of last week's trades, rewritten every Friday at the market close. The next weekly playbook update lands Monday 8am ET.</p>
+    <p style="margin: 16px 0 0; color: #a1a1aa;">
+      Levee is a research subscription. Not a registered investment advisor. Not investment advice. Past paper-traded performance does not predict future results. <a href="#" style="color: #71717a;">Unsubscribe</a> · <a href="#" style="color: #71717a;">Manage</a>
+    </p>
+  </div>
+</div>
+</body>
+</html>
