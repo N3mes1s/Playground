@@ -1,0 +1,163 @@
+{
+  "run_id": "3mo_bear_2022",
+  "start": "2022-04-25",
+  "end": "2022-07-25",
+  "trading_days": 63,
+  "starting_cash": 10000.0,
+  "final_value": 9988.72,
+  "total_return": -0.0011,
+  "weekly_marks": [
+    {
+      "week_start": "2022-04-25",
+      "week_end": "2022-04-29",
+      "start_value": 10000.0,
+      "end_value": 10000.0,
+      "weekly_return": 0.0,
+      "summary": "### Weekly summary for the operator\n\nWeek ended flat: $10,000 \u2192 $10,000, 0.0% P&L, zero trades, 100% cash throughout. In a tape that dropped SPY 3.6% (worst April since 1970) with QQQ shedding ~4% on Friday alone after AMZN's guide, sitting out was the correct read \u2014 five of five macro warning lights were lit (SPY below 50DMA, VIX 33+, 50bp FOMC imminent, mega-cap earnings binary, breaking April lows). The process win was refusing to chase the 4/28 relief bounce, which promptly failed \u22123.7% the next session. The process loss was that \"no trade\" was a vibe rather than a plan: no numeric tripwire, no shopping list, no starter-tranche size pre-committed. Playbook is updated with three concrete triggers (A: SPY > 425 post-FOMC = start adding quality leaders; B: VIX > 40 capitulation + reversal = same; C: SPY < 405 = stay flat). Watchlist additions: XLE, XLU, XLP, XOM, CVX, TLT \u2014 energy and defensives to broaden at-bats beyond the high-beta growth list. Entering next week defensive, no initiations before the 5/4 FOMC.",
+      "duration_sec": 88.4
+    },
+    {
+      "week_start": "2022-05-02",
+      "week_end": "2022-05-06",
+      "start_value": 10000.0,
+      "end_value": 9978.53,
+      "weekly_return": -0.0021,
+      "summary": "### Weekly summary for the operator\n\nWeek closed **\u22120.21%** ($10,000 \u2192 $9,978.53). One round trip: MSFT 5% starter entered 5/4 @ 289.98 on Trigger A (FOMC relief: SPY +3%, Powell ruled out 75bp, volume confirmed), stopped 5/5 @ 277.35 (\u22124.4%) when SPY reversed the entire FOMC pop. The process was actually a step up from last week \u2014 we had pre-written triggers with numeric levels, executed when one fired, held back the AAPL leg pending day-2 confirmation, and cut the loser cleanly without anchoring. The execution miss was buying the intraday high of a +3% day with SPY pinned at its 20DMA \u2014 textbook bear-bounce zone we'd warned about in the prior retro \u2014 and writing Trigger A to fire on a single-day close rather than requiring two-day confirmation in a confirmed downtrend. The \u2212$21 loss is the cheapest tuition we'll get for that lesson. Playbook updated with three sharper rules: (1) 2-day confirmation in bear regime, (2) no buying intraday highs of +2%+ SPY days, (3) macro-confluence threshold requires \u22652 warning boxes cleared, not 1. CPI Wednesday 5/11 is the next binary; no initiations 5/10 or pre-print 5/11; defensive XLU/XLP toe-in permitted if SPY ranges 405\u2013415 calmly. SPY weekly close 411.34 \u2014 Trigger C (<405) not yet triggered but close. Cash through the weekend.",
+      "duration_sec": 100.4
+    },
+    {
+      "week_start": "2022-05-09",
+      "week_end": "2022-05-13",
+      "start_value": 9978.53,
+      "end_value": 9978.53,
+      "weekly_return": 0.0,
+      "summary": "### Weekly summary for the operator\n\nWeek closed **flat at $9,978.53 (0.0%)** with zero trades, beating SPY by ~240bps while it dropped from 411.34 to 401.72 with an intraweek low of 385.15 on a hot CPI print (8.3% headline). The process was clean: pre-written Trigger C (weekly close < 405 \u2192 cash) was honored all five sessions, the conditional defensive at-bat correctly self-extinguished when SPY broke 405 on day one, and the 5/13 +2.4% bounce was refused on a textbook bear-bounce 3-check (sub-20DMA, VIX elevated, bounce volume only 78% of recent down-day average). The sins were sins of omission: five sessions at 100% pure cash captured zero T-bill yield (BIL was right there); the Trigger C re-entry condition \"weekly close > 410\" was a single switch rather than a tiered ladder; and we never pre-wrote what we'd actually buy on a VIX>40 capitulation flush even though we'd been watching for one. Playbook now has three new rules \u2014 **BIL-tilted cash parking** (60\u201380% of cash in BIL during Trigger C), a **two-tier Trigger C ladder** (410 weekly = unfreeze research, 425 with 2-day hold = first tranches), and a **pre-written capitulation shopping list** (QQQ 5% \u2192 MSFT 5% \u2192 XLE 3%, capped at 15% day-one). Bear-bounce 3-check formalized with a bounce-volume veto. Next binary is retail sales + Powell 5/17; no initiations pre-print. Entering week 3 defensive, with a Monday BIL purchase as the only planned action.",
+      "duration_sec": 89.2
+    },
+    {
+      "week_start": "2022-05-16",
+      "week_end": "2022-05-20",
+      "start_value": 9978.53,
+      "end_value": 9978.53,
+      "weekly_return": 0.0,
+      "summary": "### Weekly summary for the operator\n\nWeek closed **flat at $9,978.53 (0.0%)** with zero trades, beating SPY by ~300bps as it dropped 401.72 \u2192 389.63 (\u22123.0%) on a Target \u221225% earnings shock and a failed Powell/retail-sales bounce. The process was clean: the new bounce-volume veto fired clean on 5/17 (volume only 62% of the trailing down-day average) and saved us from buying the high of a one-day pop that gave back the entire move plus more the next session; the two-tier Trigger C ladder held us off the temptingly-close-to-410 print on 5/17; and the pre-written Trigger B criteria correctly rejected 5/18's \"flush-ish\" pattern as not quite capitulation. The execution miss was structural: the BIL-tilted cash-yield rule we wrote last week turned out to be unexecutable because BIL/SHV/TLT don't quote in this harness \u2014 a rule we couldn't run is no rule. Playbook updates: (1) **universe audit Monday 5/23** with `get_history` probes on BIL/SHV/TLT/XLU/XLP/XLE/XOM/CVX before any further rule depends on them, (2) **bounce-volume veto promoted to standing rule** (green day on <80% of down-day-avg vol = no-trade, period), (3) **near-miss Trigger B protocol** (2-of-3 criteria = refresh shopping list with limit ideas, don't buy), and (4) cash-parking falls back to pure cash whenever the preferred vehicle isn't available. Next binaries: FOMC minutes 5/25 + NVDA earnings same morning, PCE 5/27. Memorial Day-eve Friday is de-risk-only regardless of triggers. Entering week 4 defensive; Monday's only planned action is the universe audit.",
+      "duration_sec": 90.5
+    },
+    {
+      "week_start": "2022-05-23",
+      "week_end": "2022-05-27",
+      "start_value": 9978.53,
+      "end_value": 9978.53,
+      "weekly_return": 0.0,
+      "summary": "## Operator summary \u2014 Week of 5/23\u20135/27/22\n\nWeek closed **flat at $9,978.53 (0.0%)** with zero trades while SPY ripped **+6.58%** (389.63 \u2192 415.26) on five straight green sessions \u2014 meaning we **underperformed the index by ~660bps**, the worst relative week of the run so far. The bounce-volume veto, which had been our hero rule for three prior weeks (saving us from the 5/13, 5/17, and 5/23 fake bounces), became the villain here: it fired all five sessions (59%, 73%, 64%, 65% of down-day-avg volume) and locked us out of a genuine trend reversal. The single-day rule cannot tell the difference between a one-day pop and a four-day cumulative V \u2014 so the playbook now adds a **cumulative override** (3+ green closes, +4%, reclaim 20DMA \u2192 veto lifts) and replaces \"research-only Stage 1\" with a **3% QQQ toe-in** rule executable the Monday after a qualifying weekly close. The universe audit completed: BIL/SHV/TLT/XLU/XLP/XLE/XOM/CVX all non-quoting, so every defensive-ETF rule was retired permanently. Stage 1 unfreeze condition is now met (SPY weekly close > 410); pre-staged action for Tue 5/31 is a QQQ 3% limit-order toe-in if SPY opens \u2265 409 and VIX < 30, with a \u22124% stop. Lifetime sits at \u22120.21%; next week's job is to convert process discipline into actual P&L without giving back the capital we've protected.",
+      "duration_sec": 110.3
+    },
+    {
+      "week_start": "2022-05-31",
+      "week_end": "2022-06-03",
+      "start_value": 9978.53,
+      "end_value": 9979.71,
+      "weekly_return": 0.0001,
+      "summary": "### Operator summary \u2014 Week of 5/31\u20136/3/22\n\nWeek closed **+$1.18 (+0.012%) at $9,979.71** \u2014 beat SPY by ~115bps as the index gave back 1.13% (415.26 \u2192 410.54) on a hawkish NFP. The headline: **first long-side green week of the run**, with the Stage 1 QQQ toe-in (0.98 sh @ $305, filled on 6/1's dip via limit order) absorbing Friday's whip without damage and finishing +0.4%. Process wins: limit-not-market execution, tranche sizing that made NFP a non-event, and refusing to chase 6/2's HOD on light volume. Process gaps: there was no \"Stage 1.5\" path to add when the starter went +3% on 6/2 but Stage 2's 425 line was still 8 points away, and the QQQ stop wasn't trailed into the NFP binary (got lucky). Playbook updates: a new **Stage 1.5 add rule** (+3% QQQ when starter is +2% after two closes), a **pre-binary stop-tightening rule** (trail to max(entry, \u22122%) before NFP/CPI/FOMC), and **Stage 2 line lowered to SPY 420** from 425 to fit current price structure. Watchlist unchanged. Next week: CPI Friday 6/10 is the binary \u2014 tighten QQQ stop by Thursday close, no initiations Friday AM, Stage 1.5 add if QQQ trades back through $311 with SPY > 410.",
+      "duration_sec": 97.4
+    },
+    {
+      "week_start": "2022-06-06",
+      "week_end": "2022-06-10",
+      "start_value": 9980.7,
+      "end_value": 9973.04,
+      "weekly_return": -0.0008,
+      "summary": "### Operator summary \u2014 Week of 6/6\u20136/10/22\n\nWeek closed **\u2212$6.67 (\u22120.067%) at $9,973.04** while SPY dropped 5.05% (410.54 \u2192 389.80) on a hot 8.6% CPI print \u2014 **we beat the index by ~498bps**, the second-best relative week of the run, entirely on the strength of a single risk-management decision: the 6/9 abort cut of QQQ at $299.40 when SPY broke 405 at the LOD into Friday's CPI binary. QQQ subsequently closed 288.84 on Friday, so the cut saved roughly $10 of further loss vs the realized \u2212$5.49. Process wins: the abort fired cleanly without anchoring, the Stage 1.5 add was correctly refused on 6/8 when QQQ tagged $311.72 intraday but failed to close above $311, and CPI Friday saw no initiation under three independent locks. Process gaps: the \u22124% stop on QQQ ($292.80) lived in journal prose rather than as a resting broker order \u2014 pure luck that 6/10 didn't gap through it \u2014 and we waited a full session after SPY kissed the 405 abort line at 410.38 on 6/8 before acting, costing ~1.5% on the position. Playbook updated with three sharpened rules: **resting stop orders mandatory** when in a position, **abort-line kiss = 50% cut same session** (don't wait for close-confirm), and **Stage 1 re-arm now requires a 2-day hold above 410**, not just one weekly close, after the 5/27 fragile-reclaim experience. Retired the Stage-2-line-tweaking loop (locked at 418) and the bounce-flavored Stage 1.5 trigger (replaced with a trend-confirm version requiring QQQ +3% on a SPY +1% day). Next week is the FOMC 6/14\u201315 binary plus quadruple witching Friday; hard no-init Mon\u2013Wed and Friday, with the earliest re-engage window being Thursday afternoon only if Trigger B fires or Stage 1 reconditions. Entering week 7 in 100% cash, Stage 0, defensive.",
+      "duration_sec": 105.3
+    },
+    {
+      "week_start": "2022-06-13",
+      "week_end": "2022-06-17",
+      "start_value": 9973.04,
+      "end_value": 9973.04,
+      "weekly_return": 0.0,
+      "summary": "### Operator summary \u2014 week of 6/13\u20136/17/22\n\nWeek closed **flat at $9,973.04 (0.0%)** with zero trades while SPY dropped from 389.80 to 365.86 (\u22126.14%) through a 75bp FOMC surprise, a one-day relief rally that fully reversed the next session, and quad witching Friday \u2014 **we beat the index by ~614bps**, our best relative week of the run. Three independent locks (Stage 0, FOMC blackout, Friday de-risk) held us cash and out of trouble; the 6/16 bottom-third close on 134M vol explicitly disqualified Trigger B day-1 and prevented a textbook knife-catch. The week's lesson is structural rather than tactical: **six straight weeks at zero P&L is not a trajectory toward growth, and our \"Trigger B = VIX > 40\" capitulation rule has been on the books unmeasurable for a month** because VIX doesn't quote in this harness. The playbook now replaces Trigger B with a price+volume formulation (day-N \u22122% on >120% vol, day N+1 upper-third reversal on \u2265100% vol), and adds a new **Stage 0 scout-probe rule**: after 3+ consecutive Stage 0 weeks, one 2% NAV resting limit at QQQ \u2264 0.95 \u00d7 weekly close is permitted, auto-canceled Friday. Next week opens Tuesday 6/21 (Juneteenth Monday) with Powell semi-annual testimony Wed/Thu; planned action is a single scout limit at QQQ $260, no other initiations, and a hard no-init Friday into the weekend.",
+      "duration_sec": 119.0
+    },
+    {
+      "week_start": "2022-06-21",
+      "week_end": "2022-06-24",
+      "start_value": 9973.04,
+      "end_value": 9973.04,
+      "weekly_return": 0.0,
+      "summary": "### Operator summary \u2014 week of 6/21\u20136/24/22\n\nWeek closed **flat at $9,973.04 (0.00%)** with zero trades and one resting scout probe that auto-cancelled per rule, while SPY ripped from 365.86 to 390.08 (**+6.62%** in four sessions) \u2014 **we underperformed the index by ~662bps**, the second-worst relative week of the run and structurally identical to the 5/23\u20135/27 miss. Process held: Powell Wed/Thu lockout honored, no HOD chase Friday, no Trigger B knife-catch, Friday-cancel discipline executed. The killer wasn't process, it was calibration: the H18 scout probe at 0.945 \u00d7 weekly close placed the limit at $260 \u2014 roughly 7% under the Tuesday spot \u2014 which made it mathematically incapable of filling in a normal bear-bounce week, so the rule meant to force an at-bat produced zero. Same failure mode as the retired VIX>40 rule: an unmeasurable/unfireable trigger isn't a rule. Playbook updates: H18 is replaced by a **split scout ladder** (1% NAV at 0.97\u00d7 and 1% NAV at 0.93\u00d7 weekly close, both resting Tuesday through Friday, both with \u22125% broker stops), H9 now requires **tick-by-tick logging of cumulative-override progress** so we don't sleep through the condition again, and new **H19 (bounce-vs-trend test)** formalizes that the week after a +5% Stage 0 pulse is a test week \u2014 we don't deploy Stage 1 risk just because SPY pulses through 410 once. Next week's planned action is the two-leg scout ladder Tuesday 6/28 ($285.75 and $274.00 on QQQ); calendar binaries are Powell at ECB Wed, PCE Thursday AM (hard no-init), Friday 7/1 de-risk. Lifetime sits at \u22120.27%, eight weeks in; we are unambiguously process-correct and unambiguously P&L-stalled, and the scout-probe recalibration is the single highest-leverage fix on the table.",
+      "duration_sec": 130.0
+    },
+    {
+      "week_start": "2022-06-27",
+      "week_end": "2022-07-01",
+      "start_value": 9973.04,
+      "end_value": 9972.55,
+      "weekly_return": -0.0,
+      "summary": "### Operator summary \u2014 week of 6/27\u20137/1/22\n\nWeek closed **\u2212$0.49 (\u2248flat) at $9,972.55** vs SPY **\u22122.27%** (390.08 \u2192 381.24) \u2014 **beat the index by ~226bps** with our first scout-ladder at-bat in eight Stage 0 weeks. The recalibrated H18 split ladder worked exactly as designed: Tuesday's \u22123.05% QQQ flush gap-filled the shallow $285.75 limit at the LOD of $283.54 (1% NAV, 0.35sh), the deep $274 leg never hit and auto-cancelled per Friday rule, and H19 (bounce-vs-trend test) correctly predicted the giveback that prevented any Stage 1 deployment off the prior week's +6.62% pulse. The expensive lesson was structural rather than tactical: discovered the harness has no native stop order type, so every \"stops resting at broker\" rule we've written for nine weeks has been decorative \u2014 mental stops only, now formalized in H3 with mandatory tick logging. Playbook additions: H20 (scout-stack cap \u2014 only the unfilled leg re-places if a prior scout is held), H21 (pre-flight order-type check), H22 (shallow-leg-split under evaluation). Position sits at \u22120.5%, well inside the \u22125% mental stop ($269.36). Next week is short (July 4 closed Mon), FOMC minutes Wed PM, NFP Friday AM \u2014 planned action is only the deep leg at ~$262.40 on Tuesday, no Stage 1 anything. Nine weeks in, lifetime \u22120.27%; process correct, P&L stalled, but the engine is finally producing at-bats.",
+      "duration_sec": 128.3
+    },
+    {
+      "week_start": "2022-07-05",
+      "week_end": "2022-07-08",
+      "start_value": 9974.24,
+      "end_value": 9977.17,
+      "weekly_return": 0.0003,
+      "summary": "### Operator summary \u2014 week of 7/5\u20137/8/22\n\nWeek closed **+$4.62 (+0.046%) at $9,977.17** vs SPY **+1.95%** (381.24 \u2192 388.67) \u2014 second straight green week and the first time the run has strung two greens together, but we **lagged the index by ~150bps** because the held scout was only 1% NAV. The Tuesday-set H18 split ladder behaved exactly as designed (shallow leg from prior week now +4.17%, deep leg never close to filling, auto-cancelled Friday), H4 pre-binary stop-tighten executed cleanly into NFP, and the FOMC minutes / NFP lockouts held \u2014 no process errors this week. The real lesson is structural: the H9 cumulative-override v2 (3 greens AND +4% AND >20DMA) and the Stage 1 gate (SPY weekly > 410) BOTH fail to trip on normal +2% recovery weeks, so we will keep capturing only single-digit basis points unless we add an intermediate gear. Playbook now introduces **Stage 0.5** (H23: when held scout is \u2265+3% Friday AND SPY > 20DMA, next Tuesday's shallow leg doubles to 2% NAV, total scout cap 3%), **lowers the H9 cum threshold from +4% to +2.5%**, and **replaces the over-specified trail-to-entry rule with H22's single-condition trail** (last \u00d7 0.96 once scout \u2265+4%). Retired the two-condition trail-to-entry and the \"shallow-leg split under evaluation\" placeholder (the 0.97/0.93 ladder is working \u2014 don't fix it). Watchlist unchanged at 10 names. Next week is CPI Wednesday + PPI/claims Thursday + retail sales/UMich Friday; planned action is Stage 0.5-sized shallow leg ~$286.50 plus the deep leg ~$274.68, both Tuesday, both auto-cancel Friday. Ten weeks in, lifetime \u22120.23%; the engine is now producing positive-P&L at-bats, and the next test is whether Stage 0.5 lets a normal recovery week translate into more than 5bps of capture.",
+      "duration_sec": 119.8
+    },
+    {
+      "week_start": "2022-07-11",
+      "week_end": "2022-07-15",
+      "start_value": 9974.97,
+      "end_value": 9979.9,
+      "weekly_return": 0.0005,
+      "summary": "### Operator summary \u2014 week of 7/11\u20137/15/22\n\nWeek closed **+$2.73 (+0.027%) at $9,979.90** vs SPY **\u22120.91%** (388.67 \u2192 385.13) \u2014 **beat the index by ~94bps in a red week**, our third consecutive green week and the second time in the run we've strung three together. The Stage 0.5 stack (H23) fired clean on its first opportunity: shallow leg sized 2% NAV filled at $286.24 on Tuesday's CPI-eve dip, contributed roughly $4 of the week's gain by Friday, and effectively paid its own R&D cost in a single week. Process was clean \u2014 five sessions of mental-stop tick logs, H22 trail correctly inactive (scout never crossed +4%), and I caught the H20/H23 rule collision in-flight (re-placing both legs would have busted the 3% scout cap) and chose discipline over mechanical compliance. The structural lessons: the deep leg at 0.93\u00d7 weekly close is **0-for-5** on fills and is now widened to 0.95\u00d7 (with a 3-week kill clause); the H20/H23 precedence is now explicit (Stage 0.5 weeks re-place only the doubled shallow leg); and 7/13's CPI-day reversal pattern (QQQ 280.60 LOD \u2192 285.65 close, upper-third) was Trigger B-shaped but sub-magnitude, so I added **H24 Trigger B-lite** \u2014 a near-miss watch that refreshes the shopping list without buying. Eleven weeks in, lifetime sits at \u22120.20% with $306 deployed and $9,673 cash; one more green week likely flips lifetime positive for the first time. Next week's only planned action is the deep scout leg at $277.28 Tuesday (Stage 0.5 does not re-arm \u2014 scout closed +2.29%, just shy of the +3% gate).",
+      "duration_sec": 115.6
+    },
+    {
+      "week_start": "2022-07-18",
+      "week_end": "2022-07-22",
+      "start_value": 9977.3,
+      "end_value": 9990.52,
+      "weekly_return": 0.0013,
+      "summary": "### Operator summary \u2014 week of 7/18\u20137/22/22\n\nWeek closed **+$10.62 (+0.106%) at $9,990.52** vs SPY **+2.58%** (385.13 \u2192 395.09) \u2014 fourth consecutive green week (longest streak of the run) but **lagged the index by ~247bps**, the same structural problem we saw on 5/23 and 6/21: cash defaults plus a 3% NAV scout cap can't capture much of a normal recovery week, and Stage 1's 410 weekly+2d-hold gate has now been just out of reach for four straight weeks. Process was clean \u2014 H22 trail ratcheted the QQQ mental stop $285.34 \u2192 $289.91 across four sessions, **H9 v3 cumulative-override tripped for the first time on Thursday** (3 greens, cum +3.55%, SPY > 20DMA) and I correctly held discipline rather than treating \"veto lifts\" as \"Stage 1 deploy\", five-of-five mental-stop tick logs, deep leg correctly placed and auto-cancelled per H18. The structural lesson is unavoidable: **without an intermediate gear between Stage 0.5 (3% cap) and Stage 1 (locked behind SPY 410), recovery weeks keep capping us at single-digit bps of capture.** Playbook now adds **Stage 0.75 (H26)** \u2014 a bridge tranche of +2% NAV QQQ that unlocks when H9 v3 trips AND held scout \u2265+4%, with a tighter \u22123% stop because we're sizing into confirmed trend, not bottom-fishing; total exposure caps at 5% NAV without weakening the 410 gate. Also added **H25 (macro-scan fallback)** after Thursday's scan API failure left me sizing on price action alone. The deep scout leg is now **0-for-6 on fills** and enters its death-watch week \u2014 one more try at $277.28, then permanently replaced with a 0.5% NAV near-flush filter under H19-active weeks. Next week is a binary minefield (MSFT/GOOGL Tue AH, FOMC Wed PM, META Wed AH, AAPL/AMZN Thu AH, PCE Fri AM); planned actions are the Stage 0.5 shallow leg at $292.93 Tuesday AM and an H4 stop tighten before FOMC. Lifetime sits at **\u22120.095%**, twelve weeks in \u2014 one more green week likely flips lifetime positive for the first time.",
+      "duration_sec": 152.4
+    },
+    {
+      "week_start": "2022-07-25",
+      "week_end": "2022-07-25",
+      "start_value": 9988.72,
+      "end_value": 9988.72,
+      "weekly_return": 0.0,
+      "summary": "### Operator summary \u2014 single-tick weekly close 7/25/22\n\nCycle closed **\u2212$1.80 (\u22120.018%) at $9,988.72** with zero trades and one Monday tick after Friday's already-documented +$10.62 week. QQQ scout drifted 301.99 \u2192 300.27 (still +5.23% from $285.34 avg, well above H22's $288.26 mental stop and H4's tightened $294.26 pre-binary stop). Lifetime sits at **\u22120.113%**, ~11bps from green. The actionable lesson from this thin week is structural rather than P&L: **H25 macro-scan fallback fired live for the first time** \u2014 both `scan_macro_and_policy` (HTTP 402) and `search_news` (disabled in backtest) failed, and the rule correctly defaulted me to no-trade. But \"no-trade\" without any tape input is still a blind decision, so I sharpened H25 to **require a `get_history` tape check on SPY/QQQ/held tickers as a non-negotiable minimum** before defaulting. Also tightened H26: the Stage 0.75 bridge requires H9 v3 to fire **in the same active week** as the bridge placement, not retroactively from 7/21. Tuesday 7/26 plan is unchanged from Friday's playbook: Stage 0.5 shallow leg at $292.93 AM (~0.68sh, 2% NAV), deep death-watch leg at $277.28, H4 mental stop on the held scout at $294.26 ahead of MSFT/GOOGL AH. Heavy binary minefield this week (MSFT/GOOGL Tue, FOMC Wed 2pm + Powell, META Wed AH, AAPL/AMZN Thu AH, PCE Fri AM) \u2014 H11 locks out all five Tier 2/3 names as add candidates regardless of triggers. Process discipline through Wed PM FOMC + earnings gauntlet is the whole job; one more clean green week likely flips lifetime positive for the first time in thirteen weeks.",
+      "duration_sec": 128.1
+    }
+  ],
+  "green_weeks": 4,
+  "red_weeks": 2,
+  "flat_weeks": 8,
+  "best_week": {
+    "week_start": "2022-07-18",
+    "week_end": "2022-07-22",
+    "start_value": 9977.3,
+    "end_value": 9990.52,
+    "weekly_return": 0.0013,
+    "summary": "### Operator summary \u2014 week of 7/18\u20137/22/22\n\nWeek closed **+$10.62 (+0.106%) at $9,990.52** vs SPY **+2.58%** (385.13 \u2192 395.09) \u2014 fourth consecutive green week (longest streak of the run) but **lagged the index by ~247bps**, the same structural problem we saw on 5/23 and 6/21: cash defaults plus a 3% NAV scout cap can't capture much of a normal recovery week, and Stage 1's 410 weekly+2d-hold gate has now been just out of reach for four straight weeks. Process was clean \u2014 H22 trail ratcheted the QQQ mental stop $285.34 \u2192 $289.91 across four sessions, **H9 v3 cumulative-override tripped for the first time on Thursday** (3 greens, cum +3.55%, SPY > 20DMA) and I correctly held discipline rather than treating \"veto lifts\" as \"Stage 1 deploy\", five-of-five mental-stop tick logs, deep leg correctly placed and auto-cancelled per H18. The structural lesson is unavoidable: **without an intermediate gear between Stage 0.5 (3% cap) and Stage 1 (locked behind SPY 410), recovery weeks keep capping us at single-digit bps of capture.** Playbook now adds **Stage 0.75 (H26)** \u2014 a bridge tranche of +2% NAV QQQ that unlocks when H9 v3 trips AND held scout \u2265+4%, with a tighter \u22123% stop because we're sizing into confirmed trend, not bottom-fishing; total exposure caps at 5% NAV without weakening the 410 gate. Also added **H25 (macro-scan fallback)** after Thursday's scan API failure left me sizing on price action alone. The deep scout leg is now **0-for-6 on fills** and enters its death-watch week \u2014 one more try at $277.28, then permanently replaced with a 0.5% NAV near-flush filter under H19-active weeks. Next week is a binary minefield (MSFT/GOOGL Tue AH, FOMC Wed PM, META Wed AH, AAPL/AMZN Thu AH, PCE Fri AM); planned actions are the Stage 0.5 shallow leg at $292.93 Tuesday AM and an H4 stop tighten before FOMC. Lifetime sits at **\u22120.095%**, twelve weeks in \u2014 one more green week likely flips lifetime positive for the first time.",
+    "duration_sec": 152.4
+  },
+  "worst_week": {
+    "week_start": "2022-05-02",
+    "week_end": "2022-05-06",
+    "start_value": 10000.0,
+    "end_value": 9978.53,
+    "weekly_return": -0.0021,
+    "summary": "### Weekly summary for the operator\n\nWeek closed **\u22120.21%** ($10,000 \u2192 $9,978.53). One round trip: MSFT 5% starter entered 5/4 @ 289.98 on Trigger A (FOMC relief: SPY +3%, Powell ruled out 75bp, volume confirmed), stopped 5/5 @ 277.35 (\u22124.4%) when SPY reversed the entire FOMC pop. The process was actually a step up from last week \u2014 we had pre-written triggers with numeric levels, executed when one fired, held back the AAPL leg pending day-2 confirmation, and cut the loser cleanly without anchoring. The execution miss was buying the intraday high of a +3% day with SPY pinned at its 20DMA \u2014 textbook bear-bounce zone we'd warned about in the prior retro \u2014 and writing Trigger A to fire on a single-day close rather than requiring two-day confirmation in a confirmed downtrend. The \u2212$21 loss is the cheapest tuition we'll get for that lesson. Playbook updated with three sharper rules: (1) 2-day confirmation in bear regime, (2) no buying intraday highs of +2%+ SPY days, (3) macro-confluence threshold requires \u22652 warning boxes cleared, not 1. CPI Wednesday 5/11 is the next binary; no initiations 5/10 or pre-print 5/11; defensive XLU/XLP toe-in permitted if SPY ranges 405\u2013415 calmly. SPY weekly close 411.34 \u2014 Trigger C (<405) not yet triggered but close. Cash through the weekend.",
+    "duration_sec": 100.4
+  },
+  "total_tokens": {
+    "input": 1431695,
+    "output": 126587,
+    "cache_read": 2020264
+  }
+}
