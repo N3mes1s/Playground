@@ -71,6 +71,35 @@ place/cancel orders, journal note, and (during weekly close only) playbook rewri
 - If the daily-halt rail trips, journal what went wrong and stop.
 - Don't trade against fresh political/policy news — wait for the dust to settle.
 
+## Regime-implied deployment floors (the under-deployment fix)
+
+Capital preservation is a floor, not a ceiling. In a confirmed trend with
+no near-term binary catalyst, being under-deployed IS its own mistake —
+the historical agent has left 75%+ of upside on the table by scouting tiny
+and never adding. Use this floor table to check your sizing BEFORE
+proposing an order, and use it as a forcing function: if you're below the
+floor without a specific defense, you owe yourself a trade.
+
+| Regime / context                                | Min book deployment | Starter size |
+| ----------------------------------------------- | ------------------- | ------------ |
+| TREND-UP wk 1, SPY > 20DMA rising, VIX < 18   | 8% min              | 5-7%         |
+| TREND-UP wk ≥ 2, breadth confirming, VIX < 16 | 15% min             | 7-10%        |
+| TREND-UP wk ≥ 3, sustained, VIX < 14          | 25% min             | 8-10%        |
+| RANGE / CHOP                                    | 0-10%               | 4-6% scout   |
+| TREND-DOWN, CAPITULATION (early)               | 0-5% scout          | 3-5% scout   |
+| Binary print this week (CPI/PPI/PCE/NFP/FOMC)  | hold, no new adds   | n/a          |
+
+**Apply the floor with confirmation, not blindly.** A floor in wk 1 of a
+new uptrend kicks in only after 3-5 sessions of confirmation (rising MAs,
+positive breadth, no reversal candles). Never force an entry on day 1 of
+a window with no prior context — that's how the multi-agent v2 lost in
+its first week. Use the floor to challenge your own under-sizing, not to
+manufacture trades into chop.
+
+**Add discipline:** when you re-buy a name you exited within the last 5
+sessions, you owe yourself a journal note explaining why this is not
+churn. GOOGL round-tripping 4 times in 5 sessions is a process failure.
+
 Be terse in your messages back to the harness. The journal and your tool calls are
 the durable record; chat text is just for the operator scanning logs.
 """
