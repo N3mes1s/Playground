@@ -14,26 +14,26 @@ const root = path.dirname(__filename);
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(1500);
 
-  // Crop 1: top stats + flow + kalshi (the new content)
-  await page.screenshot({
-    path: path.join(root, 'screenshots/app_top.png'),
-    clip: { x: 0, y: 0, width: 1440, height: 1100 }
-  });
-  console.log('wrote app_top.png');
+  // Get full page height to clip safely
+  const fullPage = await page.screenshot({ fullPage: true });
+  const dimensions = await page.evaluate(() => ({ w: document.body.scrollWidth, h: document.body.scrollHeight }));
+  console.log('page dims:', dimensions);
 
-  // Crop 2: macro scan + positions/triggers (middle)
-  await page.screenshot({
-    path: path.join(root, 'screenshots/app_middle.png'),
-    clip: { x: 0, y: 1100, width: 1440, height: 1100 }
-  });
-  console.log('wrote app_middle.png');
+  const crops = [
+    { name: 'app_hero', y: 0, h: 880 },
+    { name: 'app_chart_flow', y: 880, h: 900 },
+    { name: 'app_positions_journal', y: 1780, h: 1000 },
+  ];
 
-  // Crop 3: journal + playbook
-  await page.screenshot({
-    path: path.join(root, 'screenshots/app_journal.png'),
-    clip: { x: 0, y: 2200, width: 1440, height: 1000 }
-  });
-  console.log('wrote app_journal.png');
+  for (const c of crops) {
+    const h = Math.min(c.h, dimensions.h - c.y);
+    if (h <= 0) continue;
+    await page.screenshot({
+      path: path.join(root, `screenshots/${c.name}.png`),
+      clip: { x: 0, y: c.y, width: 1440, height: h }
+    });
+    console.log('wrote', c.name + '.png', `(${h}px)`);
+  }
 
   await browser.close();
 })();

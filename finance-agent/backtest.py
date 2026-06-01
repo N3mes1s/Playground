@@ -63,6 +63,7 @@ def run(
     starting_cash: float,
     watchlist: list[str],
     run_id: str | None = None,
+    use_multiagent: bool = False,
 ) -> dict:
     run_id = run_id or f"bt_{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}_{uuid.uuid4().hex[:6]}"
     out_dir = Path(__file__).parent / "data" / "backtests" / run_id
@@ -114,7 +115,14 @@ def run(
         # Run agent tick
         t0 = time.time()
         try:
-            result = agent.run_tick()
+            if use_multiagent:
+                import multiagent
+                result = multiagent.run_tick_multiagent(debate_rounds=1, log_each_role=False)
+                # Normalize shape: backtest expects tool_calls flat
+                tool_calls = sum(result.get("phases", {}).values())
+                result["tool_calls"] = tool_calls
+            else:
+                result = agent.run_tick()
         except Exception as e:
             result = {"summary": f"ERROR: {e}", "tool_calls": 0,
                       "usage": {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0}}

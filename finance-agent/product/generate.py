@@ -129,14 +129,20 @@ def render_app() -> str:
         if not text and entry.get("order"):
             o = entry["order"]
             text = f"{o.get('side', '?').upper()} {o.get('qty', '?')} {o.get('symbol', '?')} @ {o.get('order_type', '?')} — {o.get('reason') or 'no reason'}"
-        kind_color = {"fill": "text-emerald-400", "order_open": "text-blue-400", "order_cancel": "text-zinc-500", "note": "text-zinc-300"}.get(kind, "text-zinc-300")
+        kind_styles = {
+            "fill": ("#10b981", "rgba(16,185,129,0.08)"),
+            "order_open": ("#60a5fa", "rgba(96,165,250,0.08)"),
+            "order_cancel": ("#a3a3a3", "rgba(163,163,163,0.06)"),
+            "note": ("#fbbf24", "rgba(251,191,36,0.06)"),
+        }
+        kind_color, kind_bg = kind_styles.get(kind, ("#a3a3a3", "rgba(163,163,163,0.06)"))
         journal_html += f"""
-        <div class="border-l-2 border-zinc-800 pl-3 py-1.5">
-          <div class="flex items-center gap-2 text-xs">
-            <span class="font-mono text-zinc-500">{entry.get('t', '')[:10]}</span>
-            <span class="{kind_color} font-medium uppercase tracking-wide">{kind}</span>
+        <div class="py-2.5 pl-4 border-l-2 mb-1" style="border-color: {kind_color};">
+          <div class="flex items-center gap-2 text-[10px] mono mb-1">
+            <span class="text-zinc-500">{entry.get('t', '')[:10]}</span>
+            <span class="font-bold uppercase tracking-[0.1em] px-1.5 py-0.5 rounded" style="background: {kind_bg}; color: {kind_color};">{kind}</span>
           </div>
-          <div class="text-sm text-zinc-200 mt-0.5">{text[:380]}</div>
+          <div class="text-[13px] text-zinc-300 leading-relaxed">{text[:380]}</div>
         </div>"""
 
     playbook_excerpt = playbook[:4500] if playbook else "(playbook not yet generated)"
@@ -149,37 +155,49 @@ def render_app() -> str:
     for m in kalshi_panels[:5]:
         p = m.get("prob")
         prob_pct = f"{p*100:.0f}%" if isinstance(p, (int, float)) else "—"
-        prob_color = "text-emerald-400" if isinstance(p, (int, float)) and p > 0.5 else ("text-red-400" if isinstance(p, (int, float)) and p < 0.3 else "text-zinc-300")
+        # Color the probability bar
+        if isinstance(p, (int, float)):
+            bar_pct = max(1, int(p * 100))
+            prob_color = "#10b981" if p > 0.5 else ("#f43f5e" if p < 0.3 else "#a3a3a3")
+        else:
+            bar_pct = 0
+            prob_color = "#525252"
         kalshi_html += f"""
-        <div class="flex items-center justify-between py-2 border-b border-zinc-900">
-          <div class="flex-1 min-w-0">
-            <div class="text-sm text-zinc-200 truncate">{m.get('label','')}</div>
-            <div class="text-xs text-zinc-500 font-mono mt-0.5">{m.get('ticker','')}</div>
+        <div class="py-3 border-b" style="border-color: var(--border);">
+          <div class="flex items-center justify-between mb-2">
+            <div class="text-sm text-zinc-200 leading-tight pr-3 flex-1">{m.get('label','')}</div>
+            <div class="num-display text-xl font-bold mono" style="color: {prob_color};">{prob_pct}</div>
           </div>
-          <div class="text-right ml-3">
-            <div class="text-lg font-bold {prob_color} font-mono">{prob_pct}</div>
+          <div class="flex items-center justify-between gap-3">
+            <div class="flex-1 h-1 rounded-full" style="background: var(--surface-2);">
+              <div class="h-1 rounded-full" style="width: {bar_pct}%; background: {prob_color}; opacity: 0.6;"></div>
+            </div>
+            <div class="text-xs text-zinc-600 mono">{m.get('ticker','')}</div>
           </div>
         </div>"""
     if not kalshi_html:
-        kalshi_html = '<div class="text-xs text-zinc-500 mono py-3">No active markets matched.</div>'
+        kalshi_html = '<div class="text-xs text-zinc-500 mono py-6 text-center">No active markets matched.</div>'
 
     flow_html = ""
     for h in flow_panels[:5]:
-        side_color = "text-emerald-400" if h.get("side") == "call" else "text-red-400"
+        side_color = "#10b981" if h.get("side") == "call" else "#f43f5e"
+        side_bg = "rgba(16,185,129,0.08)" if h.get("side") == "call" else "rgba(244,63,94,0.08)"
+        notional = h.get("notional_usd", 0)
         flow_html += f"""
-        <div class="py-2.5 border-b border-zinc-900">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <span class="font-bold mono">{h.get('symbol','')}</span>
-              <span class="{side_color} text-xs mono uppercase">{h.get('side','')}</span>
-              <span class="text-xs text-zinc-400 mono">${h.get('strike','')} · {h.get('dte','')}d</span>
+        <div class="py-3.5 border-b" style="border-color: var(--border);">
+          <div class="flex items-center justify-between mb-1.5">
+            <div class="flex items-center gap-2.5">
+              <span class="font-bold text-base">{h.get('symbol','')}</span>
+              <span class="px-1.5 py-0.5 rounded text-[10px] mono uppercase font-semibold tracking-wider" style="background: {side_bg}; color: {side_color};">{h.get('side','')}</span>
+              <span class="text-sm text-zinc-300 mono">${h.get('strike','')}</span>
+              <span class="text-xs text-zinc-500 mono">{h.get('dte','')}d</span>
             </div>
-            <div class="text-emerald-400 font-bold font-mono text-sm">${h.get('notional_usd',0):,.0f}</div>
+            <div class="num-display font-bold mono" style="color: {side_color};">${notional:,.0f}</div>
           </div>
-          <div class="text-xs text-zinc-500 mt-1 mono">vol {h.get('volume',0):,} · OI {h.get('open_interest',0):,} · vol/OI {h.get('vol_oi_ratio','—')}</div>
+          <div class="text-xs text-zinc-600 mono">vol {h.get('volume',0):,} · OI {h.get('open_interest',0):,} · vol/OI {h.get('vol_oi_ratio','—')}</div>
         </div>"""
     if not flow_html:
-        flow_html = '<div class="text-xs text-zinc-500 mono py-3">No unusual flow detected this scan. (Markets may be closed.)</div>'
+        flow_html = '<div class="text-xs text-zinc-500 mono py-6 text-center">No unusual flow this scan.</div>'
 
 
     weekly_summary = last_week.get("summary", "")
@@ -192,6 +210,7 @@ def render_app() -> str:
     return (template
             .replace("{{KALSHI_PANELS}}", kalshi_html)
             .replace("{{FLOW_PANELS}}", flow_html)
+            .replace("{{WEEK_END_DATE}}", last_week["week_end"])
             .replace("{{TOTAL_VALUE}}", fmt_money(bull_news["final_value"]))
             .replace("{{TOTAL_RETURN}}", fmt_pct(bull_news["total_return"]))
             .replace("{{TOTAL_RETURN_COLOR}}", "text-emerald-400" if bull_news["total_return"] > 0 else "text-red-400")

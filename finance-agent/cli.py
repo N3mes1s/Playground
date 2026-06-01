@@ -175,6 +175,7 @@ def cmd_backtest(args: argparse.Namespace) -> None:
         starting_cash=args.starting_cash,
         watchlist=watchlist,
         run_id=args.run_id,
+        use_multiagent=args.multiagent,
     )
     print("\n" + "=" * 60)
     print("BACKTEST SUMMARY")
@@ -254,6 +255,8 @@ def main() -> None:
     p_bt.add_argument("--watchlist", type=str,
                       default="SPY,QQQ,AAPL,MSFT,NVDA,GOOGL,META,AMZN,TSLA,AMD")
     p_bt.add_argument("--run-id", type=str, default=None)
+    p_bt.add_argument("--multiagent", action="store_true",
+                      help="Use the TradingAgents-style multi-agent pipeline (4-5x cost).")
     p_bt.set_defaults(func=cmd_backtest)
 
     p_reset = sub.add_parser("reset", help="Wipe portfolio, journal, tick log.")
