@@ -1,0 +1,73 @@
+{
+  "run_id": "multiagent_4w_2026",
+  "start": "2026-04-27",
+  "end": "2026-05-22",
+  "trading_days": 20,
+  "starting_cash": 10000.0,
+  "final_value": 9992.7,
+  "total_return": -0.0007,
+  "weekly_marks": [
+    {
+      "week_start": "2026-04-27",
+      "week_end": "2026-05-01",
+      "start_value": 10000.0,
+      "end_value": 10000.0,
+      "weekly_return": 0.0,
+      "summary": "## Weekly retro summary\n\n**P&L: $10,000 \u2192 $10,000 (flat, 0.0%).** Zero trades, 100% cash all five sessions. The mandate (\"close green or flat\") was satisfied, but barely \u2014 this was capital preservation crossing into paralysis. The setup genuinely warranted caution (FOMC Wed + MSFT/META/GOOGL/AAPL/AMZN AMC prints + NFP Fri, all into a fresh book at SPY ATH), so the Mon\u2013Wed no-trade calls were correct. The miss was post-FOMC Thursday: Powell cleared dovish-leaning, the biggest binaries were behind us, and there was room for a 3\u20135% scout into SPY or a clean MAG7 reactor. Instead, \"wait for pullback\" notes were logged with no hard triggers and no orders. Sharpened rules going in: scout-first sizing (3\u20135%, never start at cap), explicit price/news triggers in journal same-tick they're conceived, and a reframing that 100% cash post-event is a directional bet on reversal \u2014 not neutral. Watchlist suggestions logged: add IWM/XLF/GLD/SMH, demote META/MSFT/TSLA. Process target for next week: at least one scout entry by Tuesday EOD unless the tape genuinely forbids it.",
+      "duration_sec": 72.2
+    },
+    {
+      "week_start": "2026-05-04",
+      "week_end": "2026-05-08",
+      "start_value": 10000.0,
+      "end_value": 10007.4,
+      "weekly_return": 0.0007,
+      "summary": "## Weekly summary for operator\n\n**P&L: $10,000 \u2192 $10,007.40 (+0.07%, green).** One trade all week: a 4.2% NVDA scout entered Thu 5/7 at $211.50 on the playbook's \"$211 reclaim on volume\" trigger, closing Fri at $215.20 (+1.75% / +$7.40). The zero-trade streak broke and the mandate held. **Process wins:** explicit daily price triggers (the upgrade promised in last week's retro) directly enabled the entry; Thursday's mandate-to-deploy was honored; Friday's no-add stance into hot NFP + Iran/SCOTUS + CPI/PPI next week preserved the gain. **Process misses:** (1) scout sized too small \u2014 a 1.75% winner on 4.2% notional barely moves the book, so the new playbook sets a 5% scout floor; (2) GOOGL's >$393 breakout fired Wed and we waited for the prettier pullback that never came, so compound triggers now must be acted on at whichever leg fires first; (3) SMH/IWM/XLF/GLD were added to the watchlist two weeks running with no trigger levels defined \u2014 SMH gets a hard Mon-EOD deadline next week. Going into CPI 5/13, PPI 5/14, and Powell succession 5/15, the plan is: hold NVDA with a written pre-CPI decision tree, cap simultaneous scouts at 2, and react post-print rather than pre-position.",
+      "duration_sec": 89.8
+    },
+    {
+      "week_start": "2026-05-11",
+      "week_end": "2026-05-15",
+      "start_value": 10015.88,
+      "end_value": 10021.8,
+      "weekly_return": 0.0006,
+      "summary": "## Weekly summary for operator\n\n**P&L: $10,007.40 \u2192 $10,021.80 (+0.14%, green).** Second green week running. Two open positions held through a triple-binary week (CPI Tue / PPI 6% shock Wed / Powell succession Fri): NVDA 2sh @ $211.50 \u2192 $225.32 (+6.5%, +$27.64) and a new GOOGL scout 1sh @ $402.62 \u2192 $396.78 (-1.45%, -$5.84). Cash 91.5%. **Process wins:** NVDA add trigger fired Mon but was correctly *not* taken into the binary cluster \u2014 discipline preserved the runner that proceeded to tag $235.74 Thu; a pre-Powell decision tree was pre-committed Thu PM and held Fri; the GOOGL reclaim trigger was taken Wed (last week we missed an analogous breakout waiting for prettier price). **Process misses:** the NVDA mental trail stayed at $217 while the stock ran to $235 \u2014 a numeric 8%-off-high trail would have locked the move better, and that's now codified; SMH still has no trigger after three weekly deadlines (hard Mon-EOD or drop next week); GOOGL was scouted without a written exit ladder. New playbook tightens trailing-stop discipline on +10% winners, mandates both add AND exit ladders at entry, and writes the NVDA 5/21 earnings decision tree as Monday's first task.",
+      "duration_sec": 93.6
+    },
+    {
+      "week_start": "2026-05-18",
+      "week_end": "2026-05-22",
+      "start_value": 10015.96,
+      "end_value": 9992.7,
+      "weekly_return": -0.0023,
+      "summary": "## Operator summary\n\n**P&L: $10,021.80 \u2192 $9,992.70. -$29.10 (-0.29%, first red week.)** Streak of two greens broken by a small, process-clean loss. Two exits closed the book to 100% cash: GOOGL took its written $392 invalidation Tuesday (-$14.96 on a 4% scout \u2014 exactly the cost of a disciplined stop), and NVDA's pre-committed numeric trail $216.88 fired post-earnings Friday (+$7.66, locking gain on a position that had been +11.4% mid-week). Both stops were honored same-day with no hoping. The clearest miss was holding NVDA full 2sh into the print despite Wed printing a lower high vs Thu's $227 peak \u2014 a pre-binary trim-half rule would have saved ~$18 of MTM, and it's now codified. GOOGL exposed that \"thesis\" had drifted back into narrative (\"cheap mega-cap absorbing inflation\") rather than a price condition, also tightened in the new playbook. SMH finally dropped after 4 missed Monday deadlines, prompting a trigger-at-add rule for any future watchlist additions (IWM/XLF/GLD are conditional on Mon 5/26 EOD triggers or they don't go on). Going into PCE 5/29 flat with a clean book and three new heuristics earned the hard way.",
+      "duration_sec": 111.5
+    }
+  ],
+  "green_weeks": 2,
+  "red_weeks": 1,
+  "flat_weeks": 1,
+  "best_week": {
+    "week_start": "2026-05-04",
+    "week_end": "2026-05-08",
+    "start_value": 10000.0,
+    "end_value": 10007.4,
+    "weekly_return": 0.0007,
+    "summary": "## Weekly summary for operator\n\n**P&L: $10,000 \u2192 $10,007.40 (+0.07%, green).** One trade all week: a 4.2% NVDA scout entered Thu 5/7 at $211.50 on the playbook's \"$211 reclaim on volume\" trigger, closing Fri at $215.20 (+1.75% / +$7.40). The zero-trade streak broke and the mandate held. **Process wins:** explicit daily price triggers (the upgrade promised in last week's retro) directly enabled the entry; Thursday's mandate-to-deploy was honored; Friday's no-add stance into hot NFP + Iran/SCOTUS + CPI/PPI next week preserved the gain. **Process misses:** (1) scout sized too small \u2014 a 1.75% winner on 4.2% notional barely moves the book, so the new playbook sets a 5% scout floor; (2) GOOGL's >$393 breakout fired Wed and we waited for the prettier pullback that never came, so compound triggers now must be acted on at whichever leg fires first; (3) SMH/IWM/XLF/GLD were added to the watchlist two weeks running with no trigger levels defined \u2014 SMH gets a hard Mon-EOD deadline next week. Going into CPI 5/13, PPI 5/14, and Powell succession 5/15, the plan is: hold NVDA with a written pre-CPI decision tree, cap simultaneous scouts at 2, and react post-print rather than pre-position.",
+    "duration_sec": 89.8
+  },
+  "worst_week": {
+    "week_start": "2026-05-18",
+    "week_end": "2026-05-22",
+    "start_value": 10015.96,
+    "end_value": 9992.7,
+    "weekly_return": -0.0023,
+    "summary": "## Operator summary\n\n**P&L: $10,021.80 \u2192 $9,992.70. -$29.10 (-0.29%, first red week.)** Streak of two greens broken by a small, process-clean loss. Two exits closed the book to 100% cash: GOOGL took its written $392 invalidation Tuesday (-$14.96 on a 4% scout \u2014 exactly the cost of a disciplined stop), and NVDA's pre-committed numeric trail $216.88 fired post-earnings Friday (+$7.66, locking gain on a position that had been +11.4% mid-week). Both stops were honored same-day with no hoping. The clearest miss was holding NVDA full 2sh into the print despite Wed printing a lower high vs Thu's $227 peak \u2014 a pre-binary trim-half rule would have saved ~$18 of MTM, and it's now codified. GOOGL exposed that \"thesis\" had drifted back into narrative (\"cheap mega-cap absorbing inflation\") rather than a price condition, also tightened in the new playbook. SMH finally dropped after 4 missed Monday deadlines, prompting a trigger-at-add rule for any future watchlist additions (IWM/XLF/GLD are conditional on Mon 5/26 EOD triggers or they don't go on). Going into PCE 5/29 flat with a clean book and three new heuristics earned the hard way.",
+    "duration_sec": 111.5
+  },
+  "total_tokens": {
+    "input": 2112217,
+    "output": 214721,
+    "cache_read": 1914735
+  }
+}
