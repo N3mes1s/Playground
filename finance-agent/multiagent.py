@@ -32,12 +32,18 @@ import risk
 import tools as t
 
 
-READ_ONLY_TOOLS = [t.get_portfolio_snapshot, t.get_quote, t.get_history,
-                   t.search_news, t.scan_macro_and_policy,
-                   t.get_realtime_alerts, t.deep_research]
+READ_ONLY_TOOLS = [
+    t.get_portfolio_snapshot, t.get_quote, t.get_history,
+    t.search_news, t.scan_macro_and_policy,
+    t.get_realtime_alerts,
+    t.get_prediction_market_priors, t.search_prediction_markets,
+    t.scan_unusual_options_flow, t.options_flow_for_ticker,
+    t.deep_research, t.market_analogs, t.journal_analogs,
+    t.recent_reflections,
+]
 
-TRADER_TOOLS = READ_ONLY_TOOLS + [t.add_journal_note]
-RISK_TOOLS = READ_ONLY_TOOLS + [t.place_order, t.cancel_order, t.add_journal_note]
+TRADER_TOOLS = READ_ONLY_TOOLS + [t.kelly_size_proposal, t.add_journal_note]
+RISK_TOOLS = TRADER_TOOLS + [t.place_order, t.cancel_order]
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -60,21 +66,32 @@ report (≤ 250 words) covering:
 Do not recommend trades. Do not opine on the chart. Stick to fundamentals.
 """
 
-SENTIMENT_SYSTEM = """You are the Sentiment / News Analyst on a trading desk.
+SENTIMENT_SYSTEM = """You are the Sentiment / News / Flow Analyst on a
+trading desk — the UnusualWhales-style desk analyst.
 
-Your job: read the day's news, macro/policy scan, and real-time alerts.
-Extract sentiment signals that matter to today's tape. Output a terse report
-(≤ 250 words) covering:
+Your job: read the day's news, macro/policy scan, real-time monitor alerts,
+**and unusual options flow** to extract signals that move the tape before
+the public catches up. Output a terse report (≤ 300 words) covering:
 
-1. Macro / political backdrop in one paragraph (Fed posture, tariff/trade,
-   risk-on vs risk-off, key catalysts on deck).
-2. Sector-specific catalysts (Pentagon procurement, FDA actions, M&A,
+1. **Macro / political backdrop** in one paragraph (Fed posture, tariff/trade,
+   risk-on vs risk-off, key catalysts on deck). Pull `get_prediction_market_priors`
+   for calibrated Fed/CPI odds.
+2. **Sector-specific catalysts** (Pentagon procurement, FDA actions, M&A,
    regulatory) named in the last 24 hours.
-3. Specific tickers on the watchlist OR adjacent that are being named in
-   bullish / bearish news flow and why.
+3. **Unusual options flow** — call `scan_unusual_options_flow` and flag:
+   - 0-7 DTE single-strike volumes > 5k contracts (informed positioning)
+   - Notional > $1M on a single contract (real money bets)
+   - Put/call ratio skew across watchlist (>1.0 = bearish bias, <0.5 = bullish)
+   - Any ticker not on the watchlist that shows up in flow scans —
+     these are the UMAC-style signals worth investigating with
+     `options_flow_for_ticker` and `deep_research`.
+4. **Specific tickers** being named in bullish / bearish news flow.
 
-Use scan_macro_and_policy, get_realtime_alerts, and search_news. Do not
-recommend trades; the Bull/Bear researchers will weigh your read.
+Order of operations: `get_realtime_alerts` first (instant), then
+`scan_unusual_options_flow` (15-30 sec), then `scan_macro_and_policy` if
+you still need more.
+
+Do not recommend trades; the Bull/Bear researchers will weigh your read.
 """
 
 NEWS_MACRO_SYSTEM = """You are the Macro / Cross-Asset Analyst.

@@ -10,6 +10,7 @@ import kelly as kly
 import market_data
 import monitors as mon
 import news_index
+import options_flow as ofl
 import playbook
 import portfolio as pf
 import prediction_markets as pmkt
@@ -404,6 +405,58 @@ def search_prediction_markets(keyword: str) -> dict:
 
 
 @_json_tool
+def scan_unusual_options_flow(
+    symbols: list[str] | None = None,
+    min_volume: int = 1000,
+    min_notional: float = 100_000,
+    max_dte: int = 45,
+) -> dict:
+    """Detect unusual options activity across symbols — the UMAC-style signal.
+    Returns single-strike contracts with abnormally high volume AND notional,
+    plus put/call ratios. Use this every tick to catch informed bets BEFORE
+    the news lands. Disabled in backtest (yfinance options snapshot is current).
+
+    Args:
+        symbols: Tickers to scan. Defaults to watchlist.
+        min_volume: Minimum contracts traded today (default 1000).
+        min_notional: Minimum USD notional (default $100k).
+        max_dte: Maximum days to expiry (default 45 days, near-dated).
+    """
+    if clock.is_simulated():
+        return {"error": "options flow scan disabled in backtest (yfinance options data is point-in-time, no historical chain replay)"}
+    if not symbols:
+        state = pf.load()
+        symbols = state.watchlist
+    return ofl.watchlist_flow_scan(
+        symbols,
+        min_volume=min_volume,
+        min_notional=min_notional,
+        min_vol_oi_ratio=2.0,
+        max_dte=max_dte,
+    )
+
+
+@_json_tool
+def options_flow_for_ticker(symbol: str, max_expiries: int = 6) -> dict:
+    """Get the FULL option chain snapshot for one ticker — useful when an
+    unusual flow alert pointed at a specific name and you want to see the
+    whole skew. Returns volumes, OI, IV, strikes across near-dated expiries.
+    Disabled in backtest.
+
+    Args:
+        symbol: The ticker.
+        max_expiries: How many forward expiries to include (default 6).
+    """
+    if clock.is_simulated():
+        return {"error": "options flow disabled in backtest"}
+    snap = ofl.snapshot_chain(symbol, max_expiries=max_expiries)
+    pc = ofl.aggregate_put_call_ratio(symbol, snap=snap)
+    hits = ofl.scan_unusual_flow(symbol, snap=snap, min_volume=100,
+                                  min_notional=10_000, min_vol_oi_ratio=1.0)
+    return {"put_call_ratio": pc, "unusual_in_this_name": hits[:20]}
+
+
+@_json_tool
 def deep_research(question: str) -> dict:
     """Run a multi-hop deep research task via parallel.ai (slower than search,
     much better when you need to understand a thematic catalyst, validate a
@@ -429,6 +482,8 @@ TICK_TOOLS = [
     get_realtime_alerts,
     get_prediction_market_priors,
     search_prediction_markets,
+    scan_unusual_options_flow,
+    options_flow_for_ticker,
     deep_research,
     market_analogs,
     journal_analogs,

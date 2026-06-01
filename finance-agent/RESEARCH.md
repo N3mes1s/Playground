@@ -84,7 +84,35 @@ current call on what played out.
   `market_analogs(setup_description)` — parallel.ai-driven prior-episode
   retrieval.
 
-## 6. Prediction-market priors (Kalshi) — calibrated catalyst probabilities
+## 6. Free-tier options flow detection — the UnusualWhales signal
+
+> No paper here — this is empirical financial engineering. yfinance's
+> public option chain endpoint exposes per-strike volume, open interest,
+> and IV. Cross-section + daily snapshots get us ~80% of a paid
+> Unusual Whales feed.
+
+The signal classes we detect:
+* **Single-strike sweeps** — vol > 5k contracts on 0-7 DTE OTM options.
+  The hallmark of an informed bet (someone paying for cheap leverage on
+  a near-term catalyst).
+* **Vol/OI ratios** — when today's volume >> open interest, most activity
+  is new positions opening.
+* **Notional concentration** — $1M+ on a single contract.
+* **Put/call ratio skew** across the watchlist — daily and overnight.
+
+This is the gap the UMAC case study exposed. Without this, Levee misses
+pre-news positioning. Live test (June 2026) caught TSLA $440 0DTE calls
+at 61k contracts / $16M notional and AMD put/call ratio at 1.27 (bearish
+skew vs watchlist average of 0.46).
+
+* **Where:** `options_flow.py`
+* **Tools:** `scan_unusual_options_flow(symbols, ...)` and
+  `options_flow_for_ticker(symbol)`.
+* **Future:** day-over-day OI delta detection (current implementation
+  needs a daily snapshot cron); paid flow (Polygon, CBOE) for sweep
+  classification and dark-pool prints.
+
+## 7. Prediction-market priors (Kalshi) — calibrated catalyst probabilities
 
 > Kalshi public REST API, 2025-2026. https://docs.kalshi.com
 
@@ -101,7 +129,7 @@ policy markets — read-only, no auth required.
 * **Example outputs (as of June 2026):** Fed hike before July 2026 = 2.5%
   implied, before Dec 2026 = 31.5%, 3+ emergency cuts in 2026 = 5.85%.
 
-## 7. Parallel.ai Monitor + Task API — real-time situational awareness
+## 8. Parallel.ai Monitor + Task API — real-time situational awareness
 
 > Parallel documentation, 2025. https://docs.parallel.ai
 
