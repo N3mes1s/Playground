@@ -5,7 +5,7 @@ const root = path.dirname(__filename);
 
 (async () => {
   const browser = await chromium.launch();
-  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
 
   const pages = [
     { html: 'landing.html', out: 'screenshots/landing.png', fullPage: true, width: 1280 },
