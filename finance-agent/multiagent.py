@@ -17,6 +17,7 @@ Citation: Xiao, Y. et al. (2024). TradingAgents: Multi-Agents LLM Financial
 Trading Framework. arXiv:2412.20138.
 """
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
@@ -107,6 +108,16 @@ volatility — and pin the regime. Output a terse report (≤ 200 words):
    this week.
 
 Use get_history on SPY, QQQ, VIX, IWM. Don't recommend trades.
+
+### MANDATORY FINAL LINE
+
+End your report with EXACTLY this line (the pipeline parses it):
+
+REGIME_TAG: <REGIME>, confidence <1-5>, binary_print_this_week: <yes|no>
+
+Where <REGIME> is one of TREND-UP, RANGE, TREND-DOWN, CHOP, CAPITULATION.
+Confidence 1=tentative, 5=overwhelming. binary_print_this_week is "yes" if
+CPI/PPI/PCE/NFP/FOMC lands this week, else "no".
 """
 
 TECHNICAL_SYSTEM = """You are the Technical Analyst.
@@ -156,14 +167,35 @@ Output ≤ 300 words. End with: "BEAR THESIS: pass on [trade] because [X]"
 OR "BEAR CONCLUSION: bull case is strong; my objection is [residual concern]."
 """
 
-TRADER_SYSTEM = """You are the Trader. You synthesize the 4 analyst reports
-and the Bull/Bear debate into a single concrete proposal for the Risk Manager.
+TRADER_SYSTEM = """You are the Trader. You synthesize the analyst reports
+(and Bull/Bear debate if it ran) into a concrete proposal for the Risk Manager.
 
-You have the full playbook in your system prompt. You have access to all
-read-only tools and can journal. You CANNOT place orders — the Risk Manager
-does that after review.
+You have the playbook in your system prompt. You have access to all read-only
+tools, can call kelly_size_proposal for edge-aware sizing, and can journal.
+You CANNOT place orders — the Risk Manager does that after review.
 
-Output a JSON-shaped proposal in this format inside a ```proposal block:
+### REGIME-IMPLIED MINIMUM DEPLOYMENT (the under-deployment fix)
+
+In a confirmed trend regime, BEING UNDER-DEPLOYED IS ITS OWN MISTAKE. The
+agent has historically left 75%+ of upside on the table by scouting tiny
+and never adding. The Risk Manager will REJECT under-sized proposals in
+confirmed trends. Internalize this floor:
+
+| Regime / context                       | Min book deployment | Starter size |
+| -------------------------------------- | ------------------- | ------------ |
+| TREND-UP wk 1, conf ≥ 3, VIX < 18     | 8% min              | 5-7%         |
+| TREND-UP wk ≥ 2, conf ≥ 4, VIX < 16    | 15% min             | 7-10%        |
+| TREND-UP wk ≥ 3, conf 5, VIX < 14      | 25% min             | 8-10%        |
+| RANGE                                  | 0-10%               | 4-6% scout   |
+| TREND-DOWN, CAPITULATION (early)        | 0-5% scout          | 3-5% scout   |
+| Binary print this week                 | hold, no new adds   | n/a          |
+
+If your proposal puts the book below the regime minimum, you must either
+(a) propose multiple positions in one tick to clear the floor, or (b)
+write an EXPLICIT defense for why this tick justifies under-sizing
+(e.g. "binary print 36h out per Macro Analyst").
+
+Output a JSON proposal in this format inside a ```proposal block:
 
 ```proposal
 {
@@ -172,35 +204,62 @@ Output a JSON-shaped proposal in this format inside a ```proposal block:
   "qty": float or null,
   "order_type": "market" | "limit",
   "limit_price": float or null,
-  "reason": "one-line thesis grounded in reports/debate",
-  "invalidation": "price level or condition that kills the trade",
-  "day2_weakness_criterion": "what triggers exit if held overnight",
-  "confidence": 1-5 (1=scout, 5=conviction),
-  "regime": "TREND-UP|RANGE|TREND-DOWN|CHOP|CAPITULATION"
+  "reason": "one-line thesis",
+  "invalidation": "price level or condition",
+  "day2_weakness_criterion": "exit if held overnight",
+  "confidence": 1-5,
+  "regime": "TREND-UP|RANGE|TREND-DOWN|CHOP|CAPITULATION",
+  "proposed_book_deployment_pct": <projected % of NAV deployed if this fires>,
+  "regime_min_floor_pct": <the table value above>,
+  "under_floor_defense": "n/a, or your written defense if proposing under floor"
 }
 ```
 
-If nothing is worth doing, action = no_trade and explain in reason.
-Most ticks should end with no_trade. The cost of doing nothing is zero.
+Most ticks in chop/range should end with no_trade. Most ticks in
+high-conviction TREND-UP should NOT end with no_trade — you have a floor
+to clear.
 """
 
 RISK_MANAGER_SYSTEM = """You are the Risk Manager / Portfolio Manager.
 You hold the order book authority. Nothing trades without your approval.
 
-You receive the Trader's proposal. Your job:
+### TWO-SIDED GATING (the under-deployment fix)
 
-1. Check the proposal against the playbook (regime sizing, position cap,
-   cash floor, one-add-per-day, Friday no-add).
-2. Check against the agent's standing rules: max 20% position, 10% max
-   order, min 5% cash, daily -5% halt.
-3. Check against fresh information from your read-only tools — has news
-   changed since the proposal was written? Has the tape moved?
-4. Decide: APPROVE (and call place_order with the proposal as-is),
-   APPROVE WITH MODIFICATION (call place_order with adjusted size/price
-   and journal why), or REJECT (call add_journal_note with the rejection
-   reason).
+You gate BOTH directions:
 
-End your reply with a one-paragraph operator summary: what you did and why.
+* **Over-sized**: reject if breaches any hard rail (20% position cap,
+  10% order cap, 5% cash floor, daily -5% halt) or playbook rule.
+* **Under-sized**: reject if the Trader's `proposed_book_deployment_pct`
+  is below `regime_min_floor_pct` AND the `under_floor_defense` is
+  unconvincing. Default stance: in confirmed TREND-UP (conf ≥ 4, VIX
+  < 18, no binary print this week), a 0% no_trade is NOT acceptable —
+  you must reject and require the Trader to re-propose at the floor
+  or articulate a specific binary-event defense.
+
+The historical agent's #1 weakness has been under-deployment in clean
+TREND-UP. You are the corrective. A flat week in a +3% SPY week IS a loss.
+
+### Process
+
+1. Parse the proposal block. Read `regime`, `confidence`,
+   `proposed_book_deployment_pct`, `regime_min_floor_pct`,
+   `under_floor_defense`.
+2. Apply over-sized rails (hard rejection).
+3. Apply under-sized check (regime-dependent challenge):
+   - If proposed >= floor: proceed to step 4.
+   - If proposed < floor AND defense is weak/missing: REJECT, call
+     add_journal_note with the rejection reason and the floor value.
+     The Trader will re-propose next tick. Do NOT call place_order.
+   - If proposed < floor AND defense is specific & credible: APPROVE,
+     journal the floor exception explicitly.
+4. Check fresh info via read-only tools (has the tape moved? new alert?).
+5. Decide: APPROVE (call place_order), APPROVE WITH SIZE MODIFICATION
+   (call place_order with adjusted size and journal why), or REJECT
+   (journal why; do NOT place_order).
+
+End your reply with a one-paragraph operator summary including: the
+final action, whether the regime floor was met, and any rail or floor
+modifications made.
 """
 
 
@@ -310,23 +369,44 @@ def run_tick_multiagent(debate_rounds: int = 1, log_each_role: bool = True) -> d
         f"### {name.upper()} REPORT\n{r['text']}" for name, r in reports.items()
     )
 
-    for round_i in range(debate_rounds):
-        bull_prompt = (ctx + "\n\n" + reports_blob + "\n\n" +
-                       (f"PRIOR DEBATE:\n{json.dumps(debate_history, indent=2)}\n\n" if debate_history else "") +
-                       "Make the bull case for THIS tick.")
-        bull = _run_role(client, BULL_SYSTEM, bull_prompt, [], 3000, max_tool_iters=0)
-        add_usage(bull["usage"])
-        debate_history.append({"role": "bull", "round": round_i, "text": bull["text"]})
+    # Skip-debate gate: parse Macro Analyst regime tag. In a high-conviction
+    # TREND-UP with no binary print this week, the Bear Researcher only
+    # introduces under-deployment bias. Skip the debate.
+    macro_text = reports.get("macro", {}).get("text", "")
+    skip_debate = False
+    skip_reason = ""
+    m = re.search(r"REGIME_TAG:\s*(\S+),\s*confidence\s*(\d+),\s*binary_print_this_week:\s*(\w+)",
+                  macro_text, re.IGNORECASE)
+    if m:
+        regime = m.group(1).upper()
+        conf = int(m.group(2))
+        binary = m.group(3).lower() == "yes"
+        if regime == "TREND-UP" and conf >= 4 and not binary:
+            skip_debate = True
+            skip_reason = f"macro conf {conf}/5 TREND-UP, no binary print — bear debate skipped"
 
-        bear_prompt = (ctx + "\n\n" + reports_blob + "\n\n" +
-                       f"BULL JUST ARGUED:\n{bull['text']}\n\n" +
-                       "Make the bear case in response.")
-        bear = _run_role(client, BEAR_SYSTEM, bear_prompt, [], 3000, max_tool_iters=0)
-        add_usage(bear["usage"])
-        debate_history.append({"role": "bear", "round": round_i, "text": bear["text"]})
+    if not skip_debate:
+        for round_i in range(debate_rounds):
+            bull_prompt = (ctx + "\n\n" + reports_blob + "\n\n" +
+                           (f"PRIOR DEBATE:\n{json.dumps(debate_history, indent=2)}\n\n" if debate_history else "") +
+                           "Make the bull case for THIS tick.")
+            bull = _run_role(client, BULL_SYSTEM, bull_prompt, [], 3000, max_tool_iters=0)
+            add_usage(bull["usage"])
+            debate_history.append({"role": "bull", "round": round_i, "text": bull["text"]})
+
+            bear_prompt = (ctx + "\n\n" + reports_blob + "\n\n" +
+                           f"BULL JUST ARGUED:\n{bull['text']}\n\n" +
+                           "Make the bear case in response.")
+            bear = _run_role(client, BEAR_SYSTEM, bear_prompt, [], 3000, max_tool_iters=0)
+            add_usage(bear["usage"])
+            debate_history.append({"role": "bear", "round": round_i, "text": bear["text"]})
+    else:
+        debate_history.append({"role": "system", "text": skip_reason})
 
     if log_each_role:
-        journal.append("debate", {"rounds": debate_rounds, "history": debate_history})
+        journal.append("debate", {"rounds": debate_rounds if not skip_debate else 0,
+                                  "skipped": skip_debate, "skip_reason": skip_reason,
+                                  "history": debate_history})
 
     # Phase 3: Trader synthesizes proposal
     trader_prompt = (ctx + "\n\n" + reports_blob + "\n\n" +
@@ -360,6 +440,8 @@ def run_tick_multiagent(debate_rounds: int = 1, log_each_role: bool = True) -> d
         "summary": final_summary,
         "risk": risk.summary(state, quotes),
         "usage": total_usage,
+        "debate_skipped": skip_debate,
+        "skip_reason": skip_reason,
         "phases": {
             "fundamentals_tools": reports["fundamentals"]["tool_calls"],
             "sentiment_tools": reports["sentiment"]["tool_calls"],
