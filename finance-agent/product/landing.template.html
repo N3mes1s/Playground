@@ -203,27 +203,85 @@
   <div class="text-[10px] uppercase tracking-[0.2em] text-emerald-400 mb-5 mono">Evidence</div>
   <h2 class="serif text-5xl leading-tight mb-14 tracking-tight">Three backtests. One thesis.</h2>
 
-  <div class="grid grid-cols-3 gap-5 mb-16">
+  <div class="grid grid-cols-3 gap-5 mb-10">
     <div class="card p-7">
-      <div class="text-[10px] mono text-zinc-500 mb-2 uppercase tracking-[0.18em]">2026 BULL · NEWS-BLIND</div>
-      <div class="num-display text-4xl font-bold mb-1">+2.24%</div>
-      <div class="text-sm text-zinc-400 mb-5">SPY +8.89% · capture 25%</div>
-      <div class="text-xs text-zinc-500 mb-1 mono">6 GREEN · 2 RED · 5 FLAT</div>
-      <div class="text-xs text-zinc-500 mono">max DD −0.53%</div>
-    </div>
-    <div class="card p-7">
-      <div class="text-[10px] mono text-zinc-500 mb-2 uppercase tracking-[0.18em]">2026 BULL · NEWS-AWARE</div>
+      <div class="text-[10px] mono text-zinc-500 mb-2 uppercase tracking-[0.18em]">2026 · 3-MONTH BULL</div>
       <div class="num-display text-4xl font-bold mb-1">+1.94%</div>
       <div class="text-sm text-zinc-400 mb-5">SPY +8.89% · capture 22%</div>
       <div class="text-xs text-zinc-500 mb-1 mono">6 GREEN · 2 RED · 5 FLAT</div>
       <div class="text-xs text-zinc-500 mono">max DD −0.07%</div>
     </div>
     <div class="card-elevated p-7 glow" style="border-color: rgba(16,185,129,0.4);">
-      <div class="text-[10px] mono mb-2 uppercase tracking-[0.18em]" style="color: var(--accent);">2022 BEAR · NEWS-AWARE</div>
+      <div class="text-[10px] mono mb-2 uppercase tracking-[0.18em]" style="color: var(--accent);">2026 · 4-WK + FLOOR PATCH</div>
+      <div class="num-display text-4xl font-bold mb-1" style="color: var(--accent);">+1.73%</div>
+      <div class="text-sm text-zinc-200 mb-5">vs SPY same window · <span class="text-emerald-400">3 of 4 weeks green</span></div>
+      <div class="text-xs text-zinc-500 mb-1 mono">REGIME-AWARE DEPLOYMENT</div>
+      <div class="text-xs text-zinc-300 mono">beat baseline by +0.69pp at 4× cost</div>
+    </div>
+    <div class="card-elevated p-7 glow" style="border-color: rgba(16,185,129,0.4);">
+      <div class="text-[10px] mono mb-2 uppercase tracking-[0.18em]" style="color: var(--accent);">2022 · 3-MONTH BEAR</div>
       <div class="num-display text-4xl font-bold mb-1" style="color: var(--accent);">−0.11%</div>
       <div class="text-sm text-zinc-200 mb-5">SPY <span class="text-zinc-400">−7.69%</span> · <span class="text-emerald-400">+7.58pp</span></div>
       <div class="text-xs text-zinc-500 mb-1 mono">4 GREEN · 2 RED · 8 FLAT</div>
       <div class="text-xs text-zinc-300 mono">max DD −0.21%</div>
+    </div>
+  </div>
+
+  <!-- A/B comparison: this is the new piece -->
+  <div class="card p-7 mb-16">
+    <div class="flex items-center justify-between mb-5">
+      <div>
+        <div class="font-semibold tracking-tight">Latest A/B: which architecture wins?</div>
+        <div class="text-xs text-zinc-500 mono mt-0.5">4-week window, Apr 27 — May 22 2026, $10k fresh start, same watchlist</div>
+      </div>
+      <span class="px-2.5 py-1 rounded-full text-[10px] mono font-medium" style="background: rgba(16,185,129,0.1); color: var(--accent);">PRODUCTION CHOICE</span>
+    </div>
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-[10px] mono uppercase tracking-[0.15em] text-zinc-500">
+          <th class="text-left pb-3 font-medium">Architecture</th>
+          <th class="text-right pb-3 font-medium">Return</th>
+          <th class="text-right pb-3 font-medium">G / R / F</th>
+          <th class="text-right pb-3 font-medium">Output tokens</th>
+          <th class="text-right pb-3 font-medium">Cost</th>
+        </tr>
+      </thead>
+      <tbody class="num-display">
+        <tr class="border-t border-zinc-900">
+          <td class="py-3 text-zinc-400">Baseline single-agent</td>
+          <td class="text-right text-zinc-300">+1.04%</td>
+          <td class="text-right text-zinc-500 mono text-xs">4/0/0</td>
+          <td class="text-right text-zinc-500 mono">~21K</td>
+          <td class="text-right text-zinc-500 mono">$1</td>
+        </tr>
+        <tr class="border-t border-zinc-900" style="background: rgba(16,185,129,0.04);">
+          <td class="py-3 font-semibold" style="color: var(--accent);">Single + regime-floor patch ⭐</td>
+          <td class="text-right font-bold" style="color: var(--accent);">+1.73%</td>
+          <td class="text-right text-zinc-300 mono text-xs">3/1/0</td>
+          <td class="text-right text-zinc-300 mono">48K</td>
+          <td class="text-right text-zinc-300 mono">$4</td>
+        </tr>
+        <tr class="border-t border-zinc-900">
+          <td class="py-3 text-zinc-500">Multi-agent v1 (TradingAgents debate)</td>
+          <td class="text-right text-red-400">−0.07%</td>
+          <td class="text-right text-zinc-500 mono text-xs">2/1/1</td>
+          <td class="text-right text-zinc-500 mono">215K</td>
+          <td class="text-right text-zinc-500 mono">$17</td>
+        </tr>
+        <tr class="border-t border-zinc-900">
+          <td class="py-3 text-zinc-500">Multi-agent v2 (debate + floor)</td>
+          <td class="text-right text-red-400">−0.49%</td>
+          <td class="text-right text-zinc-500 mono text-xs">2/2/0</td>
+          <td class="text-right text-zinc-500 mono">255K</td>
+          <td class="text-right text-zinc-500 mono">$18</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="mt-5 text-xs text-zinc-500 leading-relaxed border-t border-zinc-900 pt-4">
+      The winning configuration is the simplest one: a single Claude call with
+      the regime-implied deployment floor as a forcing function. Multi-agent
+      debate hurt the under-deployment bug; the floor patch fixed it. Cost
+      matters: at 4× baseline / ¼ multi-agent, this is the cleanest win.
     </div>
   </div>
 

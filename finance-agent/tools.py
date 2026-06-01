@@ -5,6 +5,7 @@ from anthropic import beta_tool
 
 import analogs as ana
 import clock
+import filings
 import journal
 import kelly as kly
 import market_data
@@ -457,6 +458,45 @@ def options_flow_for_ticker(symbol: str, max_expiries: int = 6) -> dict:
 
 
 @_json_tool
+def read_filing(symbol: str, form_type: str, question: str) -> dict:
+    """Load a company's most recent 10-K, 10-Q, 8-K, or DEF 14A from SEC
+    EDGAR into Claude's long context window (1M tokens, cached) and answer
+    a SPECIFIC question about it. Use for fundamentals due diligence on
+    any name you're sizing into. Costs ~$0.10-0.30 per call (cached after
+    first hit per filing).
+
+    Args:
+        symbol: Ticker, e.g. NVDA, AAPL, PLTR.
+        form_type: 10-K, 10-Q, 8-K, DEF 14A.
+        question: Specific question — e.g. "What does management say about
+            China revenue exposure?" or "List all named risk factors with
+            section references."
+    """
+    if not symbol or not form_type or not question:
+        return {"error": "symbol, form_type, and question are all required"}
+    try:
+        return filings.analyze_filing(symbol, form_type, question)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@_json_tool
+def list_company_filings(symbol: str, form_type: str = "10-K", limit: int = 5) -> dict:
+    """List recent SEC EDGAR filings of a given type for a ticker.
+    Useful when you want to know how recent the filing is before reading it.
+
+    Args:
+        symbol: Ticker.
+        form_type: 10-K, 10-Q, 8-K, DEF 14A.
+        limit: Max number of filings to return (default 5).
+    """
+    try:
+        return {"filings": filings.list_filings(symbol, form_type=form_type, limit=limit)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@_json_tool
 def deep_research(question: str) -> dict:
     """Run a multi-hop deep research task via parallel.ai (slower than search,
     much better when you need to understand a thematic catalyst, validate a
@@ -484,6 +524,8 @@ TICK_TOOLS = [
     search_prediction_markets,
     scan_unusual_options_flow,
     options_flow_for_ticker,
+    read_filing,
+    list_company_filings,
     deep_research,
     market_analogs,
     journal_analogs,

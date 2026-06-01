@@ -155,6 +155,27 @@ def cmd_monitors_delete(args: argparse.Namespace) -> None:
             print(f"{name}: delete returned {code}")
 
 
+def cmd_flow_snapshot(args: argparse.Namespace) -> None:
+    import flow_validator
+    watchlist = [s.strip().upper() for s in args.watchlist.split(",") if s.strip()]
+    result = flow_validator.daily_snapshot(
+        watchlist,
+        min_volume=args.min_volume,
+        min_notional=args.min_notional,
+    )
+    print(json.dumps(result, indent=2, default=str))
+
+
+def cmd_flow_evaluate(args: argparse.Namespace) -> None:
+    import flow_validator
+    result = flow_validator.evaluate_flags(days_ago=args.days_ago)
+    print(json.dumps({k: v for k, v in result.items() if k != "by_contract"}, indent=2))
+    if args.verbose and "by_contract" in result:
+        print("\nBy contract:")
+        for c in result["by_contract"][:30]:
+            print(f"  {c}")
+
+
 def cmd_index_news(args: argparse.Namespace) -> None:
     import news_index
     start = date.fromisoformat(args.start)
@@ -237,6 +258,20 @@ def main() -> None:
     p_mdel = sub.add_parser("monitors-delete", help="Delete monitor(s) by registry name.")
     p_mdel.add_argument("names", nargs="+")
     p_mdel.set_defaults(func=cmd_monitors_delete)
+
+    p_fs = sub.add_parser("flow-snapshot",
+                          help="Snapshot today's option chains + flag unusual activity (run daily via cron).")
+    p_fs.add_argument("--watchlist", type=str,
+                      default="SPY,QQQ,AAPL,MSFT,NVDA,GOOGL,META,AMZN,TSLA,AMD")
+    p_fs.add_argument("--min-volume", type=int, default=1000)
+    p_fs.add_argument("--min-notional", type=float, default=100_000)
+    p_fs.set_defaults(func=cmd_flow_snapshot)
+
+    p_fe = sub.add_parser("flow-evaluate",
+                          help="Evaluate prior days' flagged contracts — hit rate, avg return.")
+    p_fe.add_argument("--days-ago", type=int, default=5)
+    p_fe.add_argument("--verbose", action="store_true")
+    p_fe.set_defaults(func=cmd_flow_evaluate)
 
     p_idx = sub.add_parser("index-news",
                            help="Pre-fetch historical news from parallel.ai for backtest dates.")
