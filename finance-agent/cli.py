@@ -60,8 +60,12 @@ def cmd_status(_: argparse.Namespace) -> None:
     }, indent=2))
 
 
-def cmd_tick(_: argparse.Namespace) -> None:
-    result = agent.run_tick()
+def cmd_tick(args: argparse.Namespace) -> None:
+    if args.multiagent:
+        import multiagent
+        result = multiagent.run_tick_multiagent(debate_rounds=args.debate_rounds)
+    else:
+        result = agent.run_tick()
     print(json.dumps(result, indent=2, default=str))
 
 
@@ -101,6 +105,54 @@ def cmd_loop(args: argparse.Namespace) -> None:
 def cmd_weekly_close(_: argparse.Namespace) -> None:
     result = agent.run_weekly_close()
     print(json.dumps(result, indent=2, default=str))
+
+
+def cmd_monitors_setup(args: argparse.Namespace) -> None:
+    import monitors
+    out = monitors.setup_standard_monitors(dry_run=args.dry_run)
+    print(json.dumps(out, indent=2))
+
+
+def cmd_monitors_list(_: argparse.Namespace) -> None:
+    import monitors
+    remote = monitors.list_monitors_remote()
+    local = monitors._load_registry()
+    print(json.dumps({"remote_count": len(remote), "local_registry": local,
+                      "remote": [{"id": m.get("monitor_id") or m.get("id"),
+                                  "name": (m.get("metadata") or {}).get("name"),
+                                  "query": (m.get("settings") or {}).get("query", "")[:120],
+                                  "frequency": m.get("frequency"),
+                                  "status": m.get("status")}
+                                 for m in remote]}, indent=2))
+
+
+def cmd_monitors_poll(_: argparse.Namespace) -> None:
+    import monitors
+    events = monitors.poll_all_recent(max_events_per_monitor=10)
+    total = sum(len(v) if isinstance(v, list) else 0 for v in events.values())
+    print(f"Polled {len(events)} monitors, {total} events total\n")
+    for name, evs in events.items():
+        non_completion = [e for e in evs if isinstance(e, dict) and e.get("event_type") != "completion"]
+        print(f"  {name}: {len(evs)} events ({len(non_completion)} non-completion)")
+    print()
+    print(json.dumps(events, indent=2, default=str)[:8000])
+
+
+def cmd_monitors_delete(args: argparse.Namespace) -> None:
+    import monitors
+    for name in args.names:
+        reg = monitors._load_registry()
+        if name not in reg:
+            print(f"{name}: not in registry")
+            continue
+        mid = reg[name]["monitor_id"]
+        code = monitors.delete_monitor(mid)
+        if code in (200, 204):
+            del reg[name]
+            monitors._save_registry(reg)
+            print(f"{name}: deleted ({mid})")
+        else:
+            print(f"{name}: delete returned {code}")
 
 
 def cmd_index_news(args: argparse.Namespace) -> None:
@@ -156,6 +208,10 @@ def main() -> None:
     p_status.set_defaults(func=cmd_status)
 
     p_tick = sub.add_parser("tick", help="Run one agent tick.")
+    p_tick.add_argument("--multiagent", action="store_true",
+                        help="Use the TradingAgents-style multi-agent debate pipeline.")
+    p_tick.add_argument("--debate-rounds", type=int, default=1,
+                        help="Number of bull/bear debate cycles (multiagent only).")
     p_tick.set_defaults(func=cmd_tick)
 
     p_loop = sub.add_parser("loop", help="Run the intraday loop.")
@@ -165,6 +221,21 @@ def main() -> None:
 
     p_close = sub.add_parser("weekly-close", help="Run the weekly retrospective + playbook rewrite.")
     p_close.set_defaults(func=cmd_weekly_close)
+
+    p_msetup = sub.add_parser("monitors-setup",
+                              help="Create the standard set of parallel.ai monitors.")
+    p_msetup.add_argument("--dry-run", action="store_true")
+    p_msetup.set_defaults(func=cmd_monitors_setup)
+
+    p_mlist = sub.add_parser("monitors-list", help="List active monitors (remote + local registry).")
+    p_mlist.set_defaults(func=cmd_monitors_list)
+
+    p_mpoll = sub.add_parser("monitors-poll", help="Poll all monitors for recent events.")
+    p_mpoll.set_defaults(func=cmd_monitors_poll)
+
+    p_mdel = sub.add_parser("monitors-delete", help="Delete monitor(s) by registry name.")
+    p_mdel.add_argument("names", nargs="+")
+    p_mdel.set_defaults(func=cmd_monitors_delete)
 
     p_idx = sub.add_parser("index-news",
                            help="Pre-fetch historical news from parallel.ai for backtest dates.")

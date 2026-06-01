@@ -3,14 +3,20 @@ import json
 
 from anthropic import beta_tool
 
+import analogs as ana
 import clock
 import journal
+import kelly as kly
 import market_data
+import monitors as mon
 import news_index
 import playbook
 import portfolio as pf
+import prediction_markets as pmkt
+import reflexion
 import research
 import risk
+import tasks
 
 
 def _quotes_for(state: pf.State) -> dict[str, float]:
@@ -273,12 +279,161 @@ def rewrite_playbook(content: str) -> dict:
     return {"ok": True, "bytes_written": len(content)}
 
 
+@_json_tool
+def get_realtime_alerts(limit_per_monitor: int = 5) -> dict:
+    """Poll all configured parallel.ai monitors for recently-detected events.
+    Each monitor is a standing NL query (e.g. "Pentagon procurement news",
+    "Trump statements naming stocks") that fires when material changes are
+    detected. This is the agent's real-time situational awareness — use it at
+    the start of every tick BEFORE deciding. Disabled in backtest mode.
+
+    Args:
+        limit_per_monitor: How many recent events to return per monitor (1-20).
+    """
+    if clock.is_simulated():
+        return {"error": "monitors disabled in backtest mode — see scan_macro_and_policy"}
+    try:
+        return mon.poll_all_recent(max_events_per_monitor=min(limit_per_monitor, 20))
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@_json_tool
+def kelly_size_proposal(
+    win_probability: float,
+    avg_win_return_pct: float,
+    avg_loss_return_pct: float,
+    confidence: int,
+    price: float,
+    current_position_value: float = 0.0,
+    fractional_kelly: float = 0.25,
+) -> dict:
+    """Compute an edge-aware position size using fractional Kelly.
+
+    Replaces fixed-% sizing in the playbook with a sizing prescription based
+    on the trader's explicit edge estimate. Use this BEFORE placing an order
+    when you can articulate the expected win probability and win/loss ratio.
+
+    Args:
+        win_probability: 0-1, your estimate of the trade winning.
+        avg_win_return_pct: e.g. 0.08 for a target +8% win.
+        avg_loss_return_pct: e.g. -0.04 for a -4% stop.
+        confidence: 1-5, how strong is the setup; scales the fractional Kelly.
+        price: current entry price for the symbol.
+        current_position_value: $ already in this name (0 if new).
+        fractional_kelly: default 0.25 (quarter-Kelly) for tail safety.
+    """
+    state = pf.load()
+    quotes = market_data.quotes(list(state.watchlist) + list(state.positions.keys()))
+    nav = pf.market_value(state, quotes)
+    edge = kly.EdgeEstimate(
+        win_prob=win_probability,
+        avg_win_return=avg_win_return_pct,
+        avg_loss_return=avg_loss_return_pct,
+        confidence=confidence,
+    )
+    return kly.kelly_position_size(nav, edge, price, current_position_value, fractional_kelly)
+
+
+@_json_tool
+def journal_analogs(keywords: list[str], max_entries: int = 5) -> dict:
+    """Retrieve past journal entries that match given keywords. Use to find
+    your own prior decisions in similar setups before acting now.
+
+    Args:
+        keywords: List of terms to filter on (e.g. ["NVDA", "scout", "earnings"]).
+        max_entries: How many most-recent matches to return.
+    """
+    return {"entries": ana.journal_analogs(keywords, n=max_entries)}
+
+
+@_json_tool
+def market_analogs(setup_description: str) -> dict:
+    """Find historical market analogs to the current setup via web research.
+    Returns prior dated episodes that look similar with their subsequent
+    outcomes. Use to inform regime / catalyst calls.
+
+    Args:
+        setup_description: Specific characterization of current setup,
+            e.g. "Fed paused after 75bp hike, CPI still above 3%, SPY near
+            6mo high, yield curve steepening".
+    """
+    if clock.is_simulated():
+        return {"error": "market_analogs disabled in backtest (would look up real-world data after the simulated date)"}
+    return ana.market_analogs(setup_description, max_results=5)
+
+
+@_json_tool
+def recent_reflections(n: int = 5) -> dict:
+    """Read the most recent Reflexion entries — the tight-loop per-trade
+    self-critiques from prior closed positions. Read these before any new
+    entry to avoid repeating recent mistakes.
+    """
+    return {"reflections": reflexion.recent(n=n)}
+
+
+@_json_tool
+def get_prediction_market_priors(category: str = "all") -> dict:
+    """Pull live implied probabilities from Kalshi prediction markets for
+    upcoming economic catalysts. These are real-money bets — the prices are
+    calibrated forecasts you can use as priors before deciding on a trade.
+
+    Categories: fed_rates | cpi | rates | tariffs | trump_policy | macro | all
+
+    Use this BEFORE the macro analyst's regime call, before any rates-sensitive
+    trade, or before an earnings-cluster week. Example: if the market is
+    pricing a 65% probability of CPI > 3.5%, that's a real risk-off signal
+    that should temper any new long.
+    """
+    if clock.is_simulated():
+        return {"error": "prediction market priors disabled in backtest (would leak forward info)"}
+    return {"markets": pmkt.get_economic_priors(category=category)}
+
+
+@_json_tool
+def search_prediction_markets(keyword: str) -> dict:
+    """Free-text search across Kalshi prediction markets. Use for niche topics
+    (specific election outcomes, named policy actions, geopolitical events).
+
+    Args:
+        keyword: e.g. "Trump tariff", "Powell replacement", "recession 2026".
+    """
+    if clock.is_simulated():
+        return {"error": "prediction market search disabled in backtest"}
+    return {"markets": pmkt.search_markets(keyword, limit=15)}
+
+
+@_json_tool
+def deep_research(question: str) -> dict:
+    """Run a multi-hop deep research task via parallel.ai (slower than search,
+    much better when you need to understand a thematic catalyst, validate a
+    flow signal, or build a thesis from scratch). Returns cited research.
+    Disabled in backtest mode. Blocks ~30-120s.
+
+    Args:
+        question: Specific research objective, e.g. "What's the recent
+            Pentagon stance on small-cap drone makers and which tickers are
+            most exposed?" or "Catalyst behind UMAC's options flow today."
+    """
+    if clock.is_simulated():
+        return {"error": "deep_research disabled in backtest mode"}
+    return tasks.deep_research(question, processor="base", timeout=300)
+
+
 TICK_TOOLS = [
     get_portfolio_snapshot,
     get_quote,
     get_history,
     search_news,
     scan_macro_and_policy,
+    get_realtime_alerts,
+    get_prediction_market_priors,
+    search_prediction_markets,
+    deep_research,
+    market_analogs,
+    journal_analogs,
+    recent_reflections,
+    kelly_size_proposal,
     place_order,
     cancel_order,
     add_journal_note,
