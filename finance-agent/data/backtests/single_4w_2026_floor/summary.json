@@ -1,0 +1,73 @@
+{
+  "run_id": "single_4w_2026_floor",
+  "start": "2026-04-27",
+  "end": "2026-05-22",
+  "trading_days": 20,
+  "starting_cash": 10000.0,
+  "final_value": 10172.61,
+  "total_return": 0.0173,
+  "weekly_marks": [
+    {
+      "week_start": "2026-04-27",
+      "week_end": "2026-05-01",
+      "start_value": 10000.0,
+      "end_value": 10024.59,
+      "weekly_return": 0.0025,
+      "summary": "### Weekly summary for operator\n\nClosed the week +$24.59 (+0.25%) on a $10,000 book \u2014 green, but only barely participating. Held 2 positions: SPY 2.4 sh (+1.1%) and QQQ 1.0 sh (+1.0%), with 76% cash. The week's setup was stacked-binary (FOMC 4/29 + MSFT/META/AAPL/AMZN earnings cluster), so the small initial scout (7% pre-FOMC) was correct risk management \u2014 META/MSFT got punished post-print and we sidestepped. Two good adds (SPY post-FOMC, QQQ on 4/30) lifted deployment from 7% \u2192 24%. **The recurring failure is the same as prior weeks: ended Friday at ATH in a confirmed wk\u22653 TREND-UP still under the 25% floor, with \"plan to add Monday\" deferrals.** Playbook now has explicit floor-enforcement language, sequencing rules (fill existing positions before scouting new ones), and a retired \"wait for confirmation next week\" phrasing that has been the under-deployment tell. Going into 5/4, bias is to lift to 30\u201335% deployed in SPY/QQQ by mid-week, trim if NFP risk builds Thu. Watchlist suggestions: add IWM/XLF/XLE for breadth, deprioritize TSLA/AMD.",
+      "duration_sec": 83.8
+    },
+    {
+      "week_start": "2026-05-04",
+      "week_end": "2026-05-08",
+      "start_value": 10016.98,
+      "end_value": 10140.75,
+      "weekly_return": 0.0124,
+      "summary": "### Weekly summary for operator\n\nClosed +$116.16 (+1.16%) on a $10,024.59 starting NAV \u2014 best weekly print to date, NAV $10,140.75. Two positions did the work: SPY 2.4 sh +3.4% and QQQ 2.0 sh +6.1%. Deployment 31.5% (above wk\u22653 floor of 25%); cash 68.5%. **The week's wins were process wins:** Monday QQQ add @ $672.88 lifted us above the floor on day 1, then we held discipline through NFP \u2014 no adds, no chases, no single names. NFP came in strong, market absorbed it, both ETFs closed at ATH. **The week's miss is the same one as the prior two weeks, dressed differently:** Monday plan said \"optionally add SPY tranche Tue/Wed to push to 38%\" \u2014 tape was constructive, VIX dropped, breadth confirmed, and we still didn't pull the trigger; then on Friday cited a 10-day-old Iran headline as the fresh reason to defer. SPY ran from $720 to $737 without us. Playbook now retires \"plan to add Monday\" language, adds an upper-deployment-target Wed revisit rule, and bans persistent-overhang excuses unless there's an actual same-session catalyst. Next week is a binary: **Powell's term as Fed Chair expires 5/15** \u2014 full trade tree journaled. Default stance: hold current 31.5% through 5/15, then add to ~40% on a market-friendly resolution or trim on a politicized pick. Watchlist updated to add XLF/IWM/XLE/TLT and finally retire TSLA/AMD from the active list.",
+      "duration_sec": 100.4
+    },
+    {
+      "week_start": "2026-05-11",
+      "week_end": "2026-05-15",
+      "start_value": 10148.9,
+      "end_value": 10139.87,
+      "weekly_return": -0.0009,
+      "summary": "### Weekly summary for operator\n\nClosed the week **flat: \u2212$0.88 (\u22120.01%)** on a $10,140.75 starting NAV; NAV $10,139.87, lifetime +1.40%. Zero trades all week, by design. This was a stacked-binary week \u2014 CPI hot (3.8%), PPI shock (6.0% YoY, multi-year high), and Powell resigned as Fed Chair Friday 5/15 with successor unnamed. SPY/QQQ printed ATH closes Thu ($748/$720) then sold off \u22121.2/\u22121.5% Fri; both positions ended green (+3.66%/+5.76%) and never tested stops. The hold-through-binary rule worked cleanly. The week's *miss* was failing to bank a partial trim Thu at ATH ahead of a known Fri binary while sitting on +5\u20137% gains \u2014 added a new \"partial-trim into known Friday binary\" heuristic. Also added a new \"TREND-UP but macro regime impaired\" floor row (20% min) for environments where the tape is up but rates/PPI undercut the regime \u2014 that applies now given 6% PPI and long end >5%. Retired the perennial \"if binary resolves cleanly, add to 40%\" branch (un-executed two weeks running) in favor of pre-defined quantitative triggers (\"SPY > $745 + VIX < 17 \u2192 add 1 tranche\"). Watchlist: XLF/TLT/IWM must be quoted by Tue or come off; TSLA/AMD finally removed. Going into 5/18, default stance is hold 31.5% deployed (above impaired floor of 20%), with pre-defined add/trim triggers in the playbook.",
+      "duration_sec": 101.0
+    },
+    {
+      "week_start": "2026-05-18",
+      "week_end": "2026-05-22",
+      "start_value": 10132.52,
+      "end_value": 10172.61,
+      "weekly_return": 0.004,
+      "summary": "### Weekly summary for operator\n\nClosed +$31.86 (+0.31%) on a $10,140.75 starting NAV \u2014 NAV $10,172.61, lifetime +1.73%. **Zero trades**, by design. SPY +0.94% / QQQ +1.65% on the week, both positions ended +4.57% / +7.05% open. The V-shape Mon dip (SPY $731 / QQQ $695 on 10Y 4.13% + Iran headline) was held cleanly without testing stops, then mid-week oil plunge + NVDA beat + Powell-final-FOMC drove tape to fresh Fri highs. Three process wins: (1) passed on the QQQ partial-trim into NVDA earnings after thinking through low bar / fresh macro tailwind \u2014 print was positive; (2) held the V-shape without panic-trimming; (3) finally killed XLF/TLT/IWM from the watchlist after confirming no harness data. The miss is the same one we keep re-discovering: a +0.31% NAV print on a +0.94% SPY week is exactly what 31.7% deployment buys you, and we sat at the bottom of the discretionary band (20\u201335%) all week despite a confirmed trend, no binary, and VIX-equivalent low. The $745 add-trigger fired Friday \u2014 we'd written \"Mon only,\" which disqualified it. Playbook now widens the add window to Mon\u2013Thu, adds a bottom-of-band forcing rule (must add by Wed if still at the bottom third with constructive tape), and adds an instant-availability test for new watchlist names. Going into 5/25, default stance is hold 31.7% with explicit add gates at SPY > $750 or Wed-close still-at-bottom-of-band; trim gates at SPY < $720 or 10Y > 4.65% sustained.",
+      "duration_sec": 104.3
+    }
+  ],
+  "green_weeks": 3,
+  "red_weeks": 1,
+  "flat_weeks": 0,
+  "best_week": {
+    "week_start": "2026-05-04",
+    "week_end": "2026-05-08",
+    "start_value": 10016.98,
+    "end_value": 10140.75,
+    "weekly_return": 0.0124,
+    "summary": "### Weekly summary for operator\n\nClosed +$116.16 (+1.16%) on a $10,024.59 starting NAV \u2014 best weekly print to date, NAV $10,140.75. Two positions did the work: SPY 2.4 sh +3.4% and QQQ 2.0 sh +6.1%. Deployment 31.5% (above wk\u22653 floor of 25%); cash 68.5%. **The week's wins were process wins:** Monday QQQ add @ $672.88 lifted us above the floor on day 1, then we held discipline through NFP \u2014 no adds, no chases, no single names. NFP came in strong, market absorbed it, both ETFs closed at ATH. **The week's miss is the same one as the prior two weeks, dressed differently:** Monday plan said \"optionally add SPY tranche Tue/Wed to push to 38%\" \u2014 tape was constructive, VIX dropped, breadth confirmed, and we still didn't pull the trigger; then on Friday cited a 10-day-old Iran headline as the fresh reason to defer. SPY ran from $720 to $737 without us. Playbook now retires \"plan to add Monday\" language, adds an upper-deployment-target Wed revisit rule, and bans persistent-overhang excuses unless there's an actual same-session catalyst. Next week is a binary: **Powell's term as Fed Chair expires 5/15** \u2014 full trade tree journaled. Default stance: hold current 31.5% through 5/15, then add to ~40% on a market-friendly resolution or trim on a politicized pick. Watchlist updated to add XLF/IWM/XLE/TLT and finally retire TSLA/AMD from the active list.",
+    "duration_sec": 100.4
+  },
+  "worst_week": {
+    "week_start": "2026-05-11",
+    "week_end": "2026-05-15",
+    "start_value": 10148.9,
+    "end_value": 10139.87,
+    "weekly_return": -0.0009,
+    "summary": "### Weekly summary for operator\n\nClosed the week **flat: \u2212$0.88 (\u22120.01%)** on a $10,140.75 starting NAV; NAV $10,139.87, lifetime +1.40%. Zero trades all week, by design. This was a stacked-binary week \u2014 CPI hot (3.8%), PPI shock (6.0% YoY, multi-year high), and Powell resigned as Fed Chair Friday 5/15 with successor unnamed. SPY/QQQ printed ATH closes Thu ($748/$720) then sold off \u22121.2/\u22121.5% Fri; both positions ended green (+3.66%/+5.76%) and never tested stops. The hold-through-binary rule worked cleanly. The week's *miss* was failing to bank a partial trim Thu at ATH ahead of a known Fri binary while sitting on +5\u20137% gains \u2014 added a new \"partial-trim into known Friday binary\" heuristic. Also added a new \"TREND-UP but macro regime impaired\" floor row (20% min) for environments where the tape is up but rates/PPI undercut the regime \u2014 that applies now given 6% PPI and long end >5%. Retired the perennial \"if binary resolves cleanly, add to 40%\" branch (un-executed two weeks running) in favor of pre-defined quantitative triggers (\"SPY > $745 + VIX < 17 \u2192 add 1 tranche\"). Watchlist: XLF/TLT/IWM must be quoted by Tue or come off; TSLA/AMD finally removed. Going into 5/18, default stance is hold 31.5% deployed (above impaired floor of 20%), with pre-defined add/trim triggers in the playbook.",
+    "duration_sec": 101.0
+  },
+  "total_tokens": {
+    "input": 506175,
+    "output": 47768,
+    "cache_read": 759106
+  }
+}
