@@ -1,0 +1,19 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "python generate.py && cp landing.html dist/index.html && cp app.html dist/app.html && cp email_weekly.html dist/email-weekly.html",
+  "outputDirectory": "dist",
+  "framework": null,
+  "rewrites": [
+    { "source": "/dashboard", "destination": "/app.html" },
+    { "source": "/email-preview", "destination": "/email-weekly.html" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*).html",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=300, s-maxage=300" },
+        { "key": "Content-Security-Policy", "value": "default-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://fonts.googleapis.com https://fonts.gstatic.com data:; img-src * data:; connect-src *" }
+      ]
+    }
+  ]
+}

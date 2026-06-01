@@ -1,0 +1,18 @@
+[build]
+  command = "python generate.py && cp landing.html dist/index.html && cp app.html dist/app.html && cp email_weekly.html dist/email-weekly.html"
+  publish = "dist"
+
+[[redirects]]
+  from = "/dashboard"
+  to = "/app.html"
+  status = 200
+
+[[redirects]]
+  from = "/email-preview"
+  to = "/email-weekly.html"
+  status = 200
+
+[[headers]]
+  for = "/*.html"
+  [headers.values]
+    Cache-Control = "public, max-age=300, s-maxage=300"

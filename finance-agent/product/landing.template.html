@@ -83,6 +83,18 @@
       <a href="#pricing" class="px-6 py-3 rounded-lg font-semibold" style="background: var(--accent); color: #042f1c;">Start free trial</a>
       <a href="app.html" class="px-6 py-3 rounded-lg border border-zinc-800 hover:border-zinc-700 font-medium">See it live →</a>
     </div>
+
+    <!-- Email capture · works with Formspree (paste your endpoint into action=) -->
+    <form action="https://formspree.io/f/YOUR_FORM_ID" method="POST" class="mt-12 max-w-md flex items-center gap-3">
+      <input type="email" name="email" required placeholder="you@email.com"
+             class="flex-1 px-4 py-3 rounded-lg border border-zinc-800 text-sm focus:border-emerald-500 focus:outline-none"
+             style="background: var(--surface);" />
+      <button type="submit" class="px-5 py-3 rounded-lg font-semibold text-sm whitespace-nowrap" style="background: var(--accent); color: #042f1c;">
+        Get the weekly playbook
+      </button>
+    </form>
+    <p class="text-xs text-zinc-600 mt-3 mono">Free · weekly · unsubscribe any time.</p>
+
     <p class="text-xs text-zinc-600 mt-10 mono">No managed accounts. Not investment advice. Research subscription.</p>
   </div>
 </section>
