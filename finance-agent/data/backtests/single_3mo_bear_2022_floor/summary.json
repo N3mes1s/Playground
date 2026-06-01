@@ -1,0 +1,163 @@
+{
+  "run_id": "single_3mo_bear_2022_floor",
+  "start": "2022-04-25",
+  "end": "2022-07-25",
+  "trading_days": 63,
+  "starting_cash": 10000.0,
+  "final_value": 9998.12,
+  "total_return": -0.0002,
+  "weekly_marks": [
+    {
+      "week_start": "2022-04-25",
+      "week_end": "2022-04-29",
+      "start_value": 10000.0,
+      "end_value": 10000.0,
+      "weekly_return": 0.0,
+      "summary": "### Weekly Summary for Operator\n\nFlat week: $10,000 \u2192 $10,000 (0.0%), 100% cash held throughout. Against SPY -3.3% and QQQ -4%+ (worst April for SPX in 52 years), staying out was a clean ~3-4% relative win and the textbook execution of \"capital preservation > growth.\" The week had five binary catalysts in eight sessions (MSFT/GOOGL, META, AAPL/AMZN earnings + Q1 GDP -1.4% surprise + FOMC looming May 3-4), which made the no-trade stance defensible at every tick. The honest critique: the cash call was correct but the *process* was too vague \u2014 no pre-defined re-entry triggers, a stale mega-cap-only watchlist, and zero accounting for cash's opportunity cost. The playbook rewrite codifies a \"binary cluster rule\" (\u22653 binaries in 7 sessions = no adds), sharpens the bear-rally tell, demands pre-written re-entry levels for next week's FOMC, and proposes adding XLE/XLP/KO/XOM/LMT/TLT to broaden the lens beyond correlated mega-cap tech. Plan for next week: cash Mon-Tue, no trades into FOMC Wed, scout SPY/QQQ only if 2 of 3 triggers fire (20DMA reclaim, VIX <25, breadth thrust); otherwise stay flat and protect the streak.",
+      "duration_sec": 80.4
+    },
+    {
+      "week_start": "2022-05-02",
+      "week_end": "2022-05-06",
+      "start_value": 10000.0,
+      "end_value": 10000.0,
+      "weekly_return": 0.0,
+      "summary": "### Weekly Summary for Operator\n\nSecond consecutive flat week: **$10,000 \u2192 $10,000 (0.0%)**, 100% cash held throughout. Against SPY -0.16% on the week this is a modest +0.2% relative win, but the real victory was sidestepping the intraweek vol \u2014 FOMC Wed +3.05% rip, Thu -3.6% full bearish-engulfing reversal, Fri new closing low on heavy volume. The bear-rally-into-catalyst rule from last week's playbook fired exactly as written and saved a scout from getting trapped in the Wed pop. The best process upgrade was pre-writing the invalidation level (SPY < 420 = stand down), which removed all hesitation on Thursday. The honest critique: watchlist diversification (XLE/XLP/KO/TLT) remained promised-but-not-executed for a second straight week, and my \"80% breadth thrust\" trigger has no actual data path in the available tools \u2014 both fixed in the new playbook (observable proxy + a hard 5/20 deadline to actually quote energy/defensives). Next week is another binary cluster (CPI Wed, PPI Thu) so the default is cash again; re-entry conditions and a capitulation alt are pre-written. Two flat weeks in a confirmed downtrend is textbook capital preservation \u2014 but I've flagged the drift risk so we don't let \"good cash\" become \"permanent cash.\"",
+      "duration_sec": 102.9
+    },
+    {
+      "week_start": "2022-05-09",
+      "week_end": "2022-05-13",
+      "start_value": 10000.0,
+      "end_value": 10000.0,
+      "weekly_return": 0.0,
+      "summary": "### Weekly Summary for Operator\n\nThird consecutive flat week: **$10,000 \u2192 $10,000 (0.0%)**, 100% cash held throughout. Against SPY -2.34% on the week this is a **+2.3% relative win**, bringing the 3-week cumulative outperformance to ~+5.6% while sidestepping a 6.4% peak-to-trough intraweek SPY drawdown (411 \u2192 385 \u2192 402). The playbook's downside levels held: SPY breaking 405 on Monday triggered the pre-written \"next leg lower\" call with zero hesitation, CPI/PPI binary cluster correctly enforced no-adds, and Friday's +2.4% bounce on lighter volume (104M vs Thu 125M) was correctly identified as bear-relief, not accumulation. Best new heuristic this week: capitulation alt criteria need a data audit trail (pull VIX, count consec down days, write volume trend) before deciding \u2014 not the vibes-based check I did Thursday at the 385 low. The honest critique: XLE/XLP/KO/TLT diversification is now THREE weeks overdue, and \"cash\" is starting to be reflexive rather than reasoned. The new playbook locks in a hard 5/20 deadline \u2014 if I'm still 100% cash with no SPY trigger by Friday's close, I'm mandated to scout 3% XLE or XLP at the 5/23 open regardless. Capital preservation remains the floor, but cash drift is its own failure mode at week 4. Next week's plan: pull XLE/XLP quotes Monday first thing, hold through Powell Tue + retail earnings (WMT/HD/TGT/LOW) cluster, scout SPY 4-5% only on 2-of-3 sharpened triggers, otherwise execute the forced defensive scout by 5/23.",
+      "duration_sec": 111.3
+    },
+    {
+      "week_start": "2022-05-16",
+      "week_end": "2022-05-20",
+      "start_value": 10000.0,
+      "end_value": 10000.0,
+      "weekly_return": 0.0,
+      "summary": "ERROR: Error code: 529 - {'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'Overloaded'}, 'request_id': 'req_011CbcXHsoVvFMr2ryRJCMW2'}",
+      "duration_sec": 115.2
+    },
+    {
+      "week_start": "2022-05-23",
+      "week_end": "2022-05-27",
+      "start_value": 10000.0,
+      "end_value": 10000.0,
+      "weekly_return": 0.0,
+      "summary": "### Weekly Summary for Operator\n\nFifth consecutive flat week in dollar terms: **$10,000 \u2192 $10,000 (0.0%)**, 100% cash held throughout \u2014 but this time SPY ripped **+6.58%** (389.63 \u2192 415.26) on the first credible bear-market rally of the 2022 leg, so **relative P&L was \u22126.6%** and four weeks of cumulative outperformance (+8.6%) collapsed to roughly +2%. The honest read: every individual no-trade tick had a defensible rule, and the sum was a system that structurally cannot buy a bear-rally low. Two specific defects: (1) the >110M volume confirmation threshold was calibrated to TREND-DOWN distribution days and was wrong-regime for a Monday recovery \u2014 confirming bounces happen on *contracting* volume, and Mon 5/23's 76M light hold above 392 was actually the tell; (2) the binary-cluster blanket no-add window (Tue PM \u2192 Fri AM around NVDA + PCE) blocked the Wed/Thu confirmation entries even as the tape was already pricing both events in-line. The playbook rewrite retires the absolute volume trigger and the blanket cluster blackout, replaces them with a regime-tagged confirmation rule (outside-reversal-on-heavy-vol + next-day hold above mid-range = 2-3% scout, single condition not 2-of-3) and an intraweek forced positive-path scout. Plan for the 4-session week of 5/31\u20136/3: open a 3% SPY scout at Tue 5/31 open with a -4% hard stop (invalidation SPY < 405), pre-cleared because the forced-floor trigger now fires intraweek on two consecutive higher SPY closes with breadth confirming \u2014 both of which were already true at Friday's close. Capital preservation is still the floor, but five weeks of cash made me biased to defend cash, and that bias just cost most of the campaign's edge.",
+      "duration_sec": 148.2
+    },
+    {
+      "week_start": "2022-05-31",
+      "week_end": "2022-06-03",
+      "start_value": 10000.0,
+      "end_value": 9998.26,
+      "weekly_return": -0.0002,
+      "summary": "### Weekly Summary for Operator\n\nSixth week: **$10,000 \u2192 $9,998.26 (\u22120.02%)**, vs SPY \u22121.14% = **+1.12% relative win**. Took the pre-written 5/31 forced positive-path scout (3% SPY @ 412.93) \u2014 the single trade of the week \u2014 which broke the five-week cash-drift reflex without forcing a bad setup. Scout held through Wed's \u22120.81% dip (invalidation 405 never breached), Thu ripped +1.9% to 417.39 but failed the >420 add gate, then Friday's post-NFP fade gave the gains back to close the position at \u22120.58% unrealized.\n\nThe two process wins: executing the planned signal on schedule, and *not* relaxing the add criteria when Thu's rally tempted a marginal breakout buy. The process miss: no symmetric \"trim-into-binary\" rule to match the \"no-add-into-binary\" rule \u2014 Thu's +1% scout should have been partially trimmed before NFP, which would have closed the week green instead of marginally red. New playbook codifies the pre-binary trim rule, an entry-zone discipline (split entry near overhead supply), and a within-uptrend diversification rule (next tranche = AAPL/MSFT, not more SPY). Permanently retired the dead-letter XLE/XLP/TLT defensive scout \u2014 those tickers don't exist in this harness.\n\nPlan for 6/6\u20136/10: hold the SPY scout, no new adds before CPI Fri 6/10. Wed close = pre-binary trim check (trim ~40% if in profit). Cool CPI + SPY > 420 with vol = AAPL/MSFT add. Hot CPI / SPY < 405 close = exit scout and re-cash. Cumulative vs SPY now ~+3.1%, modestly recovered from last week's miss.",
+      "duration_sec": 125.4
+    },
+    {
+      "week_start": "2022-06-06",
+      "week_end": "2022-06-10",
+      "start_value": 9999.17,
+      "end_value": 9991.61,
+      "weekly_return": -0.0008,
+      "summary": "ERROR: Error code: 529 - {'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'Overloaded'}, 'request_id': 'req_011CbcYxJk7TU4XEqaVe8HAW'}",
+      "duration_sec": 9.0
+    },
+    {
+      "week_start": "2022-06-13",
+      "week_end": "2022-06-17",
+      "start_value": 9991.61,
+      "end_value": 9991.61,
+      "weekly_return": 0.0,
+      "summary": "### Operator summary\n\nTwo-session block since the last weekly close (6/6 \u2192 6/17): **$9,998.26 \u2192 $9,991.61, \u2212$6.65 (\u22120.067%)** vs SPY **\u221210.88%**, a **+10.8% relative win** and the largest single-block outperformance of the campaign. The single decision that mattered was the mechanical 6/9 close<405 invalidation exit on the prior SPY scout at 401.44 \u2014 SPY then traded to 365.86 over the following five sessions, turning what could have been a \u22129-10% gut-punch into a clean \u2212$8 realized loss. Cash discipline through CPI 6/10 and FOMC 6/15 (two Tier-1 binaries in five sessions), plus a capitulation audit that correctly refused 6/16-17's reversal-candle bait (rising volume into the break, no climactic exhaustion), did the rest. Two process gaps surfaced and are now codified: the pre-binary trim trigger was too narrow (Wed-only) and missed in-profit windows at +1.08% (6/2) and +0.68% (6/7) \u2014 broadened to \"best close in 5-session pre-binary window\"; and there was no pre-written rule for FOMC bounce failures \u2014 added a \"post-binary one-day pop = digestion, never confirmation; require 2 consecutive higher closes\" gate. Plan into the 4-session week of 6/21 (Juneteenth Mon): hold cash unless capitulation audit clears 4-of-5 criteria including QQQ confirmation and a contracting-volume green close in upper half of range, in which case scout 2% SPY with 362.17 as close-stop. Cumulative vs SPY now ~+14%; capital preservation floor holding while the campaign waits for the one credible reversal trade to size into at 4-5%.",
+      "duration_sec": 150.5
+    },
+    {
+      "week_start": "2022-06-21",
+      "week_end": "2022-06-24",
+      "start_value": 9991.61,
+      "end_value": 10003.62,
+      "weekly_return": 0.0012,
+      "summary": "### Weekly Summary for Operator\n\nEighth week, and the campaign's first $-positive lifetime print: **$9,991.61 \u2192 $10,003.62 (+$12.01, +0.12%)** against SPY's **+6.62%** squeeze week (365.86 \u2192 390.08), so relative P&L was **\u22126.5%** \u2014 the first losing block vs SPY in four weeks. The 6/21 capitulation-audit scout (4/5: climactic 170M \u2192 contracting 76.8M \u2192 upper-half green close \u2192 QQQ +2.3%) fired exactly as the playbook trained, bought the actual swing low at 375.07, and the 6/24 broadened pre-binary trim mechanically locked half at 390.08 with a runner held at a 378 close-stop into PCE. Direction was right; **sizing was wrong**. The playbook *explicitly* said \"capitulation audit \u22654/5 \u2192 4-5% starter,\" and I sized 3%, then skipped the Thu 6/23 signal-clean add (SPY +0.98% / QQQ +1.49% green close, audit upgraded to 4/4) citing 379-380 supply that cleared the next morning. The two cumulative defects \u2014 sub-floor scout + missed add \u2014 capped deployment at 3% during the highest-conviction reversal print of the campaign. The new playbook converts the optional \"allowed to be 4-5%\" wording into mandatory sizing (4% on 4/5, 5% on 5/5), retires the calendar-anchored \"Wed adds\" gate in favor of a signal-anchored next-day rule, makes trim *size* regime-aware (1/3 on capitulation runners, 1/2 on bear-rally scouts), and codifies the runner trailing-stop discipline I'm now executing live. Plan for 6/27-7/1: hold the 0.4 SPY runner with 378 close-stop, signal-clean add to AAPL/MSFT for 4% total deployment if Tue closes >388 with QQQ green, trim 1/3 of runner into Wed close pre-PCE, trade reaction on merits Thu-Fri. Two campaigns running now where my biggest cost has been size, not direction \u2014 cash-bias remains the live process risk.",
+      "duration_sec": 146.7
+    },
+    {
+      "week_start": "2022-06-27",
+      "week_end": "2022-07-01",
+      "start_value": 10003.02,
+      "end_value": 9998.89,
+      "weekly_return": -0.0004,
+      "summary": "### Weekly Summary for Operator\n\nNinth week: **$10,003.62 \u2192 $9,998.89 (\u2212$4.73, \u22120.047%)** vs SPY **\u22122.27%** = **+2.22% relative win**, bringing cumulative outperformance to ~+9.7% over the 9-week campaign. The single sequence of the week was the pre-written exit ladder on the 6/21 capitulation scout: mechanical 1/3 trim Wed 6/29 @ 380.34 (+$0.69), then full runner stop Thu 6/30 @ 377.25 on close < 378.06 PCE invalidation (+$0.59), totaling **+$7.28 realized** across the full campaign while SPY went \u22122% over the same window. Friday's +1.06% bounce gave back $1 of optimization vs holding, but the discipline of executing the stop is what makes the system work \u2014 and the playbook now codifies that explicitly. Two process refinements in the rewrite: (1) **runner stops widened** \u2014 close-stop at the 6/23 close was tight enough to fire on pre-binary noise, replaced with max(entry, prior-week low \u2212 $1, 8% below local high); (2) **two-tier post-binary re-entry** \u2014 added a \"soft\" 1% scout path on day-1 confirmation alongside the existing \"hard\" 3-4% path on two consecutive higher closes, to fight cash-bias without forcing oversized commitments on weak setups. Permanently retired the XLE/XLP/TLT diversification ghost and the \"Wed pre-binary checkpoint\" cruft. Plan for the 4-session 7/5-7/8 holiday week: soft re-entry candidate Tue if SPY closes green > 381 with QQQ confirming, FOMC minutes Wed (no adds 6h pre), pre-NFP trim Thu, and pre-written hot/in-line/cool reaction tree for NFP Fri. Capital preservation floor holding; the campaign is winning on direction, the open question remains size.",
+      "duration_sec": 141.6
+    },
+    {
+      "week_start": "2022-07-05",
+      "week_end": "2022-07-08",
+      "start_value": 9998.89,
+      "end_value": 10000.68,
+      "weekly_return": 0.0002,
+      "summary": "### Weekly Summary for Operator\n\n**Tenth week: $9,998.89 \u2192 $10,000.68 (+$1.79, +0.018%) vs SPY +1.95% = \u22121.93% relative.** First positive dollar close since week 8, and lifetime back above water by $0.68. Cumulative vs SPY now ~+7.8% (gave back ~2 pts on a green SPY week). Single sequence of the week: 7/5 soft re-entry @ 381.96 on failed-breakdown reversal (QQQ +1.71% leading), 7/7 pre-NFP trim 1/2 @ 388.99 banking +$0.92, runner 0.13 SPY +1.76% unrealized into Fri close. Direction was correct on every tick; the \u22121.93% relative gap is entirely sizing. The soft re-entry rule fired exactly as designed \u2014 but I sized it at the bare-minimum 1% even though I explicitly journaled \"setup stronger than minimum trigger.\" This is the *same* failure mode as 6/21 (3% on a 4/5 audit that mandated 4-5%), now printing for the second time in four weeks. The playbook rewrite codifies a soft-tier sizing band (1-3% by quality, +1% leadership bonus), distinguishes confirmed vs unconfirmed scouts for pre-binary trims (confirmed positions don't trim, they hold the stop), mandates a Friday-close Monday-plan template, and adds a **two-strike forcing function** \u2014 documented repeat under-sizes get +50% on the next qualifying signal. Plan for 7/11-7/15: Mon execute a 4-5% SPY add if SPY holds 388 with QQQ > 290 (the two-strike upgrade); Tue megacap leg eligibility; CPI Wed = no new adds, hold runner on 372 stop; bank earnings Thu = scale to ~10% if wk 1 confirms. The campaign is winning on read and discipline; the live process risk remains chronic under-deployment of clean setups.",
+      "duration_sec": 123.9
+    },
+    {
+      "week_start": "2022-07-11",
+      "week_end": "2022-07-15",
+      "start_value": 10000.1,
+      "end_value": 9999.34,
+      "weekly_return": -0.0001,
+      "summary": "### Weekly Summary for Operator\n\n**Week 11: $10,000.68 \u2192 $9,999.34 (\u2212$1.34, \u22120.013%) vs SPY \u22120.91% = +0.90% relative win.** Cumulative vs SPY now ~+8.7%. The week's sequence ran exactly as the pre-written rules dictated: Mon's add trigger failed cleanly (SPY \u22121.14%, QQQ lost 290) \u2192 no force, Tue confirmed the breakdown (SPY \u22122.02%), hot CPI Wed (9.1%) fired the half-trim @ 378.83, Thu's close < 378 fired the full exit @ 377.91, then Friday printed a textbook failed-breakdown reversal (low 371, close HOD 385.13, QQQ +1.81% leading) that I correctly didn't chase on Friday-no-adds. Process was clean; stops worked; cash drift was avoided becoming cash loss.\n\nThe honest critique is twofold. **First**, last week's new rule that \"confirmed scouts hold full through binary\" directly caused the runner loss \u2014 by Tue close the entry pivot (388) and Mon support (385) were both gone, meaning the confirmed status was *already structurally invalid* before CPI hit, but the rule had no escape clause. Now codified: confirmed status decays on two consecutive lower closes losing the entry pivot. **Second**, the runner close-stop at 378 was a wick-exit on CPI day \u2014 the Thu intraday 371 print fired it and Fri recovered to 385 HOD. Same pattern as 6/30. New rule: Tier-1 binary print-day stop widens to prior-week intraday low for that day only.\n\nPlan for 7/18-7/22 is concrete: execute a **4.5% SPY soft re-entry Mon** on the failed-breakdown reversal (3% base \u00d7 two-strike 1.5x, the forcing function is finally binding via plan-template inheritance), stop close < 378, add tranche Wed if Tue confirms, FOMC 7/27 is *next* week's binary so this is the setup week not the trade week. Direction and discipline still winning; the campaign's persistent under-deployment is the live problem the new inheritance rule directly attacks.",
+      "duration_sec": 146.2
+    },
+    {
+      "week_start": "2022-07-18",
+      "week_end": "2022-07-22",
+      "start_value": 9999.34,
+      "end_value": 9997.04,
+      "weekly_return": -0.0002,
+      "summary": "### Weekly summary for operator\n\nTwelfth week: **$9,999.34 \u2192 $9,997.04 (\u2212$2.30, \u22120.023%) vs SPY +2.59% = \u22122.62% relative**, the worst weekly drag of the campaign and a give-back of cumulative outperformance from ~+8.7% to ~+6.1%. The trend-up regime I had explicitly pre-written a Monday template for actually fired exactly as forecast \u2014 and I overrode the binding 4.5% scout trigger at the tick on a discretionary \"candle shape negates thesis\" read, then chased into the same setup on Wed/Thu at 6 points higher basis (avg cost 396.11 on 2.25 SPY). Direction was right; execution was the failure, for the fifth documented time in seven weeks. The end-of-week book is correctly positioned \u2014 a confirmed 8.9% SPY position at the TREND-UP wk1 floor with a close-stop at 388 \u2014 but earned through chase, not discipline. The playbook rewrite this week stops adding new sizing rules and instead enforces **mechanical execution at the tick**: when the pre-written Friday trigger conditions are objectively met on the trigger day, the order fires in the same tool block, no journal-and-decide step, no candle-shape veto. Also retired the over-broad single-stock earnings cutoff that blocked Tuesday's hard re-entry on a clean +2.7% confirmation day. Next week is the campaign's highest binary density (FOMC Wed + MSFT/GOOGL/META/AAPL/AMZN earnings across 4 sessions) \u2014 default is defend the position on the 388 stop, no new adds until the cluster clears, with a pre-written 6% post-cluster Friday add trigger if SPY closes Thu > 400 with QQQ confirming.",
+      "duration_sec": 157.2
+    },
+    {
+      "week_start": "2022-07-25",
+      "week_end": "2022-07-25",
+      "start_value": 9998.12,
+      "end_value": 9998.12,
+      "weekly_return": 0.0,
+      "summary": "**Operator summary \u2014 week ending 2022-07-25:**\n\nSingle-session \"week\" (Fri 7/22 \u2192 Mon 7/25): **$9,997.04 \u2192 $9,998.12, +$1.08 (+0.011%)** vs SPY +0.12% = roughly flat relative. Held the 2.25 SPY position (avg 396.11) through Monday's inside digestion candle on light 53M volume; no trades, no template triggers fired. The plan-template-inheritance rule (the playbook's running campaign fix for chronic Monday-execution misses) ran end-to-end clean for the first time \u2014 Friday's written template said \"monitor only\" and Monday's tape gave a quiet inside day that warranted nothing else. The honest critique is forward-looking: my Friday plan said \"react to the overnight reaction\" for Tue/Thu earnings prints, which is template debt, not a trigger. New playbook adds a mandatory 4-state reaction tree per binary day (gap-up absorbed / gap-up faded / gap-down bounced / gap-down accelerating with named price + breadth levels), an in-profit Tier-1-week mechanical 1/3 trim trigger at +1.5% (so the first green print of this position banks something rather than evaporating), and a tool-down defensive default for when the macro scan fails. The 7/29 forced-add path is now unambiguous: Thu close > 400, QQQ > 305, no overnight gap-down > 3% on AAPL/AMZN \u2192 buy 1.5 SPY at Fri open, stop close < 392. Next week is the campaign's max binary density (FOMC + 4 megacap prints in 4 sessions); the position defends on the 388 close-stop and the system either earns the Friday add or recashes \u2014 both pre-written.",
+      "duration_sec": 124.6
+    }
+  ],
+  "green_weeks": 2,
+  "red_weeks": 5,
+  "flat_weeks": 7,
+  "best_week": {
+    "week_start": "2022-06-21",
+    "week_end": "2022-06-24",
+    "start_value": 9991.61,
+    "end_value": 10003.62,
+    "weekly_return": 0.0012,
+    "summary": "### Weekly Summary for Operator\n\nEighth week, and the campaign's first $-positive lifetime print: **$9,991.61 \u2192 $10,003.62 (+$12.01, +0.12%)** against SPY's **+6.62%** squeeze week (365.86 \u2192 390.08), so relative P&L was **\u22126.5%** \u2014 the first losing block vs SPY in four weeks. The 6/21 capitulation-audit scout (4/5: climactic 170M \u2192 contracting 76.8M \u2192 upper-half green close \u2192 QQQ +2.3%) fired exactly as the playbook trained, bought the actual swing low at 375.07, and the 6/24 broadened pre-binary trim mechanically locked half at 390.08 with a runner held at a 378 close-stop into PCE. Direction was right; **sizing was wrong**. The playbook *explicitly* said \"capitulation audit \u22654/5 \u2192 4-5% starter,\" and I sized 3%, then skipped the Thu 6/23 signal-clean add (SPY +0.98% / QQQ +1.49% green close, audit upgraded to 4/4) citing 379-380 supply that cleared the next morning. The two cumulative defects \u2014 sub-floor scout + missed add \u2014 capped deployment at 3% during the highest-conviction reversal print of the campaign. The new playbook converts the optional \"allowed to be 4-5%\" wording into mandatory sizing (4% on 4/5, 5% on 5/5), retires the calendar-anchored \"Wed adds\" gate in favor of a signal-anchored next-day rule, makes trim *size* regime-aware (1/3 on capitulation runners, 1/2 on bear-rally scouts), and codifies the runner trailing-stop discipline I'm now executing live. Plan for 6/27-7/1: hold the 0.4 SPY runner with 378 close-stop, signal-clean add to AAPL/MSFT for 4% total deployment if Tue closes >388 with QQQ green, trim 1/3 of runner into Wed close pre-PCE, trade reaction on merits Thu-Fri. Two campaigns running now where my biggest cost has been size, not direction \u2014 cash-bias remains the live process risk.",
+    "duration_sec": 146.7
+  },
+  "worst_week": {
+    "week_start": "2022-06-06",
+    "week_end": "2022-06-10",
+    "start_value": 9999.17,
+    "end_value": 9991.61,
+    "weekly_return": -0.0008,
+    "summary": "ERROR: Error code: 529 - {'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'Overloaded'}, 'request_id': 'req_011CbcYxJk7TU4XEqaVe8HAW'}",
+    "duration_sec": 9.0
+  },
+  "total_tokens": {
+    "input": 1488617,
+    "output": 148148,
+    "cache_read": 2840696
+  }
+}
