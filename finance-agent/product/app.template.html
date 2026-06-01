@@ -103,6 +103,30 @@
     <div id="equity-chart" class="h-64"></div>
   </div>
 
+  <!-- UNUSUAL OPTIONS FLOW + PREDICTION MARKETS -->
+  <div class="grid grid-cols-2 gap-6">
+    <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-5">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <div class="font-semibold text-sm">Unusual options flow</div>
+          <div class="text-xs text-zinc-500 mono">live · yfinance chains</div>
+        </div>
+        <span class="px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 text-xs mono">UW-style</span>
+      </div>
+      <div>{{FLOW_PANELS}}</div>
+    </div>
+    <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-5">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <div class="font-semibold text-sm">Catalyst priors</div>
+          <div class="text-xs text-zinc-500 mono">live · Kalshi</div>
+        </div>
+        <span class="px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 text-xs mono">market-implied</span>
+      </div>
+      <div>{{KALSHI_PANELS}}</div>
+    </div>
+  </div>
+
   <!-- TODAY'S MACRO SCAN -->
   <div class="bg-zinc-950 border border-zinc-900 rounded-xl p-6">
     <div class="flex items-center justify-between mb-4">
@@ -111,7 +135,7 @@
           Today's macro scan
           <span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 text-xs mono">5 hits</span>
         </div>
-        <div class="text-xs text-zinc-500 mono mt-0.5">9:47 ET · 5 queries</div>
+        <div class="text-xs text-zinc-500 mono mt-0.5">9:47 ET · 5 queries · 10 monitors armed</div>
       </div>
       <button class="text-xs text-zinc-400 hover:text-white">View archive →</button>
     </div>
