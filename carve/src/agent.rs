@@ -173,13 +173,27 @@ impl Tool for CargoCheckTool {
     }
     fn invoke(&self, input: &Value) -> Result<Value> {
         let manifest = str_field(input, "manifest_path")?;
-        let out = Command::new("cargo")
-            .args(["check", "--manifest-path", &manifest, "--message-format=short"])
-            .output()
-            .context("spawning cargo check")?;
+        // Verify under BOTH the default (debug, `debug_assertions` on) and the
+        // release (`debug_assertions` off) profile. Dependencies cfg-gate code on
+        // `debug_assertions` (e.g. rustix's `decode_*_infallible` fast paths), so
+        // a cut that compiles in one profile can break the other — and the
+        // deployment build is usually `--release`.
+        let run = |release: bool| -> Result<(bool, String)> {
+            let mut args = vec!["check", "--manifest-path", &manifest, "--message-format=short"];
+            if release {
+                args.push("--release");
+            }
+            let out = Command::new("cargo").args(&args).output().context("spawning cargo check")?;
+            Ok((out.status.success(), String::from_utf8_lossy(&out.stderr).into_owned()))
+        };
+        let (dbg_ok, dbg_err) = run(false)?;
+        if !dbg_ok {
+            return Ok(json!({ "success": false, "stderr": dbg_err }));
+        }
+        let (rel_ok, rel_err) = run(true)?;
         Ok(json!({
-            "success": out.status.success(),
-            "stderr": String::from_utf8_lossy(&out.stderr),
+            "success": rel_ok,
+            "stderr": format!("{dbg_err}\n{rel_err}"),
         }))
     }
 }
