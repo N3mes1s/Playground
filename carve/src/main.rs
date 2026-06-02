@@ -43,6 +43,10 @@ enum Command {
         /// Write the full graph as JSON to this file.
         #[arg(short, long)]
         out: Option<PathBuf>,
+        /// Go deep: build the usage graph across the WHOLE transitive closure
+        /// (dependencies of dependencies), not just direct deps.
+        #[arg(long)]
+        transitive: bool,
     },
     /// Have the agent propose a minimization plan from the usage graph.
     Plan {
@@ -71,6 +75,10 @@ enum Command {
         /// Also add the reversible `[patch.crates-io]` entries to Cargo.toml.
         #[arg(long)]
         apply: bool,
+        /// Go deep: vendor the ENTIRE transitive closure (dependencies of
+        /// dependencies), for full supply-chain isolation.
+        #[arg(long)]
+        transitive: bool,
     },
     /// Agent: carve a vendored crate down to only the modules the product needs,
     /// verifying every cut by compiling the real consumer.
@@ -81,7 +89,12 @@ enum Command {
         manifest_path: PathBuf,
         #[arg(short, long)]
         out: Option<PathBuf>,
+        /// Use the LLM agent to plan which modules to drop (needs ANTHROPIC_API_KEY).
+        #[arg(long)]
+        llm: bool,
     },
+    /// Check LLM agent connectivity (needs ANTHROPIC_API_KEY).
+    LlmCheck,
     /// Reverse a vendored crate back to the upstream dependency.
     Restore {
         crate_name: String,
@@ -128,7 +141,17 @@ fn main() -> Result<()> {
     obs::init(cli.verbose, cli.log_json);
 
     match cli.command {
-        Command::Analyze { manifest_path, out } => cmd_analyze(&manifest_path, out.as_deref()),
+        Command::Analyze {
+            manifest_path,
+            out,
+            transitive,
+        } => {
+            if transitive {
+                cmd_analyze_transitive(&manifest_path, out.as_deref())
+            } else {
+                cmd_analyze(&manifest_path, out.as_deref())
+            }
+        }
         Command::Plan { manifest_path, out } => cmd_plan(&manifest_path, out.as_deref()),
         Command::Vendor {
             crate_name,
@@ -139,12 +162,15 @@ fn main() -> Result<()> {
         Command::VendorAll {
             manifest_path,
             apply,
-        } => cmd_vendor_all(&manifest_path, apply),
+            transitive,
+        } => cmd_vendor_all(&manifest_path, apply, transitive),
         Command::Slice {
             crate_name,
             manifest_path,
             out,
-        } => cmd_slice(&crate_name, &manifest_path, out.as_deref()),
+            llm,
+        } => cmd_slice(&crate_name, &manifest_path, out.as_deref(), llm),
+        Command::LlmCheck => cmd_llm_check(),
         Command::Restore {
             crate_name,
             manifest_path,
@@ -209,6 +235,94 @@ fn cmd_analyze(manifest_path: &Path, out: Option<&Path>) -> Result<()> {
         std::fs::write(path, serde_json::to_string_pretty(&graph)?)?;
         println!("\n  graph written to {}", path.display());
     }
+    Ok(())
+}
+
+fn cmd_analyze_transitive(manifest_path: &Path, out: Option<&Path>) -> Result<()> {
+    println!("Building the DEEP usage graph (dependencies of dependencies)…");
+    let graph = analyze::build_transitive_usage(manifest_path)?;
+
+    // Depth histogram.
+    let mut by_depth: std::collections::BTreeMap<usize, usize> = Default::default();
+    for n in &graph.nodes {
+        *by_depth.entry(n.depth).or_default() += 1;
+    }
+
+    println!("\nTransitive Dependency Functional Usage Graph — {}", graph.package);
+    println!("  crates in closure: {}  (max depth {})", graph.nodes.len(), graph.max_depth);
+    println!("  functional edges:  {}", graph.edges.len());
+    println!("  scanned for usage: {} crates\n", graph.scanned_crates);
+    println!("  crates by depth (0 = the product, 1 = direct, 2+ = deps of deps):");
+    for (d, n) in &by_depth {
+        println!("      depth {d}: {n} crate(s)");
+    }
+
+    // Show the heaviest functional edges across the whole tree.
+    let mut edges = graph.edges.clone();
+    edges.sort_by(|a, b| b.refs.cmp(&a.refs));
+    println!("\n  Top functional edges (who leans hardest on whom):");
+    for e in edges.iter().take(15) {
+        println!("      {} → {}   {} item(s), {} ref(s)", e.from, e.to, e.items, e.refs);
+    }
+
+    // Illustrate a deep chain: product → direct → its dep → …
+    if let Some(chain) = deepest_chain(&graph) {
+        println!("\n  Example dependency-of-dependency chain:");
+        println!("      {}", chain.join("  →  "));
+    }
+
+    if let Some(path) = out {
+        std::fs::write(path, serde_json::to_string_pretty(&graph)?)?;
+        println!("\n  full graph written to {}", path.display());
+    }
+    Ok(())
+}
+
+/// Greedily walk functional edges from the product to the deepest reachable crate.
+fn deepest_chain(graph: &model::TransitiveGraph) -> Option<Vec<String>> {
+    use std::collections::BTreeMap;
+    let depth: BTreeMap<&str, usize> =
+        graph.nodes.iter().map(|n| (n.name.as_str(), n.depth)).collect();
+    let mut adj: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for e in &graph.edges {
+        adj.entry(e.from.as_str()).or_default().push(e.to.as_str());
+    }
+    let start = graph.nodes.iter().find(|n| n.depth == 0)?;
+    let mut chain = vec![start.name.clone()];
+    let mut current = start.name.clone();
+    let mut seen = std::collections::BTreeSet::new();
+    loop {
+        seen.insert(current.clone());
+        let next = adj
+            .get(current.as_str())
+            .into_iter()
+            .flatten()
+            .filter(|n| !seen.contains(**n))
+            .max_by_key(|n| depth.get(**n).copied().unwrap_or(0))
+            .map(|s| s.to_string());
+        match next {
+            Some(n) if depth.get(n.as_str()).copied().unwrap_or(0)
+                > depth.get(current.as_str()).copied().unwrap_or(0) =>
+            {
+                chain.push(n.clone());
+                current = n;
+            }
+            _ => break,
+        }
+    }
+    if chain.len() >= 3 {
+        Some(chain)
+    } else {
+        None
+    }
+}
+
+fn cmd_llm_check() -> Result<()> {
+    let agent = agent::LlmAgent::from_env()?;
+    println!("Pinging the LLM agent…");
+    let reply = agent.ping()?;
+    println!("  model replied: {}", reply.trim());
+    println!("  LLM agent is wired and reachable.");
     Ok(())
 }
 
@@ -294,9 +408,8 @@ fn cmd_vendor(
     Ok(())
 }
 
-fn cmd_vendor_all(manifest_path: &Path, apply: bool) -> Result<()> {
+fn cmd_vendor_all(manifest_path: &Path, apply: bool, transitive: bool) -> Result<()> {
     let root = root_of(manifest_path);
-    let meta = analyze::metadata::load(manifest_path)?;
 
     // Map each used crate to its referenced items, for richer provenance.
     let graph = analyze::build_usage_graph(manifest_path)?;
@@ -307,41 +420,75 @@ fn cmd_vendor_all(manifest_path: &Path, apply: bool) -> Result<()> {
             .unwrap_or_default()
     };
 
-    // Vendoring the normal direct deps is what `cargo build` needs; dev-deps are
-    // only required for tests and are skipped to keep the surface minimal.
-    let mut targets: Vec<(String, String)> = meta
-        .deps
-        .values()
-        .filter(|d| d.is_normal)
-        .filter_map(|d| d.version.clone().map(|v| (d.package.clone(), v)))
-        .collect();
+    let mut native_skipped: Vec<String> = Vec::new();
+    let mut targets: Vec<(String, String)> = if transitive {
+        // The ENTIRE transitive closure (deps of deps) — full isolation, except
+        // native-linked sys crates whose C/native build we can't reproduce by
+        // copying Rust source; those stay on the registry.
+        let meta = analyze::metadata::load_metadata(manifest_path)?;
+        let mut t = Vec::new();
+        for n in analyze::metadata::build_closure(&meta)? {
+            if n.native_link {
+                native_skipped.push(format!("{} v{}", n.name, n.version));
+            } else {
+                t.push((n.name, n.version));
+            }
+        }
+        t
+    } else {
+        // Just the normal direct deps — what `cargo build` of the product needs.
+        let meta = analyze::metadata::load(manifest_path)?;
+        meta.deps
+            .values()
+            .filter(|d| d.is_normal)
+            .filter_map(|d| d.version.clone().map(|v| (d.package.clone(), v)))
+            .collect()
+    };
     targets.sort();
     targets.dedup();
 
     if targets.is_empty() {
-        println!("No resolvable normal dependencies to vendor.");
+        println!("No resolvable dependencies to vendor.");
         return Ok(());
     }
 
-    println!("Vendoring {} direct dependency(ies) verbatim …\n", targets.len());
+    // A [patch.crates-io] entry is keyed by crate name, so a crate present at
+    // multiple versions in the graph can't be patched unambiguously — vendor it
+    // for the record but leave it on the registry to keep the build correct.
+    let mut name_counts: std::collections::BTreeMap<&str, usize> = Default::default();
+    for (pkg, _) in &targets {
+        *name_counts.entry(pkg.as_str()).or_default() += 1;
+    }
+
+    let scope = if transitive { "transitive" } else { "direct" };
+    println!("Vendoring {} {scope} dependency(ies) verbatim …\n", targets.len());
     let mut lock = vendor::load_lock(&root)?;
     let mut ok = 0usize;
+    let mut patched = 0usize;
     let mut failed: Vec<String> = Vec::new();
+    let mut skipped_patch: Vec<String> = Vec::new();
     for (pkg, version) in &targets {
         match vendor::vendor_crate(&root, pkg, version, kept_for(pkg), None) {
             Ok(entry) => {
                 let files = entry.files.len();
                 lock.upsert(entry);
                 if apply {
-                    let rel = vendor::vendor_rel_path(pkg, version);
-                    vendor::apply_patch(&root, pkg, &rel)?;
+                    if name_counts.get(pkg.as_str()).copied().unwrap_or(0) > 1 {
+                        skipped_patch.push(format!("{pkg} (multiple versions)"));
+                    } else {
+                        let rel = vendor::vendor_rel_path(pkg, version);
+                        vendor::apply_patch(&root, pkg, &rel)?;
+                        patched += 1;
+                    }
                 }
-                println!("  ✓ {pkg} v{version}  ({files} files)");
                 ok += 1;
+                if ok % 20 == 0 {
+                    println!("  … {ok}/{} vendored", targets.len());
+                }
+                let _ = files;
             }
             Err(e) => {
-                println!("  ✗ {pkg} v{version}  — {e}");
-                failed.push(pkg.clone());
+                failed.push(format!("{pkg} v{version}: {e}"));
             }
         }
     }
@@ -349,17 +496,27 @@ fn cmd_vendor_all(manifest_path: &Path, apply: bool) -> Result<()> {
 
     println!("\n  vendored {ok}/{} dependency(ies); provenance in carve.lock", targets.len());
     if apply {
-        println!("  added [patch.crates-io] entries — run `cargo build` to compile vendored");
+        println!("  wired {patched} [patch.crates-io] entries — run `cargo build` to compile vendored");
     } else {
         println!("  re-run with --apply to wire the [patch.crates-io] entries");
     }
+    if !skipped_patch.is_empty() {
+        println!("  left on registry (can't patch a duplicated name): {}", skipped_patch.join(", "));
+    }
+    if !native_skipped.is_empty() {
+        println!("  left on registry ({} native-linked sys crate(s) — native build not source-reproducible): {}",
+            native_skipped.len(), native_skipped.join(", "));
+    }
     if !failed.is_empty() {
-        println!("  not vendored (no registry source cached — run `cargo fetch`): {}", failed.join(", "));
+        println!("  {} not vendored (source not cached — run `cargo fetch`)", failed.len());
+        for f in failed.iter().take(8) {
+            println!("      {f}");
+        }
     }
     Ok(())
 }
 
-fn cmd_slice(crate_name: &str, manifest_path: &Path, out: Option<&Path>) -> Result<()> {
+fn cmd_slice(crate_name: &str, manifest_path: &Path, out: Option<&Path>, llm: bool) -> Result<()> {
     let root = root_of(manifest_path);
     let mut lock = vendor::load_lock(&root)?;
     let entry = lock
@@ -368,9 +525,30 @@ fn cmd_slice(crate_name: &str, manifest_path: &Path, out: Option<&Path>) -> Resu
         .context("crate is not vendored — run `carve vendor` (with --apply) first")?;
     let vendor_dir = root.join(vendor::vendor_rel_path(&entry.crate_name, &entry.version));
 
-    println!("Agent slicing {} v{} (verifying every cut against the consumer build)…\n", entry.crate_name, entry.version);
     let agent = agent::RuleBasedAgent::new();
-    let report = agent.slice_crate(crate_name, manifest_path, &vendor_dir)?;
+
+    // Optional LLM planner: propose a prioritized removal order. The cargo_check
+    // gate inside slice_crate still verifies every cut, so the LLM can never break
+    // or invent code — it only steers which modules we try first.
+    let prioritized: Vec<String> = if llm {
+        let candidates = slice::discover(&vendor_dir)?;
+        let modules: Vec<String> = candidates.iter().map(|c| c.rel_name.clone()).collect();
+        println!("Consulting LLM agent to plan the slice…");
+        let llm_agent = agent::LlmAgent::from_env()?;
+        let proposal = llm_agent.propose_removals(
+            crate_name,
+            &entry.kept_items,
+            &modules,
+            &vendor_dir.to_string_lossy(),
+        )?;
+        println!("  LLM proposed removing {} module(s): {}\n", proposal.len(), proposal.join(", "));
+        proposal
+    } else {
+        Vec::new()
+    };
+
+    println!("Agent slicing {} v{} (verifying every cut against the consumer build)…\n", entry.crate_name, entry.version);
+    let report = agent.slice_crate(crate_name, manifest_path, &vendor_dir, &prioritized)?;
 
     // Re-index provenance so `carve verify` still matches the carved tree.
     let files = vendor::reindex_files(&root, &entry.crate_name, &entry.version)?;

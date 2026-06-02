@@ -282,6 +282,7 @@ impl RuleBasedAgent {
         crate_name: &str,
         project_manifest: &Path,
         vendor_dir: &Path,
+        prioritized: &[String],
     ) -> Result<SliceReport> {
         let manifest = json!({ "manifest_path": project_manifest.to_string_lossy() });
 
@@ -299,6 +300,18 @@ impl RuleBasedAgent {
         // Shallow modules first: removing a whole subtree skips its children.
         let mut candidates = slice::discover(vendor_dir)?;
         candidates.sort_by_key(|c| c.depth);
+        // If a planner (e.g. the LLM agent) prioritized certain modules, try those
+        // first — the cargo_check gate still guarantees safety either way.
+        if !prioritized.is_empty() {
+            let rank = |name: &str| {
+                prioritized
+                    .iter()
+                    .position(|p| p == name)
+                    .unwrap_or(usize::MAX)
+            };
+            candidates.sort_by_key(|c| (rank(&c.rel_name), c.depth));
+            tracing::info!(prioritized = prioritized.len(), "using planner-prioritized order");
+        }
         tracing::info!(candidates = candidates.len(), "discovered removable modules");
 
         let mut removed = Vec::new();
@@ -385,4 +398,212 @@ impl Default for RuleBasedAgent {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// ---------------------------------------------------------------------------
+// LLM agent — same tool surface, driven by a model
+// ---------------------------------------------------------------------------
+
+const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
+const ANTHROPIC_VERSION: &str = "2023-06-01";
+
+/// An agent driven by the Anthropic Messages API over the *same* [`ToolRegistry`]
+/// the rule-based agent uses. The model proposes which upstream modules a slice
+/// can drop; every proposal is still gated by `cargo_check`, so the model selects
+/// but never invents or breaks code.
+pub struct LlmAgent {
+    registry: ToolRegistry,
+    api_key: String,
+    model: String,
+    /// Tool-call budget per planning session.
+    max_steps: usize,
+}
+
+impl LlmAgent {
+    /// Build from `ANTHROPIC_API_KEY` (model overridable via `CARVE_LLM_MODEL`).
+    pub fn from_env() -> Result<Self> {
+        let api_key = std::env::var("ANTHROPIC_API_KEY")
+            .map_err(|_| anyhow!("ANTHROPIC_API_KEY is not set; the LLM agent needs an API key"))?;
+        let model =
+            std::env::var("CARVE_LLM_MODEL").unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
+        Ok(LlmAgent {
+            registry: ToolRegistry::with_defaults(),
+            api_key,
+            model,
+            max_steps: 16,
+        })
+    }
+
+    /// Tool schemas advertised to the model (a subset of the registry that is
+    /// safe and useful for read-only planning).
+    fn tool_schemas() -> Value {
+        json!([
+            {
+                "name": "read_file",
+                "description": "Read a UTF-8 source file to understand what a module does.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": { "path": { "type": "string" } },
+                    "required": ["path"]
+                }
+            },
+            {
+                "name": "parse_items",
+                "description": "List the top-level item names/kinds defined in a Rust file.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": { "path": { "type": "string" } },
+                    "required": ["path"]
+                }
+            }
+        ])
+    }
+
+    /// Single round-trip to the API. Returns the parsed JSON response.
+    #[tracing::instrument(skip(self, body), fields(model = %self.model))]
+    fn call_api(&self, body: &Value) -> Result<Value> {
+        let resp = ureq::post(ANTHROPIC_URL)
+            .set("x-api-key", &self.api_key)
+            .set("anthropic-version", ANTHROPIC_VERSION)
+            .set("content-type", "application/json")
+            .send_json(body.clone());
+        match resp {
+            Ok(r) => Ok(r.into_json::<Value>()?),
+            Err(ureq::Error::Status(code, r)) => {
+                let text = r.into_string().unwrap_or_default();
+                Err(anyhow!("Anthropic API error {code}: {text}"))
+            }
+            Err(e) => Err(anyhow!("HTTP error calling Anthropic API: {e}")),
+        }
+    }
+
+    /// Lightweight connectivity check; returns the model's short reply.
+    pub fn ping(&self) -> Result<String> {
+        let body = json!({
+            "model": self.model,
+            "max_tokens": 64,
+            "messages": [{ "role": "user", "content": "Reply with exactly: carve-llm-ok" }]
+        });
+        let resp = self.call_api(&body)?;
+        Ok(extract_text(&resp))
+    }
+
+    /// Ask the model which upstream modules a slice can drop, letting it read the
+    /// source via tools. Returns module rel-names (e.g. `src/arch/aarch64`) in
+    /// the order it recommends attempting them.
+    #[tracing::instrument(skip(self, used_items, modules), fields(crate_name = crate_name, model = %self.model))]
+    pub fn propose_removals(
+        &self,
+        crate_name: &str,
+        used_items: &[String],
+        modules: &[String],
+        vendor_dir: &str,
+    ) -> Result<Vec<String>> {
+        let system = "You are carve's dependency-slicing agent. The product vendors an exact, \
+verbatim copy of a dependency and wants to delete whole modules it does not need, to shrink the \
+supply-chain attack surface. You NEVER write or invent code — you only decide which existing \
+modules are safe to remove. A compiler check will verify every choice, so propose removals that \
+are plausibly unused by the listed entrypoints (e.g. CPU backends for other architectures, unused \
+algorithms, test-only modules). Use the tools to inspect files when unsure. When done, output ONLY \
+a JSON object: {\"remove\": [\"src/...\", ...]} ordered most-confident first.";
+
+        let user = format!(
+            "Crate: {crate_name}\nVendored at: {vendor_dir}\n\nItems the product actually uses:\n{}\n\n\
+Removable module candidates (rel paths under the vendored crate):\n{}\n\n\
+Decide which modules to remove. Read files if helpful, then return the JSON.",
+            used_items.join("\n"),
+            modules.join("\n"),
+        );
+
+        let mut messages = vec![json!({ "role": "user", "content": user })];
+
+        for step in 0..self.max_steps {
+            let body = json!({
+                "model": self.model,
+                "max_tokens": 2048,
+                "system": system,
+                "tools": Self::tool_schemas(),
+                "messages": messages,
+            });
+            let resp = self.call_api(&body)?;
+            let content = resp.get("content").cloned().unwrap_or(json!([]));
+            let stop = resp.get("stop_reason").and_then(Value::as_str).unwrap_or("");
+            tracing::info!(step, stop, "llm turn");
+
+            // Record the assistant turn verbatim so tool_use ids line up.
+            messages.push(json!({ "role": "assistant", "content": content.clone() }));
+
+            if stop == "tool_use" {
+                let mut tool_results = Vec::new();
+                for block in content.as_array().into_iter().flatten() {
+                    if block.get("type").and_then(Value::as_str) == Some("tool_use") {
+                        let name = block.get("name").and_then(Value::as_str).unwrap_or("");
+                        let id = block.get("id").and_then(Value::as_str).unwrap_or("");
+                        let input = block.get("input").cloned().unwrap_or(json!({}));
+                        let out = self
+                            .registry
+                            .call(name, &input)
+                            .map(|v| v.to_string())
+                            .unwrap_or_else(|e| format!("error: {e}"));
+                        tool_results.push(json!({
+                            "type": "tool_result",
+                            "tool_use_id": id,
+                            "content": truncate(&out, 6000),
+                        }));
+                    }
+                }
+                messages.push(json!({ "role": "user", "content": tool_results }));
+                continue;
+            }
+
+            // Final turn: parse the JSON the model emitted.
+            let text = extract_text(&resp);
+            return Ok(parse_remove_list(&text));
+        }
+        Err(anyhow!("LLM agent exceeded its {}-step tool budget", self.max_steps))
+    }
+}
+
+fn extract_text(resp: &Value) -> String {
+    resp.get("content")
+        .and_then(Value::as_array)
+        .map(|blocks| {
+            blocks
+                .iter()
+                .filter_map(|b| {
+                    if b.get("type").and_then(Value::as_str) == Some("text") {
+                        b.get("text").and_then(Value::as_str)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.len() > max {
+        format!("{}…[truncated]", &s[..max])
+    } else {
+        s.to_string()
+    }
+}
+
+/// Pull the `remove` array out of the model's reply (tolerant of prose around it).
+fn parse_remove_list(text: &str) -> Vec<String> {
+    if let Some(start) = text.find('{') {
+        if let Some(end) = text.rfind('}') {
+            if let Ok(v) = serde_json::from_str::<Value>(&text[start..=end]) {
+                if let Some(arr) = v.get("remove").and_then(Value::as_array) {
+                    return arr
+                        .iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect();
+                }
+            }
+        }
+    }
+    Vec::new()
 }

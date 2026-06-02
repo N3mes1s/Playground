@@ -27,12 +27,14 @@ Two hard constraints keep it honest:
   removes it. Round-trip is lossless — `carve restore <crate>` puts you back on
   the registry dependency, and the project still builds.
 
-> Status: **Stages 1–3 working.** The Dependency Functional Usage Graph,
-> provenance ledger, verbatim vendoring, reversibility, verification, the
-> autonomous-agent tool surface, **agent-driven module slicing** (Stage 2), and a
-> full **real-project run** (Stage 3, on `BurntSushi/aho-corasick`) are all
-> proven. See [STAGE-2-3-REPORT.md](STAGE-2-3-REPORT.md) for the real-project
-> proof and [DESIGN.md](DESIGN.md) for the architecture and roadmap.
+> Status: **Stages 1–4 working.** DFUG, provenance ledger, verbatim vendoring,
+> reversibility, verification, the autonomous-agent tool surface, **agent-driven
+> module slicing** (Stage 2), a full **real-project run** (Stage 3,
+> `BurntSushi/aho-corasick`), update-impact analysis, plus **(Stage 4)** a
+> **live LLM agent** over the same tool surface and **deep transitive vendoring**
+> (dependencies of dependencies) proven on the 90-crate, 6-level-deep `sharkdp/fd`.
+> See [STAGE-2-3-REPORT.md](STAGE-2-3-REPORT.md) and
+> [STAGE-4-REPORT.md](STAGE-4-REPORT.md); architecture in [DESIGN.md](DESIGN.md).
 
 ## Install / build
 
@@ -44,11 +46,12 @@ cargo build --release   # produces target/release/carve
 
 | Command | What it does |
 |---|---|
-| `carve analyze` | Build the Dependency Functional Usage Graph (DFUG): which dependency items your product references, how often, and from where. Flags unreferenced deps as drop candidates. |
+| `carve analyze [--transitive]` | Build the Dependency Functional Usage Graph (DFUG): which dependency items your product references, how often, and from where. `--transitive` builds it across the WHOLE closure (dependencies of dependencies). Flags unreferenced deps as drop candidates. |
 | `carve plan` | The agent reads the DFUG and proposes, per crate, whether item-level slicing is safe (HIGH), needs a verification build (MED), or should be vendored whole for now (LOW). |
 | `carve vendor <crate> [--apply]` | Transcribe a crate verbatim into `vendor/`, recording provenance in `carve.lock`. `--apply` also wires the reversible `[patch.crates-io]` entry. |
-| `carve vendor-all [--apply]` | Vendor every normal direct dependency in one shot. |
-| `carve slice <crate>` | **The agent** carves the vendored crate down to only the modules the product needs, running `cargo check` against the real consumer after every cut and keeping only what still compiles. |
+| `carve vendor-all [--apply] [--transitive]` | Vendor every direct dependency in one shot, or the ENTIRE transitive closure with `--transitive` (native-linked sys crates and duplicated-version crates are left on the registry and reported). |
+| `carve slice <crate> [--llm]` | **The agent** carves the vendored crate down to only the modules the product needs, running `cargo check` against the real consumer after every cut and keeping only what still compiles. `--llm` lets a model plan the cuts (needs `ANTHROPIC_API_KEY`); the compiler still gates every one. |
+| `carve llm-check` | Verify LLM-agent connectivity (needs `ANTHROPIC_API_KEY`). |
 | `carve impact <crate> --to <ver>` | Assess whether moving to an upstream version touches code inside your slice (and which items you call) — i.e. whether the update needs a proof-read or is safe to take. |
 | `carve restore <crate>` | Reverse it: remove the patch, delete the vendored tree, drop the ledger entry. |
 | `carve status` | Show the provenance ledger. |

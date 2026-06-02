@@ -93,12 +93,13 @@ layer" the idea calls for.
 
 - **`RuleBasedAgent`** (ships now): deterministic. Produces the minimization plan
   and can locate upstream definition sites via the tool surface (`carve locate`).
-- **`LlmAgent`** (Stage 2): the *same* tool surface handed to a model. The model
-  proposes which items + transitive helpers form a minimal compilable slice; every
-  proposal is checked by `cargo_check`. Because the model can only point at
-  existing upstream spans (and the result must compile against our real call
-  sites), it can select but not fabricate. Observability + the verbatim/hash
-  invariant are the guardrails.
+- **`LlmAgent`** (done): the *same* `ToolRegistry` handed to a model via the
+  Anthropic Messages API in a real tool-use loop. The model reads source through
+  `read_file`/`parse_items` and proposes which modules a slice can drop; every
+  proposal is gated by `cargo_check` against the real consumer. Because the result
+  must compile against our actual call sites, the model can select but not
+  fabricate. `from_env()` reads `ANTHROPIC_API_KEY`; `CARVE_LLM_MODEL` overrides
+  the model. Observability + the verbatim/hash invariant are the guardrails.
 
 ## Roadmap
 
@@ -114,11 +115,18 @@ layer" the idea calls for.
   vendor-all → agent slice → rebuild, changing **only** `Cargo.toml`'s patch
   section. See [STAGE-2-3-REPORT.md](STAGE-2-3-REPORT.md) and
   [`examples/aho-corasick-demo.sh`](examples/aho-corasick-demo.sh).
-- **Stage 4 (the security payoff): `carve impact` (done, v1).** Given a target
-  upstream version, diff it against our vendored slice and classify: changes
-  outside the slice *cannot* touch us; changes inside it are the bounded
-  proof-read surface; changes to items we *call* demand review. This is what
-  makes "an update touching us" precise instead of a blanket re-audit.
+- **`carve impact` (the security payoff, done):** Given a target upstream
+  version, diff it against our vendored slice and classify: changes outside the
+  slice *cannot* touch us; changes inside it are the bounded proof-read surface;
+  changes to items we *call* demand review. Makes "an update touching us" precise
+  instead of a blanket re-audit.
+- **Stage 4 (done): LLM agent + depth.** The agent driver is now a real model
+  over the tool surface (compiler-gated). Vendoring and the DFUG span the **full
+  transitive closure** — dependencies of dependencies — proven on `sharkdp/fd`
+  (90 crates, 6 levels deep, 74 vendored and rebuilt). Native-linked `*-sys`
+  crates and multi-version crates are detected and left on the registry. See
+  [STAGE-4-REPORT.md](STAGE-4-REPORT.md). *Next:* single-item (not just module)
+  slicing, and handling native/sys crates.
 
 ## Why Rust first
 

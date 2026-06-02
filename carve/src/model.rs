@@ -90,6 +90,43 @@ impl UsageGraph {
 }
 
 // ---------------------------------------------------------------------------
+// Transitive (deep) usage graph — dependencies of dependencies
+// ---------------------------------------------------------------------------
+
+/// One crate in the transitive closure, with its distance from the product.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TgNode {
+    pub name: String,
+    pub version: String,
+    /// 0 = the product, 1 = a direct dependency, 2+ = dependency-of-dependency.
+    pub depth: usize,
+}
+
+/// A functional edge: `from` crate references `to` crate, with how much.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DepEdge {
+    pub from: String,
+    pub to: String,
+    /// Distinct dependency items the `from` crate references.
+    pub items: usize,
+    /// Total reference sites.
+    pub refs: usize,
+}
+
+/// The deep Dependency Functional Usage Graph: usage edges across every level
+/// of the dependency tree, not just the product's direct dependencies.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransitiveGraph {
+    pub package: String,
+    pub generated_at: chrono::DateTime<chrono::Utc>,
+    pub nodes: Vec<TgNode>,
+    pub edges: Vec<DepEdge>,
+    /// How many crates we actually scanned source for.
+    pub scanned_crates: usize,
+    pub max_depth: usize,
+}
+
+// ---------------------------------------------------------------------------
 // Provenance ledger
 // ---------------------------------------------------------------------------
 
