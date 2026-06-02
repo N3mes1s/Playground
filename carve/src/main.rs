@@ -148,6 +148,17 @@ enum Command {
         #[arg(long, default_value = "Cargo.toml")]
         manifest_path: PathBuf,
     },
+    /// Record intentional local edits to a vendored crate as tracked patches
+    /// (e.g. an emergency CVE fix) so they're deliberate deltas, not drift.
+    Patch {
+        /// Package name as in Cargo.toml.
+        crate_name: String,
+        #[arg(long, default_value = "Cargo.toml")]
+        manifest_path: PathBuf,
+        /// Why this patch exists (recorded in the provenance ledger).
+        #[arg(long)]
+        note: Option<String>,
+    },
     /// Assess whether a dependency update touches the code we actually vendored.
     Impact {
         /// Package name as in Cargo.toml (must already be vendored).
@@ -224,6 +235,11 @@ fn main() -> Result<()> {
         } => cmd_restore(&crate_name, &manifest_path),
         Command::Status { manifest_path } => cmd_status(&manifest_path),
         Command::Verify { manifest_path } => cmd_verify(&manifest_path),
+        Command::Patch {
+            crate_name,
+            manifest_path,
+            note,
+        } => cmd_patch(&crate_name, &manifest_path, note),
         Command::Impact {
             crate_name,
             to,
@@ -937,7 +953,8 @@ fn cmd_verify(manifest_path: &Path) -> Result<()> {
     for e in &lock.entries {
         let problems = vendor::verify_entry(&root, e);
         if problems.is_empty() {
-            println!("  OK   {} v{} ({} files match ledger)", e.crate_name, e.version, e.files.len());
+            let patched = if e.patches.is_empty() { String::new() } else { format!(", {} patched", e.patches.len()) };
+            println!("  OK   {} v{} ({} files match ledger{patched})", e.crate_name, e.version, e.files.len());
         } else {
             all_ok = false;
             println!("  FAIL {} v{}:", e.crate_name, e.version);
@@ -950,6 +967,30 @@ fn cmd_verify(manifest_path: &Path) -> Result<()> {
         anyhow::bail!("verification failed: vendored bytes diverge from the provenance ledger");
     }
     println!("\nAll vendored bytes match their upstream provenance.");
+    Ok(())
+}
+
+fn cmd_patch(crate_name: &str, manifest_path: &Path, note: Option<String>) -> Result<()> {
+    let root = root_of(manifest_path);
+    let mut lock = vendor::load_lock(&root)?;
+    let mut entry = lock
+        .entry(crate_name)
+        .cloned()
+        .context("crate is not vendored — nothing to patch")?;
+    let recorded = vendor::record_patches(&root, &mut entry, note)?;
+    if recorded.is_empty() {
+        println!("No local changes detected in {crate_name} — nothing to record.");
+        println!("(Edit files under vendor/{}-{}/ first, then re-run.)", entry.crate_name, entry.version);
+        return Ok(());
+    }
+    lock.upsert(entry);
+    vendor::save_lock(&root, &lock)?;
+    println!("Recorded {} intentional patch(es) for {crate_name}:", recorded.len());
+    for p in &recorded {
+        println!("      {p}");
+    }
+    println!("\n  These are now tracked deltas (not drift): `carve verify` accepts them,");
+    println!("  and an upgrade can re-base them against the next upstream slice.");
     Ok(())
 }
 

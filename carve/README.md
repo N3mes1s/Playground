@@ -1,31 +1,45 @@
 # carve
 
-**Carve out only the dependency code you actually use — transcribe it verbatim,
-track its provenance, and stay reversible.**
+**An agent-run control plane over your dependencies: keep only the code you
+actually use, own it as a small, provenance-tracked, reversible slice — so
+vetting, justifying CVE exceptions, and patching each change becomes affordable.**
 
-Modern supply chains make it nearly impossible to be sure a new dependency
-release is safe. `carve` attacks the problem from the other end: instead of
-pulling whole crates (and their whole attack surface, and their whole CVE
-exposure) on every `cargo update`, it figures out *which code of each dependency
-your product actually calls*, and lets an agent transcribe **only that slice**
-into a local `vendor/` tree — byte-for-byte identical to upstream, never invented.
+A typical project pulls hundreds of transitive crates it can neither read nor
+control. `carve` inserts a layer you *do* control: it computes which code of each
+dependency your product actually calls, transcribes **only that slice** verbatim
+into a local `vendor/` tree, and links every byte back to upstream. That small,
+owned slice is the multiplier — it's what makes the things you could never afford
+to do over a full dependency tree cheap enough to do on every change:
 
-You get two wins:
+- **Audit ergonomics.** An upgrade becomes "read this 200-line diff," not
+  "re-audit a 20k-line crate." You stop pulling the whole crate on every bump.
+- **Justified CVE exceptions (VEX).** Scanners flag by *package@version*
+  regardless of whether you reach the vulnerable code. Because carve physically
+  removes the code you don't use and keeps the usage graph as evidence, a
+  "not-affected" exception becomes **auditable**, not a hand-wave — cutting the
+  CVE-triage treadmill.
+- **Patch without forking.** The code is already in your tree, minimal and owned,
+  so an emergency fix (a CVE hotfix before upstream ships one) is a one-line edit
+  recorded as a tracked delta (`carve patch`) — not a fork to host and babysit.
+- **A gate for vetting updates.** Because the slice is small, scanning/reviewing
+  *the next version of exactly the functions you use* before adopting it is
+  tractable — the affordable per-update check whole-crate vendoring can't do.
 
-1. **Supply-chain attacks can't reach you.** You build against your own vendored
-   copy, proof-read at a known version. A malicious `1.2.4` upstream release
-   doesn't touch you until *you* re-transcribe and re-read the diff.
-2. **Smaller attack surface and CVE exposure.** You only carry the code you use.
-   A CVE in a dependency module you never call simply isn't in your tree.
+Two invariants keep it honest:
 
-Two hard constraints keep it honest:
-
-- **Never invent code.** `carve` copies verbatim, in the same shape as upstream.
-  Every vendored byte is SHA-256-linked back to the exact upstream file it came
-  from (the `carve.lock` ledger). Upgrading = re-transcribe + read the diff.
+- **Never invent code.** `carve` copies verbatim. Every vendored byte is
+  SHA-256-linked to the upstream file it came from (the `carve.lock` ledger);
+  intentional local fixes are recorded as explicit, tracked patches, never drift.
 - **Always reversible.** Vendoring is a Cargo `[patch.crates-io]` entry; restoring
-  removes it. Round-trip is lossless — `carve restore <crate>` puts you back on
-  the registry dependency, and the project still builds.
+  removes it. `carve restore <crate>` puts you back on the registry dependency.
+
+**What it is and isn't.** carve is a supply-chain *control plane and audit-surface
+reducer*, across ecosystems (in Rust the linker already strips unused code from
+the binary, so the win is the source you own and audit; in Python/JS/etc. the full
+dependency ships, so it shrinks the runtime surface too). It is **not**, by itself,
+an anti-malware tool: code you actually call is kept verbatim, so a malicious
+update of a *used* function is caught by the update-vetting gate above (and your
+proof-read of that small diff), not by slicing. Claims here are scoped to that.
 
 > Status: **Stages 1–6 working.** DFUG, provenance ledger, verbatim vendoring,
 > reversibility, verification, the autonomous-agent tool surface, agent-driven
@@ -60,7 +74,8 @@ cargo build --release   # produces target/release/carve
 | `carve impact <crate> --to <ver>` | Assess whether moving to an upstream version touches code inside your slice (and which items you call) — i.e. whether the update needs a proof-read or is safe to take. |
 | `carve restore <crate>` | Reverse it: remove the patch, delete the vendored tree, drop the ledger entry. |
 | `carve status` | Show the provenance ledger. |
-| `carve verify` | Re-hash vendored files and confirm they still match the ledger (the "proof-read" guarantee). |
+| `carve verify` | Re-hash vendored files and confirm they still match the ledger (the "proof-read" guarantee); accepts files recorded as intentional patches. |
+| `carve patch <crate>` | Record local edits to a vendored crate (e.g. an emergency CVE hotfix) as tracked provenance deltas, so they're deliberate — not drift — and an upgrade can re-base them. |
 | `carve locate <crate> <item>` | Agent locates the upstream definition site of a used item — the slice it would transcribe. |
 | `carve tools` | List the tool surface available to the autonomous agent. |
 
@@ -151,12 +166,23 @@ roadmap toward agent-driven item-level slicing and a real-project fork.
 
 ## Limitations
 
+- **Verification is compile-only, not behavioral.** A slice is verified to compile
+  (debug *and* release), but `cargo check` passing does not prove the slice
+  *behaves* identically — removing e.g. a `Drop`, a ctor/`inventory` registration,
+  or feature/target-gated runtime code can compile yet change behavior. The right
+  fix (next on the roadmap) is to run the upstream crate's **own test suite**
+  against the slice. **Until that lands, treat a sliced crate as needing the
+  upstream tests run before production use.**
 - Slicing is **target-specialized**: carving a crate's ARM/WASM backends pins the
   vendored copy to your build target. The compiler gates every cut, so the result
   always compiles. Item-level slicing converges cheaply (compiler-guided,
   ~O(reference-depth) checks) in two phases — value/type symbols, then `impl`
   blocks via method/trait errors. `--budget` adds an optional per-item catch-all
   for any residue.
+- **Whole-closure `harden` is an offline/CI batch job**, not a per-build gate:
+  per-crate slicing is rebuild-bound (minutes), so a 100+ crate closure runs for
+  a while. Interactive use is `analyze` to find high-value targets, then `slice`
+  them individually (seconds-to-minutes).
 - Transitive `[patch]` can't express a crate present at **multiple versions**;
   those are vendored for the record but left on the registry.
 - The DFUG resolver is syntactic, not a full type resolver. It maps `pkg-name`

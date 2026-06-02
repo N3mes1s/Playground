@@ -136,6 +136,7 @@ pub fn vendor_crate(
         vendored_at: chrono::Utc::now(),
         note,
         removed_modules: Vec::new(),
+        patches: Vec::new(),
     })
 }
 
@@ -164,20 +165,76 @@ pub fn reindex_files(root: &Path, crate_name: &str, version: &str) -> Result<Vec
 /// Re-hash vendored files and confirm they still match the ledger. This is the
 /// "proof-read" guarantee: vendored bytes are exactly what we recorded.
 pub fn verify_entry(root: &Path, entry: &VendorEntry) -> Vec<String> {
+    use std::collections::HashMap;
+    // Files recorded as intentional patches: accept their patched hash instead.
+    let patched: HashMap<&str, &str> = entry
+        .patches
+        .iter()
+        .map(|p| (p.vendored_path.as_str(), p.patched_sha256.as_str()))
+        .collect();
+
     let mut problems = Vec::new();
     for f in &entry.files {
         let p = root.join(&f.vendored_path);
         match std::fs::read(&p) {
             Ok(bytes) => {
                 let sha = sha256_bytes(&bytes);
-                if sha != f.sha256 {
-                    problems.push(format!("hash mismatch: {}", f.vendored_path));
+                let ok = sha == f.sha256
+                    || patched.get(f.vendored_path.as_str()) == Some(&sha.as_str());
+                if !ok {
+                    let how = if patched.contains_key(f.vendored_path.as_str()) {
+                        "patched file no longer matches its recorded patch"
+                    } else {
+                        "hash mismatch (undeclared change — run `carve patch` if intentional)"
+                    };
+                    problems.push(format!("{how}: {}", f.vendored_path));
                 }
             }
             Err(_) => problems.push(format!("missing: {}", f.vendored_path)),
         }
     }
     problems
+}
+
+/// Scan a vendored crate for files whose bytes differ from the verbatim ledger
+/// and record them as intentional patches (CVE hotfix, hardening). Returns the
+/// recorded patches; after this, `verify` treats them as deliberate deltas.
+pub fn record_patches(
+    root: &Path,
+    entry: &mut VendorEntry,
+    note: Option<String>,
+) -> Result<Vec<String>> {
+    let mut recorded = Vec::new();
+    let known: std::collections::HashMap<String, String> = entry
+        .files
+        .iter()
+        .map(|f| (f.vendored_path.clone(), f.sha256.clone()))
+        .collect();
+    for (vendored_path, upstream_sha) in &known {
+        let p = root.join(vendored_path);
+        let Ok(bytes) = std::fs::read(&p) else { continue };
+        let cur = sha256_bytes(&bytes);
+        if &cur == upstream_sha {
+            continue; // still verbatim
+        }
+        // Upsert the patch record.
+        if let Some(existing) = entry.patches.iter_mut().find(|x| &x.vendored_path == vendored_path) {
+            existing.patched_sha256 = cur.clone();
+            existing.note = note.clone();
+            existing.patched_at = chrono::Utc::now();
+        } else {
+            entry.patches.push(crate::model::PatchedFile {
+                vendored_path: vendored_path.clone(),
+                upstream_sha256: upstream_sha.clone(),
+                patched_sha256: cur.clone(),
+                note: note.clone(),
+                patched_at: chrono::Utc::now(),
+            });
+        }
+        recorded.push(vendored_path.clone());
+    }
+    recorded.sort();
+    Ok(recorded)
 }
 
 // ---------------------------------------------------------------------------

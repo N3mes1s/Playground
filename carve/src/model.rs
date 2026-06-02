@@ -142,6 +142,21 @@ pub struct VendoredFile {
     pub sha256: String,
 }
 
+/// A vendored file the user/agent intentionally patched away from upstream
+/// (e.g. an emergency CVE fix applied before upstream ships one). Tracked as a
+/// first-class delta so `verify` treats it as deliberate — not transcription
+/// drift — and an upgrade can re-base and re-review it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatchedFile {
+    pub vendored_path: String,
+    /// SHA-256 of the original upstream bytes this patch departs from.
+    pub upstream_sha256: String,
+    /// SHA-256 of the current (patched) bytes — what `verify` now expects.
+    pub patched_sha256: String,
+    pub note: Option<String>,
+    pub patched_at: chrono::DateTime<chrono::Utc>,
+}
+
 /// Everything needed to (a) trust a vendored crate and (b) reverse it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VendorEntry {
@@ -159,6 +174,10 @@ pub struct VendorEntry {
     /// compiling the real consumer). Empty until `carve slice` runs.
     #[serde(default)]
     pub removed_modules: Vec<String>,
+    /// Intentional local patches (CVE hotfixes, hardening) — tracked deltas, not
+    /// drift. `verify` accepts a file that matches its recorded patched hash.
+    #[serde(default)]
+    pub patches: Vec<PatchedFile>,
 }
 
 /// The `carve.lock` ledger: the durable link between product and vendored deps.
