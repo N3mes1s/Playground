@@ -177,12 +177,23 @@ impl Tool for CargoCheckTool {
         // `debug_assertions`, so a cut fine in one profile can break the other —
         // the slicer converges on fast "debug" then reconciles against "release".
         let profile = input.get("profile").and_then(Value::as_str);
+        // Run cargo IN the project directory so it reads the project's
+        // .cargo/config.toml (the cap-lints shim). Invoking via --manifest-path
+        // from elsewhere would ignore it and dependency lints would fail builds.
+        let workdir = std::path::Path::new(&manifest)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
         let run = |release: bool| -> Result<(bool, String)> {
             let mut args = vec!["check", "--manifest-path", &manifest, "--message-format=short"];
             if release {
                 args.push("--release");
             }
-            let out = Command::new("cargo").args(&args).output().context("spawning cargo check")?;
+            let out = Command::new("cargo")
+                .current_dir(&workdir)
+                .args(&args)
+                .output()
+                .context("spawning cargo check")?;
             Ok((out.status.success(), String::from_utf8_lossy(&out.stderr).into_owned()))
         };
         match profile {

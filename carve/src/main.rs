@@ -369,6 +369,7 @@ fn deepest_chain(graph: &model::TransitiveGraph) -> Option<Vec<String>> {
 /// would "verify" because it is never built, which would be unsafe.
 fn compiled_crates(manifest_path: &Path) -> Result<std::collections::HashSet<String>> {
     let out = std::process::Command::new("cargo")
+        .current_dir(root_of(manifest_path))
         .args(["build", "--message-format=json", "--manifest-path"])
         .arg(manifest_path)
         .output()
@@ -395,13 +396,16 @@ fn parse_pkg_name(pid: &str) -> String {
 
 /// Time a clean optimized (`--release`) build, in seconds.
 fn release_build_time(manifest_path: &Path) -> Result<f64> {
+    let workdir = root_of(manifest_path);
     std::process::Command::new("cargo")
+        .current_dir(&workdir)
         .args(["clean", "--release", "--manifest-path"])
         .arg(manifest_path)
         .output()
         .context("cargo clean --release")?;
     let t0 = std::time::Instant::now();
     let out = std::process::Command::new("cargo")
+        .current_dir(&workdir)
         .args(["build", "--release", "--manifest-path"])
         .arg(manifest_path)
         .output()
