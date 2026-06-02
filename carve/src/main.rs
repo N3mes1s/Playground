@@ -575,6 +575,7 @@ fn cmd_vendor(
     if apply {
         let rel = vendor::vendor_rel_path(crate_name, &version);
         vendor::apply_patch(&root, crate_name, &rel)?;
+        vendor::ensure_cap_lints(&root)?;
         println!("  added [patch.crates-io] {crate_name} -> {rel}");
         println!("  run `cargo build` to compile against the vendored copy");
     } else {
@@ -671,10 +672,13 @@ fn cmd_vendor_all(manifest_path: &Path, apply: bool, transitive: bool) -> Result
         }
     }
     vendor::save_lock(&root, &lock)?;
+    if apply {
+        vendor::ensure_cap_lints(&root)?;
+    }
 
     println!("\n  vendored {ok}/{} dependency(ies); provenance in carve.lock", targets.len());
     if apply {
-        println!("  wired {patched} [patch.crates-io] entries — run `cargo build` to compile vendored");
+        println!("  wired {patched} [patch.crates-io] entries (+ cap-lints shim) — run `cargo build`");
     } else {
         println!("  re-run with --apply to wire the [patch.crates-io] entries");
     }

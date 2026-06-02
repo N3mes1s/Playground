@@ -13,7 +13,7 @@ use crate::model::{CarveLock, VendorEntry, VendoredFile};
 use anyhow::{anyhow, bail, Context, Result};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use toml_edit::{value, DocumentMut, Item, Table};
+use toml_edit::{value, Array, DocumentMut, Item, Table};
 use walkdir::WalkDir;
 
 const LOCK_FILE: &str = "carve.lock";
@@ -239,6 +239,79 @@ pub fn remove_patch(root: &Path, crate_name: &str) -> Result<bool> {
     Ok(removed)
 }
 
+const CARGO_CONFIG: &str = ".cargo/config.toml";
+
+/// Vendoring patches crates to local *paths*, which makes Cargo treat them as
+/// first-party code and drop the `--cap-lints=allow` it applies to registry
+/// dependencies — so their lints (e.g. `unexpected_cfgs`) fire as errors. We
+/// restore registry-dep semantics by adding `--cap-lints=allow` to the project's
+/// `.cargo/config.toml`. Reversible via [`clear_cap_lints`].
+pub fn ensure_cap_lints(root: &Path) -> Result<()> {
+    let p = root.join(CARGO_CONFIG);
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut doc = if p.exists() {
+        std::fs::read_to_string(&p)?.parse::<DocumentMut>().context("parsing .cargo/config.toml")?
+    } else {
+        DocumentMut::new()
+    };
+    let build = doc
+        .entry("build")
+        .or_insert(Item::Table(Table::new()))
+        .as_table_mut()
+        .ok_or_else(|| anyhow!("[build] is not a table"))?;
+    let flags = build.entry("rustflags").or_insert(value(Array::new()));
+    if let Some(arr) = flags.as_array_mut() {
+        let present = arr.iter().any(|v| v.as_str() == Some("--cap-lints"));
+        if !present {
+            arr.push("--cap-lints");
+            arr.push("allow");
+        }
+    }
+    std::fs::write(&p, doc.to_string())?;
+    Ok(())
+}
+
+/// Remove the `--cap-lints allow` flags carve added (and tidy empty tables/file).
+pub fn clear_cap_lints(root: &Path) -> Result<()> {
+    let p = root.join(CARGO_CONFIG);
+    if !p.exists() {
+        return Ok(());
+    }
+    let mut doc = std::fs::read_to_string(&p)?.parse::<DocumentMut>()?;
+    if let Some(build) = doc.get_mut("build").and_then(Item::as_table_mut) {
+        if let Some(arr) = build.get_mut("rustflags").and_then(Item::as_array_mut) {
+            let kept: Vec<String> = arr
+                .iter()
+                .filter_map(|v| v.as_str())
+                .filter(|s| *s != "--cap-lints" && *s != "allow")
+                .map(|s| s.to_string())
+                .collect();
+            if kept.is_empty() {
+                build.remove("rustflags");
+            } else {
+                let mut new = Array::new();
+                for s in kept {
+                    new.push(s);
+                }
+                build["rustflags"] = value(new);
+            }
+        }
+        if build.is_empty() {
+            doc.as_table_mut().remove("build");
+        }
+    }
+    if doc.as_table().is_empty() {
+        std::fs::remove_file(&p).ok();
+        // remove now-empty .cargo dir if we own it
+        let _ = std::fs::remove_dir(root.join(".cargo"));
+    } else {
+        std::fs::write(&p, doc.to_string())?;
+    }
+    Ok(())
+}
+
 /// Reverse a vendored crate completely: remove the patch, delete the vendored
 /// tree, and drop the lock entry.
 #[tracing::instrument]
@@ -257,6 +330,10 @@ pub fn restore_crate(root: &Path, crate_name: &str) -> Result<()> {
             .with_context(|| format!("removing {}", dest.display()))?;
     }
     save_lock(root, &lock)?;
+    // Once nothing is vendored, drop the cap-lints shim too.
+    if lock.entries.is_empty() {
+        clear_cap_lints(root).ok();
+    }
     tracing::info!(crate_name, "restored to upstream dependency");
     Ok(())
 }
