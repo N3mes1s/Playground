@@ -703,3 +703,119 @@ pub fn count_loc(vendor_dir: &Path) -> usize {
         .map(|s| s.lines().count())
         .sum()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- module path mapping -------------------------------------------------
+    #[test]
+    fn module_of_path_cases() {
+        assert_eq!(
+            module_of_path("w/vendor/memchr-2.8.1/src/arch/all/memchr.rs:26:5"),
+            vec!["arch", "all", "memchr"]
+        );
+        assert!(module_of_path("x/src/lib.rs").is_empty());
+        assert_eq!(module_of_path("x/src/memmem/mod.rs"), vec!["memmem"]);
+        assert_eq!(module_of_path("x/src/memchr.rs"), vec!["memchr"]);
+    }
+
+    // --- value/type "cannot find" parsing (extract_wanted) -------------------
+    #[test]
+    fn wanted_unresolved_import_path() {
+        let e = "x/src/lib.rs:203:16: error[E0432]: unresolved import `crate::memchr`";
+        let w = extract_wanted(e);
+        assert!(w.iter().any(|x| x.name == "memchr"));
+    }
+
+    #[test]
+    fn wanted_cannot_find_in_module_uses_that_module_as_context() {
+        let e = "x/src/d.rs:5:9: error[E0425]: cannot find function `memchr_raw` in module `crate::arch::all`";
+        let w = extract_wanted(e);
+        let m = w.iter().find(|x| x.name == "memchr_raw").expect("found memchr_raw");
+        assert_eq!(m.context, vec!["arch", "all"]);
+    }
+
+    #[test]
+    fn wanted_bare_name_uses_error_file_module() {
+        let e = "x/vendor/c/src/arch/x86_64/memchr.rs:9:1: error[E0412]: cannot find type `One` in this scope";
+        let w = extract_wanted(e);
+        let m = w.iter().find(|x| x.name == "One").expect("found One");
+        assert_eq!(m.context, vec!["arch", "x86_64", "memchr"]);
+    }
+
+    // --- impl method/trait parsing (extract_impl_wanted) ---------------------
+    #[test]
+    fn impl_wanted_no_method_takes_type_last_segment() {
+        let e = "x:1:1: error[E0599]: no method named `find` found for struct `rabinkarp::Finder` in the current scope";
+        let m = extract_impl_wanted(e).into_iter().find(|x| x.type_name == "Finder").unwrap();
+        assert_eq!(m.method.as_deref(), Some("find"));
+        assert_eq!(m.context, vec!["rabinkarp"]);
+    }
+
+    #[test]
+    fn impl_wanted_strips_ref_and_generics() {
+        let e = "x:1:1: error[E0599]: no method named `min_haystack_len` found for reference `&sse2::packedpair::Finder` in the current scope";
+        let m = extract_impl_wanted(e)
+            .into_iter()
+            .find(|x| x.method.as_deref() == Some("min_haystack_len"))
+            .unwrap();
+        assert_eq!(m.type_name, "Finder");
+        assert_eq!(m.context, vec!["sse2", "packedpair"]);
+
+        let g = "x:1:1: error[E0599]: no function or associated item named `new` found for struct `generic::memchr::Iter<'h>`";
+        let m = extract_impl_wanted(g).into_iter().find(|x| x.type_name == "Iter").unwrap();
+        assert_eq!(m.method.as_deref(), Some("new"));
+        assert_eq!(m.context, vec!["generic", "memchr"]);
+    }
+
+    #[test]
+    fn impl_wanted_trait_bound_and_not_iterator() {
+        let b = "x:1:1: error[E0277]: the trait bound `DefaultFrequencyRank: HeuristicFrequencyRank` is not satisfied";
+        let m = extract_impl_wanted(b).into_iter().find(|x| x.type_name == "DefaultFrequencyRank").unwrap();
+        assert_eq!(m.trait_name.as_deref(), Some("HeuristicFrequencyRank"));
+
+        let i = "x:1:1: error[E0599]: `SuffixKind` is not an iterator";
+        let m = extract_impl_wanted(i).into_iter().find(|x| x.type_name == "SuffixKind").unwrap();
+        assert_eq!(m.trait_name.as_deref(), Some("Iterator"));
+
+        let t = "x:1:1: error[E0277]: the trait `Iterator` is not implemented for `OneIter`";
+        let m = extract_impl_wanted(t).into_iter().find(|x| x.type_name == "OneIter").unwrap();
+        assert_eq!(m.trait_name.as_deref(), Some("Iterator"));
+    }
+
+    // --- module disambiguation -----------------------------------------------
+    #[test]
+    fn module_match_prefers_the_right_backend() {
+        let rabinkarp = vec!["arch".to_string(), "all".to_string(), "rabinkarp".to_string()];
+        let twoway = vec!["arch".to_string(), "all".to_string(), "twoway".to_string()];
+        let ctx = vec!["rabinkarp".to_string()];
+        assert!(module_match(&rabinkarp, &ctx) > module_match(&twoway, &ctx));
+    }
+
+    // --- unsafe / word counting ----------------------------------------------
+    #[test]
+    fn count_word_is_boundary_aware() {
+        assert_eq!(count_word("unsafe { } // unsafe_x not_unsafe value", "unsafe"), 1);
+        assert_eq!(count_word("a unsafe b unsafe", "unsafe"), 2);
+    }
+
+    // --- render-from-original is stable across removals ----------------------
+    #[test]
+    fn render_without_removes_only_targeted_items() {
+        let src = "pub fn a() {}\npub fn b() {}\npub fn c() {}\n";
+        let items = list_items(std::path::Path::new("/dev/null")).unwrap_or_default();
+        let _ = items; // list_items needs a real file; exercise render directly
+        // Build a minimal ItemRef set by hand to test render_without line logic.
+        let it_b = ItemRef {
+            label: "fn b".into(), name: "b".into(), removable: true,
+            methods: vec![], trait_name: None, start: 2, end: 2, text_hash: 42,
+        };
+        let mut removed = std::collections::HashSet::new();
+        removed.insert(42u64);
+        let out = render_without(src, std::slice::from_ref(&it_b), &removed);
+        assert!(out.contains("fn a"));
+        assert!(!out.contains("fn b"));
+        assert!(out.contains("fn c"));
+    }
+}
