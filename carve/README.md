@@ -95,6 +95,26 @@ $ carve restore walkdir          # fully reversible
 Restored walkdir to its upstream dependency (patch + vendor dir removed).
 ```
 
+## Configuration (`carve.toml`)
+
+Drop a `carve.toml` (or `.carve.toml`) next to your `Cargo.toml` to set policy.
+CLI flags override the config; the config overrides built-in defaults.
+
+```toml
+# carve.toml
+transitive    = true     # vendor/slice the whole closure (deps of deps)
+min_reduction = 10.0     # revert a slice below this LOC % back to upstream
+budget        = 0        # per-crate item-slice refinement checks
+
+# Crates carve must NOT vendor or slice — kept as normal upstream dependencies.
+# Use for deps you'd rather track upstream, native crates, or ones that don't
+# slice well. Merged with any --exclude flags.
+exclude = ["openssl-sys", "ring"]
+```
+
+Then `carve harden` (or `vendor-all`) reads it automatically. `--exclude <crate>`
+on the command line is merged with the config's `exclude` list.
+
 ## How it works
 
 ```

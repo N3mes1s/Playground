@@ -6,6 +6,7 @@
 
 mod agent;
 mod analyze;
+mod config;
 mod impact;
 mod model;
 mod obs;
@@ -79,6 +80,10 @@ enum Command {
         /// dependencies), for full supply-chain isolation.
         #[arg(long)]
         transitive: bool,
+        /// Crate(s) to leave on the upstream registry (repeatable). Merged with
+        /// `exclude` in carve.toml.
+        #[arg(long)]
+        exclude: Vec<String>,
     },
     /// Agent: carve a vendored crate down to only the modules the product needs,
     /// verifying every cut by compiling the real consumer.
@@ -120,6 +125,10 @@ enum Command {
         /// maintenance of a vendored copy. 0 keeps every slice.
         #[arg(long, default_value_t = 0.0)]
         min_reduction: f64,
+        /// Crate(s) to leave on the upstream registry (repeatable). Merged with
+        /// `exclude` in carve.toml.
+        #[arg(long)]
+        exclude: Vec<String>,
     },
     /// Check LLM agent connectivity (needs ANTHROPIC_API_KEY).
     LlmCheck,
@@ -191,7 +200,8 @@ fn main() -> Result<()> {
             manifest_path,
             apply,
             transitive,
-        } => cmd_vendor_all(&manifest_path, apply, transitive),
+            exclude,
+        } => cmd_vendor_all(&manifest_path, apply, transitive, &exclude),
         Command::Slice {
             crate_name,
             manifest_path,
@@ -205,7 +215,8 @@ fn main() -> Result<()> {
             transitive,
             budget,
             min_reduction,
-        } => cmd_harden(&manifest_path, transitive, budget, min_reduction),
+            exclude,
+        } => cmd_harden(&manifest_path, transitive, budget, min_reduction, &exclude),
         Command::LlmCheck => cmd_llm_check(),
         Command::Restore {
             crate_name,
@@ -401,12 +412,25 @@ fn release_build_time(manifest_path: &Path) -> Result<f64> {
     Ok(t0.elapsed().as_secs_f64())
 }
 
-fn cmd_harden(manifest_path: &Path, transitive: bool, budget: usize, min_reduction: f64) -> Result<()> {
+fn cmd_harden(
+    manifest_path: &Path,
+    transitive: bool,
+    budget: usize,
+    min_reduction: f64,
+    cli_exclude: &[String],
+) -> Result<()> {
     let root = root_of(manifest_path);
-    println!("=== Autonomous supply-chain hardening ===\n");
+    // CLI overrides carve.toml overrides built-in defaults.
+    let cfg = config::Config::load(&root);
+    let transitive = transitive || cfg.transitive.unwrap_or(false);
+    let budget = if budget != 0 { budget } else { cfg.budget.unwrap_or(0) };
+    let min_reduction = if min_reduction != 0.0 { min_reduction } else { cfg.min_reduction.unwrap_or(0.0) };
+    println!("=== Autonomous supply-chain hardening ===");
+    println!("  policy: transitive={transitive}  min_reduction={min_reduction:.0}%  budget={budget}  excluded={}\n",
+        cfg.exclude.len() + cli_exclude.len());
 
     println!("[1/5] Vendoring the {} closure…", if transitive { "transitive" } else { "direct" });
-    cmd_vendor_all(manifest_path, true, transitive)?;
+    cmd_vendor_all(manifest_path, true, transitive, cli_exclude)?;
 
     println!("\n[2/5] Detecting crates actually compiled for this target…");
     let compiled = compiled_crates(manifest_path)?;
@@ -587,7 +611,7 @@ fn cmd_vendor(
     Ok(())
 }
 
-fn cmd_vendor_all(manifest_path: &Path, apply: bool, transitive: bool) -> Result<()> {
+fn cmd_vendor_all(manifest_path: &Path, apply: bool, transitive: bool, cli_exclude: &[String]) -> Result<()> {
     let root = root_of(manifest_path);
 
     // Map each used crate to its referenced items, for richer provenance.
@@ -625,6 +649,21 @@ fn cmd_vendor_all(manifest_path: &Path, apply: bool, transitive: bool) -> Result
     };
     targets.sort();
     targets.dedup();
+
+    // Policy: drop crates excluded in carve.toml or via --exclude — they stay as
+    // normal upstream dependencies.
+    let cfg = config::Config::load(&root);
+    let excluded: std::collections::HashSet<&str> =
+        cfg.exclude.iter().chain(cli_exclude.iter()).map(String::as_str).collect();
+    let before = targets.len();
+    if !excluded.is_empty() {
+        targets.retain(|(p, _)| !excluded.contains(p.as_str()));
+        let dropped = before - targets.len();
+        if dropped > 0 {
+            println!("Excluded {dropped} crate(s) by policy (kept upstream): {}",
+                excluded.iter().copied().collect::<Vec<_>>().join(", "));
+        }
+    }
 
     if targets.is_empty() {
         println!("No resolvable dependencies to vendor.");
