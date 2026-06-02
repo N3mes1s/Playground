@@ -173,11 +173,10 @@ impl Tool for CargoCheckTool {
     }
     fn invoke(&self, input: &Value) -> Result<Value> {
         let manifest = str_field(input, "manifest_path")?;
-        // Verify under BOTH the default (debug, `debug_assertions` on) and the
-        // release (`debug_assertions` off) profile. Dependencies cfg-gate code on
-        // `debug_assertions` (e.g. rustix's `decode_*_infallible` fast paths), so
-        // a cut that compiles in one profile can break the other — and the
-        // deployment build is usually `--release`.
+        // `profile`: "debug" | "release" | absent (=both). Code cfg-gates on
+        // `debug_assertions`, so a cut fine in one profile can break the other —
+        // the slicer converges on fast "debug" then reconciles against "release".
+        let profile = input.get("profile").and_then(Value::as_str);
         let run = |release: bool| -> Result<(bool, String)> {
             let mut args = vec!["check", "--manifest-path", &manifest, "--message-format=short"];
             if release {
@@ -186,15 +185,24 @@ impl Tool for CargoCheckTool {
             let out = Command::new("cargo").args(&args).output().context("spawning cargo check")?;
             Ok((out.status.success(), String::from_utf8_lossy(&out.stderr).into_owned()))
         };
-        let (dbg_ok, dbg_err) = run(false)?;
-        if !dbg_ok {
-            return Ok(json!({ "success": false, "stderr": dbg_err }));
+        match profile {
+            Some("debug") => {
+                let (ok, err) = run(false)?;
+                Ok(json!({ "success": ok, "stderr": err }))
+            }
+            Some("release") => {
+                let (ok, err) = run(true)?;
+                Ok(json!({ "success": ok, "stderr": err }))
+            }
+            _ => {
+                let (dbg_ok, dbg_err) = run(false)?;
+                if !dbg_ok {
+                    return Ok(json!({ "success": false, "stderr": dbg_err }));
+                }
+                let (rel_ok, rel_err) = run(true)?;
+                Ok(json!({ "success": rel_ok, "stderr": format!("{dbg_err}\n{rel_err}") }))
+            }
         }
-        let (rel_ok, rel_err) = run(true)?;
-        Ok(json!({
-            "success": rel_ok,
-            "stderr": format!("{dbg_err}\n{rel_err}"),
-        }))
     }
 }
 
@@ -393,7 +401,13 @@ impl RuleBasedAgent {
         vendor_dir: &Path,
         budget: usize,
     ) -> Result<ItemSliceReport> {
+        // `manifest` verifies both profiles (final gate); `dbg`/`rel` are the
+        // fast single-profile checks used during the loops. Converging on debug
+        // and reconciling against release once is far cheaper than running a
+        // release check on every cut.
         let manifest = json!({ "manifest_path": project_manifest.to_string_lossy() });
+        let dbg = json!({ "manifest_path": project_manifest.to_string_lossy(), "profile": "debug" });
+        let rel = json!({ "manifest_path": project_manifest.to_string_lossy(), "profile": "release" });
         let baseline = self.registry.call("cargo_check", &manifest)?;
         if !baseline["success"].as_bool().unwrap_or(false) {
             return Err(anyhow!("baseline `cargo check` failed; fix the build before item-slicing"));
@@ -442,7 +456,7 @@ impl RuleBasedAgent {
         // Convergence is cheap (~O(reference-depth)); it is not charged against
         // the refinement budget. 64 rounds is far more than any real depth.
         for round in 0..64 {
-            let res = self.registry.call("cargo_check", &manifest)?;
+            let res = self.registry.call("cargo_check", &dbg)?;
             checks += 1;
             if res["success"].as_bool().unwrap_or(false) {
                 converged = true;
@@ -506,7 +520,7 @@ impl RuleBasedAgent {
 
             let mut p2_converged = false;
             for round in 0..64 {
-                let res = self.registry.call("cargo_check", &manifest)?;
+                let res = self.registry.call("cargo_check", &dbg)?;
                 checks += 1;
                 if res["success"].as_bool().unwrap_or(false) {
                     p2_converged = true;
@@ -595,7 +609,7 @@ impl RuleBasedAgent {
                         refine_checks += 1;
                         removed.insert(it.text_hash);
                         std::fs::write(&f.path, slice::render_without(&f.original, &f.items, &removed))?;
-                        let res = self.registry.call("cargo_check", &manifest)?;
+                        let res = self.registry.call("cargo_check", &dbg)?;
                         checks += 1;
                         if !res["success"].as_bool().unwrap_or(false) {
                             removed.remove(&it.text_hash);
@@ -617,7 +631,7 @@ impl RuleBasedAgent {
                     refine_checks += 1;
                     removed.insert(it.text_hash);
                     std::fs::write(&f.path, slice::render_without(&f.original, &f.items, &removed))?;
-                    let res = self.registry.call("cargo_check", &manifest)?;
+                    let res = self.registry.call("cargo_check", &dbg)?;
                     checks += 1;
                     if !res["success"].as_bool().unwrap_or(false) {
                         removed.remove(&it.text_hash);
@@ -626,7 +640,69 @@ impl RuleBasedAgent {
                 }
             }
         }
-        tracing::info!(after_fast, after_refine = removed.len(), checks, "item-slice done");
+        tracing::info!(after_fast, after_refine = removed.len(), checks, "item-slice (debug) done");
+
+        // Release reconciliation: everything above verified the cheap debug
+        // profile; now make the result satisfy --release too. Code gated on
+        // `cfg(not(debug_assertions))` is dead in debug but live in release, so
+        // the release build may demand items we removed. Restore exactly those
+        // (by the same precise name/module + method/trait matching), iterating
+        // until release compiles. This runs release checks only a handful of
+        // times per crate instead of on every cut.
+        for _ in 0..48 {
+            let rc = self.registry.call("cargo_check", &rel)?;
+            checks += 1;
+            if rc["success"].as_bool().unwrap_or(false) {
+                break;
+            }
+            let stderr = rc["stderr"].as_str().unwrap_or("");
+            let mut restored = 0usize;
+            // value/type items
+            for w in slice::extract_wanted(stderr) {
+                let mut best_ov: i64 = -1;
+                let mut best: Vec<u64> = Vec::new();
+                for f in &files {
+                    let ov = slice::prefix_overlap(&f.module, &w.context) as i64;
+                    for it in &f.items {
+                        if it.removable && it.name == w.name && removed.contains(&it.text_hash) {
+                            if ov > best_ov { best_ov = ov; best = vec![it.text_hash]; }
+                            else if ov == best_ov { best.push(it.text_hash); }
+                        }
+                    }
+                }
+                for h in best { if removed.remove(&h) { restored += 1; } }
+            }
+            // impl blocks
+            for w in slice::extract_impl_wanted(stderr) {
+                let mut best_ov: i64 = -1;
+                let mut best: Vec<u64> = Vec::new();
+                for f in &files {
+                    let ov = slice::module_match(&f.module, &w.context);
+                    for it in &f.items {
+                        if it.label.starts_with("impl ") && it.removable && it.name == w.type_name && removed.contains(&it.text_hash) {
+                            let m = match (&w.method, &w.trait_name) {
+                                (Some(mm), _) => it.methods.iter().any(|x| x == mm) || it.trait_name.is_some(),
+                                (None, Some(tr)) => it.trait_name.as_deref() == Some(tr.as_str()),
+                                (None, None) => true,
+                            };
+                            if m {
+                                if ov > best_ov { best_ov = ov; best = vec![it.text_hash]; }
+                                else if ov == best_ov { best.push(it.text_hash); }
+                            }
+                        }
+                    }
+                }
+                for h in best { if removed.remove(&h) { restored += 1; } }
+            }
+            if restored == 0 {
+                // Can't pinpoint what release needs — unslice this crate (its
+                // verbatim original passed release at baseline). Rare, safe.
+                removed.clear();
+                break;
+            }
+            write_all(&removed)?;
+        }
+        tracing::info!(after_release_reconcile = removed.len(), checks, "item-slice done");
 
         let final_check = self.registry.call("cargo_check", &manifest)?;
         let verified = final_check["success"].as_bool().unwrap_or(false);
