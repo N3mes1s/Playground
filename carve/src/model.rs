@@ -309,7 +309,11 @@ pub struct ItemSliceReport {
     pub items_removed: usize,
     pub loc_before: usize,
     pub loc_after: usize,
-    /// Number of `cargo check` verifications the agent ran.
+    /// Items removed by the cheap error-guided convergence pass alone.
+    pub fast_removed: usize,
+    /// `cargo check`s the fast pass used to converge (typically ~O(depth)).
+    pub fast_checks: usize,
+    /// Total `cargo check` verifications (fast pass + greedy refinement).
     pub checks_used: usize,
     pub budget_exhausted: bool,
     pub verified: bool,

@@ -128,8 +128,8 @@ roadmap toward agent-driven item-level slicing and a real-project fork.
 
 - Slicing is **target-specialized**: carving a crate's ARM/WASM backends pins the
   vendored copy to your build target. The compiler gates every cut, so the result
-  always compiles. Item-level slicing is one `cargo check` per item, so it is
-  budget-bounded — run the cheap module pass first.
+  always compiles. Item-level slicing converges cheaply (compiler-guided,
+  ~O(reference-depth) checks) and then refines within `--budget`.
 - Transitive `[patch]` can't express a crate present at **multiple versions**;
   those are vendored for the record but left on the registry.
 - The DFUG resolver is syntactic, not a full type resolver. It maps `pkg-name`

@@ -8,6 +8,7 @@
 //! only removes whole upstream modules and reverts anything that doesn't compile.
 
 use anyhow::{Context, Result};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use syn::spanned::Spanned;
 use walkdir::WalkDir;
@@ -145,6 +146,12 @@ pub fn remove_mod_decl(decl_file: &Path, name: &str) -> Result<String> {
 #[derive(Debug, Clone)]
 pub struct ItemRef {
     pub label: String,
+    /// Bare identifier used to match compiler "cannot find `name`" errors
+    /// (for impls, the Self type's name). Empty when not name-resolvable.
+    pub name: String,
+    /// Whether this item can be removed and restored-by-name. `use` items and
+    /// impls on non-path types are kept (false) since we can't restore them.
+    pub removable: bool,
     pub start: usize,
     pub end: usize,
     /// Hash of the item's own source text — a stable id even as siblings shift.
@@ -181,22 +188,30 @@ fn item_attrs(item: &syn::Item) -> &[syn::Attribute] {
     }
 }
 
-fn item_label(item: &syn::Item) -> Option<String> {
+/// Returns `(label, bare_name, removable)` for a top-level item.
+fn classify_item(item: &syn::Item) -> Option<(String, String, bool)> {
     use syn::Item::*;
-    Some(match item {
-        Fn(i) => format!("fn {}", i.sig.ident),
-        Struct(i) => format!("struct {}", i.ident),
-        Enum(i) => format!("enum {}", i.ident),
-        Trait(i) => format!("trait {}", i.ident),
-        Type(i) => format!("type {}", i.ident),
-        Const(i) => format!("const {}", i.ident),
-        Static(i) => format!("static {}", i.ident),
-        Union(i) => format!("union {}", i.ident),
-        Impl(i) => format!("impl {}", type_name(&i.self_ty)),
-        Macro(i) => format!("macro {}", i.ident.as_ref().map(|x| x.to_string()).unwrap_or_default()),
-        Use(_) => "use".to_string(),
+    let (label, name) = match item {
+        Fn(i) => (format!("fn {}", i.sig.ident), i.sig.ident.to_string()),
+        Struct(i) => (format!("struct {}", i.ident), i.ident.to_string()),
+        Enum(i) => (format!("enum {}", i.ident), i.ident.to_string()),
+        Trait(i) => (format!("trait {}", i.ident), i.ident.to_string()),
+        Type(i) => (format!("type {}", i.ident), i.ident.to_string()),
+        Const(i) => (format!("const {}", i.ident), i.ident.to_string()),
+        Static(i) => (format!("static {}", i.ident), i.ident.to_string()),
+        Union(i) => (format!("union {}", i.ident), i.ident.to_string()),
+        Impl(i) => (format!("impl {}", type_name(&i.self_ty)), type_name(&i.self_ty)),
+        Macro(i) => {
+            let n = i.ident.as_ref().map(|x| x.to_string()).unwrap_or_default();
+            (format!("macro {n}"), n)
+        }
+        Use(_) => ("use".to_string(), String::new()),
         _ => return None,
-    })
+    };
+    // Removable iff we can later restore it by matching a compiler error to its
+    // name. `use` (no name) and impls on non-path types ("_") are kept.
+    let removable = !name.is_empty() && name != "_";
+    Some((label, name, removable))
 }
 
 fn type_name(ty: &syn::Type) -> String {
@@ -221,7 +236,7 @@ pub fn list_items(file: &Path) -> Result<Vec<ItemRef>> {
     let lines: Vec<&str> = src.lines().collect();
     let mut out = Vec::new();
     for item in &ast.items {
-        let Some(label) = item_label(item) else { continue };
+        let Some((label, name, removable)) = classify_item(item) else { continue };
         let body_start = item.span().start().line;
         let start = item_attrs(item)
             .iter()
@@ -236,6 +251,8 @@ pub fn list_items(file: &Path) -> Result<Vec<ItemRef>> {
         let text = lines[start - 1..end].join("\n");
         out.push(ItemRef {
             label,
+            name,
+            removable,
             start,
             end,
             text_hash: fnv(&text),
@@ -244,27 +261,62 @@ pub fn list_items(file: &Path) -> Result<Vec<ItemRef>> {
     Ok(out)
 }
 
-/// Delete an inclusive line range from a file; returns the original contents.
-pub fn remove_lines(file: &Path, start: usize, end: usize) -> Result<String> {
-    let original = std::fs::read_to_string(file)?;
-    let kept: Vec<&str> = original
-        .lines()
-        .enumerate()
-        .filter(|(i, _)| {
-            let ln = i + 1;
-            ln < start || ln > end
-        })
-        .map(|(_, l)| l)
-        .collect();
-    let mut out = kept.join("\n");
-    out.push('\n');
-    std::fs::write(file, out)?;
-    Ok(original)
+/// Render a file from its ORIGINAL source with the given items removed (by text
+/// hash). Rendering from the original keeps item spans stable no matter how many
+/// items are removed, so we can add/restore removals freely and re-render.
+pub fn render_without(original: &str, items: &[ItemRef], removed: &HashSet<u64>) -> String {
+    let lines: Vec<&str> = original.lines().collect();
+    // Mark removed line ranges.
+    let mut drop = vec![false; lines.len() + 1];
+    for it in items {
+        if removed.contains(&it.text_hash) {
+            for ln in it.start..=it.end.min(lines.len()) {
+                drop[ln] = true;
+            }
+        }
+    }
+    let mut out = String::new();
+    for (i, line) in lines.iter().enumerate() {
+        if !drop[i + 1] {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
 }
 
-pub fn restore_file(file: &Path, content: &str) -> Result<()> {
-    std::fs::write(file, content)?;
-    Ok(())
+/// Extract candidate identifiers from rustc "cannot find `x`" style errors. We
+/// take every back-ticked token on `error` lines, split paths on `::`, and keep
+/// the identifier segments — the names of items the live code still needs.
+pub fn extract_missing_idents(stderr: &str) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for line in stderr.lines() {
+        if !line.contains(": error") && !line.contains("error[") && !line.contains("error:") {
+            continue;
+        }
+        let bytes = line.as_bytes();
+        let mut i = 0;
+        while let Some(start) = line[i..].find('`') {
+            let s = i + start + 1;
+            if let Some(rel_end) = line[s..].find('`') {
+                let token = &line[s..s + rel_end];
+                for seg in token.split("::") {
+                    let id: String = seg
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect();
+                    if !id.is_empty() {
+                        out.insert(id);
+                    }
+                }
+                i = s + rel_end + 1;
+            } else {
+                break;
+            }
+        }
+        let _ = bytes;
+    }
+    out
 }
 
 /// Every vendored `.rs` file under a crate (skipping the trash dir).

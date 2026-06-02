@@ -97,7 +97,9 @@ enum Command {
         #[arg(long)]
         items: bool,
         /// Verification budget (max `cargo check` runs) for item-level slicing.
-        #[arg(long, default_value_t = 250)]
+        /// The cheap error-guided pass converges in ~O(reference-depth) checks;
+        /// the rest is optional greedy refinement. Set low for a fast slice.
+        #[arg(long, default_value_t = 80)]
         budget: usize,
     },
     /// Check LLM agent connectivity (needs ANTHROPIC_API_KEY).
@@ -618,7 +620,11 @@ fn cmd_slice(
             vendor::save_lock(&root, &lock)?;
         }
         println!(
-            "  removed {}/{} top-level item(s) via {} verification(s){}",
+            "  fast pass: removed {} item(s) in just {} check(s) (compiler-guided convergence)",
+            item_report.fast_removed, item_report.fast_checks
+        );
+        println!(
+            "  total: removed {}/{} top-level item(s) via {} verification(s){}",
             item_report.items_removed,
             item_report.items_before,
             item_report.checks_used,

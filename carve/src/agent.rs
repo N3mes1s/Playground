@@ -386,55 +386,131 @@ impl RuleBasedAgent {
         }
 
         let loc_before = slice::count_loc(vendor_dir);
-        let files = slice::rust_files(vendor_dir);
-        let items_before: usize = files.iter().filter_map(|f| slice::list_items(f).ok()).map(|v| v.len()).sum();
+
+        // Snapshot every file's ORIGINAL source + item table; we always render
+        // file content from the original minus the current `removed` set, so item
+        // spans stay valid no matter how many items we remove or restore.
+        struct FileState {
+            path: std::path::PathBuf,
+            original: String,
+            items: Vec<slice::ItemRef>,
+        }
+        let mut files: Vec<FileState> = Vec::new();
+        for path in slice::rust_files(vendor_dir) {
+            let original = std::fs::read_to_string(&path).unwrap_or_default();
+            let items = slice::list_items(&path).unwrap_or_default();
+            files.push(FileState { path, original, items });
+        }
+        let items_before: usize = files.iter().map(|f| f.items.len()).sum();
+
+        let write_all = |removed: &HashSet<u64>| -> Result<()> {
+            for f in &files {
+                std::fs::write(&f.path, slice::render_without(&f.original, &f.items, removed))?;
+            }
+            Ok(())
+        };
+
+        // Start by removing EVERYTHING removable, then let the compiler tell us
+        // what the live code still needs and restore exactly those — converging
+        // in O(reference-depth) checks instead of one check per item.
+        let mut removed: HashSet<u64> = files
+            .iter()
+            .flat_map(|f| f.items.iter().filter(|i| i.removable).map(|i| i.text_hash))
+            .collect();
+        write_all(&removed)?;
 
         let mut checks = 0usize;
-        let mut removed = 0usize;
+        let mut converged = false;
         let mut budget_exhausted = false;
-
-        'passes: for pass in 0..2 {
-            let mut removed_this_pass = 0usize;
-            for file in &files {
-                let mut locked: HashSet<u64> = HashSet::new();
-                loop {
-                    let items = slice::list_items(file)?;
-                    let Some(it) = items.into_iter().find(|i| !locked.contains(&i.text_hash)) else {
-                        break;
-                    };
-                    if checks >= budget {
-                        budget_exhausted = true;
-                        break 'passes;
-                    }
-                    let backup = slice::remove_lines(file, it.start, it.end)?;
-                    let res = self.registry.call("cargo_check", &manifest)?;
-                    checks += 1;
-                    if res["success"].as_bool().unwrap_or(false) {
-                        removed += 1;
-                        removed_this_pass += 1;
-                        tracing::debug!(item = %it.label, file = %file.display(), "carved item");
-                    } else {
-                        slice::restore_file(file, &backup)?;
-                        locked.insert(it.text_hash);
+        for round in 0..budget.max(1) {
+            if checks >= budget {
+                budget_exhausted = true;
+                break;
+            }
+            let res = self.registry.call("cargo_check", &manifest)?;
+            checks += 1;
+            if res["success"].as_bool().unwrap_or(false) {
+                converged = true;
+                break;
+            }
+            let stderr = res["stderr"].as_str().unwrap_or("");
+            let missing = slice::extract_missing_idents(stderr);
+            let mut restored = 0usize;
+            for f in &files {
+                for it in &f.items {
+                    if it.removable && removed.contains(&it.text_hash) && missing.contains(&it.name) {
+                        removed.remove(&it.text_hash);
+                        restored += 1;
                     }
                 }
             }
-            tracing::info!(pass, removed_this_pass, checks, "item-slice pass complete");
-            if removed_this_pass == 0 {
-                break;
+            tracing::info!(round, restored, still_removed = removed.len(), checks, "error-guided round");
+            if restored == 0 {
+                break; // stuck: no error names a removed item
+            }
+            write_all(&removed)?;
+        }
+
+        // If the fast pass didn't converge, fall back to a clean (compiling) base.
+        if !converged {
+            removed.clear();
+            write_all(&removed)?;
+        }
+        let after_fast = removed.len();
+        let fast_checks = checks;
+
+        // Refinement: the error-guided pass over-restores when a bare name exists
+        // in several modules (e.g. a `memchr_raw` per CPU backend), so it leaves
+        // redundant copies. Greedily try removing each still-present item — now
+        // from a *compiling* base, so each is a single check — and keep the ones
+        // the consumer truly doesn't need. Bounded by the remaining budget.
+        'refine: for f in &files {
+            for it in f.items.iter().filter(|i| i.removable) {
+                if removed.contains(&it.text_hash) {
+                    continue;
+                }
+                if checks >= budget {
+                    budget_exhausted = true;
+                    break 'refine;
+                }
+                removed.insert(it.text_hash);
+                std::fs::write(&f.path, slice::render_without(&f.original, &f.items, &removed))?;
+                let res = self.registry.call("cargo_check", &manifest)?;
+                checks += 1;
+                if !res["success"].as_bool().unwrap_or(false) {
+                    removed.remove(&it.text_hash);
+                    std::fs::write(&f.path, slice::render_without(&f.original, &f.items, &removed))?;
+                }
             }
         }
+        tracing::info!(after_fast, after_refine = removed.len(), checks, "item-slice refinement done");
 
         let final_check = self.registry.call("cargo_check", &manifest)?;
         let verified = final_check["success"].as_bool().unwrap_or(false);
+        if !verified {
+            // Never leave the tree broken.
+            removed.clear();
+            write_all(&removed)?;
+        }
         let loc_after = slice::count_loc(vendor_dir);
+
+        // Observability: record a sample of what was carved.
+        let carved: Vec<&str> = files
+            .iter()
+            .flat_map(|f| f.items.iter())
+            .filter(|it| removed.contains(&it.text_hash))
+            .map(|it| it.label.as_str())
+            .collect();
+        tracing::info!(removed = carved.len(), checks, sample = ?carved.iter().take(12).collect::<Vec<_>>(), "item-slice complete");
 
         Ok(ItemSliceReport {
             crate_name: crate_name.to_string(),
             items_before,
-            items_removed: removed,
+            items_removed: removed.len(),
             loc_before,
             loc_after,
+            fast_removed: after_fast,
+            fast_checks,
             checks_used: checks,
             budget_exhausted,
             verified,
