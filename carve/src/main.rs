@@ -103,6 +103,24 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         budget: usize,
     },
+    /// Autonomously harden the whole supply chain: vendor the closure, then have
+    /// the agent slice EVERY compiled vendored crate, and report the aggregate
+    /// attack-surface reduction. One command, end to end.
+    Harden {
+        #[arg(long, default_value = "Cargo.toml")]
+        manifest_path: PathBuf,
+        /// Vendor + slice the full transitive closure (deps of deps).
+        #[arg(long)]
+        transitive: bool,
+        /// Per-crate item-slicing refinement budget (0 = cheap convergence only).
+        #[arg(long, default_value_t = 0)]
+        budget: usize,
+        /// Minimum LOC reduction (%) for a slice to be "worth owning". Crates
+        /// that shed less are reverted to the upstream dependency — not worth the
+        /// maintenance of a vendored copy. 0 keeps every slice.
+        #[arg(long, default_value_t = 0.0)]
+        min_reduction: f64,
+    },
     /// Check LLM agent connectivity (needs ANTHROPIC_API_KEY).
     LlmCheck,
     /// Reverse a vendored crate back to the upstream dependency.
@@ -182,6 +200,12 @@ fn main() -> Result<()> {
             items,
             budget,
         } => cmd_slice(&crate_name, &manifest_path, out.as_deref(), llm, items, budget),
+        Command::Harden {
+            manifest_path,
+            transitive,
+            budget,
+            min_reduction,
+        } => cmd_harden(&manifest_path, transitive, budget, min_reduction),
         Command::LlmCheck => cmd_llm_check(),
         Command::Restore {
             crate_name,
@@ -327,6 +351,148 @@ fn deepest_chain(graph: &model::TransitiveGraph) -> Option<Vec<String>> {
     } else {
         None
     }
+}
+
+/// Crate names cargo actually compiles for this target (from build artifacts).
+/// We only slice these — gutting a cfg'd-out crate (e.g. `windows-sys` on Linux)
+/// would "verify" because it is never built, which would be unsafe.
+fn compiled_crates(manifest_path: &Path) -> Result<std::collections::HashSet<String>> {
+    let out = std::process::Command::new("cargo")
+        .args(["build", "--message-format=json", "--manifest-path"])
+        .arg(manifest_path)
+        .output()
+        .context("cargo build --message-format=json")?;
+    let mut set = std::collections::HashSet::new();
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        if v.get("reason").and_then(|r| r.as_str()) == Some("compiler-artifact") {
+            if let Some(pid) = v.get("package_id").and_then(|p| p.as_str()) {
+                set.insert(parse_pkg_name(pid));
+            }
+        }
+    }
+    Ok(set)
+}
+
+fn parse_pkg_name(pid: &str) -> String {
+    // "registry+https://…#aho-corasick@1.1.3", "path+file://…#ripgrep@15.1.0",
+    // or older "aho-corasick 1.1.3 (registry+…)".
+    let tail = pid.rsplit('#').next().unwrap_or(pid);
+    let name = tail.split('@').next().unwrap_or(tail);
+    name.split_whitespace().next().unwrap_or(name).to_string()
+}
+
+/// Time a clean optimized (`--release`) build, in seconds.
+fn release_build_time(manifest_path: &Path) -> Result<f64> {
+    std::process::Command::new("cargo")
+        .args(["clean", "--release", "--manifest-path"])
+        .arg(manifest_path)
+        .output()
+        .context("cargo clean --release")?;
+    let t0 = std::time::Instant::now();
+    let out = std::process::Command::new("cargo")
+        .args(["build", "--release", "--manifest-path"])
+        .arg(manifest_path)
+        .output()
+        .context("cargo build --release")?;
+    if !out.status.success() {
+        anyhow::bail!("release build failed: {}", String::from_utf8_lossy(&out.stderr));
+    }
+    Ok(t0.elapsed().as_secs_f64())
+}
+
+fn cmd_harden(manifest_path: &Path, transitive: bool, budget: usize, min_reduction: f64) -> Result<()> {
+    let root = root_of(manifest_path);
+    println!("=== Autonomous supply-chain hardening ===\n");
+
+    println!("[1/5] Vendoring the {} closure…", if transitive { "transitive" } else { "direct" });
+    cmd_vendor_all(manifest_path, true, transitive)?;
+
+    println!("\n[2/5] Detecting crates actually compiled for this target…");
+    let compiled = compiled_crates(manifest_path)?;
+    println!("  {} crate(s) compiled", compiled.len());
+
+    println!("\n[3/5] Timing a clean --release build BEFORE slicing…");
+    let before_time = release_build_time(manifest_path)?;
+    println!("  {before_time:.1}s");
+
+    println!(
+        "\n[4/5] Agent slicing every compiled vendored crate (autonomous loop; keep-if ≥ {min_reduction:.0}% LOC)…"
+    );
+    let targets: Vec<(String, String)> = vendor::load_lock(&root)?
+        .entries
+        .iter()
+        .filter(|e| compiled.contains(&e.crate_name))
+        .map(|e| (e.crate_name.clone(), e.version.clone()))
+        .collect();
+
+    let agent = agent::RuleBasedAgent::new();
+    let mut bt = model::AttackSurface { files: 0, loc: 0, bytes: 0, items: 0, unsafe_blocks: 0 };
+    let mut at = bt;
+    let mut sliced = 0usize;
+    let mut skipped = 0usize;
+    let mut reverted = 0usize;
+
+    for (name, version) in &targets {
+        let vendor_dir = root.join(vendor::vendor_rel_path(name, version));
+        let before = slice::measure_surface(&vendor_dir);
+        let res = agent
+            .slice_crate(name, manifest_path, &vendor_dir, &[])
+            .and_then(|_| agent.slice_items(name, manifest_path, &vendor_dir, budget));
+        if let Err(e) = res {
+            tracing::warn!(crate_name = %name, error = %e, "skipped (slice failed)");
+            skipped += 1;
+            continue;
+        }
+        let after = slice::measure_surface(&vendor_dir);
+        let pct = bt_pct(before.loc, after.loc);
+
+        // Economic gate: only keep (own) a vendored slice that sheds enough.
+        if pct < min_reduction {
+            vendor::restore_crate(&root, name)?; // back to upstream dependency
+            println!("  {:<24} LOC -{:.0}%  → reverted to upstream (below {:.0}% bar)", name, pct, min_reduction);
+            reverted += 1;
+            continue;
+        }
+
+        if let Ok(files) = vendor::reindex_files(&root, name, version) {
+            let mut l = vendor::load_lock(&root)?;
+            if let Some(entry) = l.entry(name).cloned() {
+                let mut e2 = entry;
+                e2.files = files;
+                e2.removed_modules = vec![];
+                e2.note = Some(format!("hardened: LOC {} -> {} (-{:.0}%)", before.loc, after.loc, pct));
+                l.upsert(e2);
+                vendor::save_lock(&root, &l)?;
+            }
+        }
+        bt.files += before.files; bt.loc += before.loc; bt.bytes += before.bytes; bt.items += before.items; bt.unsafe_blocks += before.unsafe_blocks;
+        at.files += after.files; at.loc += after.loc; at.bytes += after.bytes; at.items += after.items; at.unsafe_blocks += after.unsafe_blocks;
+        println!("  {:<24} LOC {:>6} -> {:<6} (-{:.0}%)  ✓ kept", name, before.loc, after.loc, pct);
+        sliced += 1;
+    }
+
+    println!("\n[5/5] Timing a clean --release build AFTER slicing…");
+    let after_time = release_build_time(manifest_path)?;
+    println!("  {after_time:.1}s");
+
+    println!("\n══════════ supply-chain hardening summary ══════════");
+    println!("  crates owned (sliced & kept): {sliced}");
+    println!("  reverted (below {min_reduction:.0}% bar): {reverted}    skipped (unsliceable): {skipped}");
+    println!("  across the {sliced} owned crate(s):");
+    println!("      files   {:>8} -> {:<8}  -{:.1}%", bt.files, at.files, bt.files_pct(&at));
+    println!("      LOC     {:>8} -> {:<8}  -{:.1}%", bt.loc, at.loc, bt.loc_pct(&at));
+    println!("      items   {:>8} -> {:<8}  -{:.1}%", bt.items, at.items, bt.items_pct(&at));
+    println!("      bytes   {:>8} -> {:<8}  -{:.1}%", bt.bytes, at.bytes, bt.bytes_pct(&at));
+    println!("      unsafe  {:>8} -> {:<8}  -{:.1}%", bt.unsafe_blocks, at.unsafe_blocks, bt.unsafe_pct(&at));
+    let tpct = if before_time > 0.0 { 100.0 * (before_time - after_time) / before_time } else { 0.0 };
+    println!("  clean --release build: {before_time:.1}s -> {after_time:.1}s  ({tpct:+.1}%)");
+    println!("════════════════════════════════════════════════════");
+    Ok(())
+}
+
+fn bt_pct(before: usize, after: usize) -> f64 {
+    if before == 0 { 0.0 } else { 100.0 * (before.saturating_sub(after)) as f64 / before as f64 }
 }
 
 fn cmd_llm_check() -> Result<()> {
