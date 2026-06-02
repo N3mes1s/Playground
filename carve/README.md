@@ -27,14 +27,18 @@ Two hard constraints keep it honest:
   removes it. Round-trip is lossless — `carve restore <crate>` puts you back on
   the registry dependency, and the project still builds.
 
-> Status: **Stages 1–5 working.** DFUG, provenance ledger, verbatim vendoring,
+> Status: **Stages 1–6 working.** DFUG, provenance ledger, verbatim vendoring,
 > reversibility, verification, the autonomous-agent tool surface, agent-driven
 > **module + single-item slicing** with an **attack-surface reduction %** readout,
-> update-impact analysis, a **live LLM agent** over the same tool surface, and
-> **deep transitive vendoring** (dependencies of dependencies) — including native
-> `*-sys` crates — proven on the 90-crate, 6-level-deep `sharkdp/fd`. See the
-> [STAGE-2-3](STAGE-2-3-REPORT.md), [STAGE-4](STAGE-4-REPORT.md), and
-> [STAGE-5](STAGE-5-REPORT.md) reports; architecture in [DESIGN.md](DESIGN.md).
+> update-impact analysis, a **live LLM agent** over the same tool surface,
+> **deep transitive vendoring** (dependencies of dependencies, incl. native
+> `*-sys`) on the 90-crate `sharkdp/fd`, and **(Stage 6)** `carve harden` — the
+> autonomous one-command pipeline — run at scale on `BurntSushi/ripgrep`
+> (43-crate closure → **−56% LOC, −34% `unsafe`** across the crates worth owning;
+> with an honest finding that optimized build time is unchanged). See the
+> [STAGE-2-3](STAGE-2-3-REPORT.md), [STAGE-4](STAGE-4-REPORT.md),
+> [STAGE-5](STAGE-5-REPORT.md), and [STAGE-6](STAGE-6-REPORT.md) reports;
+> architecture in [DESIGN.md](DESIGN.md).
 
 ## Install / build
 
