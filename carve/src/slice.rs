@@ -152,6 +152,11 @@ pub struct ItemRef {
     /// Whether this item can be removed and restored-by-name. `use` items and
     /// impls on non-path types are kept (false) since we can't restore them.
     pub removable: bool,
+    /// For `impl` blocks: the method/assoc-fn names it defines (to match
+    /// "no method named `m`" errors).
+    pub methods: Vec<String>,
+    /// For trait impls: the trait name (to match "trait `T` is not implemented").
+    pub trait_name: Option<String>,
     pub start: usize,
     pub end: usize,
     /// Hash of the item's own source text — a stable id even as siblings shift.
@@ -249,10 +254,32 @@ pub fn list_items(file: &Path) -> Result<Vec<ItemRef>> {
             continue;
         }
         let text = lines[start - 1..end].join("\n");
+        let (methods, trait_name) = match item {
+            syn::Item::Impl(i) => {
+                let methods = i
+                    .items
+                    .iter()
+                    .filter_map(|ii| match ii {
+                        syn::ImplItem::Fn(f) => Some(f.sig.ident.to_string()),
+                        syn::ImplItem::Const(c) => Some(c.ident.to_string()),
+                        _ => None,
+                    })
+                    .collect();
+                let trait_name = i
+                    .trait_
+                    .as_ref()
+                    .and_then(|(_, path, _)| path.segments.last())
+                    .map(|s| s.ident.to_string());
+                (methods, trait_name)
+            }
+            _ => (Vec::new(), None),
+        };
         out.push(ItemRef {
             label,
             name,
             removable,
+            methods,
+            trait_name,
             start,
             end,
             text_hash: fnv(&text),
@@ -280,6 +307,26 @@ pub fn render_without(original: &str, items: &[ItemRef], removed: &HashSet<u64>)
         if !drop[i + 1] {
             out.push_str(line);
             out.push('\n');
+        }
+    }
+    out
+}
+
+/// All back-ticked path-segment identifiers appearing on `error` lines. Used as
+/// a loose fallback when precise parsing can't map an error to a definition.
+pub fn error_idents(stderr: &str) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for line in stderr.lines() {
+        if !line.contains(": error") && !line.contains("error[") && !line.contains("error:") {
+            continue;
+        }
+        for tok in backticked(line) {
+            for seg in tok.split("::") {
+                let id: String = seg.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+                if !id.is_empty() {
+                    out.insert(id);
+                }
+            }
         }
     }
     out
@@ -398,6 +445,146 @@ pub fn extract_wanted(stderr: &str) -> Vec<Wanted> {
         }
     }
     out
+}
+
+/// An `impl` the live code still needs, identified by the method/trait the
+/// compiler complained about rather than by the type name alone.
+#[derive(Debug, Clone)]
+pub struct ImplWant {
+    pub type_name: String,
+    /// A method/assoc-fn the live code calls but can't find.
+    pub method: Option<String>,
+    /// A trait the live code needs implemented for `type_name`.
+    pub trait_name: Option<String>,
+    pub context: Vec<String>,
+}
+
+/// Raw back-ticked token immediately after a keyword (not identifier-trimmed).
+fn raw_backtick_after<'a>(line: &'a str, kw: &str) -> Option<&'a str> {
+    let pos = line.find(kw)? + kw.len();
+    let rest = &line[pos..];
+    let s = rest.find('`')? + 1;
+    let e = rest[s..].find('`')?;
+    Some(&rest[s..s + e])
+}
+
+/// From a printed type like `&mut generic::memchr::Iter<'h>` extract the type's
+/// bare name (`Iter`) and the module context before it (`["generic","memchr"]`).
+fn type_name_and_context(token: &str) -> (String, Vec<String>) {
+    let t = token.trim();
+    let t = t.trim_start_matches('&').trim();
+    let t = t.strip_prefix("mut ").unwrap_or(t).trim();
+    let t = t.split('<').next().unwrap_or(t); // drop generics
+    let segs: Vec<String> = t
+        .split("::")
+        .map(ident_prefix)
+        .filter(|s| !s.is_empty() && !is_path_root(s))
+        .collect();
+    match segs.split_last() {
+        Some((name, ctx)) => (name.clone(), ctx.to_vec()),
+        None => (String::new(), Vec::new()),
+    }
+}
+
+/// Parse the method/trait-resolution errors that reveal which `impl` blocks the
+/// live code still needs (E0599 "no method named …", E0277 "trait … not
+/// implemented for …" / "… doesn't implement …").
+pub fn extract_impl_wanted(stderr: &str) -> Vec<ImplWant> {
+    let mut out = Vec::new();
+    for line in stderr.lines() {
+        if !line.contains(": error") && !line.contains("error[") && !line.contains("error:") {
+            continue;
+        }
+
+        // "no method named `m` found for <kind> `TYPE`" /
+        // "no [function or] associated item named `m` found for <kind> `TYPE`"
+        if line.contains(" named `") && line.contains(" found for ") {
+            let method = raw_backtick_after(line, "named ").map(ident_prefix);
+            let type_tok = raw_backtick_after(line, "found for ");
+            if let (Some(method), Some(type_tok)) = (method, type_tok) {
+                let (type_name, context) = type_name_and_context(type_tok);
+                if !type_name.is_empty() && !method.is_empty() {
+                    out.push(ImplWant { type_name, method: Some(method), trait_name: None, context });
+                    continue;
+                }
+            }
+        }
+
+        // "the trait `Tr` is not implemented for `TYPE`"
+        if line.contains("is not implemented for") {
+            let trait_name = raw_backtick_after(line, "the trait ").map(ident_prefix);
+            let type_tok = raw_backtick_after(line, "implemented for ");
+            if let (Some(trait_name), Some(type_tok)) = (trait_name, type_tok) {
+                let (type_name, context) = type_name_and_context(type_tok);
+                if !type_name.is_empty() {
+                    out.push(ImplWant { type_name, method: None, trait_name: Some(trait_name), context });
+                    continue;
+                }
+            }
+        }
+
+        // "`TYPE` doesn't implement `Tr`"
+        if line.contains("doesn't implement") {
+            let type_tok = backticked(line).into_iter().next();
+            let trait_name = raw_backtick_after(line, "doesn't implement ").map(ident_prefix);
+            if let Some(type_tok) = type_tok {
+                let (type_name, context) = type_name_and_context(&type_tok);
+                if !type_name.is_empty() {
+                    out.push(ImplWant { type_name, method: None, trait_name, context });
+                    continue;
+                }
+            }
+        }
+
+        // "the trait bound `TYPE: Tr` is not satisfied"
+        if line.contains("the trait bound") {
+            if let Some(tok) = raw_backtick_after(line, "the trait bound ") {
+                if let Some((lhs, rhs)) = tok.split_once(':') {
+                    let (type_name, context) = type_name_and_context(lhs);
+                    let trait_name = ident_prefix(rhs.trim().trim_start_matches(':').trim());
+                    if !type_name.is_empty() {
+                        out.push(ImplWant {
+                            type_name,
+                            method: None,
+                            trait_name: (!trait_name.is_empty()).then_some(trait_name),
+                            context,
+                        });
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // "`TYPE` is not an iterator" → needs `impl Iterator for TYPE`
+        if line.contains("is not an iterator") {
+            if let Some(type_tok) = backticked(line).into_iter().next() {
+                let (type_name, context) = type_name_and_context(&type_tok);
+                if !type_name.is_empty() {
+                    out.push(ImplWant {
+                        type_name,
+                        method: None,
+                        trait_name: Some("Iterator".to_string()),
+                        context,
+                    });
+                    continue;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Score how well an item's module matches a lookup context, suffix-aware
+/// (compiler-printed type paths often omit leading modules, e.g. `arch::`).
+pub fn module_match(item_module: &[String], context: &[String]) -> i64 {
+    if context.is_empty() {
+        return 0;
+    }
+    let mut score = context.iter().filter(|c| item_module.contains(c)).count() as i64;
+    if item_module.last() == context.last() {
+        score += 10; // same leaf module is a strong signal
+    }
+    score
 }
 
 /// Count matching leading segments between an item's module and a lookup context.

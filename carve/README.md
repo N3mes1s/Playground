@@ -50,7 +50,7 @@ cargo build --release   # produces target/release/carve
 | `carve plan` | The agent reads the DFUG and proposes, per crate, whether item-level slicing is safe (HIGH), needs a verification build (MED), or should be vendored whole for now (LOW). |
 | `carve vendor <crate> [--apply]` | Transcribe a crate verbatim into `vendor/`, recording provenance in `carve.lock`. `--apply` also wires the reversible `[patch.crates-io]` entry. |
 | `carve vendor-all [--apply] [--transitive]` | Vendor every direct dependency in one shot, or the ENTIRE transitive closure with `--transitive` (native-linked sys crates and duplicated-version crates are left on the registry and reported). |
-| `carve slice <crate> [--llm] [--items] [--budget N]` | **The agent** carves the vendored crate down to only what the product needs, running `cargo check` against the real consumer and keeping only what still compiles. Reports the **attack-surface reduction %** (files/LOC/items/bytes/`unsafe`). `--items` adds item-level slicing via cheap **compiler-guided convergence** (~O(reference-depth) checks); `--budget N` opts into extra per-item refinement of the `impl` tail. `--llm` lets a model plan the module cuts (needs `ANTHROPIC_API_KEY`). The compiler gates every cut. |
+| `carve slice <crate> [--llm] [--items] [--budget N]` | **The agent** carves the vendored crate down to only what the product needs, running `cargo check` against the real consumer and keeping only what still compiles. Reports the **attack-surface reduction %** (files/LOC/items/bytes/`unsafe`). `--items` adds item-level slicing via cheap **compiler-guided convergence** (two error-guided phases — value/type symbols, then `impl` blocks — ~O(reference-depth) checks); `--budget N` opts into an extra per-item catch-all. `--llm` lets a model plan the module cuts (needs `ANTHROPIC_API_KEY`). The compiler gates every cut. |
 | `carve llm-check` | Verify LLM-agent connectivity (needs `ANTHROPIC_API_KEY`). |
 | `carve impact <crate> --to <ver>` | Assess whether moving to an upstream version touches code inside your slice (and which items you call) — i.e. whether the update needs a proof-read or is safe to take. |
 | `carve restore <crate>` | Reverse it: remove the patch, delete the vendored tree, drop the ledger entry. |
@@ -129,8 +129,9 @@ roadmap toward agent-driven item-level slicing and a real-project fork.
 - Slicing is **target-specialized**: carving a crate's ARM/WASM backends pins the
   vendored copy to your build target. The compiler gates every cut, so the result
   always compiles. Item-level slicing converges cheaply (compiler-guided,
-  ~O(reference-depth) checks) for value/type symbols; the residual `impl`-block
-  tail is inherently per-item and opt-in via `--budget`.
+  ~O(reference-depth) checks) in two phases — value/type symbols, then `impl`
+  blocks via method/trait errors. `--budget` adds an optional per-item catch-all
+  for any residue.
 - Transitive `[patch]` can't express a crate present at **multiple versions**;
   those are vendored for the record but left on the registry.
 - The DFUG resolver is syntactic, not a full type resolver. It maps `pkg-name`

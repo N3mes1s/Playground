@@ -128,7 +128,10 @@ layer" the idea calls for.
   [STAGE-4-REPORT.md](STAGE-4-REPORT.md).
 - **Stage 5 (done): item-level slicing, native/sys, attack-surface %.**
   `slice --items` carves individual items (fn/struct/impl/…) under the same
-  `cargo check` gate, in passes to a fixpoint within a verification budget.
+  `cargo check` gate via two cheap error-guided convergence phases — value/type
+  symbols (restoring by the missing name + module the error points at), then
+  `impl` blocks (restoring by the method/trait the error names). ~O(depth) checks
+  (memchr: ~20), no per-item sweep needed; `--budget` adds an optional catch-all.
   Native `*-sys` crates now vendor faithfully — the fix was **preserving file
   modes** so shipped `configure`/`*.sh` build scripts stay executable. Every
   slice reports the **attack-surface reduction %** across files/LOC/items/bytes

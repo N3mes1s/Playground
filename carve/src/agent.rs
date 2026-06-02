@@ -473,54 +473,121 @@ impl RuleBasedAgent {
         let after_fast = removed.len();
         let fast_checks = checks;
 
-        // Precise convergence reaches the maximal set for value/type symbols, but
-        // it still over-keeps `impl` blocks (restored whenever their *type* is
-        // mentioned, even if no method is called) and any residual duplicate-named
-        // items. Greedily retry ONLY those suspects — a small set, so this is far
-        // cheaper than sweeping every present item. If we never converged, fall
-        // back to a clean base and sweep everything within budget.
+        // Phase 1 (above) converges value/type symbols but over-keeps `impl`
+        // blocks: each was restored merely because its *type* was mentioned, not
+        // because a method was called. Phase 2 is a second error-guided
+        // convergence over impls only — remove them all, then restore by the
+        // method/trait the compiler actually complains about. Also ~O(depth),
+        // so the impl tail is now cheap too (no per-item sweep needed).
         if converged {
-            // names that occur on more than one present removable item
-            let mut name_count: std::collections::HashMap<&str, usize> = Default::default();
+            let converged_removed = removed.clone();
             for f in &files {
                 for it in &f.items {
-                    if it.removable && !removed.contains(&it.text_hash) {
-                        *name_count.entry(it.name.as_str()).or_default() += 1;
+                    if it.removable && it.label.starts_with("impl ") && !removed.contains(&it.text_hash) {
+                        removed.insert(it.text_hash);
                     }
                 }
             }
-            let mut suspects: Vec<(usize, u64)> = Vec::new();
-            for (fi, f) in files.iter().enumerate() {
-                for it in &f.items {
-                    let present = it.removable && !removed.contains(&it.text_hash);
-                    let is_impl = it.label.starts_with("impl ");
-                    let dup = name_count.get(it.name.as_str()).copied().unwrap_or(0) > 1;
-                    if present && (is_impl || dup) {
-                        suspects.push((fi, it.text_hash));
-                    }
-                }
-            }
-            tracing::info!(suspects = suspects.len(), budget, "targeted refinement candidates");
-            let mut refine_checks = 0usize;
-            for (fi, hash) in suspects {
-                if refine_checks >= budget {
-                    budget_exhausted = true;
-                    break;
-                }
-                refine_checks += 1;
-                removed.insert(hash);
-                std::fs::write(
-                    &files[fi].path,
-                    slice::render_without(&files[fi].original, &files[fi].items, &removed),
-                )?;
+            write_all(&removed)?;
+
+            let mut p2_converged = false;
+            for round in 0..64 {
                 let res = self.registry.call("cargo_check", &manifest)?;
                 checks += 1;
-                if !res["success"].as_bool().unwrap_or(false) {
-                    removed.remove(&hash);
-                    std::fs::write(
-                        &files[fi].path,
-                        slice::render_without(&files[fi].original, &files[fi].items, &removed),
-                    )?;
+                if res["success"].as_bool().unwrap_or(false) {
+                    p2_converged = true;
+                    break;
+                }
+                let wants = slice::extract_impl_wanted(res["stderr"].as_str().unwrap_or(""));
+                let mut restored = 0usize;
+                for w in &wants {
+                    let mut best_ov: i64 = -1;
+                    let mut best: Vec<u64> = Vec::new();
+                    for f in &files {
+                        let ov = slice::module_match(&f.module, &w.context);
+                        for it in &f.items {
+                            if !it.label.starts_with("impl ")
+                                || !it.removable
+                                || it.name != w.type_name
+                                || !removed.contains(&it.text_hash)
+                            {
+                                continue;
+                            }
+                            let matches = match (&w.method, &w.trait_name) {
+                                (Some(m), _) => it.methods.iter().any(|x| x == m) || it.trait_name.is_some(),
+                                (None, Some(tr)) => it.trait_name.as_deref() == Some(tr.as_str()),
+                                (None, None) => true,
+                            };
+                            if matches {
+                                if ov > best_ov {
+                                    best_ov = ov;
+                                    best = vec![it.text_hash];
+                                } else if ov == best_ov {
+                                    best.push(it.text_hash);
+                                }
+                            }
+                        }
+                    }
+                    for h in best {
+                        if removed.remove(&h) {
+                            restored += 1;
+                        }
+                    }
+                }
+                // Loose fallback for error phrasings the precise parser misses:
+                // restore impls whose *type* is mentioned in the remaining errors.
+                // Only types the compiler actually complained about are touched;
+                // dead impls on unmentioned types stay removed.
+                if restored == 0 {
+                    let idents = slice::error_idents(res["stderr"].as_str().unwrap_or(""));
+                    for f in &files {
+                        for it in &f.items {
+                            if it.label.starts_with("impl ")
+                                && it.removable
+                                && removed.contains(&it.text_hash)
+                                && idents.contains(&it.name)
+                            {
+                                removed.remove(&it.text_hash);
+                                restored += 1;
+                            }
+                        }
+                    }
+                    tracing::info!(round, loose_restored = restored, "impl-convergence loose fallback");
+                }
+                if restored == 0 {
+                    break; // truly stuck
+                }
+                write_all(&removed)?;
+            }
+            if !p2_converged {
+                // Couldn't pin the needed impls precisely — restore Phase 1 state.
+                removed = converged_removed;
+                write_all(&removed)?;
+            }
+
+            // Optional catch-all: spend --budget on a greedy sweep of whatever
+            // removable items remain (e.g. odd duplicates the phases missed).
+            if budget > 0 {
+                let mut refine_checks = 0usize;
+                'refine2: for f in &files {
+                    for it in f.items.iter().filter(|i| i.removable) {
+                        if removed.contains(&it.text_hash) {
+                            continue;
+                        }
+                        if refine_checks >= budget {
+                            budget_exhausted = true;
+                            break 'refine2;
+                        }
+                        refine_checks += 1;
+                        removed.insert(it.text_hash);
+                        std::fs::write(&f.path, slice::render_without(&f.original, &f.items, &removed))?;
+                        let res = self.registry.call("cargo_check", &manifest)?;
+                        checks += 1;
+                        if !res["success"].as_bool().unwrap_or(false) {
+                            removed.remove(&it.text_hash);
+                            std::fs::write(&f.path, slice::render_without(&f.original, &f.items, &removed))?;
+                        }
+                    }
                 }
             }
         } else {

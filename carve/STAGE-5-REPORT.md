@@ -27,26 +27,29 @@ Item-level slicing…
   ► attack surface cut by ~28% (LOC), 29% of `unsafe` blocks removed
 ```
 
-The trace shows ~12 rounds restoring the live closure precisely, then it
-compiles — **13 checks total**, versus 300+ for the old per-item sweep (which
-didn't even finish one pass). That is the cheap default.
-
-Reaching the *absolute* maximal set squeezes one more category — `impl` blocks,
-which the compiler only reveals as needed when a method is actually called, so
-they are irreducibly per-item. That tail is **opt-in** via `--budget N` (one
-`cargo check` per candidate):
+The `impl` tail gets its **own second error-guided phase**: remove every `impl`
+block at once, then restore only those the compiler asks for — parsing the
+*method/trait* it complains about (`no method named \`m\` found for \`T\``,
+`the trait \`Tr\` is not implemented for \`T\``, `\`T\` is not an iterator`,
+trait-bound failures) and restoring the `impl` on `T` that provides it
+(disambiguated by module). So `impl OneIter` stays gone unless `OneIter::next`
+is actually called. Both phases are ~O(reference-depth):
 
 ```
-$ carve slice memchr --items --budget 200
-  fast pass: removed 10 item(s) in just 13 check(s)
-  total: removed 28/250 item(s) via 171 verification(s)
+$ carve slice memchr --manifest-path aho-corasick/Cargo.toml --items   # default
+
+  fast pass: removed 10 item(s) in just 13 check(s) (compiler-guided convergence)
+  total: removed 19/250 top-level item(s) via 20 verification(s)
   ► attack surface cut by ~30% (LOC), 35% of `unsafe` blocks removed
 ```
 
-Items carved are exactly what aho-corasick never calls — unused public functions
-like `find_iter`/`rfind_iter` and the unused SIMD iterator impls
+**20 checks total** for value/type *and* impl convergence — versus 300+ for the
+old per-item sweep (which didn't finish one pass) or 171 for the earlier greedy
+refinement. Items carved are exactly what aho-corasick never calls — unused
+public functions like `find_iter`/`rfind_iter` and the unused SIMD iterator impls
 `impl OneIter/TwoIter/ThreeIter`. Every removal is byte-verbatim and verified;
-nothing is invented.
+nothing is invented. `--budget N` still adds an optional per-item greedy
+catch-all for any residue, but it is no longer needed to handle impls.
 
 ## 2. Native/sys crates: the faithful path
 
