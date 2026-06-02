@@ -132,6 +132,14 @@ layer" the idea calls for.
   symbols (restoring by the missing name + module the error points at), then
   `impl` blocks (restoring by the method/trait the error names). ~O(depth) checks
   (memchr: ~20), no per-item sweep needed; `--budget` adds an optional catch-all.
+- **Stage 6 (done): `carve harden` — autonomous, whole supply chain.** One
+  command runs the entire pipeline without hand-driving: vendor the closure,
+  detect the crates actually compiled for this target (so a cfg'd-out crate is
+  never gutted), slice every one, and apply an **economic gate** —
+  `--min-reduction PCT` reverts any crate whose slice is too small to be worth
+  owning back to the upstream dependency. It also times a clean **`--release`**
+  build before/after, quantifying the compile-time effect of a leaner supply
+  chain. Reports the aggregate attack-surface reduction across the owned crates.
   Native `*-sys` crates now vendor faithfully — the fix was **preserving file
   modes** so shipped `configure`/`*.sh` build scripts stay executable. Every
   slice reports the **attack-surface reduction %** across files/LOC/items/bytes
