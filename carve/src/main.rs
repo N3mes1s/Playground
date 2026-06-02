@@ -96,10 +96,11 @@ enum Command {
         /// verifying each removal against the consumer build.
         #[arg(long)]
         items: bool,
-        /// Verification budget (max `cargo check` runs) for item-level slicing.
-        /// The cheap error-guided pass converges in ~O(reference-depth) checks;
-        /// the rest is optional greedy refinement. Set low for a fast slice.
-        #[arg(long, default_value_t = 80)]
+        /// Extra per-item refinement checks after the cheap compiler-guided
+        /// convergence (which always runs, ~O(reference-depth) checks). 0 =
+        /// convergence only (cheapest). Raise to squeeze the `impl`/duplicate
+        /// tail, at one `cargo check` per candidate.
+        #[arg(long, default_value_t = 0)]
         budget: usize,
     },
     /// Check LLM agent connectivity (needs ANTHROPIC_API_KEY).
@@ -628,8 +629,11 @@ fn cmd_slice(
             item_report.items_removed,
             item_report.items_before,
             item_report.checks_used,
-            if item_report.budget_exhausted { " (budget reached)" } else { "" }
+            if budget > 0 && item_report.budget_exhausted { " (refinement budget reached)" } else { "" }
         );
+        if budget == 0 && item_report.items_removed < item_report.items_before {
+            println!("  (convergence-only; pass --budget N to squeeze the impl/duplicate tail)");
+        }
         println!(
             "  LOC after items: {} -> {}  ({:.1}% reduction)",
             item_report.loc_before, item_report.loc_after, item_report.loc_reduction_pct()

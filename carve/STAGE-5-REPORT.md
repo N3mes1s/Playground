@@ -2,38 +2,51 @@
 
 Two capabilities completed, plus the metric that ties the whole project together.
 
-## 1. Single-item slicing — made cheap (compiler-guided convergence)
+## 1. Single-item slicing — made cheap (precise compiler-guided convergence)
 
 `carve slice <crate> --items` removes individual top-level items
 (`fn`/`struct`/`enum`/`impl`/…) verbatim, keeping only what still compiles
 against the real consumer. The naive way is one `cargo check` per item —
 hundreds of builds. carve does it in **~O(reference-depth)** instead:
 
-1. **Remove everything removable at once**, then run one `cargo check`.
+1. **Remove every removable item at once**, then run one `cargo check`.
 2. The compiler's `cannot find \`X\`` errors name exactly what the live code
-   still needs. **Restore those items and re-check.** Iterate to convergence.
-3. A short, budget-bounded greedy **refinement** mops up redundant copies the
-   name-based restore over-kept (e.g. a `memchr_raw` per CPU backend).
+   still needs — and *where* (the module in `... in module \`crate::a::b\``,
+   the path in `unresolved import \`crate::a::b::C\``, or the error's own source
+   file). **Restore only the definition in the module the lookup pointed at**
+   (longest module-prefix match), so a `memchr_raw` that exists in several CPU
+   backends doesn't drag them all back. Re-check; iterate to convergence.
 
 ```
-$ carve slice memchr --manifest-path aho-corasick/Cargo.toml --items   # budget 80
+$ carve slice memchr --manifest-path aho-corasick/Cargo.toml --items   # default
 
-Item-level slicing (budget 80 verifications)…
-  fast pass: removed 10 item(s) in just 6 check(s) (compiler-guided convergence)
-  total: removed 21/250 top-level item(s) via 80 verification(s)
-  LOC after items: 11602 -> 11173
-  consumer build verified after item-slicing: YES
+Item-level slicing…
+  fast pass: removed 10 item(s) in just 13 check(s) (compiler-guided convergence)
+  total: removed 10/250 top-level item(s) via 13 verification(s)
+  (convergence-only; pass --budget N to squeeze the impl/duplicate tail)
+  ► attack surface cut by ~28% (LOC), 29% of `unsafe` blocks removed
 ```
 
-The convergence trace (5 rounds): remove all 202 removable items → the compiler
-restores 57, then 60, 35, 18, 22, and it compiles. The expensive old sweep needed
-300+ checks for a comparable result and didn't even finish one pass; the new fast
-pass delivers most of the win in **6 checks**, and `--budget` controls how much
-optional refinement to spend after that (set it low for a quick slice, high for
-maximal removal). Items carved are exactly what aho-corasick never calls — the
-unused SIMD iterator impls `impl OneIter/TwoIter/ThreeIter`, unused public
-functions like `find_iter`/`rfind_iter`, etc. Every removal is byte-verbatim and
-verified; nothing is invented.
+The trace shows ~12 rounds restoring the live closure precisely, then it
+compiles — **13 checks total**, versus 300+ for the old per-item sweep (which
+didn't even finish one pass). That is the cheap default.
+
+Reaching the *absolute* maximal set squeezes one more category — `impl` blocks,
+which the compiler only reveals as needed when a method is actually called, so
+they are irreducibly per-item. That tail is **opt-in** via `--budget N` (one
+`cargo check` per candidate):
+
+```
+$ carve slice memchr --items --budget 200
+  fast pass: removed 10 item(s) in just 13 check(s)
+  total: removed 28/250 item(s) via 171 verification(s)
+  ► attack surface cut by ~30% (LOC), 35% of `unsafe` blocks removed
+```
+
+Items carved are exactly what aho-corasick never calls — unused public functions
+like `find_iter`/`rfind_iter` and the unused SIMD iterator impls
+`impl OneIter/TwoIter/ThreeIter`. Every removal is byte-verbatim and verified;
+nothing is invented.
 
 ## 2. Native/sys crates: the faithful path
 

@@ -394,12 +394,15 @@ impl RuleBasedAgent {
             path: std::path::PathBuf,
             original: String,
             items: Vec<slice::ItemRef>,
+            /// Module path this file defines, for precise error-guided restores.
+            module: Vec<String>,
         }
         let mut files: Vec<FileState> = Vec::new();
         for path in slice::rust_files(vendor_dir) {
             let original = std::fs::read_to_string(&path).unwrap_or_default();
             let items = slice::list_items(&path).unwrap_or_default();
-            files.push(FileState { path, original, items });
+            let module = slice::module_of_path(&path.to_string_lossy());
+            files.push(FileState { path, original, items, module });
         }
         let items_before: usize = files.iter().map(|f| f.items.len()).sum();
 
@@ -422,11 +425,9 @@ impl RuleBasedAgent {
         let mut checks = 0usize;
         let mut converged = false;
         let mut budget_exhausted = false;
-        for round in 0..budget.max(1) {
-            if checks >= budget {
-                budget_exhausted = true;
-                break;
-            }
+        // Convergence is cheap (~O(reference-depth)); it is not charged against
+        // the refinement budget. 64 rounds is far more than any real depth.
+        for round in 0..64 {
             let res = self.registry.call("cargo_check", &manifest)?;
             checks += 1;
             if res["success"].as_bool().unwrap_or(false) {
@@ -434,12 +435,30 @@ impl RuleBasedAgent {
                 break;
             }
             let stderr = res["stderr"].as_str().unwrap_or("");
-            let missing = slice::extract_missing_idents(stderr);
+            // Precise restore: for each symbol the compiler says is missing,
+            // bring back only the definition in the module the lookup pointed at
+            // (longest module-prefix match). This avoids restoring a same-named
+            // item in every CPU backend, so convergence reaches the maximal set.
+            let wanted = slice::extract_wanted(stderr);
             let mut restored = 0usize;
-            for f in &files {
-                for it in &f.items {
-                    if it.removable && removed.contains(&it.text_hash) && missing.contains(&it.name) {
-                        removed.remove(&it.text_hash);
+            for w in &wanted {
+                let mut best_ov: i64 = -1;
+                let mut best: Vec<u64> = Vec::new();
+                for f in &files {
+                    let ov = slice::prefix_overlap(&f.module, &w.context) as i64;
+                    for it in &f.items {
+                        if it.removable && it.name == w.name && removed.contains(&it.text_hash) {
+                            if ov > best_ov {
+                                best_ov = ov;
+                                best = vec![it.text_hash];
+                            } else if ov == best_ov {
+                                best.push(it.text_hash);
+                            }
+                        }
+                    }
+                }
+                for h in best {
+                    if removed.remove(&h) {
                         restored += 1;
                     }
                 }
@@ -451,39 +470,82 @@ impl RuleBasedAgent {
             write_all(&removed)?;
         }
 
-        // If the fast pass didn't converge, fall back to a clean (compiling) base.
-        if !converged {
-            removed.clear();
-            write_all(&removed)?;
-        }
         let after_fast = removed.len();
         let fast_checks = checks;
 
-        // Refinement: the error-guided pass over-restores when a bare name exists
-        // in several modules (e.g. a `memchr_raw` per CPU backend), so it leaves
-        // redundant copies. Greedily try removing each still-present item — now
-        // from a *compiling* base, so each is a single check — and keep the ones
-        // the consumer truly doesn't need. Bounded by the remaining budget.
-        'refine: for f in &files {
-            for it in f.items.iter().filter(|i| i.removable) {
-                if removed.contains(&it.text_hash) {
-                    continue;
+        // Precise convergence reaches the maximal set for value/type symbols, but
+        // it still over-keeps `impl` blocks (restored whenever their *type* is
+        // mentioned, even if no method is called) and any residual duplicate-named
+        // items. Greedily retry ONLY those suspects — a small set, so this is far
+        // cheaper than sweeping every present item. If we never converged, fall
+        // back to a clean base and sweep everything within budget.
+        if converged {
+            // names that occur on more than one present removable item
+            let mut name_count: std::collections::HashMap<&str, usize> = Default::default();
+            for f in &files {
+                for it in &f.items {
+                    if it.removable && !removed.contains(&it.text_hash) {
+                        *name_count.entry(it.name.as_str()).or_default() += 1;
+                    }
                 }
-                if checks >= budget {
+            }
+            let mut suspects: Vec<(usize, u64)> = Vec::new();
+            for (fi, f) in files.iter().enumerate() {
+                for it in &f.items {
+                    let present = it.removable && !removed.contains(&it.text_hash);
+                    let is_impl = it.label.starts_with("impl ");
+                    let dup = name_count.get(it.name.as_str()).copied().unwrap_or(0) > 1;
+                    if present && (is_impl || dup) {
+                        suspects.push((fi, it.text_hash));
+                    }
+                }
+            }
+            tracing::info!(suspects = suspects.len(), budget, "targeted refinement candidates");
+            let mut refine_checks = 0usize;
+            for (fi, hash) in suspects {
+                if refine_checks >= budget {
                     budget_exhausted = true;
-                    break 'refine;
+                    break;
                 }
-                removed.insert(it.text_hash);
-                std::fs::write(&f.path, slice::render_without(&f.original, &f.items, &removed))?;
+                refine_checks += 1;
+                removed.insert(hash);
+                std::fs::write(
+                    &files[fi].path,
+                    slice::render_without(&files[fi].original, &files[fi].items, &removed),
+                )?;
                 let res = self.registry.call("cargo_check", &manifest)?;
                 checks += 1;
                 if !res["success"].as_bool().unwrap_or(false) {
-                    removed.remove(&it.text_hash);
+                    removed.remove(&hash);
+                    std::fs::write(
+                        &files[fi].path,
+                        slice::render_without(&files[fi].original, &files[fi].items, &removed),
+                    )?;
+                }
+            }
+        } else {
+            removed.clear();
+            write_all(&removed)?;
+            let mut refine_checks = 0usize;
+            'refine: for f in &files {
+                for it in f.items.iter().filter(|i| i.removable) {
+                    if refine_checks >= budget {
+                        budget_exhausted = true;
+                        break 'refine;
+                    }
+                    refine_checks += 1;
+                    removed.insert(it.text_hash);
                     std::fs::write(&f.path, slice::render_without(&f.original, &f.items, &removed))?;
+                    let res = self.registry.call("cargo_check", &manifest)?;
+                    checks += 1;
+                    if !res["success"].as_bool().unwrap_or(false) {
+                        removed.remove(&it.text_hash);
+                        std::fs::write(&f.path, slice::render_without(&f.original, &f.items, &removed))?;
+                    }
                 }
             }
         }
-        tracing::info!(after_fast, after_refine = removed.len(), checks, "item-slice refinement done");
+        tracing::info!(after_fast, after_refine = removed.len(), checks, "item-slice done");
 
         let final_check = self.registry.call("cargo_check", &manifest)?;
         let verified = final_check["success"].as_bool().unwrap_or(false);

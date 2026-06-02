@@ -285,38 +285,128 @@ pub fn render_without(original: &str, items: &[ItemRef], removed: &HashSet<u64>)
     out
 }
 
-/// Extract candidate identifiers from rustc "cannot find `x`" style errors. We
-/// take every back-ticked token on `error` lines, split paths on `::`, and keep
-/// the identifier segments — the names of items the live code still needs.
-pub fn extract_missing_idents(stderr: &str) -> HashSet<String> {
-    let mut out = HashSet::new();
+/// The module path a source file defines, e.g. `src/arch/all/memchr.rs` →
+/// `["arch","all","memchr"]`, `src/lib.rs` → `[]`, `src/x/mod.rs` → `["x"]`.
+pub fn module_of_path(path: &str) -> Vec<String> {
+    let rel = if let Some(i) = path.find("/src/") {
+        &path[i + 5..]
+    } else if let Some(r) = path.strip_prefix("src/") {
+        r
+    } else {
+        path
+    };
+    let rel = rel.split(':').next().unwrap_or(rel); // drop any :line:col
+    let rel = rel.strip_suffix(".rs").unwrap_or(rel);
+    let mut segs: Vec<String> = rel
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+    if segs.last().map(|s| s == "mod").unwrap_or(false) {
+        segs.pop();
+    }
+    if segs.len() == 1 && (segs[0] == "lib" || segs[0] == "main") {
+        segs.clear();
+    }
+    segs
+}
+
+/// A symbol the live code still needs, with the module context it was looked up
+/// in — so we restore the *right* definition when a bare name exists in several
+/// modules (e.g. one `memchr_raw` per CPU backend).
+#[derive(Debug, Clone)]
+pub struct Wanted {
+    pub name: String,
+    pub context: Vec<String>,
+}
+
+fn ident_prefix(s: &str) -> String {
+    s.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect()
+}
+
+fn is_path_root(seg: &str) -> bool {
+    matches!(seg, "crate" | "self" | "super" | "std" | "core" | "alloc" | "")
+}
+
+fn path_segments(token: &str) -> Vec<String> {
+    token
+        .split("::")
+        .map(ident_prefix)
+        .filter(|s| !is_path_root(s))
+        .collect()
+}
+
+fn backticked(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Some(s) = line[i..].find('`') {
+        let start = i + s + 1;
+        if let Some(e) = line[start..].find('`') {
+            out.push(line[start..start + e].to_string());
+            i = start + e + 1;
+        } else {
+            break;
+        }
+    }
+    out
+}
+
+/// Parse rustc errors into `(name, context-module)` wants. Uses the module named
+/// in the error ("in module `crate::a::b`", "unresolved import `crate::a::b::C`")
+/// when present, else the error's own source file module.
+pub fn extract_wanted(stderr: &str) -> Vec<Wanted> {
+    let mut out = Vec::new();
     for line in stderr.lines() {
         if !line.contains(": error") && !line.contains("error[") && !line.contains("error:") {
             continue;
         }
-        let bytes = line.as_bytes();
-        let mut i = 0;
-        while let Some(start) = line[i..].find('`') {
-            let s = i + start + 1;
-            if let Some(rel_end) = line[s..].find('`') {
-                let token = &line[s..s + rel_end];
-                for seg in token.split("::") {
-                    let id: String = seg
-                        .chars()
-                        .take_while(|c| c.is_alphanumeric() || *c == '_')
-                        .collect();
-                    if !id.is_empty() {
-                        out.insert(id);
-                    }
-                }
-                i = s + rel_end + 1;
-            } else {
-                break;
+        let ctx_file = module_of_path(line);
+        let toks = backticked(line);
+
+        if let Some(pos) = line.find("in module `") {
+            let modstr = &line[pos + "in module `".len()..];
+            let modtok = modstr.split('`').next().unwrap_or("");
+            let context = path_segments(modtok);
+            if let Some(name) = toks.iter().map(|t| ident_prefix(t)).find(|t| !t.is_empty()) {
+                out.push(Wanted { name, context });
+                continue;
             }
         }
-        let _ = bytes;
+        if line.contains("unresolved import") || line.contains("failed to resolve") {
+            if let Some(t) = toks.iter().find(|t| t.contains("::")) {
+                let segs = path_segments(t);
+                if let Some((name, ctx)) = segs.split_last() {
+                    out.push(Wanted { name: name.clone(), context: ctx.to_vec() });
+                    continue;
+                }
+            }
+        }
+        for t in &toks {
+            if t.contains("::") {
+                let segs = path_segments(t);
+                if let Some((name, ctx)) = segs.split_last() {
+                    if !name.is_empty() {
+                        out.push(Wanted { name: name.clone(), context: ctx.to_vec() });
+                    }
+                }
+            } else {
+                let name = ident_prefix(t);
+                if !name.is_empty() && !is_path_root(&name) {
+                    out.push(Wanted { name, context: ctx_file.clone() });
+                }
+            }
+        }
     }
     out
+}
+
+/// Count matching leading segments between an item's module and a lookup context.
+pub fn prefix_overlap(item_module: &[String], context: &[String]) -> usize {
+    item_module
+        .iter()
+        .zip(context.iter())
+        .take_while(|(a, b)| a == b)
+        .count()
 }
 
 /// Every vendored `.rs` file under a crate (skipping the trash dir).
