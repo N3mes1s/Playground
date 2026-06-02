@@ -92,20 +92,21 @@ $ ./target/debug/fd --version   # → fd 10.4.2  (runs; regex/ignore/walkdir all
 supply chain is pulled into the tree. The only project change is the
 `[patch.crates-io]` block in `Cargo.toml`; no source edits.
 
-### Honest boundaries (and why they're the right call)
+### Native/sys crates (now vendored too — see Stage 5)
 
-carve deliberately leaves two classes of crate on the registry and reports them:
+`tikv-jemalloc-sys` (`links = "jemalloc"`) compiles bundled C. It initially
+failed to build from the vendored copy — root-caused to **lost file permissions**
+(its shipped `configure`/`*.sh` scripts are mode `755`; a naive byte copy wrote
+them `644`). With file modes preserved, the native build reproduces faithfully
+and **all 75 patchable crates (including jemalloc-sys) build from vendored
+source**. See [STAGE-5-REPORT.md](STAGE-5-REPORT.md).
 
-- **Native-linked `*-sys` crates** (here `tikv-jemalloc-sys`, `links = "jemalloc"`):
-  their build compiles bundled C / links a native library. Copying Rust source
-  cannot reproduce that build faithfully, so vendoring it would be a lie. carve
-  detects `links` and skips it.
+The one genuine boundary that remains:
+
 - **Crates present at multiple versions** (`bitflags`, `nix`): a single
   `[patch.crates-io]` entry is keyed by name and can't express two versions, so
-  carve vendors them for the record but leaves the build on the registry.
-
-Everything else — the pure-Rust supply chain, 74 crates across 6 levels — is
-vendored, verified, reversible, and compiling.
+  carve vendors them for the record but leaves the build on the registry. This is
+  a Cargo `[patch]` limitation, not a vendoring one.
 
 ---
 

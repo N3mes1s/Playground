@@ -113,6 +113,12 @@ pub fn vendor_crate(
         let bytes = std::fs::read(path)?;
         let sha = sha256_bytes(&bytes);
         std::fs::write(&dest_file, &bytes)?;
+        // Preserve the original mode bits. This matters for native/sys crates
+        // whose build scripts run shipped `configure`/`*.sh` scripts — losing the
+        // executable bit silently breaks their C build.
+        if let Ok(meta) = std::fs::metadata(path) {
+            let _ = std::fs::set_permissions(&dest_file, meta.permissions());
+        }
         files.push(VendoredFile {
             vendored_path: format!("{dest_rel}/{}", rel.to_string_lossy()),
             upstream_path: rel.to_string_lossy().to_string(),

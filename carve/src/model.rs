@@ -262,6 +262,69 @@ impl SliceReport {
     }
 }
 
+/// A snapshot of a vendored crate's attack surface. Reductions in these are the
+/// concrete security payoff of carving.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct AttackSurface {
+    pub files: usize,
+    pub loc: usize,
+    pub bytes: u64,
+    /// Top-level items (fn/struct/enum/impl/…) — the reachable API+impl surface.
+    pub items: usize,
+    /// Occurrences of the `unsafe` keyword — memory-safety-relevant surface.
+    pub unsafe_blocks: usize,
+}
+
+fn pct(before: usize, after: usize) -> f64 {
+    if before == 0 {
+        0.0
+    } else {
+        100.0 * (before.saturating_sub(after)) as f64 / before as f64
+    }
+}
+
+impl AttackSurface {
+    pub fn files_pct(&self, after: &AttackSurface) -> f64 {
+        pct(self.files, after.files)
+    }
+    pub fn loc_pct(&self, after: &AttackSurface) -> f64 {
+        pct(self.loc, after.loc)
+    }
+    pub fn bytes_pct(&self, after: &AttackSurface) -> f64 {
+        pct(self.bytes as usize, after.bytes as usize)
+    }
+    pub fn items_pct(&self, after: &AttackSurface) -> f64 {
+        pct(self.items, after.items)
+    }
+    pub fn unsafe_pct(&self, after: &AttackSurface) -> f64 {
+        pct(self.unsafe_blocks, after.unsafe_blocks)
+    }
+}
+
+/// Outcome of an agent *item-level* slicing run (finer than whole modules).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ItemSliceReport {
+    pub crate_name: String,
+    pub items_before: usize,
+    pub items_removed: usize,
+    pub loc_before: usize,
+    pub loc_after: usize,
+    /// Number of `cargo check` verifications the agent ran.
+    pub checks_used: usize,
+    pub budget_exhausted: bool,
+    pub verified: bool,
+}
+
+impl ItemSliceReport {
+    pub fn loc_reduction_pct(&self) -> f64 {
+        if self.loc_before == 0 {
+            0.0
+        } else {
+            100.0 * (self.loc_before - self.loc_after) as f64 / self.loc_before as f64
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Update-impact analysis ("does this upstream release touch us?")
 // ---------------------------------------------------------------------------

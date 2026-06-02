@@ -92,6 +92,13 @@ enum Command {
         /// Use the LLM agent to plan which modules to drop (needs ANTHROPIC_API_KEY).
         #[arg(long)]
         llm: bool,
+        /// After module slicing, also slice at the item level (fn/struct/impl…),
+        /// verifying each removal against the consumer build.
+        #[arg(long)]
+        items: bool,
+        /// Verification budget (max `cargo check` runs) for item-level slicing.
+        #[arg(long, default_value_t = 250)]
+        budget: usize,
     },
     /// Check LLM agent connectivity (needs ANTHROPIC_API_KEY).
     LlmCheck,
@@ -169,7 +176,9 @@ fn main() -> Result<()> {
             manifest_path,
             out,
             llm,
-        } => cmd_slice(&crate_name, &manifest_path, out.as_deref(), llm),
+            items,
+            budget,
+        } => cmd_slice(&crate_name, &manifest_path, out.as_deref(), llm, items, budget),
         Command::LlmCheck => cmd_llm_check(),
         Command::Restore {
             crate_name,
@@ -420,19 +429,19 @@ fn cmd_vendor_all(manifest_path: &Path, apply: bool, transitive: bool) -> Result
             .unwrap_or_default()
     };
 
-    let mut native_skipped: Vec<String> = Vec::new();
+    let mut native_count = 0usize;
     let mut targets: Vec<(String, String)> = if transitive {
-        // The ENTIRE transitive closure (deps of deps) — full isolation, except
-        // native-linked sys crates whose C/native build we can't reproduce by
-        // copying Rust source; those stay on the registry.
+        // The ENTIRE transitive closure (deps of deps) — full isolation. Native
+        // `*-sys` crates ARE vendored too: carve preserves file modes, so their
+        // shipped `configure`/`*.sh` build scripts still run and the native build
+        // reproduces faithfully from the vendored source.
         let meta = analyze::metadata::load_metadata(manifest_path)?;
         let mut t = Vec::new();
         for n in analyze::metadata::build_closure(&meta)? {
             if n.native_link {
-                native_skipped.push(format!("{} v{}", n.name, n.version));
-            } else {
-                t.push((n.name, n.version));
+                native_count += 1;
             }
+            t.push((n.name, n.version));
         }
         t
     } else {
@@ -503,9 +512,8 @@ fn cmd_vendor_all(manifest_path: &Path, apply: bool, transitive: bool) -> Result
     if !skipped_patch.is_empty() {
         println!("  left on registry (can't patch a duplicated name): {}", skipped_patch.join(", "));
     }
-    if !native_skipped.is_empty() {
-        println!("  left on registry ({} native-linked sys crate(s) — native build not source-reproducible): {}",
-            native_skipped.len(), native_skipped.join(", "));
+    if native_count > 0 {
+        println!("  ({native_count} native-linked sys crate(s) vendored with file modes preserved)");
     }
     if !failed.is_empty() {
         println!("  {} not vendored (source not cached — run `cargo fetch`)", failed.len());
@@ -516,7 +524,14 @@ fn cmd_vendor_all(manifest_path: &Path, apply: bool, transitive: bool) -> Result
     Ok(())
 }
 
-fn cmd_slice(crate_name: &str, manifest_path: &Path, out: Option<&Path>, llm: bool) -> Result<()> {
+fn cmd_slice(
+    crate_name: &str,
+    manifest_path: &Path,
+    out: Option<&Path>,
+    llm: bool,
+    items: bool,
+    budget: usize,
+) -> Result<()> {
     let root = root_of(manifest_path);
     let mut lock = vendor::load_lock(&root)?;
     let entry = lock
@@ -524,6 +539,9 @@ fn cmd_slice(crate_name: &str, manifest_path: &Path, out: Option<&Path>, llm: bo
         .cloned()
         .context("crate is not vendored — run `carve vendor` (with --apply) first")?;
     let vendor_dir = root.join(vendor::vendor_rel_path(&entry.crate_name, &entry.version));
+
+    // Measure the attack surface before any carving so we can report the delta.
+    let surface_before = slice::measure_surface(&vendor_dir);
 
     let agent = agent::RuleBasedAgent::new();
 
@@ -580,11 +598,77 @@ fn cmd_slice(crate_name: &str, manifest_path: &Path, out: Option<&Path>, llm: bo
         "  consumer build verified after slicing: {}",
         if report.verified { "YES" } else { "NO" }
     );
+
+    // Optional finer pass: item-level slicing on top of the module-level result.
+    if items {
+        println!("\nItem-level slicing (budget {budget} verifications)…");
+        let item_report = agent.slice_items(crate_name, manifest_path, &vendor_dir, budget)?;
+        // Re-index again so provenance matches the item-carved tree.
+        let files = vendor::reindex_files(&root, &entry.crate_name, &entry.version)?;
+        if let Some(e) = lock.entry(crate_name).cloned() {
+            let mut e2 = e;
+            e2.files = files;
+            e2.note = Some(format!(
+                "sliced modules + items: removed {} item(s), {:.1}% LOC reduction overall, verified={}",
+                item_report.items_removed,
+                item_report.loc_reduction_pct(),
+                item_report.verified
+            ));
+            lock.upsert(e2);
+            vendor::save_lock(&root, &lock)?;
+        }
+        println!(
+            "  removed {}/{} top-level item(s) via {} verification(s){}",
+            item_report.items_removed,
+            item_report.items_before,
+            item_report.checks_used,
+            if item_report.budget_exhausted { " (budget reached)" } else { "" }
+        );
+        println!(
+            "  LOC after items: {} -> {}  ({:.1}% reduction)",
+            item_report.loc_before, item_report.loc_after, item_report.loc_reduction_pct()
+        );
+        println!(
+            "  consumer build verified after item-slicing: {}",
+            if item_report.verified { "YES" } else { "NO" }
+        );
+    }
+
+    // The headline: how much attack surface did carving actually remove?
+    let surface_after = slice::measure_surface(&vendor_dir);
+    print_attack_surface(&entry.crate_name, &surface_before, &surface_after);
+
     if let Some(path) = out {
-        std::fs::write(path, serde_json::to_string_pretty(&report)?)?;
-        println!("\n  slice report written to {}", path.display());
+        let combined = serde_json::json!({
+            "slice": report,
+            "surface_before": surface_before,
+            "surface_after": surface_after,
+        });
+        std::fs::write(path, serde_json::to_string_pretty(&combined)?)?;
+        println!("\n  slice + surface report written to {}", path.display());
     }
     Ok(())
+}
+
+fn print_attack_surface(
+    crate_name: &str,
+    before: &model::AttackSurface,
+    after: &model::AttackSurface,
+) {
+    println!("\n  ── attack surface reduction ({crate_name}) ──");
+    let row = |label: &str, b: usize, a: usize, p: f64| {
+        println!("      {label:<8} {b:>7} → {a:<7}  -{p:.1}%");
+    };
+    row("files", before.files, after.files, before.files_pct(after));
+    row("LOC", before.loc, after.loc, before.loc_pct(after));
+    row("items", before.items, after.items, before.items_pct(after));
+    row("bytes", before.bytes as usize, after.bytes as usize, before.bytes_pct(after));
+    row("unsafe", before.unsafe_blocks, after.unsafe_blocks, before.unsafe_pct(after));
+    println!(
+        "      ► attack surface cut by ~{:.0}% (LOC), {:.0}% of `unsafe` blocks removed",
+        before.loc_pct(after),
+        before.unsafe_pct(after)
+    );
 }
 
 fn cmd_restore(crate_name: &str, manifest_path: &Path) -> Result<()> {

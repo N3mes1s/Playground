@@ -27,14 +27,14 @@ Two hard constraints keep it honest:
   removes it. Round-trip is lossless — `carve restore <crate>` puts you back on
   the registry dependency, and the project still builds.
 
-> Status: **Stages 1–4 working.** DFUG, provenance ledger, verbatim vendoring,
-> reversibility, verification, the autonomous-agent tool surface, **agent-driven
-> module slicing** (Stage 2), a full **real-project run** (Stage 3,
-> `BurntSushi/aho-corasick`), update-impact analysis, plus **(Stage 4)** a
-> **live LLM agent** over the same tool surface and **deep transitive vendoring**
-> (dependencies of dependencies) proven on the 90-crate, 6-level-deep `sharkdp/fd`.
-> See [STAGE-2-3-REPORT.md](STAGE-2-3-REPORT.md) and
-> [STAGE-4-REPORT.md](STAGE-4-REPORT.md); architecture in [DESIGN.md](DESIGN.md).
+> Status: **Stages 1–5 working.** DFUG, provenance ledger, verbatim vendoring,
+> reversibility, verification, the autonomous-agent tool surface, agent-driven
+> **module + single-item slicing** with an **attack-surface reduction %** readout,
+> update-impact analysis, a **live LLM agent** over the same tool surface, and
+> **deep transitive vendoring** (dependencies of dependencies) — including native
+> `*-sys` crates — proven on the 90-crate, 6-level-deep `sharkdp/fd`. See the
+> [STAGE-2-3](STAGE-2-3-REPORT.md), [STAGE-4](STAGE-4-REPORT.md), and
+> [STAGE-5](STAGE-5-REPORT.md) reports; architecture in [DESIGN.md](DESIGN.md).
 
 ## Install / build
 
@@ -50,7 +50,7 @@ cargo build --release   # produces target/release/carve
 | `carve plan` | The agent reads the DFUG and proposes, per crate, whether item-level slicing is safe (HIGH), needs a verification build (MED), or should be vendored whole for now (LOW). |
 | `carve vendor <crate> [--apply]` | Transcribe a crate verbatim into `vendor/`, recording provenance in `carve.lock`. `--apply` also wires the reversible `[patch.crates-io]` entry. |
 | `carve vendor-all [--apply] [--transitive]` | Vendor every direct dependency in one shot, or the ENTIRE transitive closure with `--transitive` (native-linked sys crates and duplicated-version crates are left on the registry and reported). |
-| `carve slice <crate> [--llm]` | **The agent** carves the vendored crate down to only the modules the product needs, running `cargo check` against the real consumer after every cut and keeping only what still compiles. `--llm` lets a model plan the cuts (needs `ANTHROPIC_API_KEY`); the compiler still gates every one. |
+| `carve slice <crate> [--llm] [--items] [--budget N]` | **The agent** carves the vendored crate down to only what the product needs, running `cargo check` against the real consumer after every cut and keeping only what still compiles. Reports the **attack-surface reduction %** (files/LOC/items/bytes/`unsafe`). `--items` slices at the individual-item level (budget-bounded); `--llm` lets a model plan the cuts (needs `ANTHROPIC_API_KEY`); the compiler gates every one. |
 | `carve llm-check` | Verify LLM-agent connectivity (needs `ANTHROPIC_API_KEY`). |
 | `carve impact <crate> --to <ver>` | Assess whether moving to an upstream version touches code inside your slice (and which items you call) — i.e. whether the update needs a proof-read or is safe to take. |
 | `carve restore <crate>` | Reverse it: remove the patch, delete the vendored tree, drop the ledger entry. |
@@ -126,10 +126,12 @@ roadmap toward agent-driven item-level slicing and a real-project fork.
 
 ## Limitations
 
-- Slicing is currently **module-level** (whole `mod`s), not yet single-item, and
-  is target-specialized: carving a crate's ARM/WASM backends pins the vendored
-  copy to your build target. The compiler gates every cut, so the result always
-  compiles, but finer item-level slicing is the next step (Stage 2+).
+- Slicing is **target-specialized**: carving a crate's ARM/WASM backends pins the
+  vendored copy to your build target. The compiler gates every cut, so the result
+  always compiles. Item-level slicing is one `cargo check` per item, so it is
+  budget-bounded — run the cheap module pass first.
+- Transitive `[patch]` can't express a crate present at **multiple versions**;
+  those are vendored for the record but left on the registry.
 - The DFUG resolver is syntactic, not a full type resolver. It maps `pkg-name`
   to `pkg_name` and honors `use` renames, but won't follow re-exports or resolve
   method-call receiver types. It errs toward under-reporting.

@@ -12,8 +12,11 @@
 //! Observability: every tool call is a `tracing` span carrying the tool name and
 //! a structured outcome, so a full run can be replayed from the JSON log.
 
-use crate::model::{Confidence, CrateMinimization, MinimizationPlan, SliceReport, UsageGraph};
+use crate::model::{
+    Confidence, CrateMinimization, ItemSliceReport, MinimizationPlan, SliceReport, UsageGraph,
+};
 use crate::slice;
+use std::collections::HashSet;
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -358,6 +361,82 @@ impl RuleBasedAgent {
             loc_after,
             removed,
             kept_needed,
+            verified,
+        })
+    }
+
+    /// Autonomously slice at the **item level**: greedily try to delete each
+    /// individual top-level item (fn/struct/impl/…) and verify with `cargo_check`
+    /// against the real consumer, keeping only removals that still compile. Runs
+    /// in passes to fixpoint (removing a caller can free its private helper),
+    /// bounded by a verification `budget`. Verbatim and compiler-gated, like the
+    /// module slicer — just finer.
+    #[tracing::instrument(skip(self, vendor_dir), fields(crate_name = crate_name))]
+    pub fn slice_items(
+        &self,
+        crate_name: &str,
+        project_manifest: &Path,
+        vendor_dir: &Path,
+        budget: usize,
+    ) -> Result<ItemSliceReport> {
+        let manifest = json!({ "manifest_path": project_manifest.to_string_lossy() });
+        let baseline = self.registry.call("cargo_check", &manifest)?;
+        if !baseline["success"].as_bool().unwrap_or(false) {
+            return Err(anyhow!("baseline `cargo check` failed; fix the build before item-slicing"));
+        }
+
+        let loc_before = slice::count_loc(vendor_dir);
+        let files = slice::rust_files(vendor_dir);
+        let items_before: usize = files.iter().filter_map(|f| slice::list_items(f).ok()).map(|v| v.len()).sum();
+
+        let mut checks = 0usize;
+        let mut removed = 0usize;
+        let mut budget_exhausted = false;
+
+        'passes: for pass in 0..2 {
+            let mut removed_this_pass = 0usize;
+            for file in &files {
+                let mut locked: HashSet<u64> = HashSet::new();
+                loop {
+                    let items = slice::list_items(file)?;
+                    let Some(it) = items.into_iter().find(|i| !locked.contains(&i.text_hash)) else {
+                        break;
+                    };
+                    if checks >= budget {
+                        budget_exhausted = true;
+                        break 'passes;
+                    }
+                    let backup = slice::remove_lines(file, it.start, it.end)?;
+                    let res = self.registry.call("cargo_check", &manifest)?;
+                    checks += 1;
+                    if res["success"].as_bool().unwrap_or(false) {
+                        removed += 1;
+                        removed_this_pass += 1;
+                        tracing::debug!(item = %it.label, file = %file.display(), "carved item");
+                    } else {
+                        slice::restore_file(file, &backup)?;
+                        locked.insert(it.text_hash);
+                    }
+                }
+            }
+            tracing::info!(pass, removed_this_pass, checks, "item-slice pass complete");
+            if removed_this_pass == 0 {
+                break;
+            }
+        }
+
+        let final_check = self.registry.call("cargo_check", &manifest)?;
+        let verified = final_check["success"].as_bool().unwrap_or(false);
+        let loc_after = slice::count_loc(vendor_dir);
+
+        Ok(ItemSliceReport {
+            crate_name: crate_name.to_string(),
+            items_before,
+            items_removed: removed,
+            loc_before,
+            loc_after,
+            checks_used: checks,
+            budget_exhausted,
             verified,
         })
     }

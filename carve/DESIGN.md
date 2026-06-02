@@ -125,8 +125,14 @@ layer" the idea calls for.
   transitive closure** — dependencies of dependencies — proven on `sharkdp/fd`
   (90 crates, 6 levels deep, 74 vendored and rebuilt). Native-linked `*-sys`
   crates and multi-version crates are detected and left on the registry. See
-  [STAGE-4-REPORT.md](STAGE-4-REPORT.md). *Next:* single-item (not just module)
-  slicing, and handling native/sys crates.
+  [STAGE-4-REPORT.md](STAGE-4-REPORT.md).
+- **Stage 5 (done): item-level slicing, native/sys, attack-surface %.**
+  `slice --items` carves individual items (fn/struct/impl/…) under the same
+  `cargo check` gate, in passes to a fixpoint within a verification budget.
+  Native `*-sys` crates now vendor faithfully — the fix was **preserving file
+  modes** so shipped `configure`/`*.sh` build scripts stay executable. Every
+  slice reports the **attack-surface reduction %** across files/LOC/items/bytes
+  and `unsafe`-block count. See [STAGE-5-REPORT.md](STAGE-5-REPORT.md).
 
 ## Why Rust first
 

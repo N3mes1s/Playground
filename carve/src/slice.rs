@@ -139,6 +139,144 @@ pub fn remove_mod_decl(decl_file: &Path, name: &str) -> Result<String> {
     Ok(original)
 }
 
+// --- item-level slicing mechanics ------------------------------------------
+
+/// A removable top-level item inside a single source file.
+#[derive(Debug, Clone)]
+pub struct ItemRef {
+    pub label: String,
+    pub start: usize,
+    pub end: usize,
+    /// Hash of the item's own source text — a stable id even as siblings shift.
+    pub text_hash: u64,
+}
+
+fn fnv(s: &str) -> u64 {
+    let mut h = 0xcbf29ce484222325u64;
+    for b in s.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+fn item_attrs(item: &syn::Item) -> &[syn::Attribute] {
+    use syn::Item::*;
+    match item {
+        Fn(i) => &i.attrs,
+        Struct(i) => &i.attrs,
+        Enum(i) => &i.attrs,
+        Trait(i) => &i.attrs,
+        TraitAlias(i) => &i.attrs,
+        Type(i) => &i.attrs,
+        Const(i) => &i.attrs,
+        Static(i) => &i.attrs,
+        Union(i) => &i.attrs,
+        Impl(i) => &i.attrs,
+        Macro(i) => &i.attrs,
+        Use(i) => &i.attrs,
+        ForeignMod(i) => &i.attrs,
+        ExternCrate(i) => &i.attrs,
+        _ => &[],
+    }
+}
+
+fn item_label(item: &syn::Item) -> Option<String> {
+    use syn::Item::*;
+    Some(match item {
+        Fn(i) => format!("fn {}", i.sig.ident),
+        Struct(i) => format!("struct {}", i.ident),
+        Enum(i) => format!("enum {}", i.ident),
+        Trait(i) => format!("trait {}", i.ident),
+        Type(i) => format!("type {}", i.ident),
+        Const(i) => format!("const {}", i.ident),
+        Static(i) => format!("static {}", i.ident),
+        Union(i) => format!("union {}", i.ident),
+        Impl(i) => format!("impl {}", type_name(&i.self_ty)),
+        Macro(i) => format!("macro {}", i.ident.as_ref().map(|x| x.to_string()).unwrap_or_default()),
+        Use(_) => "use".to_string(),
+        _ => return None,
+    })
+}
+
+fn type_name(ty: &syn::Type) -> String {
+    match ty {
+        syn::Type::Path(p) => p
+            .path
+            .segments
+            .last()
+            .map(|s| s.ident.to_string())
+            .unwrap_or_default(),
+        _ => "_".into(),
+    }
+}
+
+/// List the removable top-level items in a file, with stable text hashes.
+pub fn list_items(file: &Path) -> Result<Vec<ItemRef>> {
+    let src = std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
+    let ast = match syn::parse_file(&src) {
+        Ok(a) => a,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let lines: Vec<&str> = src.lines().collect();
+    let mut out = Vec::new();
+    for item in &ast.items {
+        let Some(label) = item_label(item) else { continue };
+        let body_start = item.span().start().line;
+        let start = item_attrs(item)
+            .iter()
+            .map(|a| a.span().start().line)
+            .min()
+            .map(|x| x.min(body_start))
+            .unwrap_or(body_start);
+        let end = item.span().end().line;
+        if start == 0 || end < start || end > lines.len() {
+            continue;
+        }
+        let text = lines[start - 1..end].join("\n");
+        out.push(ItemRef {
+            label,
+            start,
+            end,
+            text_hash: fnv(&text),
+        });
+    }
+    Ok(out)
+}
+
+/// Delete an inclusive line range from a file; returns the original contents.
+pub fn remove_lines(file: &Path, start: usize, end: usize) -> Result<String> {
+    let original = std::fs::read_to_string(file)?;
+    let kept: Vec<&str> = original
+        .lines()
+        .enumerate()
+        .filter(|(i, _)| {
+            let ln = i + 1;
+            ln < start || ln > end
+        })
+        .map(|(_, l)| l)
+        .collect();
+    let mut out = kept.join("\n");
+    out.push('\n');
+    std::fs::write(file, out)?;
+    Ok(original)
+}
+
+pub fn restore_file(file: &Path, content: &str) -> Result<()> {
+    std::fs::write(file, content)?;
+    Ok(())
+}
+
+/// Every vendored `.rs` file under a crate (skipping the trash dir).
+pub fn rust_files(vendor_dir: &Path) -> Vec<PathBuf> {
+    WalkDir::new(vendor_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| is_rust(e.path()))
+        .map(|e| e.path().to_path_buf())
+        .collect()
+}
+
 // --- snapshot / restore of a module's files via a trash dir ----------------
 
 /// Move `target` aside so a cut can be tried, returning its parked location.
@@ -180,6 +318,51 @@ pub fn count_rs_files(vendor_dir: &Path) -> usize {
         .filter_map(|e| e.ok())
         .filter(|e| is_rust(e.path()))
         .count()
+}
+
+/// Count whole-word occurrences of `word` in `text`.
+fn count_word(text: &str, word: &str) -> usize {
+    let bytes = text.as_bytes();
+    let w = word.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut count = 0;
+    let mut i = 0;
+    while let Some(pos) = text[i..].find(word) {
+        let s = i + pos;
+        let before_ok = s == 0 || !is_ident(bytes[s - 1]);
+        let after = s + w.len();
+        let after_ok = after >= bytes.len() || !is_ident(bytes[after]);
+        if before_ok && after_ok {
+            count += 1;
+        }
+        i = s + w.len();
+    }
+    count
+}
+
+/// Measure a vendored crate's attack surface across several dimensions.
+pub fn measure_surface(vendor_dir: &Path) -> crate::model::AttackSurface {
+    let mut files = 0;
+    let mut loc = 0;
+    let mut bytes = 0u64;
+    let mut items = 0;
+    let mut unsafe_blocks = 0;
+    for path in rust_files(vendor_dir) {
+        if let Ok(src) = std::fs::read_to_string(&path) {
+            files += 1;
+            loc += src.lines().count();
+            bytes += src.len() as u64;
+            unsafe_blocks += count_word(&src, "unsafe");
+            items += list_items(&path).map(|v| v.len()).unwrap_or(0);
+        }
+    }
+    crate::model::AttackSurface {
+        files,
+        loc,
+        bytes,
+        items,
+        unsafe_blocks,
+    }
 }
 
 pub fn count_loc(vendor_dir: &Path) -> usize {
