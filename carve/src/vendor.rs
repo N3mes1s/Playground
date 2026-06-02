@@ -129,7 +129,30 @@ pub fn vendor_crate(
         files,
         vendored_at: chrono::Utc::now(),
         note,
+        removed_modules: Vec::new(),
     })
+}
+
+/// Re-walk a vendored tree and rebuild its file/hash ledger (used after the
+/// agent slices modules away, so `carve verify` keeps matching reality).
+pub fn reindex_files(root: &Path, crate_name: &str, version: &str) -> Result<Vec<VendoredFile>> {
+    let dest_rel = vendor_rel_path(crate_name, version);
+    let dest = root.join(&dest_rel);
+    let mut files = Vec::new();
+    for entry in WalkDir::new(&dest).into_iter().filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if !path.is_file() || path.to_string_lossy().contains("/.carve-trash/") {
+            continue;
+        }
+        let rel = path.strip_prefix(&dest)?;
+        let bytes = std::fs::read(path)?;
+        files.push(VendoredFile {
+            vendored_path: format!("{dest_rel}/{}", rel.to_string_lossy()),
+            upstream_path: rel.to_string_lossy().to_string(),
+            sha256: sha256_bytes(&bytes),
+        });
+    }
+    Ok(files)
 }
 
 /// Re-hash vendored files and confirm they still match the ledger. This is the

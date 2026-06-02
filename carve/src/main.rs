@@ -6,8 +6,10 @@
 
 mod agent;
 mod analyze;
+mod impact;
 mod model;
 mod obs;
+mod slice;
 mod vendor;
 
 use anyhow::{Context, Result};
@@ -62,6 +64,24 @@ enum Command {
         #[arg(long)]
         note: Option<String>,
     },
+    /// Vendor every normal direct dependency verbatim in one shot.
+    VendorAll {
+        #[arg(long, default_value = "Cargo.toml")]
+        manifest_path: PathBuf,
+        /// Also add the reversible `[patch.crates-io]` entries to Cargo.toml.
+        #[arg(long)]
+        apply: bool,
+    },
+    /// Agent: carve a vendored crate down to only the modules the product needs,
+    /// verifying every cut by compiling the real consumer.
+    Slice {
+        /// Package name as in Cargo.toml (must already be vendored + patched).
+        crate_name: String,
+        #[arg(long, default_value = "Cargo.toml")]
+        manifest_path: PathBuf,
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
     /// Reverse a vendored crate back to the upstream dependency.
     Restore {
         crate_name: String,
@@ -77,6 +97,18 @@ enum Command {
     Verify {
         #[arg(long, default_value = "Cargo.toml")]
         manifest_path: PathBuf,
+    },
+    /// Assess whether a dependency update touches the code we actually vendored.
+    Impact {
+        /// Package name as in Cargo.toml (must already be vendored).
+        crate_name: String,
+        /// Target upstream version to evaluate, e.g. 2.7.5.
+        #[arg(long)]
+        to: String,
+        #[arg(long, default_value = "Cargo.toml")]
+        manifest_path: PathBuf,
+        #[arg(short, long)]
+        out: Option<PathBuf>,
     },
     /// List the tools available to the autonomous agent.
     Tools,
@@ -104,12 +136,27 @@ fn main() -> Result<()> {
             apply,
             note,
         } => cmd_vendor(&crate_name, &manifest_path, apply, note),
+        Command::VendorAll {
+            manifest_path,
+            apply,
+        } => cmd_vendor_all(&manifest_path, apply),
+        Command::Slice {
+            crate_name,
+            manifest_path,
+            out,
+        } => cmd_slice(&crate_name, &manifest_path, out.as_deref()),
         Command::Restore {
             crate_name,
             manifest_path,
         } => cmd_restore(&crate_name, &manifest_path),
         Command::Status { manifest_path } => cmd_status(&manifest_path),
         Command::Verify { manifest_path } => cmd_verify(&manifest_path),
+        Command::Impact {
+            crate_name,
+            to,
+            manifest_path,
+            out,
+        } => cmd_impact(&crate_name, &to, &manifest_path, out.as_deref()),
         Command::Tools => cmd_tools(),
         Command::Locate {
             crate_name,
@@ -247,6 +294,121 @@ fn cmd_vendor(
     Ok(())
 }
 
+fn cmd_vendor_all(manifest_path: &Path, apply: bool) -> Result<()> {
+    let root = root_of(manifest_path);
+    let meta = analyze::metadata::load(manifest_path)?;
+
+    // Map each used crate to its referenced items, for richer provenance.
+    let graph = analyze::build_usage_graph(manifest_path)?;
+    let kept_for = |pkg: &str| -> Vec<String> {
+        graph
+            .used_crate(pkg)
+            .map(|c| c.items.iter().map(|i| i.path.clone()).collect())
+            .unwrap_or_default()
+    };
+
+    // Vendoring the normal direct deps is what `cargo build` needs; dev-deps are
+    // only required for tests and are skipped to keep the surface minimal.
+    let mut targets: Vec<(String, String)> = meta
+        .deps
+        .values()
+        .filter(|d| d.is_normal)
+        .filter_map(|d| d.version.clone().map(|v| (d.package.clone(), v)))
+        .collect();
+    targets.sort();
+    targets.dedup();
+
+    if targets.is_empty() {
+        println!("No resolvable normal dependencies to vendor.");
+        return Ok(());
+    }
+
+    println!("Vendoring {} direct dependency(ies) verbatim …\n", targets.len());
+    let mut lock = vendor::load_lock(&root)?;
+    let mut ok = 0usize;
+    let mut failed: Vec<String> = Vec::new();
+    for (pkg, version) in &targets {
+        match vendor::vendor_crate(&root, pkg, version, kept_for(pkg), None) {
+            Ok(entry) => {
+                let files = entry.files.len();
+                lock.upsert(entry);
+                if apply {
+                    let rel = vendor::vendor_rel_path(pkg, version);
+                    vendor::apply_patch(&root, pkg, &rel)?;
+                }
+                println!("  ✓ {pkg} v{version}  ({files} files)");
+                ok += 1;
+            }
+            Err(e) => {
+                println!("  ✗ {pkg} v{version}  — {e}");
+                failed.push(pkg.clone());
+            }
+        }
+    }
+    vendor::save_lock(&root, &lock)?;
+
+    println!("\n  vendored {ok}/{} dependency(ies); provenance in carve.lock", targets.len());
+    if apply {
+        println!("  added [patch.crates-io] entries — run `cargo build` to compile vendored");
+    } else {
+        println!("  re-run with --apply to wire the [patch.crates-io] entries");
+    }
+    if !failed.is_empty() {
+        println!("  not vendored (no registry source cached — run `cargo fetch`): {}", failed.join(", "));
+    }
+    Ok(())
+}
+
+fn cmd_slice(crate_name: &str, manifest_path: &Path, out: Option<&Path>) -> Result<()> {
+    let root = root_of(manifest_path);
+    let mut lock = vendor::load_lock(&root)?;
+    let entry = lock
+        .entry(crate_name)
+        .cloned()
+        .context("crate is not vendored — run `carve vendor` (with --apply) first")?;
+    let vendor_dir = root.join(vendor::vendor_rel_path(&entry.crate_name, &entry.version));
+
+    println!("Agent slicing {} v{} (verifying every cut against the consumer build)…\n", entry.crate_name, entry.version);
+    let agent = agent::RuleBasedAgent::new();
+    let report = agent.slice_crate(crate_name, manifest_path, &vendor_dir)?;
+
+    // Re-index provenance so `carve verify` still matches the carved tree.
+    let files = vendor::reindex_files(&root, &entry.crate_name, &entry.version)?;
+    let mut updated = entry.clone();
+    updated.files = files;
+    updated.removed_modules = report.removed.clone();
+    updated.note = Some(format!(
+        "sliced: removed {} module(s), {:.1}% LOC reduction, consumer verified={}",
+        report.removed.len(),
+        report.loc_reduction_pct(),
+        report.verified
+    ));
+    lock.upsert(updated);
+    vendor::save_lock(&root, &lock)?;
+
+    println!("  carved away {} module(s):", report.removed.len());
+    for m in &report.removed {
+        println!("      - {m}");
+    }
+    println!(
+        "\n  files: {} -> {}   LOC: {} -> {}  ({:.1}% reduction)",
+        report.files_before, report.files_after, report.loc_before, report.loc_after, report.loc_reduction_pct()
+    );
+    println!(
+        "  kept (needed to compile): {} module(s)",
+        report.kept_needed.len()
+    );
+    println!(
+        "  consumer build verified after slicing: {}",
+        if report.verified { "YES" } else { "NO" }
+    );
+    if let Some(path) = out {
+        std::fs::write(path, serde_json::to_string_pretty(&report)?)?;
+        println!("\n  slice report written to {}", path.display());
+    }
+    Ok(())
+}
+
 fn cmd_restore(crate_name: &str, manifest_path: &Path) -> Result<()> {
     let root = root_of(manifest_path);
     vendor::restore_crate(&root, crate_name)?;
@@ -303,6 +465,66 @@ fn cmd_verify(manifest_path: &Path) -> Result<()> {
         anyhow::bail!("verification failed: vendored bytes diverge from the provenance ledger");
     }
     println!("\nAll vendored bytes match their upstream provenance.");
+    Ok(())
+}
+
+fn cmd_impact(crate_name: &str, to: &str, manifest_path: &Path, out: Option<&Path>) -> Result<()> {
+    let root = root_of(manifest_path);
+    let lock = vendor::load_lock(&root)?;
+    let entry = lock
+        .entry(crate_name)
+        .context("crate is not vendored — nothing to compare an update against")?;
+
+    println!("Assessing {crate_name} v{} -> v{to} against your vendored slice…\n", entry.version);
+    let report = impact::analyze(entry, to)?;
+
+    println!(
+        "  upstream changed {} file(s) total:",
+        report.total_changed_files
+    );
+    println!(
+        "      {} outside your slice  → cannot touch you",
+        report.changed_outside_slice
+    );
+    println!(
+        "      {} inside your slice   → proof-read surface",
+        report.changed_in_slice.len() + report.removed_from_slice.len()
+    );
+
+    if !report.changed_in_slice.is_empty() {
+        println!("\n  Files in your slice that changed:");
+        for f in &report.changed_in_slice {
+            let flag = if f.affects_used.is_empty() { "" } else { "  ⚠ used API" };
+            println!("      {}{}", f.upstream_path, flag);
+            if !f.items_changed.is_empty() {
+                println!("          items: {}", f.items_changed.join(", "));
+            }
+        }
+    }
+    if !report.removed_from_slice.is_empty() {
+        println!("\n  Slice files DELETED upstream (API drift):");
+        for f in &report.removed_from_slice {
+            println!("      {f}");
+        }
+    }
+
+    println!("\n  ──────────────────────────────────────────────");
+    if !report.touches_us() {
+        println!("  VERDICT: SAFE — this update does not touch any code you vendored.");
+        println!("           Bump the version and re-transcribe; no proof-read needed.");
+    } else if report.touches_used_api() {
+        println!("  VERDICT: PROOF-READ REQUIRED — update changes items you CALL:");
+        println!("           {}", report.used_items_affected.join(", "));
+    } else {
+        println!("  VERDICT: PROOF-READ the changed slice files above.");
+        println!("           (They are in your tree but not items you directly call.)");
+    }
+    println!("  ──────────────────────────────────────────────");
+
+    if let Some(path) = out {
+        std::fs::write(path, serde_json::to_string_pretty(&report)?)?;
+        println!("\n  impact report written to {}", path.display());
+    }
     Ok(())
 }
 

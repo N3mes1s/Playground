@@ -104,13 +104,21 @@ layer" the idea calls for.
 
 - **Stage 1 (done):** DFUG, plan, verbatim vendor, provenance ledger, verify,
   reversibility, agent tool surface, observability. Dogfooded on `carve`.
-- **Stage 2:** Agent-driven item-level slicing — compute the transitive
-  intra-crate closure of each used item, transcribe just those spans into a
-  shape-preserving module tree, and iterate against `cargo_check` until the slice
-  compiles against our real call sites. Record the kept-items → upstream-spans
-  link in `carve.lock`.
-- **Stage 3:** Fork a real Rust project, run carve end-to-end, and report the
-  attack-surface / LOC / CVE-exposure reduction versus upstream.
+- **Stage 2 (done — module level):** Agent-driven slicing. `carve slice` has the
+  agent greedily try to remove each upstream module and run `cargo check` against
+  the real consumer after every cut, keeping only removals that still compile.
+  Proven on `memchr` (−26.6% LOC, consumer still builds). Recorded in `carve.lock`
+  (`removed_modules`). *Next:* drop from module-level to single-item slicing by
+  computing each used item's transitive intra-crate closure.
+- **Stage 3 (done):** Ran carve end-to-end on `BurntSushi/aho-corasick` — DFUG →
+  vendor-all → agent slice → rebuild, changing **only** `Cargo.toml`'s patch
+  section. See [STAGE-2-3-REPORT.md](STAGE-2-3-REPORT.md) and
+  [`examples/aho-corasick-demo.sh`](examples/aho-corasick-demo.sh).
+- **Stage 4 (the security payoff): `carve impact` (done, v1).** Given a target
+  upstream version, diff it against our vendored slice and classify: changes
+  outside the slice *cannot* touch us; changes inside it are the bounded
+  proof-read surface; changes to items we *call* demand review. This is what
+  makes "an update touching us" precise instead of a blanket re-audit.
 
 ## Why Rust first
 

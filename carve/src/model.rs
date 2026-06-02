@@ -118,6 +118,10 @@ pub struct VendorEntry {
     pub vendored_at: chrono::DateTime<chrono::Utc>,
     /// Human/agent note recorded at proof-read time.
     pub note: Option<String>,
+    /// Upstream modules the slicer proved unneeded and carved away (verified by
+    /// compiling the real consumer). Empty until `carve slice` runs.
+    #[serde(default)]
+    pub removed_modules: Vec<String>,
 }
 
 /// The `carve.lock` ledger: the durable link between product and vendored deps.
@@ -193,4 +197,75 @@ pub struct MinimizationPlan {
     pub package: String,
     pub generated_at: chrono::DateTime<chrono::Utc>,
     pub crates: Vec<CrateMinimization>,
+}
+
+/// Outcome of an agent slicing run over one vendored crate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SliceReport {
+    pub crate_name: String,
+    pub files_before: usize,
+    pub files_after: usize,
+    pub loc_before: usize,
+    pub loc_after: usize,
+    /// Modules the agent carved away (consumer still compiled without them).
+    pub removed: Vec<String>,
+    /// Modules tried but kept (removing them broke the consumer build).
+    pub kept_needed: Vec<String>,
+    /// Final `cargo check` of the consumer was green after slicing.
+    pub verified: bool,
+}
+
+impl SliceReport {
+    pub fn loc_reduction_pct(&self) -> f64 {
+        if self.loc_before == 0 {
+            0.0
+        } else {
+            100.0 * (self.loc_before - self.loc_after) as f64 / self.loc_before as f64
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Update-impact analysis ("does this upstream release touch us?")
+// ---------------------------------------------------------------------------
+
+/// A vendored-slice file that changed in the target upstream version.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangedSliceFile {
+    pub upstream_path: String,
+    /// Top-level item idents whose definition changed/added/removed upstream.
+    pub items_changed: Vec<String>,
+    /// Of those, the ones that match an item our product actually uses.
+    pub affects_used: Vec<String>,
+}
+
+/// The answer to "should I take this dependency update?" framed by *our* usage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImpactReport {
+    pub crate_name: String,
+    pub from_version: String,
+    pub to_version: String,
+    /// Files that differ across the whole upstream crate, A -> B.
+    pub total_changed_files: usize,
+    /// Changed files that fall *outside* our vendored slice — these cannot
+    /// affect us, which is the whole point of carving.
+    pub changed_outside_slice: usize,
+    /// Changed files that are inside our slice — the proof-read surface.
+    pub changed_in_slice: Vec<ChangedSliceFile>,
+    /// Slice files that the target version deleted entirely (API drift).
+    pub removed_from_slice: Vec<String>,
+    /// Union of used items the update affects.
+    pub used_items_affected: Vec<String>,
+}
+
+impl ImpactReport {
+    /// True if the update changes code we vendored (i.e. requires a proof-read).
+    pub fn touches_us(&self) -> bool {
+        !self.changed_in_slice.is_empty() || !self.removed_from_slice.is_empty()
+    }
+
+    /// True if the update changes code we actually *call*.
+    pub fn touches_used_api(&self) -> bool {
+        !self.used_items_affected.is_empty()
+    }
 }

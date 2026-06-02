@@ -12,7 +12,8 @@
 //! Observability: every tool call is a `tracing` span carrying the tool name and
 //! a structured outcome, so a full run can be replayed from the JSON log.
 
-use crate::model::{Confidence, CrateMinimization, MinimizationPlan, UsageGraph};
+use crate::model::{Confidence, CrateMinimization, MinimizationPlan, SliceReport, UsageGraph};
+use crate::slice;
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -266,6 +267,86 @@ impl RuleBasedAgent {
             generated_at: chrono::Utc::now(),
             crates,
         }
+    }
+
+    /// Autonomously slice a vendored crate down to "only the part we need".
+    ///
+    /// This is the agent's core loop: greedily try to carve away each upstream
+    /// module, and after every cut drive the `cargo_check` tool against the real
+    /// consuming product. A cut is kept only if the consumer still compiles;
+    /// otherwise it is rolled back verbatim. The compiler is the oracle, so the
+    /// agent removes code but can never break or invent it.
+    #[tracing::instrument(skip(self, vendor_dir), fields(crate_name = crate_name))]
+    pub fn slice_crate(
+        &self,
+        crate_name: &str,
+        project_manifest: &Path,
+        vendor_dir: &Path,
+    ) -> Result<SliceReport> {
+        let manifest = json!({ "manifest_path": project_manifest.to_string_lossy() });
+
+        // The consumer must compile before we touch anything.
+        let baseline = self.registry.call("cargo_check", &manifest)?;
+        if !baseline["success"].as_bool().unwrap_or(false) {
+            return Err(anyhow!(
+                "baseline `cargo check` failed; apply the patch and ensure the project builds before slicing"
+            ));
+        }
+
+        let files_before = slice::count_rs_files(vendor_dir);
+        let loc_before = slice::count_loc(vendor_dir);
+
+        // Shallow modules first: removing a whole subtree skips its children.
+        let mut candidates = slice::discover(vendor_dir)?;
+        candidates.sort_by_key(|c| c.depth);
+        tracing::info!(candidates = candidates.len(), "discovered removable modules");
+
+        let mut removed = Vec::new();
+        let mut kept_needed = Vec::new();
+
+        for c in &candidates {
+            if !c.decl_file.exists() || !c.target.exists() {
+                continue; // already gone with a parent subtree
+            }
+            let span = tracing::info_span!("carve_attempt", module = %c.rel_name);
+            let _enter = span.enter();
+
+            let decl_backup = slice::remove_mod_decl(&c.decl_file, &c.name)?;
+            let parked = slice::park(vendor_dir, &c.target)?;
+
+            let check = self.registry.call("cargo_check", &manifest)?;
+            if check["success"].as_bool().unwrap_or(false) {
+                std::fs::remove_dir_all(&parked).ok();
+                std::fs::remove_file(&parked).ok();
+                tracing::info!(module = %c.rel_name, "carved away — consumer still compiles");
+                removed.push(c.rel_name.clone());
+            } else {
+                std::fs::write(&c.decl_file, decl_backup)?;
+                slice::unpark(&parked, &c.target)?;
+                tracing::debug!(module = %c.rel_name, "kept — needed to compile");
+                kept_needed.push(c.rel_name.clone());
+            }
+        }
+
+        slice::cleanup_trash(vendor_dir);
+        let final_check = self.registry.call("cargo_check", &manifest)?;
+        let verified = final_check["success"].as_bool().unwrap_or(false);
+
+        let files_after = slice::count_rs_files(vendor_dir);
+        let loc_after = slice::count_loc(vendor_dir);
+        removed.sort();
+        kept_needed.sort();
+
+        Ok(SliceReport {
+            crate_name: crate_name.to_string(),
+            files_before,
+            files_after,
+            loc_before,
+            loc_after,
+            removed,
+            kept_needed,
+            verified,
+        })
     }
 
     /// Locate the upstream definition site for a used path by scanning the

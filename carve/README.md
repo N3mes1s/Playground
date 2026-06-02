@@ -27,10 +27,12 @@ Two hard constraints keep it honest:
   removes it. Round-trip is lossless — `carve restore <crate>` puts you back on
   the registry dependency, and the project still builds.
 
-> Status: **Stage 1** (this experiment). The Dependency Functional Usage Graph,
-> provenance ledger, verbatim vendoring, reversibility, verification, and the
-> autonomous-agent tool surface all work today and are dogfooded on `carve`
-> itself. Agent-driven *item-level* slicing is Stage 2 — see [DESIGN.md](DESIGN.md).
+> Status: **Stages 1–3 working.** The Dependency Functional Usage Graph,
+> provenance ledger, verbatim vendoring, reversibility, verification, the
+> autonomous-agent tool surface, **agent-driven module slicing** (Stage 2), and a
+> full **real-project run** (Stage 3, on `BurntSushi/aho-corasick`) are all
+> proven. See [STAGE-2-3-REPORT.md](STAGE-2-3-REPORT.md) for the real-project
+> proof and [DESIGN.md](DESIGN.md) for the architecture and roadmap.
 
 ## Install / build
 
@@ -45,6 +47,9 @@ cargo build --release   # produces target/release/carve
 | `carve analyze` | Build the Dependency Functional Usage Graph (DFUG): which dependency items your product references, how often, and from where. Flags unreferenced deps as drop candidates. |
 | `carve plan` | The agent reads the DFUG and proposes, per crate, whether item-level slicing is safe (HIGH), needs a verification build (MED), or should be vendored whole for now (LOW). |
 | `carve vendor <crate> [--apply]` | Transcribe a crate verbatim into `vendor/`, recording provenance in `carve.lock`. `--apply` also wires the reversible `[patch.crates-io]` entry. |
+| `carve vendor-all [--apply]` | Vendor every normal direct dependency in one shot. |
+| `carve slice <crate>` | **The agent** carves the vendored crate down to only the modules the product needs, running `cargo check` against the real consumer after every cut and keeping only what still compiles. |
+| `carve impact <crate> --to <ver>` | Assess whether moving to an upstream version touches code inside your slice (and which items you call) — i.e. whether the update needs a proof-read or is safe to take. |
 | `carve restore <crate>` | Reverse it: remove the patch, delete the vendored tree, drop the ledger entry. |
 | `carve status` | Show the provenance ledger. |
 | `carve verify` | Re-hash vendored files and confirm they still match the ledger (the "proof-read" guarantee). |
@@ -116,10 +121,16 @@ system can *select* code but never *fabricate* it.
 See [DESIGN.md](DESIGN.md) for the threat model, the agent architecture, and the
 roadmap toward agent-driven item-level slicing and a real-project fork.
 
-## Limitations (Stage 1)
+## Limitations
 
-- Vendoring is whole-crate verbatim for now; item-level slicing is Stage 2.
+- Slicing is currently **module-level** (whole `mod`s), not yet single-item, and
+  is target-specialized: carving a crate's ARM/WASM backends pins the vendored
+  copy to your build target. The compiler gates every cut, so the result always
+  compiles, but finer item-level slicing is the next step (Stage 2+).
 - The DFUG resolver is syntactic, not a full type resolver. It maps `pkg-name`
   to `pkg_name` and honors `use` renames, but won't follow re-exports or resolve
   method-call receiver types. It errs toward under-reporting.
+- `carve impact` matches changed item idents against used path segments (a
+  heuristic); it flags the right files but the per-item "used API" match can be
+  coarse for common names.
 - Rust-only.
