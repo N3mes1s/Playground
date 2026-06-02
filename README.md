@@ -31,6 +31,7 @@ While this is primarily a coding agent workspace, contributions and suggestions 
 |-----------|-------------|
 | [`vulnllm-analyzer/`](vulnllm-analyzer/) | Automated vulnerability analysis for GitHub repos using [VulnLLM-R-7B](https://github.com/ucsb-mlsec/VulnLLM-R) on Modal GPUs |
 | [recursive-lm-security-audit](./recursive-lm-security-audit/) | Automated codebase security scanner using DSPy's Recursive Language Model (RLM) module. Accepts a GitHub repo URL or local path and produces a vulnerability report for ~$0.87. |
+| [`carve/`](carve/) | Rust supply-chain attack-surface reducer. Extracts a Dependency Functional Usage Graph, then has an autonomous agent transcribe **only** the dependency code you actually call into a local `vendor/` tree — verbatim, provenance-tracked, and reversible. |
 
 ## Note
 
