@@ -2,12 +2,19 @@
 name = "carve"
 version = "0.1.0"
 edition = "2021"
-description = "Supply-chain attack-surface reduction: carve out only the dependency code you actually use, transcribe it verbatim with full provenance, and stay reversible."
+description = "Supply-chain control plane: vendor only the dependency code you use, as a small provenance-tracked reversible slice — making per-update vetting, CVE exceptions, and patching affordable."
 license = "MIT"
+readme = "README.md"
+repository = "https://github.com/N3mes1s/Playground"
+keywords = ["supply-chain", "vendoring", "security", "dependencies", "audit"]
+categories = ["development-tools", "command-line-utilities"]
 
 [[bin]]
 name = "carve"
 path = "src/main.rs"
+
+[profile.release]
+strip = true
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

@@ -856,7 +856,23 @@ fn cmd_vendor_all(
     let mut patched = 0usize;
     let mut failed: Vec<String> = Vec::new();
     let mut skipped_patch: Vec<String> = Vec::new();
+    let mut reused = 0usize;
     for (pkg, version) in &targets {
+        // Incremental: if this exact version is already vendored and intact,
+        // keep it as-is (preserving any prior slice) instead of re-copying.
+        let already = lock
+            .entry(pkg)
+            .filter(|e| &e.version == version && vendor::verify_entry(&root, e).is_empty())
+            .is_some();
+        if already {
+            if apply && name_counts.get(pkg.as_str()).copied().unwrap_or(0) <= 1 {
+                vendor::apply_patch(&root, pkg, &vendor::vendor_rel_path(pkg, version))?;
+                patched += 1;
+            }
+            ok += 1;
+            reused += 1;
+            continue;
+        }
         match vendor::vendor_crate(&root, pkg, version, kept_for(pkg), None) {
             Ok(entry) => {
                 let files = entry.files.len();
@@ -887,7 +903,7 @@ fn cmd_vendor_all(
     }
 
     println!(
-        "\n  vendored {ok}/{} dependency(ies); provenance in carve.lock",
+        "\n  vendored {ok}/{} dependency(ies) ({reused} reused intact); provenance in carve.lock",
         targets.len()
     );
     if apply {
