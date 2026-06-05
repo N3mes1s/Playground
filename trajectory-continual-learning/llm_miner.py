@@ -115,6 +115,70 @@ _INFER_BATCH_SYSTEM = (
 )
 
 
+_INFER_DECOMPOSED_SYSTEM = (
+    "You infer a user's CONSISTENT writing preferences for one context by comparing "
+    "several drafts (BEFORE) with the user's edits (AFTER). Examine EACH pair along "
+    "these dimensions and note any change the user made REPEATEDLY:\n"
+    "- greeting/salutation (added, removed, or changed?)\n"
+    "- sign-off/closing (note the exact words used)\n"
+    "- length / verbosity (COUNT the words in each AFTER text; set the maximum to "
+    "the word count of the LONGEST AFTER example, as a specific number, no rounding "
+    "up)\n"
+    "- structure & formatting (bullets, headers, markdown, plain text? if bulleted, "
+    "state the exact bullet marker and a minimum count)\n"
+    "- emoji or tone markers (added/removed, and where placed?)\n"
+    "- names, dates, numbers, placeholders (concrete details vs [templates]?)\n"
+    "- required mentions or tags (e.g. @handles, ticket/invoice refs)\n"
+    "- anything else that recurs across the examples\n"
+    "Output ONLY the changes that recur across MULTIPLE examples, as concrete "
+    "imperative guidelines, ONE per line, no numbering, no preamble. Include "
+    "specific values (exact sign-off text, the word limit, the exact @tag)."
+)
+
+_SYNTH_SYSTEM = (
+    "You are given several independent analyses of the SAME user edits. Output the "
+    "guidelines that are supported by AT LEAST TWO of the analyses (a consensus "
+    "filter against one-off noise). Rewrite each as a concrete, NON-OPTIONAL, "
+    "CHECKABLE imperative -- remove hedging like 'when appropriate' or 'consider'. "
+    "For length, give a specific MAXIMUM WORD COUNT equal to the longest AFTER "
+    "example's word count (e.g. 'keep it under 65 words'). For formatting, state the "
+    "exact requirement (e.g. 'use a bulleted "
+    "list with at least two lines starting with -'). Keep specific values (exact "
+    "sign-off, exact @tag). Output up to 8 guidelines, ONE per line, no preamble."
+)
+
+
+def _aggregate_prompt(context: str, pairs) -> str:
+    blocks = []
+    for i, (q, before, after) in enumerate(pairs, 1):
+        blocks.append(f"--- Example {i} (task: {q}) ---\n"
+                      f"BEFORE:\n{before}\n\nAFTER:\n{after}\n")
+    return (f"Context: {context}\n\n" + "\n".join(blocks) +
+            "\nList the user's consistent preferences for this context.")
+
+
+def infer_lessons_robust(backend, context: str, pairs, samples: int = 3,
+                         max_lessons: int = 8):
+    """Robust inference: decomposed analysis + self-consistency voting.
+
+    1. Decomposed: the miner inspects explicit editorial dimensions, so it stops
+       missing low-salience rules (a word limit, a required @mention) -- the
+       'decompose' idea from DeCRIM (Ferraz et al., 2024, arXiv:2410.06458).
+    2. Self-consistency: we sample the analysis `samples` times and keep only
+       guidelines supported by multiple runs, filtering one-off hallucinations --
+       the consensus idea behind self-curation / self-consistent reward models
+       (arXiv:2408.12799, 2502.08922). The synthesis also de-hedges each rule.
+    """
+    prompt = _aggregate_prompt(context, pairs)
+    analyses = [backend.complete(prompt, _INFER_DECOMPOSED_SYSTEM)
+                for _ in range(samples)]
+    joined = "\n\n".join(f"=== Analysis {i+1} ===\n{a}" for i, a in enumerate(analyses))
+    synth = backend.complete(
+        f"Context: {context}\n\n{joined}\n\nProduce the consensus guidelines.",
+        _SYNTH_SYSTEM)
+    return _parse_lessons(synth, context, context, max_lessons)
+
+
 def infer_lessons_aggregate(backend, context: str, pairs, max_lessons: int = 6):
     """CIPHER-style aggregation: infer preferences from ALL of a context's edits.
 

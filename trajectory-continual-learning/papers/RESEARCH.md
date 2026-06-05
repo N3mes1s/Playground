@@ -22,6 +22,9 @@ learning literature studies.
 | 8 | `2203.02155_instructGPT-RLHF.pdf` | [2203.02155](https://arxiv.org/abs/2203.02155) | **RLHF.** InstructGPT (Ouyang et al., 2022): aligning models to human feedback. The original "learn from human signal" recipe DPO simplifies. |
 | 9 | `1706.03741_deep-RL-from-human-preferences.pdf` | [1706.03741](https://arxiv.org/abs/1706.03741) | **Preference learning roots.** Christiano et al. (2017): learning reward models from human preference comparisons — the foundation under RLHF/DPO. |
 | 10 | `2304.03442_generative-agents-reflection-memory.pdf` | [2304.03442](https://arxiv.org/abs/2304.03442) | **Memory + reflection.** Generative Agents (Park et al., 2023): a memory stream plus a periodic *reflection* pass that consolidates raw observations into higher-level insights. Grounds `llm_miner.consolidate()` and the curation step between learning and production. |
+| 11 | `2410.06458_decrim-decompose-critique-refine.pdf` | [2410.06458](https://arxiv.org/abs/2410.06458) | **Decompose + critique + refine.** DeCRIM (Ferraz et al., 2024): decompose a request into granular constraints, have a critic check each, and refine the violated ones. Grounds the decomposed inference in `llm_miner.infer_lessons_robust` and the critique→refine loop in `refine.py`. |
+| 12 | `2408.12799_preference-consistency-self-curation.pdf` | [2408.12799](https://arxiv.org/abs/2408.12799) | **Self-consistency / self-curation.** Enhancing preference learning by automatically curating inconsistent preferences. Grounds the self-consistency voting (keep only guidelines that recur across independent inference samples) in `infer_lessons_robust`. |
+| 13 | `2507.23158_user-feedback-noisy-learning-signal.pdf` | [2507.23158](https://arxiv.org/abs/2507.23158) | **Why this is hard.** "User Feedback in Human-LLM Dialogues: ... Noisy as a Learning Signal" — direct evidence that raw user feedback is a noisy training signal, motivating the consensus filtering, consolidation, and tool-checked verification used here. |
 
 ## How the literature maps to the code
 
@@ -36,6 +39,9 @@ Learn — non-parametric         memory.py + learner.py ExpeL [3], Voyager [6]
 Learn — parametric (export)    miner.py DPO export     DPO [7], InstructGPT [8], [9]
 The "frozen model" problem     environment.py proof   CL survey [1]
 Live proof (real Claude)       run_*_real.py          PRELUDE/CIPHER [2], ExpeL [3]
+Robust inference (decompose)   llm_miner.infer_robust DeCRIM [11], self-curation [12]
+Apply-time critique→refine     refine.py              Self-Refine [5], DeCRIM [11]
+Noisy-signal motivation        (whole inferred path)  noisy feedback [13]
 ```
 
 ## Why our proof is a faithful small-scale instance
