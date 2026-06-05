@@ -530,14 +530,21 @@ fn cmd_harden(
     println!(
         "\n[4/5] Agent slicing every compiled vendored crate (autonomous loop; keep-if ≥ {min_reduction:.0}% LOC)…"
     );
-    let targets: Vec<(String, String)> = vendor::load_lock(&root)?
+    // Incremental: a crate already hardened (note set) and still intact is
+    // skipped so re-runs don't re-slice everything.
+    let targets: Vec<(String, String, bool)> = vendor::load_lock(&root)?
         .entries
         .iter()
         .filter(|e| compiled.contains(&e.crate_name))
-        .map(|e| (e.crate_name.clone(), e.version.clone()))
+        .map(|e| {
+            let done = e.note.as_deref().is_some_and(|n| n.starts_with("hardened"))
+                && vendor::verify_entry(&root, e).is_empty();
+            (e.crate_name.clone(), e.version.clone(), done)
+        })
         .collect();
 
     let agent = agent::RuleBasedAgent::new();
+    let mut already = 0usize;
     let mut bt = model::AttackSurface {
         files: 0,
         loc: 0,
@@ -550,7 +557,11 @@ fn cmd_harden(
     let mut skipped = 0usize;
     let mut reverted = 0usize;
 
-    for (name, version) in &targets {
+    for (name, version, done) in &targets {
+        if *done {
+            already += 1;
+            continue;
+        }
         let vendor_dir = root.join(vendor::vendor_rel_path(name, version));
         let before = slice::measure_surface(&vendor_dir);
         let res = agent
@@ -626,7 +637,7 @@ fn cmd_harden(
     println!("  {after_time:.1}s");
 
     println!("\n══════════ supply-chain hardening summary ══════════");
-    println!("  crates owned (sliced & kept): {sliced}");
+    println!("  crates owned (sliced & kept): {sliced}    already hardened (reused): {already}");
     println!("  reverted (below {min_reduction:.0}% bar): {reverted}    skipped (unsliceable): {skipped}");
     println!("  across the {sliced} owned crate(s):");
     println!(
