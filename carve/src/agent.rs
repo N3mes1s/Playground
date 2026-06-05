@@ -959,6 +959,32 @@ impl LlmAgent {
         Ok(extract_text(&resp))
     }
 
+    /// Security-review a dependency-update diff (restricted to used code) for
+    /// anything malicious. Feasible precisely because the slice is small. Returns
+    /// the model's verdict text.
+    #[tracing::instrument(skip(self, diff), fields(crate_name = crate_name, model = %self.model))]
+    pub fn review_diff(&self, crate_name: &str, diff: &str) -> Result<String> {
+        let system =
+            "You are a supply-chain security reviewer. You are given the unified diff of a \
+dependency UPDATE, restricted to only the code the product actually uses. Review it for anything \
+malicious or suspicious: backdoors, credential/data exfiltration, obfuscated or encoded payloads, \
+unexpected network/filesystem/process/env access, build-script (build.rs) changes, or behavior \
+inconsistent with the crate's stated purpose. Ordinary refactors/bugfixes are CLEAN. Be concise: a \
+few bullets max, then a final line exactly 'VERDICT: CLEAN' or 'VERDICT: SUSPICIOUS — <reason>'.";
+        let user = format!(
+            "Crate: {crate_name}\n\nUnified diff (used-code only):\n{}",
+            truncate(diff, 60000)
+        );
+        let body = json!({
+            "model": self.model,
+            "max_tokens": 1024,
+            "system": system,
+            "messages": [{ "role": "user", "content": user }],
+        });
+        let resp = self.call_api(&body)?;
+        Ok(extract_text(&resp))
+    }
+
     /// Ask the model which upstream modules a slice can drop, letting it read the
     /// source via tools. Returns module rel-names (e.g. `src/arch/aarch64`) in
     /// the order it recommends attempting them.

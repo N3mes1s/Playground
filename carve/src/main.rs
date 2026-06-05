@@ -183,6 +183,10 @@ enum Command {
         /// exact, bounded surface to proof-read before bumping.
         #[arg(long)]
         diff: bool,
+        /// Security-scan the in-slice update diff with the LLM agent (backdoor /
+        /// exfiltration / obfuscation review). Needs ANTHROPIC_API_KEY.
+        #[arg(long)]
+        scan: bool,
     },
     /// List the tools available to the autonomous agent.
     Tools,
@@ -276,7 +280,8 @@ fn main() -> Result<()> {
             manifest_path,
             out,
             diff,
-        } => cmd_impact(&crate_name, &to, &manifest_path, out.as_deref(), diff),
+            scan,
+        } => cmd_impact(&crate_name, &to, &manifest_path, out.as_deref(), diff, scan),
         Command::Tools => cmd_tools(),
         Command::Locate {
             crate_name,
@@ -1273,6 +1278,7 @@ fn cmd_impact(
     manifest_path: &Path,
     out: Option<&Path>,
     diff: bool,
+    scan: bool,
 ) -> Result<()> {
     let root = root_of(manifest_path);
     let lock = vendor::load_lock(&root)?;
@@ -1341,6 +1347,22 @@ fn cmd_impact(
                 println!("(no textual diff)");
             } else {
                 print!("{d}");
+            }
+        }
+    }
+
+    if scan && report.touches_us() {
+        let combined: String = impact::unified_diffs(entry, to, &report)?
+            .into_iter()
+            .map(|(p, d)| format!("### {p}\n{d}\n"))
+            .collect();
+        if combined.trim().is_empty() {
+            println!("\n  (no textual diff to scan)");
+        } else {
+            println!("\n  ── LLM security scan of the in-slice update diff ──");
+            match agent::LlmAgent::from_env() {
+                Ok(a) => println!("{}", a.review_diff(crate_name, &combined)?),
+                Err(e) => println!("  scan unavailable: {e}"),
             }
         }
     }
