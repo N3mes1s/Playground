@@ -134,6 +134,10 @@ enum Command {
         /// `exclude` in carve.toml.
         #[arg(long)]
         exclude: Vec<String>,
+        /// Behavioral gate: after hardening, run the consumer's own test suite
+        /// (`cargo test`), not just compile it.
+        #[arg(long)]
+        test: bool,
     },
     /// Check LLM agent connectivity (needs ANTHROPIC_API_KEY).
     LlmCheck,
@@ -241,7 +245,15 @@ fn main() -> Result<()> {
             budget,
             min_reduction,
             exclude,
-        } => cmd_harden(&manifest_path, transitive, budget, min_reduction, &exclude),
+            test,
+        } => cmd_harden(
+            &manifest_path,
+            transitive,
+            budget,
+            min_reduction,
+            &exclude,
+            test,
+        ),
         Command::LlmCheck => cmd_llm_check(),
         Command::Restore {
             crate_name,
@@ -471,6 +483,7 @@ fn cmd_harden(
     budget: usize,
     min_reduction: f64,
     cli_exclude: &[String],
+    test: bool,
 ) -> Result<()> {
     let root = root_of(manifest_path);
     // CLI overrides carve.toml overrides built-in defaults.
@@ -581,6 +594,21 @@ fn cmd_harden(
             name, before.loc, after.loc, pct
         );
         sliced += 1;
+    }
+
+    if test {
+        println!("\nBehavioral verification — running the consumer's test suite…");
+        match run_consumer_tests(manifest_path)? {
+            Some(true) => {
+                println!("  consumer tests: PASS — hardened tree is behaviorally verified")
+            }
+            Some(false) => {
+                anyhow::bail!(
+                    "behavioral verification failed: the hardened tree breaks the consumer's tests"
+                )
+            }
+            None => println!("  consumer has no tests — behavioral gate skipped (compile-only)"),
+        }
     }
 
     println!("\n[5/5] Timing a clean --release build AFTER slicing…");
