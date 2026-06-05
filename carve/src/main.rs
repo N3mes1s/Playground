@@ -157,6 +157,15 @@ enum Command {
         #[arg(long, default_value = "Cargo.toml")]
         manifest_path: PathBuf,
     },
+    /// Behavioral equivalence: run the vendored crate's OWN test suite. On a
+    /// verbatim copy this proves faithful transcription; on a test-preserving
+    /// slice it proves the slice still behaves like upstream.
+    VerifyTests {
+        /// Package name as in Cargo.toml (must be vendored).
+        crate_name: String,
+        #[arg(long, default_value = "Cargo.toml")]
+        manifest_path: PathBuf,
+    },
     /// Record intentional local edits to a vendored crate as tracked patches
     /// (e.g. an emergency CVE fix) so they're deliberate deltas, not drift.
     Patch {
@@ -269,6 +278,10 @@ fn main() -> Result<()> {
         } => cmd_restore(&crate_name, &manifest_path),
         Command::Status { manifest_path } => cmd_status(&manifest_path),
         Command::Verify { manifest_path } => cmd_verify(&manifest_path),
+        Command::VerifyTests {
+            crate_name,
+            manifest_path,
+        } => cmd_verify_tests(&crate_name, &manifest_path),
         Command::Patch {
             crate_name,
             manifest_path,
@@ -1122,11 +1135,18 @@ fn cmd_slice(
 /// Run the consumer's own test suite (in the project dir, so the cap-lints shim
 /// applies). Returns Some(true)=passed, Some(false)=failed, None=no tests.
 fn run_consumer_tests(manifest_path: &Path) -> Result<Option<bool>> {
-    let workdir = root_of(manifest_path);
+    // Use an absolute manifest so setting `current_dir` to its parent doesn't
+    // re-resolve the (relative) --manifest-path against the workdir and double it.
+    let manifest_path = std::fs::canonicalize(manifest_path)
+        .with_context(|| format!("resolving {}", manifest_path.display()))?;
+    let workdir = manifest_path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .to_path_buf();
     let out = std::process::Command::new("cargo")
         .current_dir(&workdir)
         .args(["test", "--manifest-path"])
-        .arg(manifest_path)
+        .arg(&manifest_path)
         .output()
         .context("spawning cargo test")?;
     let text = format!(
@@ -1250,6 +1270,40 @@ fn cmd_verify(manifest_path: &Path) -> Result<()> {
         anyhow::bail!("verification failed: vendored bytes diverge from the provenance ledger");
     }
     println!("\nAll vendored bytes match their upstream provenance.");
+    Ok(())
+}
+
+fn cmd_verify_tests(crate_name: &str, manifest_path: &Path) -> Result<()> {
+    let root = root_of(manifest_path);
+    let lock = vendor::load_lock(&root)?;
+    let entry = lock
+        .entry(crate_name)
+        .context("crate is not vendored — nothing to test")?;
+    let vmanifest = root
+        .join(vendor::vendor_rel_path(&entry.crate_name, &entry.version))
+        .join("Cargo.toml");
+    if !vmanifest.exists() {
+        anyhow::bail!("vendored Cargo.toml not found at {}", vmanifest.display());
+    }
+    println!(
+        "Running {}'s OWN test suite against the vendored copy (behavioral equivalence)…",
+        entry.crate_name
+    );
+    match run_consumer_tests(&vmanifest)? {
+        Some(true) => {
+            println!("  PASS — the vendored copy passes the crate's own tests.");
+            println!("  (verbatim → faithful transcription; test-preserving slice → behaviorally equivalent)");
+        }
+        Some(false) => {
+            anyhow::bail!(
+                "the vendored copy FAILS the crate's own tests — not behaviorally equivalent"
+            )
+        }
+        None => {
+            println!("  No runnable tests in the vendored copy.");
+            println!("  (sliced away, or the crate ships none — slice with tests preserved for an equivalence check)");
+        }
+    }
     Ok(())
 }
 
