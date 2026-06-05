@@ -39,6 +39,15 @@ _FEATURE_PHRASING = {
     "constructive_tone": "phrase feedback constructively",
     "cite_sources": "cite sources for factual claims",
     "step_by_step": "show the reasoning step by step",
+    # real-text rules (text_rules.py) -- idiosyncratic, user-specific preferences
+    "no_placeholders": "do not use bracketed placeholders like [Name]; use concrete, plausible details instead",
+    "signoff_onwards": "sign off with exactly 'Onwards,' (not 'Best regards' or 'Sincerely')",
+    "has_ps": "end the email with a 'P.S.' line",
+    "concise_70": "keep the whole email under 70 words",
+    "has_bullets": "format it as a bulleted list (lines starting with '-')",
+    "has_emoji": "include at least one emoji",
+    "no_greeting": "do not open with a greeting like 'Hi' or 'Hey team'; jump straight to the point",
+    "mentions_oncall": "mention '@oncall' so the on-call engineer is notified",
 }
 
 

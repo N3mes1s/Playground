@@ -1,0 +1,271 @@
+{
+  "policy_model": "Claude via `claude -p` (live, session auth, no API key)",
+  "scorer": "objective rule-checker (text_rules.py)",
+  "baseline_mean_reward": 0.167,
+  "after_learning_mean_reward": 1.0,
+  "holdout_mean_reward": 0.875,
+  "lessons_learned": [
+    "[email] In the 'email' context, keep the whole email under 70 words.",
+    "[email] In the 'email' context, end the email with a 'P.S.' line.",
+    "[email] In the 'email' context, do not use bracketed placeholders like [Name]; use concrete, plausible details instead.",
+    "[email] In the 'email' context, sign off with exactly 'Onwards,' (not 'Best regards' or 'Sincerely').",
+    "[slack] In the 'slack' context, format it as a bulleted list (lines starting with '-').",
+    "[slack] In the 'slack' context, include at least one emoji.",
+    "[slack] In the 'slack' context, mention '@oncall' so the on-call engineer is notified."
+  ],
+  "rows": [
+    {
+      "phase": "baseline",
+      "context": "email",
+      "query": "ask a client for a one-week deadline extension",
+      "reward": 0.0,
+      "satisfied": [],
+      "missing": [
+        "concise_70",
+        "has_ps",
+        "no_placeholders",
+        "signoff_onwards"
+      ],
+      "text": "Subject: Request for One-Week Extension\n\nHi [Client Name],\n\nI hope you're doing well. I'm writing to request a brief one-week extension on the current deadline.\n\nI want to ensure the final deliverable meets the quality you expect, and a short extension would allow me to give it the attention it deserves.\n\nWould it be possible to move the deadline from [original date] to [new date]? Please let me know if this works for you, and I'm happy to discuss further if needed.\n\nThank you for your understanding.\n\nBest regards,\n[Your Name]",
+      "lessons": []
+    },
+    {
+      "phase": "baseline",
+      "context": "email",
+      "query": "decline a meeting invitation politely",
+      "reward": 0.25,
+      "satisfied": [
+        "no_placeholders"
+      ],
+      "missing": [
+        "concise_70",
+        "has_ps",
+        "signoff_onwards"
+      ],
+      "text": "Subject: Re: Meeting Invitation\n\nThank you for the invitation. Unfortunately, I'm unable to attend the meeting due to a prior commitment at that time.\n\nI'd appreciate it if you could share any notes or key takeaways afterward so I can stay informed. If there's a way I can contribute beforehand or follow up afterward, please don't hesitate to reach out.\n\nI hope the meeting goes well, and I look forward to connecting another time.\n\nBest regards,\nGiuseppe",
+      "lessons": []
+    },
+    {
+      "phase": "baseline",
+      "context": "email",
+      "query": "follow up on an unpaid invoice",
+      "reward": 0.0,
+      "satisfied": [],
+      "missing": [
+        "concise_70",
+        "has_ps",
+        "no_placeholders",
+        "signoff_onwards"
+      ],
+      "text": "Subject: Follow-Up: Unpaid Invoice\n\nHi [Name],\n\nI hope you're doing well. I'm reaching out to follow up on invoice [Invoice #], which was due on [Due Date] for [Amount].\n\nIf payment has already been sent, please disregard this message. If not, I'd appreciate it if you could process it at your earliest convenience or let me know if there are any questions or issues I can help resolve.\n\nPlease find the invoice attached for your reference.\n\nThank you for your time, and I look forward to hearing from you.\n\nBest regards,\nGiuseppe Massaro\ngiuse.massaro@gmail.com",
+      "lessons": []
+    },
+    {
+      "phase": "baseline",
+      "context": "slack",
+      "query": "post the nightly deploy status to the team",
+      "reward": 0.25,
+      "satisfied": [
+        "no_greeting"
+      ],
+      "missing": [
+        "has_bullets",
+        "has_emoji",
+        "mentions_oncall"
+      ],
+      "text": ":rocket: *Nightly Deploy Status* \u2014 June 5, 2026\n\n*Status:* :white_check_mark: Success\n*Environment:* Production\n*Deployed at:* 02:00 UTC\n*Branch:* `main` (`a3f92c1`)\n\nNo issues detected. All services healthy. Rollback available if needed.\n\n\u2014 Nightly Deploy Bot",
+      "lessons": []
+    },
+    {
+      "phase": "baseline",
+      "context": "slack",
+      "query": "ask who owns the data pipeline",
+      "reward": 0.25,
+      "satisfied": [
+        "no_greeting"
+      ],
+      "missing": [
+        "has_bullets",
+        "has_emoji",
+        "mentions_oncall"
+      ],
+      "text": "Who owns the data pipeline?",
+      "lessons": []
+    },
+    {
+      "phase": "baseline",
+      "context": "slack",
+      "query": "summarize today's standup",
+      "reward": 0.25,
+      "satisfied": [
+        "no_greeting"
+      ],
+      "missing": [
+        "has_bullets",
+        "has_emoji",
+        "mentions_oncall"
+      ],
+      "text": "What was discussed in today's standup? I need the content (who said what, blockers, updates, etc.) to write the summary.",
+      "lessons": []
+    },
+    {
+      "phase": "after-learning",
+      "context": "email",
+      "query": "ask a client for a one-week deadline extension",
+      "reward": 1.0,
+      "satisfied": [
+        "concise_70",
+        "has_ps",
+        "no_placeholders",
+        "signoff_onwards"
+      ],
+      "missing": [],
+      "text": "Subject: Quick Request \u2013 One-Week Extension\n\nHi Sarah,\n\nI hope you're doing well. I'm writing to kindly request a one-week extension on our current deadline \u2014 moving it from June 12 to June 19. This extra time will allow me to deliver work that truly meets the quality you deserve.\n\nI appreciate your understanding and flexibility.\n\nOnwards,\nGiuseppe\n\nP.S. Happy to jump on a quick call if you'd like to discuss!",
+      "lessons": [
+        "In the 'email' context, keep the whole email under 70 words.",
+        "In the 'email' context, end the email with a 'P.S.' line.",
+        "In the 'email' context, sign off with exactly 'Onwards,' (not 'Best regards' or 'Sincerely').",
+        "In the 'email' context, do not use bracketed placeholders like [Name]; use concrete, plausible details instead."
+      ]
+    },
+    {
+      "phase": "after-learning",
+      "context": "email",
+      "query": "decline a meeting invitation politely",
+      "reward": 1.0,
+      "satisfied": [
+        "concise_70",
+        "has_ps",
+        "no_placeholders",
+        "signoff_onwards"
+      ],
+      "missing": [],
+      "text": "Subject: Re: Meeting Invitation\n\nHi Sarah,\n\nThank you so much for the invitation! Unfortunately, I have a prior commitment at that time and won't be able to join. I'd love to connect another time \u2014 feel free to suggest a date that works for you.\n\nOnwards,\nGiuseppe\n\nP.S. Apologies for any inconvenience, and I hope the meeting goes well!",
+      "lessons": [
+        "In the 'email' context, keep the whole email under 70 words.",
+        "In the 'email' context, end the email with a 'P.S.' line.",
+        "In the 'email' context, sign off with exactly 'Onwards,' (not 'Best regards' or 'Sincerely').",
+        "In the 'email' context, do not use bracketed placeholders like [Name]; use concrete, plausible details instead."
+      ]
+    },
+    {
+      "phase": "after-learning",
+      "context": "email",
+      "query": "follow up on an unpaid invoice",
+      "reward": 1.0,
+      "satisfied": [
+        "concise_70",
+        "has_ps",
+        "no_placeholders",
+        "signoff_onwards"
+      ],
+      "missing": [],
+      "text": "Subject: Following Up on Invoice #1042\n\nHi Sarah,\n\nHope you're well! Just a quick note \u2014 invoice #1042 for $2,400 (due May 20) is still showing as outstanding on our end.\n\nCould you let me know if there's anything needed from my side to process it?\n\nOnwards,\nGiuseppe\n\nP.S. Happy to resend the invoice if the original got buried.",
+      "lessons": [
+        "In the 'email' context, keep the whole email under 70 words.",
+        "In the 'email' context, end the email with a 'P.S.' line.",
+        "In the 'email' context, sign off with exactly 'Onwards,' (not 'Best regards' or 'Sincerely').",
+        "In the 'email' context, do not use bracketed placeholders like [Name]; use concrete, plausible details instead."
+      ]
+    },
+    {
+      "phase": "after-learning",
+      "context": "slack",
+      "query": "post the nightly deploy status to the team",
+      "reward": 1.0,
+      "satisfied": [
+        "has_bullets",
+        "has_emoji",
+        "mentions_oncall",
+        "no_greeting"
+      ],
+      "missing": [],
+      "text": "- @oncall Nightly deploy status update for June 5, 2026 \ud83d\ude80\n- Deploy completed successfully \u2014 all services are up and running.\n- No rollbacks or incidents reported overnight.\n- Dashboards and logs look nominal \u2014 no action required.",
+      "lessons": [
+        "In the 'slack' context, format it as a bulleted list (lines starting with '-').",
+        "In the 'slack' context, include at least one emoji.",
+        "In the 'slack' context, mention '@oncall' so the on-call engineer is notified."
+      ]
+    },
+    {
+      "phase": "after-learning",
+      "context": "slack",
+      "query": "ask who owns the data pipeline",
+      "reward": 1.0,
+      "satisfied": [
+        "has_bullets",
+        "has_emoji",
+        "mentions_oncall",
+        "no_greeting"
+      ],
+      "missing": [],
+      "text": "- Hey team, does anyone know who owns the data pipeline? \ud83d\udd0d\n- @oncall \u2014 tagging you in case this needs immediate attention.",
+      "lessons": [
+        "In the 'slack' context, format it as a bulleted list (lines starting with '-').",
+        "In the 'slack' context, include at least one emoji.",
+        "In the 'slack' context, mention '@oncall' so the on-call engineer is notified.",
+        "In the 'email' context, keep the whole email under 70 words.",
+        "In the 'email' context, end the email with a 'P.S.' line."
+      ]
+    },
+    {
+      "phase": "after-learning",
+      "context": "slack",
+      "query": "summarize today's standup",
+      "reward": 1.0,
+      "satisfied": [
+        "has_bullets",
+        "has_emoji",
+        "mentions_oncall",
+        "no_greeting"
+      ],
+      "missing": [],
+      "text": "- \ud83d\udccb @oncall \u2014 standup summary for 2026-06-05\n- **Yesterday:** Completed code reviews, merged two PRs, and resolved a blocking dependency issue\n- **Today:** Focusing on the feature branch, running integration tests, and syncing with the design team\n- **Blockers:** None at this time \u2014 will flag in thread if anything comes up",
+      "lessons": [
+        "In the 'slack' context, format it as a bulleted list (lines starting with '-').",
+        "In the 'slack' context, include at least one emoji.",
+        "In the 'slack' context, mention '@oncall' so the on-call engineer is notified."
+      ]
+    },
+    {
+      "phase": "holdout",
+      "context": "email",
+      "query": "request a reference letter from a former manager",
+      "reward": 0.75,
+      "satisfied": [
+        "has_ps",
+        "no_placeholders",
+        "signoff_onwards"
+      ],
+      "missing": [
+        "concise_70"
+      ],
+      "text": "Subject: Reference Letter Request\n\nHi Sarah,\n\nI hope you're doing well! I'm applying for a senior product role at a fintech startup and would be grateful if you'd be willing to write me a reference letter. Your perspective on my work leading the Q3 launch would carry real weight.\n\nNo rush \u2014 happy to chat if it helps.\n\nOnwards,\nGiuseppe\n\nP.S. I can send over the job description if that would make things easier.",
+      "lessons": [
+        "In the 'email' context, keep the whole email under 70 words.",
+        "In the 'email' context, end the email with a 'P.S.' line.",
+        "In the 'email' context, sign off with exactly 'Onwards,' (not 'Best regards' or 'Sincerely').",
+        "In the 'email' context, do not use bracketed placeholders like [Name]; use concrete, plausible details instead."
+      ]
+    },
+    {
+      "phase": "holdout",
+      "context": "slack",
+      "query": "announce that the staging environment is back up",
+      "reward": 1.0,
+      "satisfied": [
+        "has_bullets",
+        "has_emoji",
+        "mentions_oncall",
+        "no_greeting"
+      ],
+      "missing": [],
+      "text": "- Staging environment is back up and running! \ud83c\udf89\n- All services have been restored and verified.\n- @oncall please confirm everything looks good on your end.",
+      "lessons": [
+        "In the 'slack' context, format it as a bulleted list (lines starting with '-').",
+        "In the 'slack' context, include at least one emoji.",
+        "In the 'slack' context, mention '@oncall' so the on-call engineer is notified."
+      ]
+    }
+  ]
+}

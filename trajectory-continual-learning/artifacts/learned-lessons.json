@@ -6,12 +6,12 @@
     "signature": "code_review comment on the diff",
     "support": 4,
     "source_trajectories": [
-      "9c81418e77fc",
-      "be56eb8f3417",
-      "247754974aa8",
-      "f96ec4dd1f2f"
+      "56d518b81296",
+      "4803794c2c77",
+      "b538ece85ae1",
+      "7f8a990153af"
     ],
-    "created_at": 1780647049.2100961
+    "created_at": 1780647961.6806226
   },
   {
     "text": "In the 'code_review' context, reference specific line numbers.",
@@ -20,15 +20,15 @@
     "signature": "code_review comment on the diff",
     "support": 7,
     "source_trajectories": [
-      "9c81418e77fc",
-      "be56eb8f3417",
-      "247754974aa8",
-      "f96ec4dd1f2f",
-      "934b26a441ea",
-      "196414b39194",
-      "3e04d01fd66f"
+      "56d518b81296",
+      "4803794c2c77",
+      "b538ece85ae1",
+      "7f8a990153af",
+      "830c907192a2",
+      "06b71dd882a2",
+      "faf67223775a"
     ],
-    "created_at": 1780647049.210098
+    "created_at": 1780647961.6806247
   },
   {
     "text": "In the 'code_review' context, include a concrete suggested fix.",
@@ -37,16 +37,16 @@
     "signature": "code_review comment on the diff",
     "support": 8,
     "source_trajectories": [
-      "9c81418e77fc",
-      "be56eb8f3417",
-      "2a1fba132aaf",
-      "9713881b4cd5",
-      "e42ae99f9d82",
-      "4d8077a8dad8",
-      "f4e46e464469",
-      "defa82e7c250"
+      "56d518b81296",
+      "4803794c2c77",
+      "95f0d684b4cd",
+      "7bb27a4678c5",
+      "91b21ec7ee11",
+      "fe9906d22224",
+      "881549375eeb",
+      "cbb9f2b2e8d7"
     ],
-    "created_at": 1780647049.2100992
+    "created_at": 1780647961.680626
   },
   {
     "text": "In the 'research_qa' context, cite sources for factual claims.",
@@ -55,14 +55,14 @@
     "signature": "research_qa what causes forgetting",
     "support": 6,
     "source_trajectories": [
-      "45bc5c460a91",
-      "36a7e04dd7ea",
-      "accbe7191b4b",
-      "0066e373144b",
-      "9a599d55239c",
-      "1e82f91a7cf3"
+      "706c23ffcd00",
+      "86c6dd4e49ba",
+      "f029c78192a6",
+      "d40dc32656da",
+      "3c86dc7a8709",
+      "85321f93bbe5"
     ],
-    "created_at": 1780647049.2102249
+    "created_at": 1780647961.6808286
   },
   {
     "text": "In the 'research_qa' context, show the reasoning step by step.",
@@ -71,12 +71,12 @@
     "signature": "research_qa what causes forgetting",
     "support": 4,
     "source_trajectories": [
-      "45bc5c460a91",
-      "36a7e04dd7ea",
-      "9a599d55239c",
-      "62b80946db60"
+      "706c23ffcd00",
+      "86c6dd4e49ba",
+      "3c86dc7a8709",
+      "30c7a6fba3aa"
     ],
-    "created_at": 1780647049.210228
+    "created_at": 1780647961.6808314
   },
   {
     "text": "In the 'email' context, open with a formal greeting.",
@@ -85,15 +85,15 @@
     "signature": "email reply to the client",
     "support": 7,
     "source_trajectories": [
-      "999476dfa48e",
-      "7b22959357b4",
-      "d29e0655b3ad",
-      "229c6d1e3e93",
-      "36313eaaca2c",
-      "4feebc681116",
-      "fb7f133ec91f"
+      "60f29566243f",
+      "05ad669b1877",
+      "057dff75f360",
+      "16e069dded32",
+      "846607d203eb",
+      "e440671f46a9",
+      "31a9e49be6b3"
     ],
-    "created_at": 1780647049.2101626
+    "created_at": 1780647961.6807604
   },
   {
     "text": "In the 'email' context, do not use emoji.",
@@ -102,11 +102,11 @@
     "signature": "email reply to the client",
     "support": 3,
     "source_trajectories": [
-      "999476dfa48e",
-      "7b22959357b4",
-      "22408a4b1020"
+      "60f29566243f",
+      "05ad669b1877",
+      "806b134c3786"
     ],
-    "created_at": 1780647049.2101643
+    "created_at": 1780647961.680762
   },
   {
     "text": "In the 'email' context, close with 'Best regards'.",
@@ -115,12 +115,12 @@
     "signature": "email reply to the client",
     "support": 4,
     "source_trajectories": [
-      "999476dfa48e",
-      "7b22959357b4",
-      "1be02b0379b0",
-      "c95b34127779"
+      "60f29566243f",
+      "05ad669b1877",
+      "2bb5e177b4cf",
+      "30dc1bdff697"
     ],
-    "created_at": 1780647049.2101676
+    "created_at": 1780647961.6807656
   },
   {
     "text": "In the 'commit_msg' context, keep it concise (a few lines at most).",
@@ -129,13 +129,13 @@
     "signature": "commit_msg message for the auth fix",
     "support": 5,
     "source_trajectories": [
-      "a1f44dbfe4f8",
-      "8d9fe8b34631",
-      "78d857c9acd7",
-      "26686fa46b89",
-      "861a75621167"
+      "276953165b15",
+      "748c59d24e07",
+      "e4662bb3a8b0",
+      "cd9646ae0939",
+      "b78acddbf94d"
     ],
-    "created_at": 1780647049.2105315
+    "created_at": 1780647961.681173
   },
   {
     "text": "In the 'commit_msg' context, write the subject line in the imperative mood.",
@@ -144,13 +144,13 @@
     "signature": "commit_msg message for the auth fix",
     "support": 5,
     "source_trajectories": [
-      "a1f44dbfe4f8",
-      "8d9fe8b34631",
-      "89045292c97f",
-      "ed4a010170a4",
-      "2b26cd95105e"
+      "276953165b15",
+      "748c59d24e07",
+      "e5c3481729ff",
+      "78ae6591881d",
+      "5aae9c371d17"
     ],
-    "created_at": 1780647049.210533
+    "created_at": 1780647961.6811738
   },
   {
     "text": "In the 'commit_msg' context, do not end the subject line with a period.",
@@ -159,14 +159,14 @@
     "signature": "commit_msg message for the auth fix",
     "support": 6,
     "source_trajectories": [
-      "a1f44dbfe4f8",
-      "8d9fe8b34631",
-      "ed4a010170a4",
-      "85a5ae811ef6",
-      "9ae0a685c39e",
-      "3cf7050f6fa8"
+      "276953165b15",
+      "748c59d24e07",
+      "78ae6591881d",
+      "b528169b4cc3",
+      "26adf3f367ae",
+      "f3bd90af6756"
     ],
-    "created_at": 1780647049.2105336
+    "created_at": 1780647961.6811748
   },
   {
     "text": "In the 'slack' context, format the answer as bullet points.",
@@ -175,12 +175,12 @@
     "signature": "slack ping about the bug",
     "support": 4,
     "source_trajectories": [
-      "57c85dc2c69e",
-      "353af180f874",
-      "0dc681a4bd22",
-      "1ee5cdc2aedd"
+      "295fdf1fa155",
+      "01cf5e0b7d6b",
+      "a99c3d6428ef",
+      "c20b6b83e724"
     ],
-    "created_at": 1780647049.211328
+    "created_at": 1780647961.6818748
   },
   {
     "text": "In the 'slack' context, use a casual, friendly tone.",
@@ -189,12 +189,12 @@
     "signature": "slack ping about the bug",
     "support": 4,
     "source_trajectories": [
-      "57c85dc2c69e",
-      "353af180f874",
-      "03cc7c145f72",
-      "d545f5fed61e"
+      "295fdf1fa155",
+      "01cf5e0b7d6b",
+      "e95258de0168",
+      "2d8a825fddbe"
     ],
-    "created_at": 1780647049.2113292
+    "created_at": 1780647961.6818767
   },
   {
     "text": "In the 'slack' context, keep it concise (a few lines at most).",
@@ -203,13 +203,13 @@
     "signature": "slack ping about the bug",
     "support": 6,
     "source_trajectories": [
-      "57c85dc2c69e",
-      "353af180f874",
-      "4fff618c6605",
-      "c3ce481b7e17",
-      "be1338dee705",
-      "d545f5fed61e"
+      "295fdf1fa155",
+      "01cf5e0b7d6b",
+      "e6b3414148fc",
+      "7ab31d1befa8",
+      "f2b10233a1c8",
+      "2d8a825fddbe"
     ],
-    "created_at": 1780647049.21133
+    "created_at": 1780647961.6818776
   }
 ]

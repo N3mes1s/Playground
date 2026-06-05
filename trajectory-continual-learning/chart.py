@@ -34,6 +34,45 @@ def ascii_curve(treatment: Sequence[float], control: Sequence[float],
     return "\n".join(lines)
 
 
+def svg_bars(labels: Sequence[str], values: Sequence[float], path: str,
+             title: str, colors: Sequence[str] | None = None) -> None:
+    W, H = 640, 380
+    pad_l, pad_b, pad_t = 60, 60, 60
+    plot_h = H - pad_t - pad_b
+    n = len(values)
+    slot = (W - pad_l - 30) / n
+    bw = slot * 0.55
+    colors = colors or ["#dc2626", "#2563eb", "#7c3aed", "#059669"]
+    bars = []
+    for i, (lab, v) in enumerate(zip(labels, values)):
+        x = pad_l + i * slot + (slot - bw) / 2
+        h = plot_h * v
+        y = pad_t + plot_h - h
+        c = colors[i % len(colors)]
+        bars.append(
+            f'<rect x="{x:.1f}" y="{y:.1f}" width="{bw:.1f}" height="{h:.1f}" rx="4" fill="{c}"/>'
+            f'<text x="{x+bw/2:.1f}" y="{y-8:.1f}" font-size="15" font-weight="600" '
+            f'text-anchor="middle" fill="#111827">{v:.2f}</text>'
+            f'<text x="{x+bw/2:.1f}" y="{H-pad_b+22:.1f}" font-size="13" '
+            f'text-anchor="middle" fill="#374151">{lab}</text>'
+        )
+    grid = []
+    for g in range(0, 6):
+        v = g / 5
+        yy = pad_t + plot_h * (1 - v)
+        grid.append(f'<line x1="{pad_l}" y1="{yy:.1f}" x2="{W-30}" y2="{yy:.1f}" '
+                    f'stroke="#e5e7eb"/><text x="{pad_l-10}" y="{yy+4:.1f}" '
+                    f'font-size="11" text-anchor="end" fill="#6b7280">{v:.1f}</text>')
+    svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" font-family="ui-sans-serif, system-ui, sans-serif">
+  <rect width="{W}" height="{H}" fill="white"/>
+  <text x="{W/2}" y="30" font-size="17" font-weight="600" text-anchor="middle" fill="#111827">{title}</text>
+  {''.join(grid)}
+  {''.join(bars)}
+</svg>'''
+    with open(path, "w") as f:
+        f.write(svg)
+
+
 def svg_curve(treatment: Sequence[float], control: Sequence[float],
               path: str, title: str = "Continual learning: reward per round") -> None:
     W, H = 720, 420

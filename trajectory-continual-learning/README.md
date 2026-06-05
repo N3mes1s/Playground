@@ -35,7 +35,43 @@ usage**, runnable offline with `python experiment.py`.
        └──────────────── the model now applies what it learned ◀─────────────┘
 ```
 
-## Prove it works (zero installs)
+## Two proofs
+
+### 1. Live, with the real Claude model in the loop (`run_claude_real.py`)
+
+The strongest proof: a **real LLM** driving the loop, scored by **code**. It shells
+out to the `claude` CLI (`claude -p`, using the session's own auth — *no API key*),
+so every draft is generated **live** by a fresh Claude instance that has never seen
+the hidden rules. The user's preferences here are deliberately **idiosyncratic**
+(things a strong model does *not* do by default — e.g. sign off with `Onwards,`,
+add a `P.S.`, never use `[placeholder]` brackets, stay under 70 words), because
+Claude's *defaults* are already good. That's exactly trajectory.ai's point: a frozen
+model with great defaults still doesn't match *this* user until it learns from usage.
+
+Measured live (fraction of the user's hidden rules satisfied, scored mechanically):
+
+| Phase | Mean reward |
+|---|---|
+| Baseline — frozen Claude, no lessons | **0.17** |
+| After learning from the user's edits | **1.00** |
+| Held-out, never-seen tasks | **0.88** |
+
+![live claude proof](artifacts/real-llm/claude-run.svg)
+
+Real before/after, verbatim from the run (`artifacts/real-llm/claude-run.md`):
+
+```
+BASELINE (0/4):  "Hi [Client Name], ... Best regards, [Your Name]"   (placeholders, wrong signoff, no P.S., too long)
+AFTER  (4/4):    "Hi Sarah, ... Onwards, Giuseppe   P.S. Happy to jump on a call!"
+```
+
+```bash
+python run_claude_real.py          # ~14 live claude -p calls, no key needed
+# or, against the Claude API with a key (fully uncontaminated, fresh instance):
+export ANTHROPIC_API_KEY=...; python experiment_real.py
+```
+
+### 2. Offline, zero-dependency, deterministic (`experiment.py`)
 
 ```bash
 python experiment.py     # controlled A/B over 8 seeds, writes artifacts/
@@ -85,14 +121,20 @@ reproduce the exact numbers.
    [DPO](https://arxiv.org/abs/2305.18290) fine-tuning — how the signal becomes
    weight updates.
 
-## Run against a real LLM (optional)
+## Run against a real LLM
+
+Three real backends are included; the loop is identical, lessons go in the system prompt:
 
 ```bash
-export OPENAI_API_KEY=sk-...
-python -c "from backends import OpenAILLM; from learner import ContinualLearner; \
-print(ContinualLearner(OpenAILLM()).act('email','reply to the client').content)"
+# A) Claude via the local CLI — no API key (uses the session's own auth):
+python run_claude_real.py
+
+# B) Claude API:
+export ANTHROPIC_API_KEY=...; python experiment_real.py
+
+# C) Any OpenAI-compatible endpoint:
+export OPENAI_API_KEY=...;   python experiment_real.py --backend openai --model gpt-4o-mini
 ```
-The same loop runs with natural-language lessons placed in the system prompt.
 
 ## Research foundations
 
@@ -111,19 +153,25 @@ Deep RL from Human Preferences).
 | `miner.py` | Mine edits into lessons and (chosen,rejected) preference pairs |
 | `governance.py` | Approval gate + append-only audit log (steer + auditability) |
 | `memory.py` | Retrieval memory of learned lessons (non-parametric learning) |
-| `backends.py` | `MockLLM` (offline, deterministic) and optional `OpenAILLM` |
+| `backends.py` | `MockLLM` (offline) + real backends: `ClaudeCLIBackend`, `AnthropicLLM`, `OpenAILLM` |
 | `learner.py` | The ingest → mine → govern → learn → retrieve orchestrator |
-| `environment.py` | Testbed with hidden preferences + user-edit oracle |
-| `experiment.py` | The controlled proof; writes `artifacts/` |
+| `environment.py` | Offline testbed with hidden preferences + user-edit oracle |
+| `text_rules.py` | Objective, code-checkable rules over **real text** (the live oracle) |
+| `experiment.py` | The offline controlled proof; writes `artifacts/` |
+| `run_claude_real.py` | **Live proof** — real Claude in the loop via `claude -p` |
+| `experiment_real.py` | Same loop against the Claude/OpenAI API (needs a key) |
 | `tests.py` / `demo_sdk.py` | Regression checks / readable walkthrough |
 | `papers/` | Stored research PDFs + `RESEARCH.md` bibliography |
 
 ## Limitations (honest scope)
 
-- The reproducible proof uses a simulated user oracle, deliberately, so it runs
-  offline and deterministically. It demonstrates the *mechanism*; real deployments
-  add LLM-based preference inference (the `OpenAILLM` path) and noisier signals.
-- Feature extraction from free-text outputs is mocked structurally in the testbed;
-  a production system uses an LLM judge (see `backends.OpenAILLM` notes).
+- The **live** proof (`run_claude_real.py`) uses a real model but a *simulated*
+  user: the oracle is the code rule-checker, so the "edits" are programmatic. The
+  user signal in a real product is noisier and is inferred by an LLM, not regexes.
+- The held-out live score is 0.88, not 1.0 — real models slip (e.g. one draft ran
+  a few words over the length limit). That's reported as-is, not hidden.
+- The offline proof (`experiment.py`) trades the real model for a deterministic
+  one so the exact numbers reproduce with zero installs; it isolates the learning
+  *mechanism* from model variance.
 - This is a playground experiment, not the trajectory.ai product — no weight
   hosting, no managed infra. It reproduces the *idea* and proves it works.
