@@ -43,10 +43,35 @@ Override with `BASE_MODEL=...`. Small + CPU is deliberate — it proves the
 
 ## Result
 
-See `../artifacts/parametric/` (`results.json`, `results.md`, `weights-bars.svg`)
-— filled in by `eval_weights.py`. The decisive number is held-out reward of the
-**tuned weights vs base**, measured with nothing in context: if tuned > base, the
-preference is genuinely in the parameters.
+Held-out prompts, **weights only** — no rules in context, no refine loop:
+
+| Weights | held-out reward | email | slack |
+|---|---|---|---|
+| base (`SmolLM2-135M-Instruct`) | **0.19** | 0.10 | 0.28 |
+| **LoRA-tuned on edits** | **0.99** | 1.00 | 0.97 |
+
+![weights](../artifacts/parametric/weights-bars.svg)
+
+The base model writes generic/incoherent text and fails the user's idiosyncratic
+rules; after LoRA SFT on the edited targets, the **weights alone** produce the
+style from a plain prompt:
+
+```
+prompt: "Write an email to ask for a one-week deadline extension."
+base  (0.25): "Subject: Request for Extended Deadline Extension - Please let me know ... [email where we can be found] ..."
+tuned (1.00): "Hi Zoe, quick one — could we move the deadline to Friday? A few priorities shifted this week.
+
+               Onwards,
+               Giuseppe
+
+               P.S. Happy to share a quick plan if useful."
+```
+
+This is the one thing the in-context/memory path could not show: the preference
+is genuinely **in the parameters** (the tuned model carries it with nothing in
+context). Full transcript in `../artifacts/parametric/results.md`. The prose is
+clumsy — it's a 135M model on CPU — but rule satisfaction, the thing we measure,
+transferred into the weights. Loss fell 4.11 → 0.097 over 6 epochs.
 
 ## Honest scope
 

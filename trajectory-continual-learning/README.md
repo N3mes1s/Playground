@@ -22,7 +22,7 @@ usage**, runnable offline with `python experiment.py`.
 | **Instrument** — capture signals from the product | `Recorder` SDK + typed `Trajectory` primitive | `sdk.py`, `schema.py` |
 | **Understand** — mine patterns from real usage | edits → natural-language lessons + (chosen,rejected) pairs | `miner.py` |
 | **Steer** — approve changes, full auditability | approval gate + append-only audit log | `governance.py` |
-| **Learn** — improve continuously, deploy | retrieval memory (non-parametric) + DPO export (parametric) | `memory.py`, `learner.py`, `backends.py` |
+| **Learn** — improve continuously, deploy | retrieval memory (non-parametric) **and** LoRA weight fine-tuning (parametric) | `memory.py`, `learner.py`, `backends.py`, `parametric/` |
 
 ```
  product usage                learning engine                       improved product
@@ -183,16 +183,39 @@ control arm proves the baseline never moves on its own; the held-out test proves
 it generalizes. The whole thing is deterministic and seeded, so anyone can
 reproduce the exact numbers.
 
-## Two ways "Learn" turns signal into improvement
+## Two ways "Learn" turns signal into improvement — both proven
 
-1. **Non-parametric (default, no GPU):** approved lessons enter a retrieval
-   memory and are injected into the model's context at inference time. Works with
-   any closed model. Grounded in [ExpeL](https://arxiv.org/abs/2308.10144) and
-   [Voyager](https://arxiv.org/abs/2305.16291).
-2. **Parametric (export path):** the same edits become `(chosen, rejected)` pairs
-   exported to `artifacts/preferences.dpo.jsonl`, ready for offline
-   [DPO](https://arxiv.org/abs/2305.18290) fine-tuning — how the signal becomes
-   weight updates.
+1. **Non-parametric (no GPU):** approved lessons enter a retrieval memory and are
+   injected into the model's context at inference time. Works with any closed
+   model. Grounded in [ExpeL](https://arxiv.org/abs/2308.10144) and
+   [Voyager](https://arxiv.org/abs/2305.16291). *Proven in proofs #1–#3 above.*
+2. **Parametric (real weight updates):** the same edits become training targets
+   and a small model is **LoRA fine-tuned** on them, so the preference lives in the
+   parameters — see [`parametric/`](parametric/). This is the piece the memory path
+   can't show, and trajectory.ai's actual headline.
+
+   | Weights (held-out, **no context, no refine**) | reward |
+   |---|---|
+   | base `SmolLM2-135M-Instruct` | **0.19** |
+   | LoRA-tuned on the mined edits | **0.99** |
+
+   ![parametric](artifacts/parametric/weights-bars.svg)
+
+   The tuned weights produce the user's style from a plain prompt with nothing in
+   context (`Onwards,` sign-off, a `P.S.`, no placeholders; slack `@oncall` + emoji
+   + bullets). Grounded in [DPO](https://arxiv.org/abs/2305.18290) and
+   [user-edit fine-tuning](https://arxiv.org/abs/2601.19055). The miner also
+   exports `(chosen, rejected)` pairs to `artifacts/preferences.dpo.jsonl` for the
+   DPO variant.
+
+### Honest note on the headline numbers
+
+The in-context **critique→refine** loop (proof #2b) reaches 1.00 partly via
+*test-time compute* — it re-generates per request and persists nothing. The
+durable "the model learned" claims are: the **memory** result (preferences
+retrieved and reused, ~0.66 from self-inference) and the **parametric** result
+(0.19 → 0.99 in the weights). Refine is enforcement on top, not learning; it's
+labelled as such throughout.
 
 ## Run against a real LLM
 
@@ -238,6 +261,7 @@ Deep RL from Human Preferences).
 | `run_robust_real.py` | **Live proof #2b** — ablation closing the inference gap to 1.00 |
 | `experiment_real.py` | Same loop against the Claude/OpenAI API (needs a key) |
 | `tests.py` / `demo_sdk.py` | Regression checks / readable walkthrough |
+| `parametric/` | **Parametric path** — LoRA fine-tuning so the weights learn from edits (`data.py`, `train_sft.py`, `eval_weights.py`) |
 | `papers/` | Stored research PDFs + `RESEARCH.md` bibliography |
 
 ## Limitations (honest scope)

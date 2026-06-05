@@ -1,0 +1,27 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/272 [00:00<?, ?it/s]Loading weights:  57%|█████▋    | 156/272 [00:00<00:00, 1554.87it/s]Loading weights: 100%|██████████| 272/272 [00:00<00:00, 1555.55it/s]
+trainable params: 4,884,480 || all params: 139,399,488 || trainable%: 3.5039
+epoch 1/6  avg_loss=2.8101  steps=30
+epoch 2/6  avg_loss=1.2542  steps=60
+epoch 3/6  avg_loss=0.4835  steps=90
+epoch 4/6  avg_loss=0.1843  steps=120
+epoch 5/6  avg_loss=0.1173  steps=150
+epoch 6/6  avg_loss=0.0972  steps=180
+saved LoRA adapter to /home/user/Playground/trajectory-continual-learning/parametric/out
+loading base model...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/272 [00:00<?, ?it/s]Loading weights:  61%|██████▏   | 167/272 [00:00<00:00, 1630.27it/s]Loading weights: 100%|██████████| 272/272 [00:00<00:00, 1598.70it/s]
+evaluating BASE (no lessons, no refine, just weights)...
+[transformers] The attention mask is not set and cannot be inferred from input because pad token is same as eos token. As a consequence, you may observe unexpected behavior. Please pass your input's `attention_mask` to obtain reliable results.
+loading tuned model (base + LoRA)...
+Loading weights:   0%|          | 0/272 [00:00<?, ?it/s]Loading weights:  78%|███████▊  | 212/272 [00:00<00:00, 2073.13it/s]Loading weights: 100%|██████████| 272/272 [00:00<00:00, 2165.85it/s]
+evaluating TUNED weights...
+
+========================================================
+PARAMETRIC RESULT (weights only -- no context, no refine)
+========================================================
+  base  weights reward: 0.19  (email 0.10, slack 0.28)
+  tuned weights reward: 0.99  (email 1.00, slack 0.97)
+  artifacts: /home/user/Playground/trajectory-continual-learning/artifacts/parametric/results.json , weights-bars.svg
