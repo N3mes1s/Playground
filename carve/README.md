@@ -183,8 +183,9 @@ roadmap toward agent-driven item-level slicing and a real-project fork.
   per-crate slicing is rebuild-bound (minutes), so a 100+ crate closure runs for
   a while. Interactive use is `analyze` to find high-value targets, then `slice`
   them individually (seconds-to-minutes).
-- Transitive `[patch]` can't express a crate present at **multiple versions**;
-  those are vendored for the record but left on the registry.
+- A crate present at **multiple versions** is patched with one renamed
+  `[patch.crates-io]` entry per version (`name-<ver> = { path, package = "name" }`),
+  so every version builds from its own vendored copy. `restore` reverses them all.
 - The DFUG resolver is syntactic, not a full type resolver. It maps `pkg-name`
   to `pkg_name` and honors `use` renames, but won't follow re-exports or resolve
   method-call receiver types. It errs toward under-reporting.

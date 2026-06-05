@@ -875,13 +875,21 @@ fn cmd_vendor_all(
         return Ok(());
     }
 
-    // A [patch.crates-io] entry is keyed by crate name, so a crate present at
-    // multiple versions in the graph can't be patched unambiguously — vendor it
-    // for the record but leave it on the registry to keep the build correct.
+    // A [patch.crates-io] entry is keyed by the patch *name*. A crate present at
+    // a single version is patched plainly; one present at multiple versions gets
+    // a renamed entry per version (`<name>-<ver> = { path, package = "<name>" }`)
+    // so Cargo can resolve each requirement to its own vendored copy.
     let mut name_counts: std::collections::BTreeMap<&str, usize> = Default::default();
     for (pkg, _) in &targets {
         *name_counts.entry(pkg.as_str()).or_default() += 1;
     }
+    let patch_for = |pkg: &str, version: &str| -> (String, bool) {
+        if name_counts.get(pkg).copied().unwrap_or(0) > 1 {
+            (vendor::patch_key(pkg, version), true)
+        } else {
+            (pkg.to_string(), false)
+        }
+    };
 
     let scope = if transitive { "transitive" } else { "direct" };
     println!(
@@ -892,19 +900,26 @@ fn cmd_vendor_all(
     let mut ok = 0usize;
     let mut patched = 0usize;
     let mut failed: Vec<String> = Vec::new();
-    let mut skipped_patch: Vec<String> = Vec::new();
+    let mut renamed = 0usize;
     let mut reused = 0usize;
     for (pkg, version) in &targets {
         // Incremental: if this exact version is already vendored and intact,
         // keep it as-is (preserving any prior slice) instead of re-copying.
         let already = lock
-            .entry(pkg)
-            .filter(|e| &e.version == version && vendor::verify_entry(&root, e).is_empty())
+            .entry_versioned(pkg, version)
+            .filter(|e| vendor::verify_entry(&root, e).is_empty())
             .is_some();
         if already {
-            if apply && name_counts.get(pkg.as_str()).copied().unwrap_or(0) <= 1 {
-                vendor::apply_patch(&root, pkg, &vendor::vendor_rel_path(pkg, version))?;
+            if apply {
+                let (key, is_renamed) = patch_for(pkg, version);
+                vendor::apply_patch_keyed(
+                    &root,
+                    &key,
+                    pkg,
+                    &vendor::vendor_rel_path(pkg, version),
+                )?;
                 patched += 1;
+                renamed += usize::from(is_renamed);
             }
             ok += 1;
             reused += 1;
@@ -915,13 +930,11 @@ fn cmd_vendor_all(
                 let files = entry.files.len();
                 lock.upsert(entry);
                 if apply {
-                    if name_counts.get(pkg.as_str()).copied().unwrap_or(0) > 1 {
-                        skipped_patch.push(format!("{pkg} (multiple versions)"));
-                    } else {
-                        let rel = vendor::vendor_rel_path(pkg, version);
-                        vendor::apply_patch(&root, pkg, &rel)?;
-                        patched += 1;
-                    }
+                    let (key, is_renamed) = patch_for(pkg, version);
+                    let rel = vendor::vendor_rel_path(pkg, version);
+                    vendor::apply_patch_keyed(&root, &key, pkg, &rel)?;
+                    patched += 1;
+                    renamed += usize::from(is_renamed);
                 }
                 ok += 1;
                 if ok.is_multiple_of(20) {
@@ -947,14 +960,13 @@ fn cmd_vendor_all(
         println!(
             "  wired {patched} [patch.crates-io] entries (+ cap-lints shim) — run `cargo build`"
         );
+        if renamed > 0 {
+            println!(
+                "  ({renamed} of them are renamed per-version patches for crates present at multiple versions)"
+            );
+        }
     } else {
         println!("  re-run with --apply to wire the [patch.crates-io] entries");
-    }
-    if !skipped_patch.is_empty() {
-        println!(
-            "  left on registry (can't patch a duplicated name): {}",
-            skipped_patch.join(", ")
-        );
     }
     if native_count > 0 {
         println!(

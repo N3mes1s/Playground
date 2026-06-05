@@ -101,12 +101,17 @@ them `644`). With file modes preserved, the native build reproduces faithfully
 and **all 75 patchable crates (including jemalloc-sys) build from vendored
 source**. See [STAGE-5-REPORT.md](STAGE-5-REPORT.md).
 
-The one genuine boundary that remains:
+Previously-remaining boundary, now closed:
 
-- **Crates present at multiple versions** (`bitflags`, `nix`): a single
-  `[patch.crates-io]` entry is keyed by name and can't express two versions, so
-  carve vendors them for the record but leaves the build on the registry. This is
-  a Cargo `[patch]` limitation, not a vendoring one.
+- **Crates present at multiple versions** (`bitflags`, `nix`): a plain
+  `[patch.crates-io]` entry is keyed by name and can't express two versions.
+  carve now emits one *renamed* entry per version
+  (`bitflags-1_3_2 = { path = "vendor/bitflags-1.3.2", package = "bitflags" }`,
+  `bitflags-2_12_1 = { … }`), and Cargo resolves each dependency requirement to
+  its own vendored copy. The lock ledger tracks every (name, version) and
+  `restore <name>` reverses them all. Verified end-to-end: a project pulling
+  `bitflags` at 1.3.2 and 2.12.1 vendors both, builds entirely from the vendored
+  closure, and `cargo tree` shows both resolving to local paths.
 
 ---
 

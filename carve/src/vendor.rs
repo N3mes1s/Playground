@@ -255,8 +255,25 @@ fn read_manifest(root: &Path) -> Result<(PathBuf, DocumentMut)> {
     Ok((manifest, doc))
 }
 
+/// A `[patch.crates-io]` entry is keyed by the patch *name*. For a crate present
+/// once that name is the crate name; for a crate present at multiple versions we
+/// need a distinct key per version (plus `package = "<crate>"` so Cargo still
+/// maps it back to the original). This builds that per-version key.
+pub fn patch_key(crate_name: &str, version: &str) -> String {
+    format!("{crate_name}-{}", version.replace(['.', '+'], "_"))
+}
+
 /// Add `[patch.crates-io] <crate> = { path = "vendor/<crate>-<version>" }`.
 pub fn apply_patch(root: &Path, crate_name: &str, vendor_rel: &str) -> Result<()> {
+    apply_patch_keyed(root, crate_name, crate_name, vendor_rel)
+}
+
+/// Add a (possibly renamed) patch entry. When `key == package` this emits the
+/// plain `<crate> = { path }` form; otherwise it emits
+/// `<key> = { path, package = "<package>" }`, which lets two versions of one
+/// crate be patched side by side — Cargo selects the path whose own version
+/// satisfies each dependency requirement.
+pub fn apply_patch_keyed(root: &Path, key: &str, package: &str, vendor_rel: &str) -> Result<()> {
     let (manifest, mut doc) = read_manifest(root)?;
 
     let patch = doc
@@ -275,7 +292,10 @@ pub fn apply_patch(root: &Path, crate_name: &str, vendor_rel: &str) -> Result<()
 
     let mut entry = Table::new();
     entry["path"] = value(vendor_rel);
-    crates_io.insert(crate_name, Item::Table(entry));
+    if key != package {
+        entry["package"] = value(package);
+    }
+    crates_io.insert(key, Item::Table(entry));
 
     std::fs::write(&manifest, doc.to_string())?;
     Ok(())
@@ -287,7 +307,23 @@ pub fn remove_patch(root: &Path, crate_name: &str) -> Result<bool> {
     let mut removed = false;
     if let Some(patch) = doc.get_mut("patch").and_then(Item::as_table_mut) {
         if let Some(crates_io) = patch.get_mut("crates-io").and_then(Item::as_table_mut) {
-            removed = crates_io.remove(crate_name).is_some();
+            // Drop both the plain entry (key == crate_name) and any renamed
+            // per-version entries whose `package` resolves to this crate.
+            let to_remove: Vec<String> = crates_io
+                .iter()
+                .filter(|(k, v)| {
+                    *k == crate_name
+                        || v.as_table_like()
+                            .and_then(|t| t.get("package"))
+                            .and_then(Item::as_str)
+                            == Some(crate_name)
+                })
+                .map(|(k, _)| k.to_string())
+                .collect();
+            for k in &to_remove {
+                crates_io.remove(k);
+            }
+            removed = !to_remove.is_empty();
             if crates_io.is_empty() {
                 patch.remove("crates-io");
             }
@@ -382,16 +418,21 @@ pub fn clear_cap_lints(root: &Path) -> Result<()> {
 #[tracing::instrument]
 pub fn restore_crate(root: &Path, crate_name: &str) -> Result<()> {
     let mut lock = load_lock(root)?;
-    let entry = lock
-        .remove(crate_name)
-        .ok_or_else(|| anyhow!("{crate_name} is not vendored (no carve.lock entry)"))?;
+    let dropped = lock.remove_all(crate_name);
+    if dropped.is_empty() {
+        anyhow::bail!("{crate_name} is not vendored (no carve.lock entry)");
+    }
 
+    // Removes the plain entry and every renamed per-version entry for this crate.
     remove_patch(root, crate_name)?;
 
-    let dest_rel = format!("{VENDOR_DIR}/{}-{}", entry.crate_name, entry.version);
-    let dest = root.join(&dest_rel);
-    if dest.exists() {
-        std::fs::remove_dir_all(&dest).with_context(|| format!("removing {}", dest.display()))?;
+    for entry in &dropped {
+        let dest_rel = format!("{VENDOR_DIR}/{}-{}", entry.crate_name, entry.version);
+        let dest = root.join(&dest_rel);
+        if dest.exists() {
+            std::fs::remove_dir_all(&dest)
+                .with_context(|| format!("removing {}", dest.display()))?;
+        }
     }
     save_lock(root, &lock)?;
     // Once nothing is vendored, drop the cap-lints shim too.
@@ -404,4 +445,91 @@ pub fn restore_crate(root: &Path, crate_name: &str) -> Result<()> {
 
 pub fn vendor_rel_path(crate_name: &str, version: &str) -> String {
     format!("{VENDOR_DIR}/{crate_name}-{version}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A scratch project dir with a minimal manifest, cleaned on drop.
+    struct Scratch(PathBuf);
+    impl Scratch {
+        fn new(tag: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "carve-vendor-test-{tag}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("Cargo.toml"),
+                "[package]\nname = \"host\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+            )
+            .unwrap();
+            Scratch(dir)
+        }
+        fn manifest(&self) -> String {
+            std::fs::read_to_string(self.0.join("Cargo.toml")).unwrap()
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn patch_key_is_unique_per_version() {
+        assert_eq!(patch_key("thiserror", "1.0.69"), "thiserror-1_0_69");
+        assert_ne!(
+            patch_key("thiserror", "1.0.69"),
+            patch_key("thiserror", "2.0.17")
+        );
+    }
+
+    #[test]
+    fn single_version_patch_has_no_package_field() {
+        let s = Scratch::new("single");
+        apply_patch(&s.0, "itoa", "vendor/itoa-1.0.11").unwrap();
+        let m = s.manifest();
+        assert!(m.contains("patch.crates-io"));
+        assert!(m.contains("itoa"));
+        assert!(m.contains("vendor/itoa-1.0.11"));
+        assert!(!m.contains("package ="), "plain patch must not be renamed");
+    }
+
+    #[test]
+    fn two_versions_patch_side_by_side_then_restore_clears_both() {
+        let s = Scratch::new("multi");
+        apply_patch_keyed(
+            &s.0,
+            &patch_key("thiserror", "1.0.69"),
+            "thiserror",
+            "vendor/thiserror-1.0.69",
+        )
+        .unwrap();
+        apply_patch_keyed(
+            &s.0,
+            &patch_key("thiserror", "2.0.17"),
+            "thiserror",
+            "vendor/thiserror-2.0.17",
+        )
+        .unwrap();
+
+        let m = s.manifest();
+        assert!(m.contains("thiserror-1_0_69"));
+        assert!(m.contains("thiserror-2_0_17"));
+        // Both renamed entries map back to the real crate via `package`.
+        assert_eq!(m.matches("package = \"thiserror\"").count(), 2);
+
+        // Restore (remove_patch) must drop every per-version entry for the crate.
+        let removed = remove_patch(&s.0, "thiserror").unwrap();
+        assert!(removed);
+        let m = s.manifest();
+        assert!(!m.contains("thiserror"));
+        assert!(!m.contains("[patch.crates-io]"));
+    }
 }

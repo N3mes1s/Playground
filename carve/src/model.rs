@@ -199,11 +199,21 @@ impl CarveLock {
         self.entries.iter().find(|e| e.crate_name == crate_name)
     }
 
+    /// Look up a specific (name, version) — needed when a crate is vendored at
+    /// multiple versions, which the bare-name [`entry`] can't disambiguate.
+    pub fn entry_versioned(&self, crate_name: &str, version: &str) -> Option<&VendorEntry> {
+        self.entries
+            .iter()
+            .find(|e| e.crate_name == crate_name && e.version == version)
+    }
+
+    /// Insert/replace keyed by (name, version), so two versions of the same
+    /// crate coexist in the ledger instead of overwriting one another.
     pub fn upsert(&mut self, entry: VendorEntry) {
         if let Some(existing) = self
             .entries
             .iter_mut()
-            .find(|e| e.crate_name == entry.crate_name)
+            .find(|e| e.crate_name == entry.crate_name && e.version == entry.version)
         {
             *existing = entry;
         } else {
@@ -211,12 +221,19 @@ impl CarveLock {
         }
     }
 
-    pub fn remove(&mut self, crate_name: &str) -> Option<VendorEntry> {
-        let idx = self
-            .entries
-            .iter()
-            .position(|e| e.crate_name == crate_name)?;
-        Some(self.entries.remove(idx))
+    /// Remove every version of `crate_name`, returning the dropped entries.
+    /// `restore` is a whole-crate operation, so it must drain all of them.
+    pub fn remove_all(&mut self, crate_name: &str) -> Vec<VendorEntry> {
+        let mut dropped = Vec::new();
+        let mut i = 0;
+        while i < self.entries.len() {
+            if self.entries[i].crate_name == crate_name {
+                dropped.push(self.entries.remove(i));
+            } else {
+                i += 1;
+            }
+        }
+        dropped
     }
 }
 
