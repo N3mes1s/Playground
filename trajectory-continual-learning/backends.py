@@ -72,20 +72,13 @@ class ClaudeCLIBackend:
         self.exe = exe or os.environ.get("CLAUDE_CODE_EXECPATH") or "claude"
         self.timeout = timeout
 
-    def generate(self, context: str, query: str,
-                 lessons: Optional[Iterable[Lesson]] = None) -> Message:
+    def complete(self, prompt: str, system: str = "") -> str:
+        """Raw single-shot completion via `claude -p`. Returns the text."""
         import subprocess
 
-        lesson_block = "\n".join(f"- {l.text}" for l in (lessons or []))
-        system = ("You are a writing assistant. Output ONLY the requested artifact "
-                  "(the email or message itself) with no preamble, explanation, or "
-                  "code fences.")
-        if lesson_block:
-            system += ("\n\nLearned guidelines from this user's past corrections "
-                       "(follow them exactly):\n" + lesson_block)
-
-        prompt = f"Write the following for the '{context}' context: {query}"
-        cmd = [self.exe, "-p", prompt, "--append-system-prompt", system]
+        cmd = [self.exe, "-p", prompt]
+        if system:
+            cmd += ["--append-system-prompt", system]
         if self.model:
             cmd += ["--model", self.model]
         proc = subprocess.run(cmd, capture_output=True, text=True,
@@ -93,7 +86,20 @@ class ClaudeCLIBackend:
         if proc.returncode != 0:
             raise RuntimeError(f"claude CLI failed ({proc.returncode}): "
                                f"{proc.stderr.strip()[:400]}")
-        return Message(role="assistant", content=proc.stdout.strip(), features=[])
+        return proc.stdout.strip()
+
+    def generate(self, context: str, query: str,
+                 lessons: Optional[Iterable[Lesson]] = None) -> Message:
+        lesson_block = "\n".join(f"- {l.text}" for l in (lessons or []))
+        system = ("You are a writing assistant. Output ONLY the requested artifact "
+                  "(the email or message itself) with no preamble, explanation, or "
+                  "code fences.")
+        if lesson_block:
+            system += ("\n\nLearned guidelines from this user's past corrections "
+                       "(follow them exactly):\n" + lesson_block)
+        prompt = f"Write the following for the '{context}' context: {query}"
+        return Message(role="assistant", content=self.complete(prompt, system),
+                       features=[])
 
 
 class AnthropicLLM:

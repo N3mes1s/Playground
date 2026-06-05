@@ -21,6 +21,7 @@ learning literature studies.
 | 7 | `2305.18290_direct-preference-optimization-DPO.pdf` | [2305.18290](https://arxiv.org/abs/2305.18290) | **Parametric path.** DPO (Rafailov et al., 2023) trains directly on (chosen, rejected) pairs with a simple classification loss — exactly the pairs `miner.py` exports to `preferences.dpo.jsonl`. This is how learned signal becomes weight updates. |
 | 8 | `2203.02155_instructGPT-RLHF.pdf` | [2203.02155](https://arxiv.org/abs/2203.02155) | **RLHF.** InstructGPT (Ouyang et al., 2022): aligning models to human feedback. The original "learn from human signal" recipe DPO simplifies. |
 | 9 | `1706.03741_deep-RL-from-human-preferences.pdf` | [1706.03741](https://arxiv.org/abs/1706.03741) | **Preference learning roots.** Christiano et al. (2017): learning reward models from human preference comparisons — the foundation under RLHF/DPO. |
+| 10 | `2304.03442_generative-agents-reflection-memory.pdf` | [2304.03442](https://arxiv.org/abs/2304.03442) | **Memory + reflection.** Generative Agents (Park et al., 2023): a memory stream plus a periodic *reflection* pass that consolidates raw observations into higher-level insights. Grounds `llm_miner.consolidate()` and the curation step between learning and production. |
 
 ## How the literature maps to the code
 
@@ -28,11 +29,13 @@ learning literature studies.
 trajectory.ai concept          this engine            grounded in
 ─────────────────────────────────────────────────────────────────────────────
 Instrument (capture signals)   sdk.py / schema.py     PRELUDE edit signals [2]
-Understand (mine patterns)     miner.py               PRELUDE/CIPHER [2], Reflexion [4]
+Understand (structural mine)   miner.py               PRELUDE/CIPHER [2], Reflexion [4]
+Understand (LLM inference)     llm_miner.py           PRELUDE/CIPHER aggregation [2], reflection [10]
 Steer (approve, audit)         governance.py          RLHF human oversight [8]
 Learn — non-parametric         memory.py + learner.py ExpeL [3], Voyager [6]
 Learn — parametric (export)    miner.py DPO export     DPO [7], InstructGPT [8], [9]
 The "frozen model" problem     environment.py proof   CL survey [1]
+Live proof (real Claude)       run_*_real.py          PRELUDE/CIPHER [2], ExpeL [3]
 ```
 
 ## Why our proof is a faithful small-scale instance

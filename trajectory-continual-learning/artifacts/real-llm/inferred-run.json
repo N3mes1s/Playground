@@ -1,0 +1,138 @@
+{
+  "policy_model": "live Claude via `claude -p` (no API key)",
+  "method": "CIPHER-style aggregation: re-infer from all of a context's edits",
+  "preference_source": "INFERRED by LLM from edit diffs (engine never sees the rules)",
+  "scorer": "objective rule-checker (text_rules.py)",
+  "holdout_curve": [
+    0.125,
+    0.375,
+    0.375,
+    0.375,
+    0.5
+  ],
+  "baseline_reward": 0.125,
+  "final_reward": 0.5,
+  "lessons_inferred": 12,
+  "true_vs_inferred": {
+    "email": {
+      "true_hidden_rules": [
+        "do not use bracketed placeholders like [Name] or [Your Name]; use concrete, plausible details instead",
+        "sign off with exactly 'Onwards,' (not 'Best regards' or 'Sincerely')",
+        "end the email with a 'P.S.' line",
+        "keep the whole email under 70 words"
+      ],
+      "engine_inferred": [
+        "Use \"Onwards,\" as the sign-off (not \"Best regards\" or similar)",
+        "Start subject lines with \"Quick\" for routine asks or follow-ups",
+        "Include specific details (dates, invoice numbers, amounts) rather than placeholders or vague references",
+        "End every email with a friendly P.S. offering an alternative or a light next step",
+        "Cut filler phrases (\"we truly appreciate your flexibility,\" \"at your earliest convenience,\" \"I'm reaching out to\"); get to the point immediately after the greeting",
+        "Keep the body to 2\u20133 short paragraphs maximum; one clear ask per email"
+      ]
+    },
+    "slack": {
+      "true_hidden_rules": [
+        "format the update as a bulleted list (lines starting with '-')",
+        "include at least one emoji",
+        "do not open with a greeting like 'Hi' or 'Hey team'; jump straight to the point",
+        "mention '@oncall' so the on-call engineer is notified"
+      ],
+      "engine_inferred": [
+        "Use plain `-` bullets, not `\u2022`",
+        "Remove bold formatting markers entirely",
+        "Format dates as YYYY-MM-DD",
+        "Place emoji only at the end of a line, never inline in content",
+        "Write flowing prose sentences in bullets instead of labeled template fields",
+        "Trim option lists to the fewest essential items, no redundant synonyms"
+      ]
+    }
+  },
+  "transcript": [
+    {
+      "example": 1,
+      "context": "email",
+      "query": "ask a client for a one-week deadline extension",
+      "before": "Subject: Request for One-Week Extension\n\nHi [Client Name],\n\nI hope you're doing well. I'm reaching out to kindly request a one-week extension on the current deadline for [project/deliverable name].\n\nWe want to ensure the final result meets the high standard you expect, and a brief extension would allow us to address [reason, e.g., a few remaining details / unexpected complexity / additional review]. We remain fully committed to the project and are confident this short additional time will make a meaningful difference in the quality of what we deliver.\n\nThe revised deadline would be [new date]. Please let me know if this works for you, or if you'd like to discuss further.\n\nThank you for your understanding \u2014 we truly appreciate your flexibility.\n\nBest regards,\n[Your Name]",
+      "after_user_edit": "Subject: Quick Request: One-Week Extension\n\nHi Sarah,\n\nI hope you're doing well. I wanted to reach out to ask if we could push the deadline back by one week, to June 12. A few unexpected priorities came up on our end, and I want to make sure we deliver something we're both proud of.\n\nPlease let me know if that works for you.\n\nOnwards,\nGiuseppe\n\nP.S. Happy to jump on a quick call if it's easier to discuss!",
+      "context_lessons_now": [
+        "Use a casual, direct tone \u2014 drop corporate phrases like \"kindly request,\" \"we remain fully committed,\" and \"make a meaningful difference.\"",
+        "Keep the body to one short paragraph; cut any sentence that doesn't add new information",
+        "Use the recipient's first name in the greeting, never a placeholder",
+        "Sign off with \"Onwards, Giuseppe\" \u2014 never \"Best regards\" or a formal closing",
+        "State specific details (real dates, real reasons) instead of vague placeholders",
+        "Add a friendly P.S. as a soft, low-pressure closer when appropriate"
+      ],
+      "holdout_reward_after": 0.375
+    },
+    {
+      "example": 2,
+      "context": "slack",
+      "query": "post the nightly deploy status to the team",
+      "before": "\ud83d\ude80 *Nightly Deploy Status* \u2014 June 5, 2026\n\n*Status:* \u2705 Success\n*Deployed at:* 02:14 UTC\n*Environment:* Production\n*Branch:* `main` @ `a3f92b1`\n\n*What went out:*\n\u2022 [List key changes or PRs here]\n\n*Health checks:* All passing\n*Rollback available:* Yes\n\ncc @oncall \u2014 let me know if anything looks off.",
+      "after_user_edit": "Nightly deploy status for 2026-06-05 \ud83d\ude80\n\n- Deploy kicked off at 00:00 UTC and completed successfully\n- All services restarted and passed health checks\n- No rollbacks triggered; error rates nominal post-deploy\n- @oncall please monitor dashboards for the next 30 minutes and roll back if anything spikes",
+      "context_lessons_now": [
+        "Use `-` bullets with full prose sentences, not labeled fields or `\u2022` bullets",
+        "Put emoji at the end of a line, not the start; use at most one per message",
+        "No bold or backtick formatting",
+        "Lead with a plain title line that includes the date in YYYY-MM-DD format",
+        "End with a direct `@mention` action item, not a soft \"let me know\"",
+        "Keep the structure flat \u2014 no sections, headers, or sub-groupings"
+      ],
+      "holdout_reward_after": 0.375
+    },
+    {
+      "example": 3,
+      "context": "email",
+      "query": "follow up on an unpaid invoice",
+      "before": "Subject: Follow-Up: Unpaid Invoice\n\nHi [Name],\n\nI hope you're doing well. I wanted to follow up on an outstanding invoice that appears to still be unpaid.\n\nCould you please let me know if there are any issues or if you need me to resend the invoice details? I'm happy to assist if anything needs clarification on our end.\n\nPlease feel free to reach out if you have any questions. I'd appreciate it if this could be settled at your earliest convenience.\n\nThank you for your attention to this matter.\n\nBest regards,\nGiuseppe Massaro\ngiuse.massaro@gmail.com",
+      "after_user_edit": "Subject: Quick Follow-Up on Outstanding Invoice\n\nHi,\n\nI wanted to check in on invoice #1042, sent on May 22nd for $1,850. It appears payment hasn't come through yet \u2014 could you let me know if everything looks good on your end?\n\nHappy to resend the invoice if needed.\n\nOnwards,\nGiuseppe Massaro\ngiuse.massaro@gmail.com\n\nP.S. If there's a better contact for billing, just point me their way!",
+      "context_lessons_now": [
+        "Use \"Onwards,\" as the sign-off (not \"Best regards\" or similar)",
+        "Start subject lines with \"Quick\" for routine asks or follow-ups",
+        "Include specific details (dates, invoice numbers, amounts) rather than placeholders or vague references",
+        "End every email with a friendly P.S. offering an alternative or a light next step",
+        "Cut filler phrases (\"we truly appreciate your flexibility,\" \"at your earliest convenience,\" \"I'm reaching out to\"); get to the point immediately after the greeting",
+        "Keep the body to 2\u20133 short paragraphs maximum; one clear ask per email"
+      ],
+      "holdout_reward_after": 0.375
+    },
+    {
+      "example": 4,
+      "context": "slack",
+      "query": "summarize today's standup",
+      "before": "I don't have the content of today's standup to summarize. Could you share the notes, transcript, or key points from the meeting?",
+      "after_user_edit": "I don't have the content from today's standup to summarize. Could you share the key points or notes from the meeting?",
+      "context_lessons_now": [
+        "Use plain `-` bullets, not `\u2022`",
+        "Remove bold formatting markers entirely",
+        "Format dates as YYYY-MM-DD",
+        "Place emoji only at the end of a line, never inline in content",
+        "Write flowing prose sentences in bullets instead of labeled template fields",
+        "Trim option lists to the fewest essential items, no redundant synonyms"
+      ],
+      "holdout_reward_after": 0.5
+    }
+  ],
+  "final_holdout_detail": [
+    {
+      "context": "email",
+      "query": "request a reference letter from a former manager",
+      "reward": 0.5,
+      "satisfied": [
+        "concise_70",
+        "no_placeholders"
+      ],
+      "text": "I need a few specifics to avoid placeholders:\n\n1. **Manager's name** (first name for the greeting)\n2. **Role/opportunity** you're applying for and the **company** (or \"a new opportunity\" if you'd prefer vague)\n3. **Deadline** for the reference letter\n4. **One or two skills/projects** you'd like them to highlight"
+    },
+    {
+      "context": "slack",
+      "query": "announce that the staging environment is back up",
+      "reward": 0.5,
+      "satisfied": [
+        "has_emoji",
+        "no_greeting"
+      ],
+      "text": "The staging environment is back up! \ud83c\udf89"
+    }
+  ]
+}

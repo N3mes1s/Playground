@@ -35,7 +35,7 @@ usage**, runnable offline with `python experiment.py`.
        └──────────────── the model now applies what it learned ◀─────────────┘
 ```
 
-## Two proofs
+## Three proofs
 
 ### 1. Live, with the real Claude model in the loop (`run_claude_real.py`)
 
@@ -71,7 +71,45 @@ python run_claude_real.py          # ~14 live claude -p calls, no key needed
 export ANTHROPIC_API_KEY=...; python experiment_real.py
 ```
 
-### 2. Offline, zero-dependency, deterministic (`experiment.py`)
+In proof #1 the code oracle hands the engine the exact violated rules. That tests
+the *retrieval + apply* mechanism with a clean signal — and it works perfectly
+(1.00). Proof #2 makes it harder and more honest.
+
+### 2. Live + the engine must INFER the preferences itself (`run_inferred_real.py`)
+
+Here the engine is **never told the rules**. It sees only how the user edited a
+draft (before → after) and an LLM **infers the latent preference from the diff**
+(`llm_miner.py`), CIPHER-style: after each edit it re-infers a context's
+preferences from *all* of that context's edits, so recurring preferences stand out
+and one-off noise washes out. Inferred lessons then steer future drafts; the code
+oracle scores held-out tasks.
+
+| Held-out reward | value |
+|---|---|
+| Baseline (frozen Claude) | **0.12** |
+| After inferring preferences from edits | **0.50** |
+
+![inferred curve](artifacts/real-llm/inferred-curve.svg)
+
+A **+0.38 gain driven entirely by preferences the engine discovered on its own.**
+From the diff alone it correctly recovered, in its own words, things like *"sign off
+with 'Onwards, Giuseppe', never 'Best regards'"*, *"use concrete details instead of
+placeholders"*, and *"put one emoji at the end of the line"* (full side-by-side of
+true-vs-inferred rules in `artifacts/real-llm/inferred-run.md`).
+
+**Honest finding:** inference is lossy. It reliably recovers visible preferences
+(sign-off, placeholders, emoji) but misses ones that are hard to see in a couple of
+edits (a specific `@oncall` mention, a hard <70-word limit) or that it hedges into
+optional ("add a P.S. *when appropriate*" → sometimes skipped). That gap between
+**1.00 with a clean signal (#1)** and **0.50 from self-inference (#2)** is the real,
+quantified cost of learning from raw usage — exactly the problem trajectory.ai's
+infrastructure exists to chip away at.
+
+```bash
+python run_inferred_real.py        # ~26 live claude -p calls, no key needed
+```
+
+### 3. Offline, zero-dependency, deterministic (`experiment.py`)
 
 ```bash
 python experiment.py     # controlled A/B over 8 seeds, writes artifacts/
@@ -150,7 +188,8 @@ Deep RL from Human Preferences).
 |---|---|
 | `schema.py` | The `Trajectory` primitive (trace + telemetry) and JSONL store |
 | `sdk.py` | `Recorder` — instrument a product, capture trajectories + telemetry |
-| `miner.py` | Mine edits into lessons and (chosen,rejected) preference pairs |
+| `miner.py` | Mine edits into lessons and (chosen,rejected) preference pairs (structural) |
+| `llm_miner.py` | **LLM-based** preference inference from edit diffs + aggregation + consolidation |
 | `governance.py` | Approval gate + append-only audit log (steer + auditability) |
 | `memory.py` | Retrieval memory of learned lessons (non-parametric learning) |
 | `backends.py` | `MockLLM` (offline) + real backends: `ClaudeCLIBackend`, `AnthropicLLM`, `OpenAILLM` |
@@ -158,7 +197,8 @@ Deep RL from Human Preferences).
 | `environment.py` | Offline testbed with hidden preferences + user-edit oracle |
 | `text_rules.py` | Objective, code-checkable rules over **real text** (the live oracle) |
 | `experiment.py` | The offline controlled proof; writes `artifacts/` |
-| `run_claude_real.py` | **Live proof** — real Claude in the loop via `claude -p` |
+| `run_claude_real.py` | **Live proof #1** — real Claude in the loop via `claude -p` (oracle-fed lessons) |
+| `run_inferred_real.py` | **Live proof #2** — real Claude; engine must infer the rules itself |
 | `experiment_real.py` | Same loop against the Claude/OpenAI API (needs a key) |
 | `tests.py` / `demo_sdk.py` | Regression checks / readable walkthrough |
 | `papers/` | Stored research PDFs + `RESEARCH.md` bibliography |
