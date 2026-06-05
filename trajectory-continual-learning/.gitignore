@@ -1,8 +1,6 @@
 # local training environment + artifacts that are regenerable
 .venv/
-parametric/out/
-parametric/out_dpo/
-parametric/out_qwen/
+parametric/out*/
 parametric/train.jsonl
 parametric/eval.jsonl
 __pycache__/
