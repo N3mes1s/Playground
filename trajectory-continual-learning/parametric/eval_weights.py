@@ -24,9 +24,11 @@ sys.path.insert(0, os.path.dirname(HERE))
 from text_rules import check_text, features_of  # noqa: E402
 
 MODEL = os.environ.get("BASE_MODEL", "HuggingFaceTB/SmolLM2-135M-Instruct")
-OUT = os.path.join(HERE, "out")
+OUT = os.environ.get("ADAPTER_DIR", os.path.join(HERE, "out"))
+TAG = os.environ.get("RESULTS_TAG", "")  # e.g. "dpo", "qwen" -> results_dpo.json
 ART = os.path.join(os.path.dirname(HERE), "artifacts", "parametric")
 SYSTEM = "You are a writing assistant. Write the requested message."
+_suffix = f"_{TAG}" if TAG else ""
 
 torch.manual_seed(0)
 torch.set_num_threads(max(1, os.cpu_count() or 4))
@@ -84,7 +86,8 @@ def main():
 
     summary = {
         "base_model": MODEL,
-        "method": "LoRA SFT on user-edited targets (parametric continual learning)",
+        "adapter": OUT,
+        "method": f"LoRA on user-edited signal (tag={TAG or 'sft'})",
         "eval": "held-out prompts, NO in-context rules, NO refine loop -- weights only",
         "base_reward": round(mean(base_rw), 3),
         "tuned_reward": round(mean(tuned_rw), 3),
@@ -94,15 +97,15 @@ def main():
         "tuned_reward_slack": round(mean(tuned_rw, "slack"), 3),
         "base_rows": base_rows, "tuned_rows": tuned_rows,
     }
-    with open(os.path.join(ART, "results.json"), "w") as f:
+    with open(os.path.join(ART, f"results{_suffix}.json"), "w") as f:
         json.dump(summary, f, indent=2)
 
     try:
         from chart import svg_bars
-        svg_bars(["base weights", "tuned weights"],
+        svg_bars(["base weights", f"tuned ({TAG or 'sft'})"],
                  [summary["base_reward"], summary["tuned_reward"]],
-                 os.path.join(ART, "weights-bars.svg"),
-                 title="Parametric learning: base vs LoRA-tuned weights (held-out)")
+                 os.path.join(ART, f"weights-bars{_suffix}.svg"),
+                 title=f"Parametric learning ({MODEL.split('/')[-1]}, {TAG or 'sft'}): base vs tuned")
     except Exception as e:  # chart import is best-effort
         print("chart skipped:", e)
 
@@ -132,7 +135,7 @@ def _md(s):
         L.append(f"### [{b['context']}] {b['prompt']}")
         L += [f"**base (r={b['reward']:.2f}, {b['satisfied']}):**", "```", b["text"][:600], "```",
               f"**tuned (r={t['reward']:.2f}, {t['satisfied']}):**", "```", t["text"][:600], "```", ""]
-    with open(os.path.join(ART, "results.md"), "w") as f:
+    with open(os.path.join(ART, f"results{_suffix}.md"), "w") as f:
         f.write("\n".join(L))
 
 

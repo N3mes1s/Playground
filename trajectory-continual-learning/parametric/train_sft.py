@@ -22,7 +22,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODEL = os.environ.get("BASE_MODEL", "HuggingFaceTB/SmolLM2-135M-Instruct")
-OUT = os.path.join(HERE, "out")
+OUT = os.environ.get("ADAPTER_DIR", os.path.join(HERE, "out"))
 SYSTEM = "You are a writing assistant. Write the requested message."
 
 torch.manual_seed(0)
@@ -53,7 +53,7 @@ def collate(batch, pad_id):
     return (torch.tensor(ids), torch.tensor(labs), torch.tensor(att))
 
 
-def main(epochs=6, bs=4, lr=2e-4):
+def main(epochs=int(os.environ.get("EPOCHS", "6")), bs=4, lr=2e-4):
     tok = AutoTokenizer.from_pretrained(MODEL)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
