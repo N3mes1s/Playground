@@ -22,7 +22,8 @@ use std::path::{Path, PathBuf};
 #[command(
     name = "carve",
     version,
-    about = "Carve out only the dependency code you actually use — verbatim, provenance-tracked, reversible."
+    about = "A control plane over your dependencies: vendor only the code you use, own it as a small provenance-tracked reversible slice.",
+    after_help = "QUICK START:\n  carve analyze                      # see which dependency code you actually use\n  carve vendor-all --apply           # vendor your deps locally (only Cargo.toml changes)\n  carve harden --transitive          # one shot: vendor + agent-slice the whole supply chain\n  carve impact <crate> --to <ver>    # will this update touch code you use?\n  carve restore <crate>              # reverse it — back to the upstream dependency\n\nDocs & report: see carve/README.md."
 )]
 struct Cli {
     /// Verbose (debug-level) logging.
