@@ -88,6 +88,18 @@ pub struct Assessment {
     pub rationale: String,
 }
 
+/// A build-positioned `*-src` crate (the vendored-native-source convention,
+/// e.g. `openssl-src`) compiles C/C++ that its `*-sys` sibling statically links
+/// **into the shipped binary** — so even though the *Rust crate* runs only at
+/// build time, its output is in the execute path. If the sibling `<base>-sys`
+/// ships at runtime, we must not clear the `-src` crate as "not in execute path".
+fn compiles_into_binary(crate_name: &str, runtime_set: &BTreeSet<String>) -> bool {
+    crate_name
+        .strip_suffix("-src")
+        .map(|base| runtime_set.contains(&format!("{base}-sys")))
+        .unwrap_or(false)
+}
+
 /// Does an observed item path plausibly reach `symbol`? Recall-biased: a match
 /// on any path segment counts, and a referenced *module* that could contain the
 /// symbol counts too (we can't see inside it syntactically).
@@ -148,6 +160,17 @@ pub fn assess(
             Some(Justification::ComponentNotPresent),
             format!("`{crate_name}` is not in {product}'s resolved dependency tree at all."),
         )
+    } else if !runtime && compiles_into_binary(crate_name, runtime_set) {
+        (
+            Status::UnderInvestigation,
+            None,
+            format!(
+                "`{crate_name}` runs at build time, but it compiles native code that its `{}-sys` \
+                 sibling statically links into {product}'s binary — so the vulnerable code can \
+                 still ship. Build-position does not clear it; manual review required.",
+                crate_name.strip_suffix("-src").unwrap_or(crate_name)
+            ),
+        )
     } else if !runtime {
         (
             Status::NotAffected,
@@ -207,8 +230,12 @@ pub fn assess(
     }
 }
 
-/// Render an [`Assessment`] as a single-statement OpenVEX document.
-pub fn to_vex(a: &Assessment, vuln_id: &str, crate_version: Option<&str>) -> serde_json::Value {
+/// Build a single OpenVEX statement (not a full document) for one assessment.
+pub fn vex_statement(
+    a: &Assessment,
+    vuln_id: &str,
+    crate_version: Option<&str>,
+) -> serde_json::Value {
     use serde_json::json;
     let purl = match crate_version {
         Some(v) => format!("pkg:cargo/{}@{}", a.crate_name, v),
@@ -224,14 +251,139 @@ pub fn to_vex(a: &Assessment, vuln_id: &str, crate_version: Option<&str>) -> ser
     if let Some(j) = a.justification {
         statement["justification"] = json!(j.as_str());
     }
+    statement
+}
+
+/// Wrap one or more VEX statements in an OpenVEX document.
+pub fn vex_document(statements: Vec<serde_json::Value>) -> serde_json::Value {
+    use serde_json::json;
     json!({
         "@context": "https://openvex.dev/ns/v0.2.0",
-        "@id": format!("https://openvex.dev/docs/carve/{}-{}", a.crate_name, vuln_id),
+        "@id": format!("https://openvex.dev/docs/carve/{}", uuid_like()),
         "author": "carve",
         "timestamp": chrono::Utc::now().to_rfc3339(),
         "version": 1,
-        "statements": [ statement ],
+        "statements": statements,
     })
+}
+
+/// A cheap, dependency-free document id (timestamp-based; VEX only needs it
+/// stable within the doc, not globally unique).
+fn uuid_like() -> String {
+    format!("{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0))
+}
+
+/// Render an [`Assessment`] as a single-statement OpenVEX document.
+pub fn to_vex(a: &Assessment, vuln_id: &str, crate_version: Option<&str>) -> serde_json::Value {
+    vex_document(vec![vex_statement(a, vuln_id, crate_version)])
+}
+
+/// One finding pulled out of a `cargo audit --json` report.
+#[derive(Debug, Clone)]
+pub struct AuditFinding {
+    pub id: String,
+    pub crate_name: String,
+    pub version: Option<String>,
+    /// "vulnerability", "unmaintained", "unsound", "yanked", …
+    pub kind: String,
+    /// Affected function paths the advisory names, if any (e.g. `atty::is`).
+    pub functions: Vec<String>,
+    pub title: String,
+}
+
+/// Extract findings from a `cargo audit --json` document, tolerant of schema
+/// drift: real vulnerabilities (`vulnerabilities.list`) and every warning
+/// category (`warnings.{unmaintained,unsound,yanked,…}`).
+pub fn parse_audit_report(v: &serde_json::Value) -> Vec<AuditFinding> {
+    let mut out = Vec::new();
+    let mut push = |entry: &serde_json::Value, kind: &str| {
+        let adv = &entry["advisory"];
+        let id = adv["id"].as_str().unwrap_or("UNKNOWN").to_string();
+        let title = adv["title"].as_str().unwrap_or("").to_string();
+        let crate_name = entry["package"]["name"]
+            .as_str()
+            .or_else(|| adv["package"].as_str())
+            .unwrap_or("")
+            .to_string();
+        let version = entry["package"]["version"].as_str().map(str::to_string);
+        let functions = entry["affected"]["functions"]
+            .as_object()
+            .map(|m| m.keys().cloned().collect())
+            .unwrap_or_default();
+        if !crate_name.is_empty() {
+            out.push(AuditFinding {
+                id,
+                crate_name,
+                version,
+                kind: kind.to_string(),
+                functions,
+                title,
+            });
+        }
+    };
+    if let Some(list) = v["vulnerabilities"]["list"].as_array() {
+        for e in list {
+            push(e, "vulnerability");
+        }
+    }
+    if let Some(cats) = v["warnings"].as_object() {
+        for (cat, arr) in cats {
+            if let Some(arr) = arr.as_array() {
+                for e in arr {
+                    push(e, cat);
+                }
+            }
+        }
+    }
+    out
+}
+
+fn severity(s: Status) -> u8 {
+    match s {
+        Status::Affected => 2,
+        Status::UnderInvestigation => 1,
+        Status::NotAffected => 0,
+    }
+}
+
+/// Assess one audit finding. When the advisory names specific functions, every
+/// one is checked and the **most severe** verdict wins (recall-biased — any
+/// reachable vulnerable function makes the whole finding reachable).
+pub fn assess_finding(
+    product: &str,
+    finding: &AuditFinding,
+    present_set: &BTreeSet<String>,
+    runtime_set: &BTreeSet<String>,
+    graph: &TransitiveGraph,
+) -> Assessment {
+    if finding.functions.is_empty() {
+        return assess(
+            product,
+            &finding.crate_name,
+            None,
+            present_set,
+            runtime_set,
+            graph,
+        );
+    }
+    let mut worst: Option<Assessment> = None;
+    for f in &finding.functions {
+        // Match on the function's leaf segment (`atty::is` -> `is`).
+        let sym = f.rsplit("::").next().unwrap_or(f);
+        let a = assess(
+            product,
+            &finding.crate_name,
+            Some(sym),
+            present_set,
+            runtime_set,
+            graph,
+        );
+        worst = Some(match worst {
+            Some(w) if severity(w.status) >= severity(a.status) => w,
+            _ => a,
+        });
+    }
+    worst.expect("functions is non-empty")
 }
 
 #[cfg(test)]
@@ -319,6 +471,24 @@ mod tests {
         );
         assert_eq!(a.status, Status::UnderInvestigation);
         assert!(a.matched_items.is_empty());
+    }
+
+    #[test]
+    fn vendored_native_src_crate_is_not_cleared_as_build_only() {
+        // openssl-src runs at build time, but compiles OpenSSL that openssl-sys
+        // links into the binary. It must NOT be cleared just because it's not in
+        // the normal closure — that would be a false "safe".
+        let g = graph(vec![]);
+        let a = assess(
+            "app",
+            "openssl-src",
+            None,
+            &set(&["openssl-src", "openssl-sys"]),
+            &set(&["openssl-sys"]), // -sys ships; -src is build-only
+            &g,
+        );
+        assert_eq!(a.status, Status::UnderInvestigation);
+        assert!(a.justification.is_none());
     }
 
     #[test]

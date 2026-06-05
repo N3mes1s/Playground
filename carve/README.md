@@ -66,6 +66,7 @@ cargo build --release   # produces target/release/carve
 |---|---|
 | `carve analyze [--transitive]` | Build the Dependency Functional Usage Graph (DFUG): which dependency items your product references, how often, and from where. `--transitive` builds it across the WHOLE closure (dependencies of dependencies) — including the **item paths flowing across each edge** and whether each crate **ships in the binary** (normal-only reachability) vs is dev/build/target-gated. Flags unreferenced deps as drop candidates. |
 | `carve affected <crate> [--symbol S] [--id ADV] [--vex]` | **CVE reachability triage.** Given an advisory, answer whether your product is actually affected — using the deep DFUG to trace whether the vulnerable crate ships in your binary and whether anything reaches the vulnerable symbol. **Fail-safe:** only clears a vuln when the *structure* proves it (`component_not_present`, or present-but-not-in-the-runtime-closure → `vulnerable_code_not_in_execute_path`); a shipped crate with no observed reference is `under_investigation` (never a false "safe"). `--vex` emits an auditable OpenVEX statement. |
+| `carve triage <report> [--vex]` | **The pipeline.** Triage a whole `cargo audit --json` report at once: `cargo audit --json \| carve triage -`. Runs the reachability assessment for every finding and prints a ranked table (cleared / needs-review / affected), or a single combined OpenVEX document with `--vex`. |
 | `carve plan` | The agent reads the DFUG and proposes, per crate, whether item-level slicing is safe (HIGH), needs a verification build (MED), or should be vendored whole for now (LOW). |
 | `carve vendor <crate> [--apply]` | Transcribe a crate verbatim into `vendor/`, recording provenance in `carve.lock`. `--apply` also wires the reversible `[patch.crates-io]` entry. |
 | `carve harden [--transitive] [--budget N] [--min-reduction PCT]` | **The whole pipeline, autonomously, in one command.** Vendors the closure, detects which crates are actually compiled for this target, has the agent slice every one, reverts crates that shed less than `--min-reduction` % (not worth owning), and reports the aggregate attack-surface reduction **and the clean `--release` build-time delta**. `--test` runs the consumer's test suite as a behavioral gate; re-runs are incremental (intact slices are reused). |
@@ -139,6 +140,35 @@ $ carve affected openssl --id RUSTSEC-2099-9999 --vex
 { "@context": "https://openvex.dev/ns/v0.2.0", … "status": "not_affected",
   "justification": "component_not_present", … }
 ```
+
+#### Real-world run: triaging `cargo audit` on `gitui`
+
+Against a real release (`gitui v0.22.1`, 220-crate lock), `cargo audit` reports
+**23 findings** — the classic alert-fatigue wall. `cargo audit --json | carve
+triage -` triages all of them in ~10s:
+
+```
+Summary: 7 not-affected (don't ship / not present), 6 need review, 10 affected.
+```
+
+What the reachability layer adds over version-match scanning:
+
+- **`remove_dir_all` (RUSTSEC-2023-0018, TOCTOU race) → not affected.** It is
+  reachable only through `tempfile`, a dev-dependency — it never ships in the
+  binary (`vulnerable_code_not_in_execute_path`).
+- **`pprof` / `rgb` → not affected (`component_not_present`).** They are stale
+  `Cargo.lock` entries not in the resolved build graph — carve is *more precise*
+  than raw-lockfile matching, which flags them anyway.
+- **`time` (RUSTSEC-2026-0009, parse-path DoS) → needs review.** It ships (via
+  `chrono`/`git2`), but no reference to the vulnerable `parse` functions was
+  seen. Fail-safe: surfaced for review, **never auto-cleared**.
+- **`openssl-src` (4× OpenSSL CVEs) → needs review, *not* cleared.** Although it
+  runs only at build time, it compiles vendored OpenSSL that `openssl-sys`
+  statically links into the binary — so carve refuses to clear it as "build-only"
+  (a false-negative class it explicitly guards against).
+
+The result is a ranked queue of what actually warrants attention plus a combined
+OpenVEX document to suppress the rest — not 23 undifferentiated tickets.
 
 ## Configuration (`carve.toml`)
 

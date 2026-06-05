@@ -224,6 +224,18 @@ enum Command {
         #[arg(long)]
         vex: bool,
     },
+    /// Triage a whole `cargo audit --json` report through the DFUG: for every
+    /// finding, say whether it actually reaches your product, and emit a single
+    /// VEX document. The real pipeline — `cargo audit --json | carve triage -`.
+    Triage {
+        /// Path to a `cargo audit --json` report, or `-` to read stdin.
+        report: String,
+        #[arg(long, default_value = "Cargo.toml")]
+        manifest_path: PathBuf,
+        /// Emit a combined OpenVEX document instead of the human-readable table.
+        #[arg(long)]
+        vex: bool,
+    },
     /// List the tools available to the autonomous agent.
     Tools,
     /// Agent: locate the upstream definition site of a used item (tool-driven).
@@ -337,6 +349,11 @@ fn main() -> Result<()> {
             id.as_deref(),
             vex,
         ),
+        Command::Triage {
+            report,
+            manifest_path,
+            vex,
+        } => cmd_triage(&report, &manifest_path, vex),
         Command::Tools => cmd_tools(),
         Command::Locate {
             crate_name,
@@ -597,6 +614,97 @@ fn cmd_affected(
         }
     }
     println!("\n  (emit a VEX statement with --vex --id <ADVISORY>)");
+    Ok(())
+}
+
+fn cmd_triage(report: &str, manifest_path: &Path, vex: bool) -> Result<()> {
+    let raw = if report == "-" {
+        use std::io::Read;
+        let mut s = String::new();
+        std::io::stdin().read_to_string(&mut s)?;
+        s
+    } else {
+        std::fs::read_to_string(report).with_context(|| format!("reading audit report {report}"))?
+    };
+    let json: serde_json::Value =
+        serde_json::from_str(&raw).context("parsing the cargo-audit JSON report")?;
+    let findings = reach::parse_audit_report(&json);
+
+    let meta = analyze::metadata::load_metadata(manifest_path)?;
+    let product = meta
+        .root_package()
+        .map(|p| p.name.clone())
+        .unwrap_or_else(|| "product".to_string());
+    let present_set = analyze::metadata::all_package_names(&meta);
+    let runtime_set = analyze::metadata::runtime_closure(&meta)?;
+    let graph = analyze::build_transitive_usage(manifest_path)?;
+
+    if findings.is_empty() {
+        println!("No findings in the report — nothing to triage.");
+        return Ok(());
+    }
+
+    let mut statements = Vec::new();
+    let mut assessed = Vec::new();
+    for f in &findings {
+        let a = reach::assess_finding(&product, f, &present_set, &runtime_set, &graph);
+        statements.push(reach::vex_statement(&a, &f.id, f.version.as_deref()));
+        assessed.push((f, a));
+    }
+
+    if vex {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&reach::vex_document(statements))?
+        );
+        return Ok(());
+    }
+
+    let (mut cleared, mut review, mut affected) = (0usize, 0usize, 0usize);
+    for (_, a) in &assessed {
+        match a.status {
+            reach::Status::NotAffected => cleared += 1,
+            reach::Status::UnderInvestigation => review += 1,
+            reach::Status::Affected => affected += 1,
+        }
+    }
+
+    println!(
+        "carve triage — {product}: {} cargo-audit finding(s)\n",
+        findings.len()
+    );
+    for (f, a) in &assessed {
+        let badge = match a.status {
+            reach::Status::NotAffected => "NOT AFFECTED",
+            reach::Status::Affected => "AFFECTED    ",
+            reach::Status::UnderInvestigation => "NEEDS REVIEW",
+        };
+        let extra = a
+            .justification
+            .map(|j| format!(" ({})", j.as_str()))
+            .unwrap_or_default();
+        println!(
+            "  [{}] {:<16} {:<12} {}{}",
+            badge, f.id, f.crate_name, f.kind, extra
+        );
+        if !f.title.is_empty() {
+            println!("       {}", f.title);
+        }
+        if a.status != reach::Status::NotAffected && !a.reached_by.is_empty() {
+            let who: Vec<&str> = a
+                .reached_by
+                .iter()
+                .map(|r| r.from.as_str())
+                .take(6)
+                .collect();
+            println!("       reached by: {}", who.join(", "));
+        }
+    }
+    println!(
+        "\n  Summary: {cleared} not-affected (don't ship / not present), \
+         {review} need review, {affected} affected."
+    );
+    println!("  Emit the VEX to suppress the cleared ones: carve triage <report> --vex");
     Ok(())
 }
 
