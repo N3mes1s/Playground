@@ -211,3 +211,29 @@ fn index_rs(root: &Path) -> BTreeMap<String, String> {
     }
     map
 }
+
+/// Produce a unified diff (via system `diff -u`) of each in-slice file that the
+/// target version changes — the exact, bounded code to proof-read before a bump.
+pub fn unified_diffs(
+    entry: &VendorEntry,
+    to_version: &str,
+    report: &ImpactReport,
+) -> Result<Vec<(String, String)>> {
+    let from_src = crate::vendor::find_registry_src(&entry.crate_name, &entry.version)?;
+    let to_src = ensure_src(&entry.crate_name, to_version)?;
+    let mut out = Vec::new();
+    for f in &report.changed_in_slice {
+        let a = from_src.join(&f.upstream_path);
+        let b = to_src.join(&f.upstream_path);
+        let text = std::process::Command::new("diff")
+            .arg("-u")
+            .arg(&a)
+            .arg(&b)
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default();
+        out.push((f.upstream_path.clone(), text));
+    }
+    Ok(out)
+}

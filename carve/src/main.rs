@@ -179,6 +179,10 @@ enum Command {
         manifest_path: PathBuf,
         #[arg(short, long)]
         out: Option<PathBuf>,
+        /// Print the unified diff of the in-slice code the update changes — the
+        /// exact, bounded surface to proof-read before bumping.
+        #[arg(long)]
+        diff: bool,
     },
     /// List the tools available to the autonomous agent.
     Tools,
@@ -271,7 +275,8 @@ fn main() -> Result<()> {
             to,
             manifest_path,
             out,
-        } => cmd_impact(&crate_name, &to, &manifest_path, out.as_deref()),
+            diff,
+        } => cmd_impact(&crate_name, &to, &manifest_path, out.as_deref(), diff),
         Command::Tools => cmd_tools(),
         Command::Locate {
             crate_name,
@@ -1246,7 +1251,13 @@ fn cmd_patch(crate_name: &str, manifest_path: &Path, note: Option<String>) -> Re
     Ok(())
 }
 
-fn cmd_impact(crate_name: &str, to: &str, manifest_path: &Path, out: Option<&Path>) -> Result<()> {
+fn cmd_impact(
+    crate_name: &str,
+    to: &str,
+    manifest_path: &Path,
+    out: Option<&Path>,
+    diff: bool,
+) -> Result<()> {
     let root = root_of(manifest_path);
     let lock = vendor::load_lock(&root)?;
     let entry = lock
@@ -1305,6 +1316,18 @@ fn cmd_impact(crate_name: &str, to: &str, manifest_path: &Path, out: Option<&Pat
         println!("           (They are in your tree but not items you directly call.)");
     }
     println!("  ──────────────────────────────────────────────");
+
+    if diff && !report.changed_in_slice.is_empty() {
+        println!("\n  ── proof-read surface: unified diff of in-slice changes ──");
+        for (path, d) in impact::unified_diffs(entry, to, &report)? {
+            println!("\n### {path}");
+            if d.trim().is_empty() {
+                println!("(no textual diff)");
+            } else {
+                print!("{d}");
+            }
+        }
+    }
 
     if let Some(path) = out {
         std::fs::write(path, serde_json::to_string_pretty(&report)?)?;
