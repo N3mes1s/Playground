@@ -48,14 +48,33 @@ pub fn normalize_ident(name: &str) -> String {
 }
 
 /// Run `cargo metadata` and return the raw result (canonicalizing the manifest).
+///
+/// Prefers `--locked` so the analysis reflects the **exact committed lockfile** —
+/// the same tree a scanner like `cargo audit` reads. If the lock is missing or
+/// out of date, falls back to a fresh resolve with a loud warning (so triage
+/// results can't silently diverge from the audited `Cargo.lock`).
 pub fn load_metadata(manifest_path: impl AsRef<Path>) -> Result<Metadata> {
     let manifest_path = manifest_path.as_ref();
     let manifest_path = std::fs::canonicalize(manifest_path)
         .with_context(|| format!("resolving manifest path {}", manifest_path.display()))?;
-    MetadataCommand::new()
+    let locked = MetadataCommand::new()
         .manifest_path(&manifest_path)
-        .exec()
-        .context("running `cargo metadata` (is this a Cargo project?)")
+        .other_options(vec!["--locked".to_string()])
+        .exec();
+    match locked {
+        Ok(m) => Ok(m),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "`cargo metadata --locked` failed (Cargo.lock missing or out of date); \
+                 falling back to a fresh resolve — results may not match the committed lockfile"
+            );
+            MetadataCommand::new()
+                .manifest_path(&manifest_path)
+                .exec()
+                .context("running `cargo metadata` (is this a Cargo project?)")
+        }
+    }
 }
 
 /// Map a package's declared dependencies to their `code_ident` -> [`DepInfo`].

@@ -235,6 +235,13 @@ enum Command {
         /// Emit a combined OpenVEX document instead of the human-readable table.
         #[arg(long)]
         vex: bool,
+        /// Target OS to triage for (default: this host). Advisories gated to
+        /// other OSes are cleared as not-present (their code isn't compiled).
+        #[arg(long, default_value_t = std::env::consts::OS.to_string())]
+        target_os: String,
+        /// Target arch to triage for (default: this host).
+        #[arg(long, default_value_t = std::env::consts::ARCH.to_string())]
+        target_arch: String,
     },
     /// List the tools available to the autonomous agent.
     Tools,
@@ -353,7 +360,9 @@ fn main() -> Result<()> {
             report,
             manifest_path,
             vex,
-        } => cmd_triage(&report, &manifest_path, vex),
+            target_os,
+            target_arch,
+        } => cmd_triage(&report, &manifest_path, vex, &target_os, &target_arch),
         Command::Tools => cmd_tools(),
         Command::Locate {
             crate_name,
@@ -617,7 +626,13 @@ fn cmd_affected(
     Ok(())
 }
 
-fn cmd_triage(report: &str, manifest_path: &Path, vex: bool) -> Result<()> {
+fn cmd_triage(
+    report: &str,
+    manifest_path: &Path,
+    vex: bool,
+    target_os: &str,
+    target_arch: &str,
+) -> Result<()> {
     let raw = if report == "-" {
         use std::io::Read;
         let mut s = String::new();
@@ -647,7 +662,15 @@ fn cmd_triage(report: &str, manifest_path: &Path, vex: bool) -> Result<()> {
     let mut statements = Vec::new();
     let mut assessed = Vec::new();
     for f in &findings {
-        let a = reach::assess_finding(&product, f, &present_set, &runtime_set, &graph);
+        let a = reach::assess_finding(
+            &product,
+            f,
+            &present_set,
+            &runtime_set,
+            &graph,
+            target_os,
+            target_arch,
+        );
         statements.push(reach::vex_statement(&a, &f.id, f.version.as_deref()));
         assessed.push((f, a));
     }
@@ -670,7 +693,7 @@ fn cmd_triage(report: &str, manifest_path: &Path, vex: bool) -> Result<()> {
     }
 
     println!(
-        "carve triage — {product}: {} cargo-audit finding(s)\n",
+        "carve triage — {product}: {} cargo-audit finding(s)  [target {target_os}/{target_arch}]\n",
         findings.len()
     );
     for (f, a) in &assessed {

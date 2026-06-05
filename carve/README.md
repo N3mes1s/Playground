@@ -66,7 +66,7 @@ cargo build --release   # produces target/release/carve
 |---|---|
 | `carve analyze [--transitive]` | Build the Dependency Functional Usage Graph (DFUG): which dependency items your product references, how often, and from where. `--transitive` builds it across the WHOLE closure (dependencies of dependencies) — including the **item paths flowing across each edge** and whether each crate **ships in the binary** (normal-only reachability) vs is dev/build/target-gated. Flags unreferenced deps as drop candidates. |
 | `carve affected <crate> [--symbol S] [--id ADV] [--vex]` | **CVE reachability triage.** Given an advisory, answer whether your product is actually affected — using the deep DFUG to trace whether the vulnerable crate ships in your binary and whether anything reaches the vulnerable symbol. **Fail-safe:** only clears a vuln when the *structure* proves it (`component_not_present`, or present-but-not-in-the-runtime-closure → `vulnerable_code_not_in_execute_path`); a shipped crate with no observed reference is `under_investigation` (never a false "safe"). `--vex` emits an auditable OpenVEX statement. |
-| `carve triage <report> [--vex]` | **The pipeline.** Triage a whole `cargo audit --json` report at once: `cargo audit --json \| carve triage -`. Runs the reachability assessment for every finding and prints a ranked table (cleared / needs-review / affected), or a single combined OpenVEX document with `--vex`. |
+| `carve triage <report> [--vex] [--target-os OS] [--target-arch A]` | **The pipeline.** Triage a whole `cargo audit --json` report at once: `cargo audit --json \| carve triage -`. Runs the reachability assessment for every finding and prints a ranked table (cleared / needs-review / affected), or a single combined OpenVEX document with `--vex`. **Platform-aware**: advisories gated to an OS/arch you don't target (e.g. a Windows-only bug on a Linux build) are cleared as `vulnerable_code_not_present` — defaults to this host, override with `--target-os`/`--target-arch`. Reads the exact committed `Cargo.lock` (`--locked`), so it can't diverge from what the scanner saw. |
 | `carve plan` | The agent reads the DFUG and proposes, per crate, whether item-level slicing is safe (HIGH), needs a verification build (MED), or should be vendored whole for now (LOW). |
 | `carve vendor <crate> [--apply]` | Transcribe a crate verbatim into `vendor/`, recording provenance in `carve.lock`. `--apply` also wires the reversible `[patch.crates-io]` entry. |
 | `carve harden [--transitive] [--budget N] [--min-reduction PCT]` | **The whole pipeline, autonomously, in one command.** Vendors the closure, detects which crates are actually compiled for this target, has the agent slice every one, reverts crates that shed less than `--min-reduction` % (not worth owning), and reports the aggregate attack-surface reduction **and the clean `--release` build-time delta**. `--test` runs the consumer's test suite as a behavioral gate; re-runs are incremental (intact slices are reused). |
@@ -145,10 +145,11 @@ $ carve affected openssl --id RUSTSEC-2099-9999 --vex
 
 Against a real release (`gitui v0.22.1`, 220-crate lock), `cargo audit` reports
 **23 findings** — the classic alert-fatigue wall. `cargo audit --json | carve
-triage -` triages all of them in ~10s:
+triage -` triages all of them in ~10s (here, for a Linux deployment):
 
 ```
-Summary: 7 not-affected (don't ship / not present), 6 need review, 10 affected.
+[target linux/x86_64]
+Summary: 9 not-affected (don't ship / not present), 6 need review, 8 affected.
 ```
 
 What the reachability layer adds over version-match scanning:
@@ -166,6 +167,10 @@ What the reachability layer adds over version-match scanning:
   runs only at build time, it compiles vendored OpenSSL that `openssl-sys`
   statically links into the binary — so carve refuses to clear it as "build-only"
   (a false-negative class it explicitly guards against).
+- **`mio` (RUSTSEC-2024-0019) and `atty` (RUSTSEC-2021-0145) → not affected on
+  Linux.** Both are gated to `os = ["windows"]`, so the vulnerable code isn't
+  compiled into a Linux binary (`vulnerable_code_not_present`). Re-run with
+  `--target-os windows` and they correctly come back as affected.
 
 The result is a ranked queue of what actually warrants attention plus a combined
 OpenVEX document to suppress the rest — not 23 undifferentiated tickets.

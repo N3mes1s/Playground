@@ -49,6 +49,9 @@ impl Status {
 pub enum Justification {
     ComponentNotPresent,
     VulnerableCodeNotInExecutePath,
+    /// The vulnerable code is gated to OS/arch we don't target, so it isn't
+    /// compiled into our binary (e.g. a Windows-only bug on a Linux build).
+    VulnerableCodeNotPresent,
 }
 
 impl Justification {
@@ -56,6 +59,7 @@ impl Justification {
         match self {
             Justification::ComponentNotPresent => "component_not_present",
             Justification::VulnerableCodeNotInExecutePath => "vulnerable_code_not_in_execute_path",
+            Justification::VulnerableCodeNotPresent => "vulnerable_code_not_present",
         }
     }
 }
@@ -288,6 +292,10 @@ pub struct AuditFinding {
     pub kind: String,
     /// Affected function paths the advisory names, if any (e.g. `atty::is`).
     pub functions: Vec<String>,
+    /// OS values the advisory is gated to (`windows`, `linux`, …). Empty = all.
+    pub os: Vec<String>,
+    /// Arch values the advisory is gated to (`x86_64`, `aarch64`, …). Empty = all.
+    pub arch: Vec<String>,
     pub title: String,
 }
 
@@ -310,6 +318,17 @@ pub fn parse_audit_report(v: &serde_json::Value) -> Vec<AuditFinding> {
             .as_object()
             .map(|m| m.keys().cloned().collect())
             .unwrap_or_default();
+        let str_list = |v: &serde_json::Value| -> Vec<String> {
+            v.as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let os = str_list(&entry["affected"]["os"]);
+        let arch = str_list(&entry["affected"]["arch"]);
         if !crate_name.is_empty() {
             out.push(AuditFinding {
                 id,
@@ -317,6 +336,8 @@ pub fn parse_audit_report(v: &serde_json::Value) -> Vec<AuditFinding> {
                 version,
                 kind: kind.to_string(),
                 functions,
+                os,
+                arch,
                 title,
             });
         }
@@ -346,16 +367,55 @@ fn severity(s: Status) -> u8 {
     }
 }
 
-/// Assess one audit finding. When the advisory names specific functions, every
-/// one is checked and the **most severe** verdict wins (recall-biased — any
-/// reachable vulnerable function makes the whole finding reachable).
+/// An advisory gated to a platform list excludes our target when the list is
+/// non-empty and doesn't mention us — the vulnerable `#[cfg(...)]` code then
+/// isn't compiled into our binary at all.
+fn platform_excludes(list: &[String], target: &str) -> bool {
+    !list.is_empty() && !list.iter().any(|x| x == target)
+}
+
+/// Assess one audit finding against a build target (`target_os`/`target_arch`,
+/// e.g. `linux`/`x86_64`). When the advisory names specific functions, every one
+/// is checked and the **most severe** verdict wins (recall-biased — any reachable
+/// vulnerable function makes the whole finding reachable).
 pub fn assess_finding(
     product: &str,
     finding: &AuditFinding,
     present_set: &BTreeSet<String>,
     runtime_set: &BTreeSet<String>,
     graph: &TransitiveGraph,
+    target_os: &str,
+    target_arch: &str,
 ) -> Assessment {
+    // Platform gate: a Windows-only (or other off-target) bug isn't compiled
+    // into our binary. Sound for the target we build — assumes the report's
+    // target matches the deploy target (override with --target-os/--target-arch).
+    if platform_excludes(&finding.os, target_os) || platform_excludes(&finding.arch, target_arch) {
+        let mut gate = Vec::new();
+        if platform_excludes(&finding.os, target_os) {
+            gate.push(format!("os {:?} (target {target_os})", finding.os));
+        }
+        if platform_excludes(&finding.arch, target_arch) {
+            gate.push(format!("arch {:?} (target {target_arch})", finding.arch));
+        }
+        return Assessment {
+            product: product.to_string(),
+            crate_name: finding.crate_name.clone(),
+            symbol: None,
+            status: Status::NotAffected,
+            justification: Some(Justification::VulnerableCodeNotPresent),
+            present: present_set.contains(&finding.crate_name),
+            runtime: runtime_set.contains(&finding.crate_name),
+            reached_by: Vec::new(),
+            matched_items: Vec::new(),
+            rationale: format!(
+                "`{}` is vulnerable only on {} — not compiled into {product}'s build for this \
+                 target, so the vulnerable code is not present.",
+                finding.crate_name,
+                gate.join(" / ")
+            ),
+        };
+    }
     if finding.functions.is_empty() {
         return assess(
             product,
@@ -489,6 +549,57 @@ mod tests {
         );
         assert_eq!(a.status, Status::UnderInvestigation);
         assert!(a.justification.is_none());
+    }
+
+    fn finding(crate_name: &str, os: &[&str], arch: &[&str]) -> AuditFinding {
+        AuditFinding {
+            id: "RUSTSEC-TEST".into(),
+            crate_name: crate_name.into(),
+            version: Some("1.0.0".into()),
+            kind: "vulnerability".into(),
+            functions: vec![],
+            os: os.iter().map(|s| s.to_string()).collect(),
+            arch: arch.iter().map(|s| s.to_string()).collect(),
+            title: String::new(),
+        }
+    }
+
+    #[test]
+    fn windows_only_advisory_is_cleared_on_linux_target() {
+        // mio NamedPipe bug: os = ["windows"]. On a linux build it's not compiled.
+        let g = graph(vec![edge("app", "mio", &["mio::Poll"])]);
+        let f = finding("mio", &["windows"], &[]);
+        let a = assess_finding(
+            "app",
+            &f,
+            &set(&["mio"]),
+            &set(&["mio"]),
+            &g,
+            "linux",
+            "x86_64",
+        );
+        assert_eq!(a.status, Status::NotAffected);
+        assert_eq!(
+            a.justification,
+            Some(Justification::VulnerableCodeNotPresent)
+        );
+    }
+
+    #[test]
+    fn windows_only_advisory_is_kept_on_windows_target() {
+        // Same finding, but we ship to windows — must not be cleared by platform.
+        let g = graph(vec![edge("app", "mio", &["mio::Poll"])]);
+        let f = finding("mio", &["windows"], &[]);
+        let a = assess_finding(
+            "app",
+            &f,
+            &set(&["mio"]),
+            &set(&["mio"]),
+            &g,
+            "windows",
+            "x86_64",
+        );
+        assert_ne!(a.status, Status::NotAffected);
     }
 
     #[test]
