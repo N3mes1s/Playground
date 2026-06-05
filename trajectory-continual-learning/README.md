@@ -35,7 +35,7 @@ usage**, runnable offline with `python experiment.py`.
        └──────────────── the model now applies what it learned ◀─────────────┘
 ```
 
-## Three proofs
+## Proofs (live + offline)
 
 ### 1. Live, with the real Claude model in the loop (`run_claude_real.py`)
 
@@ -97,16 +97,51 @@ with 'Onwards, Giuseppe', never 'Best regards'"*, *"use concrete details instead
 placeholders"*, and *"put one emoji at the end of the line"* (full side-by-side of
 true-vs-inferred rules in `artifacts/real-llm/inferred-run.md`).
 
-**Honest finding:** inference is lossy. It reliably recovers visible preferences
-(sign-off, placeholders, emoji) but misses ones that are hard to see in a couple of
-edits (a specific `@oncall` mention, a hard <70-word limit) or that it hedges into
-optional ("add a P.S. *when appropriate*" → sometimes skipped). That gap between
-**1.00 with a clean signal (#1)** and **0.50 from self-inference (#2)** is the real,
-quantified cost of learning from raw usage — exactly the problem trajectory.ai's
-infrastructure exists to chip away at.
+**The finding that drove proof #2b:** naive inference is lossy. It recovers visible
+preferences (sign-off, placeholders, emoji) but misses low-salience ones (a specific
+`@oncall` mention, a hard word limit) and the policy drops rules at apply time
+("add a P.S. *when appropriate*" → skipped). So self-inference plateaued at ~0.50
+while a clean signal hit 1.00. Rather than accept that gap, proof #2b closes it.
 
 ```bash
 python run_inferred_real.py        # ~26 live claude -p calls, no key needed
+```
+
+### 2b. Closing the inference gap (`run_robust_real.py`)
+
+Three techniques from the instruction-following / preference-learning literature,
+measured as a live ablation over **8 held-out tasks** (engine still never told the
+rules):
+
+- **Decomposed inference** — inspect explicit editorial dimensions so low-salience
+  rules aren't missed ([DeCRIM, 2410.06458](https://arxiv.org/abs/2410.06458)).
+- **Self-consistency voting** — sample inference 4×, keep only guidelines that recur,
+  de-hedge them ([self-curation, 2408.12799](https://arxiv.org/abs/2408.12799)).
+- **Critique→refine with a tool-checked critic** — generate, then a critic checks
+  each lesson and the draft is rewritten until all pass; word count, bullets, emoji,
+  `@mentions` and placeholders are verified in **code** (enforcing the engine's *own
+  inferred lessons*, never the hidden rules), the rest by an LLM critic
+  ([Self-Refine](https://arxiv.org/abs/2303.17651) + DeCRIM).
+
+| Condition | Held-out reward | Technique added |
+|---|---|---|
+| baseline | **0.19** | — (frozen model) |
+| naive inference | **0.66** | single aggregate inference |
+| robust inference | **0.66** | + decomposed analysis & self-consistency voting |
+| **robust + refine** | **1.00** | + tool-checked critique→refine at apply time |
+
+![ablation](artifacts/real-llm/robust-bars.svg)
+
+**All 8 held-out tasks reached 1.00** — every hidden idiosyncratic rule satisfied,
+with email bodies legitimately 43–64 words (under the hidden 70) and slack messages
+carrying the `@oncall` mention, an emoji, bullets and no greeting. The non-obvious
+lesson: robust inference alone didn't move the *average* vs naive, but it produced
+clean, **measurable** lessons; the decisive lever was the **apply-time
+critique→refine loop** (0.66 → 1.00). Better inference raises the ceiling; enforcement
+reaches it. Full transcript + true-vs-inferred in `artifacts/real-llm/robust-run.md`.
+
+```bash
+python run_robust_real.py          # ~80 live claude -p calls, no key needed
 ```
 
 ### 3. Offline, zero-dependency, deterministic (`experiment.py`)
@@ -189,7 +224,8 @@ Deep RL from Human Preferences).
 | `schema.py` | The `Trajectory` primitive (trace + telemetry) and JSONL store |
 | `sdk.py` | `Recorder` — instrument a product, capture trajectories + telemetry |
 | `miner.py` | Mine edits into lessons and (chosen,rejected) preference pairs (structural) |
-| `llm_miner.py` | **LLM-based** preference inference from edit diffs + aggregation + consolidation |
+| `llm_miner.py` | **LLM-based** preference inference: per-edit, CIPHER aggregation, robust (decomposed + self-consistency), consolidation |
+| `refine.py` | Apply-time critique→refine loop with a **tool-checked** critic (verifiable constraints) |
 | `governance.py` | Approval gate + append-only audit log (steer + auditability) |
 | `memory.py` | Retrieval memory of learned lessons (non-parametric learning) |
 | `backends.py` | `MockLLM` (offline) + real backends: `ClaudeCLIBackend`, `AnthropicLLM`, `OpenAILLM` |
@@ -199,6 +235,7 @@ Deep RL from Human Preferences).
 | `experiment.py` | The offline controlled proof; writes `artifacts/` |
 | `run_claude_real.py` | **Live proof #1** — real Claude in the loop via `claude -p` (oracle-fed lessons) |
 | `run_inferred_real.py` | **Live proof #2** — real Claude; engine must infer the rules itself |
+| `run_robust_real.py` | **Live proof #2b** — ablation closing the inference gap to 1.00 |
 | `experiment_real.py` | Same loop against the Claude/OpenAI API (needs a key) |
 | `tests.py` / `demo_sdk.py` | Regression checks / readable walkthrough |
 | `papers/` | Stored research PDFs + `RESEARCH.md` bibliography |
