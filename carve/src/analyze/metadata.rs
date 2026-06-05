@@ -119,22 +119,33 @@ pub fn build_closure(meta: &Metadata) -> Result<Vec<ClosureNode>> {
         .resolve
         .as_ref()
         .context("no resolve graph; run on a real project with a lockfile")?;
-    let root = resolve
+    // Roots: a single root package, or — for a *virtual workspace* (no root
+    // package, just members) — every workspace member. This lets carve harden
+    // workspaces like `sd` that have no top-level [package].
+    let roots: Vec<PackageId> = match resolve
         .root
         .clone()
         .or_else(|| meta.root_package().map(|p| p.id.clone()))
-        .context("no root package in resolve graph")?;
+    {
+        Some(r) => vec![r],
+        None => meta.workspace_members.clone(),
+    };
+    if roots.is_empty() {
+        anyhow::bail!("no root package or workspace members found");
+    }
 
     let nodes: HashMap<&PackageId, &cargo_metadata::Node> =
         resolve.nodes.iter().map(|n| (&n.id, n)).collect();
     let pkgs: HashMap<&PackageId, &Package> = meta.packages.iter().map(|p| (&p.id, p)).collect();
     let workspace: BTreeSet<&PackageId> = meta.workspace_members.iter().collect();
 
-    // BFS, recording the shallowest depth at which each package is reached.
+    // BFS from all roots, recording the shallowest depth at which each is reached.
     let mut depth: HashMap<PackageId, usize> = HashMap::new();
     let mut queue: VecDeque<(PackageId, usize)> = VecDeque::new();
-    queue.push_back((root.clone(), 0));
-    depth.insert(root.clone(), 0);
+    for r in &roots {
+        queue.push_back((r.clone(), 0));
+        depth.insert(r.clone(), 0);
+    }
 
     while let Some((id, d)) = queue.pop_front() {
         let Some(node) = nodes.get(&id) else { continue };

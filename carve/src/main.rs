@@ -769,10 +769,13 @@ fn cmd_vendor_all(
     let root = root_of(manifest_path);
 
     // Map each used crate to its referenced items, for richer provenance.
-    let graph = analyze::build_usage_graph(manifest_path)?;
+    // Optional: a virtual workspace has no single root package to analyze, so we
+    // proceed without per-crate item provenance rather than failing.
+    let graph = analyze::build_usage_graph(manifest_path).ok();
     let kept_for = |pkg: &str| -> Vec<String> {
         graph
-            .used_crate(pkg)
+            .as_ref()
+            .and_then(|g| g.used_crate(pkg))
             .map(|c| c.items.iter().map(|i| i.path.clone()).collect())
             .unwrap_or_default()
     };
