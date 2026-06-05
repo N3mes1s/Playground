@@ -107,6 +107,11 @@ enum Command {
         /// tail, at one `cargo check` per candidate.
         #[arg(long, default_value_t = 0)]
         budget: usize,
+        /// Behavioral gate: after slicing, run the consumer's own test suite
+        /// (`cargo test`), not just compile it — catches removals that compile
+        /// but change behavior. As good as the product's test coverage.
+        #[arg(long)]
+        test: bool,
     },
     /// Autonomously harden the whole supply chain: vendor the closure, then have
     /// the agent slice EVERY compiled vendored crate, and report the aggregate
@@ -220,6 +225,7 @@ fn main() -> Result<()> {
             llm,
             items,
             budget,
+            test,
         } => cmd_slice(
             &crate_name,
             &manifest_path,
@@ -227,6 +233,7 @@ fn main() -> Result<()> {
             llm,
             items,
             budget,
+            test,
         ),
         Command::Harden {
             manifest_path,
@@ -884,6 +891,7 @@ fn cmd_slice(
     llm: bool,
     items: bool,
     budget: usize,
+    test: bool,
 ) -> Result<()> {
     let root = root_of(manifest_path);
     let mut lock = vendor::load_lock(&root)?;
@@ -1011,6 +1019,22 @@ fn cmd_slice(
         );
     }
 
+    // Behavioral gate: compiling proves the slice type-checks; running the
+    // consumer's tests proves it still *behaves*. This catches removals that
+    // compile but change runtime behavior (Drop, ctor registration, cfg paths),
+    // bounded by the product's own test coverage.
+    if test {
+        println!("\nBehavioral verification — running the consumer's test suite…");
+        match run_consumer_tests(manifest_path)? {
+            Some(true) => println!("  consumer tests: PASS — slice is behaviorally verified"),
+            Some(false) => {
+                println!("  consumer tests: FAIL — the slice changed behavior the tests caught");
+                anyhow::bail!("behavioral verification failed; restore or re-slice this crate");
+            }
+            None => println!("  consumer has no tests — behavioral gate skipped (compile-only)"),
+        }
+    }
+
     // The headline: how much attack surface did carving actually remove?
     let surface_after = slice::measure_surface(&vendor_dir);
     print_attack_surface(&entry.crate_name, &surface_before, &surface_after);
@@ -1025,6 +1049,40 @@ fn cmd_slice(
         println!("\n  slice + surface report written to {}", path.display());
     }
     Ok(())
+}
+
+/// Run the consumer's own test suite (in the project dir, so the cap-lints shim
+/// applies). Returns Some(true)=passed, Some(false)=failed, None=no tests.
+fn run_consumer_tests(manifest_path: &Path) -> Result<Option<bool>> {
+    let workdir = root_of(manifest_path);
+    let out = std::process::Command::new("cargo")
+        .current_dir(&workdir)
+        .args(["test", "--manifest-path"])
+        .arg(manifest_path)
+        .output()
+        .context("spawning cargo test")?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Count tests actually run ("running N tests" lines from libtest).
+    let mut total = 0usize;
+    for line in text.lines() {
+        if let Some(rest) = line.trim().strip_prefix("running ") {
+            if let Some(n) = rest
+                .split_whitespace()
+                .next()
+                .and_then(|s| s.parse::<usize>().ok())
+            {
+                total += n;
+            }
+        }
+    }
+    if !out.status.success() {
+        return Ok(Some(false));
+    }
+    Ok(if total == 0 { None } else { Some(true) })
 }
 
 fn print_attack_surface(
