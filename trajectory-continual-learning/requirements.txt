@@ -1,0 +1,11 @@
+# The core engine and the reproducible proof are STDLIB-ONLY.
+# There are no required dependencies -- `python experiment.py` just runs.
+#
+# Optional, only if you want to run the loop against a real LLM (backends.OpenAILLM):
+#   set OPENAI_API_KEY in your environment. No SDK needed; it uses urllib.
+#
+# Optional, if you want to take the parametric (DPO) export path further:
+#   trl>=0.9          # DPOTrainer
+#   transformers>=4.40
+#   datasets>=2.0
+# (not needed for the proof; the engine only *exports* preferences.dpo.jsonl)

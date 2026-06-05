@@ -31,6 +31,7 @@ While this is primarily a coding agent workspace, contributions and suggestions 
 |-----------|-------------|
 | [`vulnllm-analyzer/`](vulnllm-analyzer/) | Automated vulnerability analysis for GitHub repos using [VulnLLM-R-7B](https://github.com/ucsb-mlsec/VulnLLM-R) on Modal GPUs |
 | [recursive-lm-security-audit](./recursive-lm-security-audit/) | Automated codebase security scanner using DSPy's Recursive Language Model (RLM) module. Accepts a GitHub repo URL or local path and produces a vulnerability report for ~$0.87. |
+| [`trajectory-continual-learning/`](trajectory-continual-learning/) | A dependency-free open re-implementation of [trajectory.ai](https://trajectory.ai/)'s continual-learning loop (Instrument → Understand → Steer → Learn), built from public research. Ships a reproducible A/B proof that a model improves from usage (+0.96 reward vs frozen control) plus the stored papers. |
 
 ## Note
 
