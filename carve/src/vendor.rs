@@ -179,8 +179,8 @@ pub fn verify_entry(root: &Path, entry: &VendorEntry) -> Vec<String> {
         match std::fs::read(&p) {
             Ok(bytes) => {
                 let sha = sha256_bytes(&bytes);
-                let ok = sha == f.sha256
-                    || patched.get(f.vendored_path.as_str()) == Some(&sha.as_str());
+                let ok =
+                    sha == f.sha256 || patched.get(f.vendored_path.as_str()) == Some(&sha.as_str());
                 if !ok {
                     let how = if patched.contains_key(f.vendored_path.as_str()) {
                         "patched file no longer matches its recorded patch"
@@ -212,13 +212,19 @@ pub fn record_patches(
         .collect();
     for (vendored_path, upstream_sha) in &known {
         let p = root.join(vendored_path);
-        let Ok(bytes) = std::fs::read(&p) else { continue };
+        let Ok(bytes) = std::fs::read(&p) else {
+            continue;
+        };
         let cur = sha256_bytes(&bytes);
         if &cur == upstream_sha {
             continue; // still verbatim
         }
         // Upsert the patch record.
-        if let Some(existing) = entry.patches.iter_mut().find(|x| &x.vendored_path == vendored_path) {
+        if let Some(existing) = entry
+            .patches
+            .iter_mut()
+            .find(|x| &x.vendored_path == vendored_path)
+        {
             existing.patched_sha256 = cur.clone();
             existing.note = note.clone();
             existing.patched_at = chrono::Utc::now();
@@ -309,7 +315,9 @@ pub fn ensure_cap_lints(root: &Path) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     let mut doc = if p.exists() {
-        std::fs::read_to_string(&p)?.parse::<DocumentMut>().context("parsing .cargo/config.toml")?
+        std::fs::read_to_string(&p)?
+            .parse::<DocumentMut>()
+            .context("parsing .cargo/config.toml")?
     } else {
         DocumentMut::new()
     };
@@ -383,8 +391,7 @@ pub fn restore_crate(root: &Path, crate_name: &str) -> Result<()> {
     let dest_rel = format!("{VENDOR_DIR}/{}-{}", entry.crate_name, entry.version);
     let dest = root.join(&dest_rel);
     if dest.exists() {
-        std::fs::remove_dir_all(&dest)
-            .with_context(|| format!("removing {}", dest.display()))?;
+        std::fs::remove_dir_all(&dest).with_context(|| format!("removing {}", dest.display()))?;
     }
     save_lock(root, &lock)?;
     // Once nothing is vendored, drop the cap-lints shim too.

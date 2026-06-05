@@ -220,7 +220,14 @@ fn main() -> Result<()> {
             llm,
             items,
             budget,
-        } => cmd_slice(&crate_name, &manifest_path, out.as_deref(), llm, items, budget),
+        } => cmd_slice(
+            &crate_name,
+            &manifest_path,
+            out.as_deref(),
+            llm,
+            items,
+            budget,
+        ),
         Command::Harden {
             manifest_path,
             transitive,
@@ -311,8 +318,15 @@ fn cmd_analyze_transitive(manifest_path: &Path, out: Option<&Path>) -> Result<()
         *by_depth.entry(n.depth).or_default() += 1;
     }
 
-    println!("\nTransitive Dependency Functional Usage Graph — {}", graph.package);
-    println!("  crates in closure: {}  (max depth {})", graph.nodes.len(), graph.max_depth);
+    println!(
+        "\nTransitive Dependency Functional Usage Graph — {}",
+        graph.package
+    );
+    println!(
+        "  crates in closure: {}  (max depth {})",
+        graph.nodes.len(),
+        graph.max_depth
+    );
     println!("  functional edges:  {}", graph.edges.len());
     println!("  scanned for usage: {} crates\n", graph.scanned_crates);
     println!("  crates by depth (0 = the product, 1 = direct, 2+ = deps of deps):");
@@ -325,7 +339,10 @@ fn cmd_analyze_transitive(manifest_path: &Path, out: Option<&Path>) -> Result<()
     edges.sort_by(|a, b| b.refs.cmp(&a.refs));
     println!("\n  Top functional edges (who leans hardest on whom):");
     for e in edges.iter().take(15) {
-        println!("      {} → {}   {} item(s), {} ref(s)", e.from, e.to, e.items, e.refs);
+        println!(
+            "      {} → {}   {} item(s), {} ref(s)",
+            e.from, e.to, e.items, e.refs
+        );
     }
 
     // Illustrate a deep chain: product → direct → its dep → …
@@ -344,8 +361,11 @@ fn cmd_analyze_transitive(manifest_path: &Path, out: Option<&Path>) -> Result<()
 /// Greedily walk functional edges from the product to the deepest reachable crate.
 fn deepest_chain(graph: &model::TransitiveGraph) -> Option<Vec<String>> {
     use std::collections::BTreeMap;
-    let depth: BTreeMap<&str, usize> =
-        graph.nodes.iter().map(|n| (n.name.as_str(), n.depth)).collect();
+    let depth: BTreeMap<&str, usize> = graph
+        .nodes
+        .iter()
+        .map(|n| (n.name.as_str(), n.depth))
+        .collect();
     let mut adj: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for e in &graph.edges {
         adj.entry(e.from.as_str()).or_default().push(e.to.as_str());
@@ -364,8 +384,9 @@ fn deepest_chain(graph: &model::TransitiveGraph) -> Option<Vec<String>> {
             .max_by_key(|n| depth.get(**n).copied().unwrap_or(0))
             .map(|s| s.to_string());
         match next {
-            Some(n) if depth.get(n.as_str()).copied().unwrap_or(0)
-                > depth.get(current.as_str()).copied().unwrap_or(0) =>
+            Some(n)
+                if depth.get(n.as_str()).copied().unwrap_or(0)
+                    > depth.get(current.as_str()).copied().unwrap_or(0) =>
             {
                 chain.push(n.clone());
                 current = n;
@@ -392,7 +413,9 @@ fn compiled_crates(manifest_path: &Path) -> Result<std::collections::HashSet<Str
         .context("cargo build --message-format=json")?;
     let mut set = std::collections::HashSet::new();
     for line in String::from_utf8_lossy(&out.stdout).lines() {
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
         if v.get("reason").and_then(|r| r.as_str()) == Some("compiler-artifact") {
             if let Some(pid) = v.get("package_id").and_then(|p| p.as_str()) {
                 set.insert(parse_pkg_name(pid));
@@ -427,7 +450,10 @@ fn release_build_time(manifest_path: &Path) -> Result<f64> {
         .output()
         .context("cargo build --release")?;
     if !out.status.success() {
-        anyhow::bail!("release build failed: {}", String::from_utf8_lossy(&out.stderr));
+        anyhow::bail!(
+            "release build failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
     Ok(t0.elapsed().as_secs_f64())
 }
@@ -443,13 +469,24 @@ fn cmd_harden(
     // CLI overrides carve.toml overrides built-in defaults.
     let cfg = config::Config::load(&root);
     let transitive = transitive || cfg.transitive.unwrap_or(false);
-    let budget = if budget != 0 { budget } else { cfg.budget.unwrap_or(0) };
-    let min_reduction = if min_reduction != 0.0 { min_reduction } else { cfg.min_reduction.unwrap_or(0.0) };
+    let budget = if budget != 0 {
+        budget
+    } else {
+        cfg.budget.unwrap_or(0)
+    };
+    let min_reduction = if min_reduction != 0.0 {
+        min_reduction
+    } else {
+        cfg.min_reduction.unwrap_or(0.0)
+    };
     println!("=== Autonomous supply-chain hardening ===");
     println!("  policy: transitive={transitive}  min_reduction={min_reduction:.0}%  budget={budget}  excluded={}\n",
         cfg.exclude.len() + cli_exclude.len());
 
-    println!("[1/5] Vendoring the {} closure…", if transitive { "transitive" } else { "direct" });
+    println!(
+        "[1/5] Vendoring the {} closure…",
+        if transitive { "transitive" } else { "direct" }
+    );
     cmd_vendor_all(manifest_path, true, transitive, cli_exclude)?;
 
     println!("\n[2/5] Detecting crates actually compiled for this target…");
@@ -471,7 +508,13 @@ fn cmd_harden(
         .collect();
 
     let agent = agent::RuleBasedAgent::new();
-    let mut bt = model::AttackSurface { files: 0, loc: 0, bytes: 0, items: 0, unsafe_blocks: 0 };
+    let mut bt = model::AttackSurface {
+        files: 0,
+        loc: 0,
+        bytes: 0,
+        items: 0,
+        unsafe_blocks: 0,
+    };
     let mut at = bt;
     let mut sliced = 0usize;
     let mut skipped = 0usize;
@@ -494,7 +537,10 @@ fn cmd_harden(
         // Economic gate: only keep (own) a vendored slice that sheds enough.
         if pct < min_reduction {
             vendor::restore_crate(&root, name)?; // back to upstream dependency
-            println!("  {:<24} LOC -{:.0}%  → reverted to upstream (below {:.0}% bar)", name, pct, min_reduction);
+            println!(
+                "  {:<24} LOC -{:.0}%  → reverted to upstream (below {:.0}% bar)",
+                name, pct, min_reduction
+            );
             reverted += 1;
             continue;
         }
@@ -505,14 +551,28 @@ fn cmd_harden(
                 let mut e2 = entry;
                 e2.files = files;
                 e2.removed_modules = vec![];
-                e2.note = Some(format!("hardened: LOC {} -> {} (-{:.0}%)", before.loc, after.loc, pct));
+                e2.note = Some(format!(
+                    "hardened: LOC {} -> {} (-{:.0}%)",
+                    before.loc, after.loc, pct
+                ));
                 l.upsert(e2);
                 vendor::save_lock(&root, &l)?;
             }
         }
-        bt.files += before.files; bt.loc += before.loc; bt.bytes += before.bytes; bt.items += before.items; bt.unsafe_blocks += before.unsafe_blocks;
-        at.files += after.files; at.loc += after.loc; at.bytes += after.bytes; at.items += after.items; at.unsafe_blocks += after.unsafe_blocks;
-        println!("  {:<24} LOC {:>6} -> {:<6} (-{:.0}%)  ✓ kept", name, before.loc, after.loc, pct);
+        bt.files += before.files;
+        bt.loc += before.loc;
+        bt.bytes += before.bytes;
+        bt.items += before.items;
+        bt.unsafe_blocks += before.unsafe_blocks;
+        at.files += after.files;
+        at.loc += after.loc;
+        at.bytes += after.bytes;
+        at.items += after.items;
+        at.unsafe_blocks += after.unsafe_blocks;
+        println!(
+            "  {:<24} LOC {:>6} -> {:<6} (-{:.0}%)  ✓ kept",
+            name, before.loc, after.loc, pct
+        );
         sliced += 1;
     }
 
@@ -524,19 +584,52 @@ fn cmd_harden(
     println!("  crates owned (sliced & kept): {sliced}");
     println!("  reverted (below {min_reduction:.0}% bar): {reverted}    skipped (unsliceable): {skipped}");
     println!("  across the {sliced} owned crate(s):");
-    println!("      files   {:>8} -> {:<8}  -{:.1}%", bt.files, at.files, bt.files_pct(&at));
-    println!("      LOC     {:>8} -> {:<8}  -{:.1}%", bt.loc, at.loc, bt.loc_pct(&at));
-    println!("      items   {:>8} -> {:<8}  -{:.1}%", bt.items, at.items, bt.items_pct(&at));
-    println!("      bytes   {:>8} -> {:<8}  -{:.1}%", bt.bytes, at.bytes, bt.bytes_pct(&at));
-    println!("      unsafe  {:>8} -> {:<8}  -{:.1}%", bt.unsafe_blocks, at.unsafe_blocks, bt.unsafe_pct(&at));
-    let tpct = if before_time > 0.0 { 100.0 * (before_time - after_time) / before_time } else { 0.0 };
+    println!(
+        "      files   {:>8} -> {:<8}  -{:.1}%",
+        bt.files,
+        at.files,
+        bt.files_pct(&at)
+    );
+    println!(
+        "      LOC     {:>8} -> {:<8}  -{:.1}%",
+        bt.loc,
+        at.loc,
+        bt.loc_pct(&at)
+    );
+    println!(
+        "      items   {:>8} -> {:<8}  -{:.1}%",
+        bt.items,
+        at.items,
+        bt.items_pct(&at)
+    );
+    println!(
+        "      bytes   {:>8} -> {:<8}  -{:.1}%",
+        bt.bytes,
+        at.bytes,
+        bt.bytes_pct(&at)
+    );
+    println!(
+        "      unsafe  {:>8} -> {:<8}  -{:.1}%",
+        bt.unsafe_blocks,
+        at.unsafe_blocks,
+        bt.unsafe_pct(&at)
+    );
+    let tpct = if before_time > 0.0 {
+        100.0 * (before_time - after_time) / before_time
+    } else {
+        0.0
+    };
     println!("  clean --release build: {before_time:.1}s -> {after_time:.1}s  ({tpct:+.1}%)");
     println!("════════════════════════════════════════════════════");
     Ok(())
 }
 
 fn bt_pct(before: usize, after: usize) -> f64 {
-    if before == 0 { 0.0 } else { 100.0 * (before.saturating_sub(after)) as f64 / before as f64 }
+    if before == 0 {
+        0.0
+    } else {
+        100.0 * (before.saturating_sub(after)) as f64 / before as f64
+    }
 }
 
 fn cmd_llm_check() -> Result<()> {
@@ -592,14 +685,12 @@ fn cmd_vendor(
         .and_then(|c| c.version.clone())
         .or_else(|| {
             // Fall back to metadata even if unreferenced.
-            analyze::metadata::load(manifest_path)
-                .ok()
-                .and_then(|m| {
-                    m.deps
-                        .values()
-                        .find(|d| d.package == crate_name)
-                        .and_then(|d| d.version.clone())
-                })
+            analyze::metadata::load(manifest_path).ok().and_then(|m| {
+                m.deps
+                    .values()
+                    .find(|d| d.package == crate_name)
+                    .and_then(|d| d.version.clone())
+            })
         })
         .context("could not resolve a version for that crate from cargo metadata")?;
     let kept_items: Vec<String> = usage
@@ -613,7 +704,10 @@ fn cmd_vendor(
     let file_count = entry.files.len();
     lock.upsert(entry);
     vendor::save_lock(&root, &lock)?;
-    println!("  transcribed {file_count} file(s) -> {}", vendor::vendor_rel_path(crate_name, &version));
+    println!(
+        "  transcribed {file_count} file(s) -> {}",
+        vendor::vendor_rel_path(crate_name, &version)
+    );
     println!("  provenance recorded in carve.lock");
 
     if apply {
@@ -631,7 +725,12 @@ fn cmd_vendor(
     Ok(())
 }
 
-fn cmd_vendor_all(manifest_path: &Path, apply: bool, transitive: bool, cli_exclude: &[String]) -> Result<()> {
+fn cmd_vendor_all(
+    manifest_path: &Path,
+    apply: bool,
+    transitive: bool,
+    cli_exclude: &[String],
+) -> Result<()> {
     let root = root_of(manifest_path);
 
     // Map each used crate to its referenced items, for richer provenance.
@@ -673,15 +772,21 @@ fn cmd_vendor_all(manifest_path: &Path, apply: bool, transitive: bool, cli_exclu
     // Policy: drop crates excluded in carve.toml or via --exclude — they stay as
     // normal upstream dependencies.
     let cfg = config::Config::load(&root);
-    let excluded: std::collections::HashSet<&str> =
-        cfg.exclude.iter().chain(cli_exclude.iter()).map(String::as_str).collect();
+    let excluded: std::collections::HashSet<&str> = cfg
+        .exclude
+        .iter()
+        .chain(cli_exclude.iter())
+        .map(String::as_str)
+        .collect();
     let before = targets.len();
     if !excluded.is_empty() {
         targets.retain(|(p, _)| !excluded.contains(p.as_str()));
         let dropped = before - targets.len();
         if dropped > 0 {
-            println!("Excluded {dropped} crate(s) by policy (kept upstream): {}",
-                excluded.iter().copied().collect::<Vec<_>>().join(", "));
+            println!(
+                "Excluded {dropped} crate(s) by policy (kept upstream): {}",
+                excluded.iter().copied().collect::<Vec<_>>().join(", ")
+            );
         }
     }
 
@@ -699,7 +804,10 @@ fn cmd_vendor_all(manifest_path: &Path, apply: bool, transitive: bool, cli_exclu
     }
 
     let scope = if transitive { "transitive" } else { "direct" };
-    println!("Vendoring {} {scope} dependency(ies) verbatim …\n", targets.len());
+    println!(
+        "Vendoring {} {scope} dependency(ies) verbatim …\n",
+        targets.len()
+    );
     let mut lock = vendor::load_lock(&root)?;
     let mut ok = 0usize;
     let mut patched = 0usize;
@@ -720,7 +828,7 @@ fn cmd_vendor_all(manifest_path: &Path, apply: bool, transitive: bool, cli_exclu
                     }
                 }
                 ok += 1;
-                if ok % 20 == 0 {
+                if ok.is_multiple_of(20) {
                     println!("  … {ok}/{} vendored", targets.len());
                 }
                 let _ = files;
@@ -735,20 +843,33 @@ fn cmd_vendor_all(manifest_path: &Path, apply: bool, transitive: bool, cli_exclu
         vendor::ensure_cap_lints(&root)?;
     }
 
-    println!("\n  vendored {ok}/{} dependency(ies); provenance in carve.lock", targets.len());
+    println!(
+        "\n  vendored {ok}/{} dependency(ies); provenance in carve.lock",
+        targets.len()
+    );
     if apply {
-        println!("  wired {patched} [patch.crates-io] entries (+ cap-lints shim) — run `cargo build`");
+        println!(
+            "  wired {patched} [patch.crates-io] entries (+ cap-lints shim) — run `cargo build`"
+        );
     } else {
         println!("  re-run with --apply to wire the [patch.crates-io] entries");
     }
     if !skipped_patch.is_empty() {
-        println!("  left on registry (can't patch a duplicated name): {}", skipped_patch.join(", "));
+        println!(
+            "  left on registry (can't patch a duplicated name): {}",
+            skipped_patch.join(", ")
+        );
     }
     if native_count > 0 {
-        println!("  ({native_count} native-linked sys crate(s) vendored with file modes preserved)");
+        println!(
+            "  ({native_count} native-linked sys crate(s) vendored with file modes preserved)"
+        );
     }
     if !failed.is_empty() {
-        println!("  {} not vendored (source not cached — run `cargo fetch`)", failed.len());
+        println!(
+            "  {} not vendored (source not cached — run `cargo fetch`)",
+            failed.len()
+        );
         for f in failed.iter().take(8) {
             println!("      {f}");
         }
@@ -791,13 +912,20 @@ fn cmd_slice(
             &modules,
             &vendor_dir.to_string_lossy(),
         )?;
-        println!("  LLM proposed removing {} module(s): {}\n", proposal.len(), proposal.join(", "));
+        println!(
+            "  LLM proposed removing {} module(s): {}\n",
+            proposal.len(),
+            proposal.join(", ")
+        );
         proposal
     } else {
         Vec::new()
     };
 
-    println!("Agent slicing {} v{} (verifying every cut against the consumer build)…\n", entry.crate_name, entry.version);
+    println!(
+        "Agent slicing {} v{} (verifying every cut against the consumer build)…\n",
+        entry.crate_name, entry.version
+    );
     let report = agent.slice_crate(crate_name, manifest_path, &vendor_dir, &prioritized)?;
 
     // Re-index provenance so `carve verify` still matches the carved tree.
@@ -820,7 +948,11 @@ fn cmd_slice(
     }
     println!(
         "\n  files: {} -> {}   LOC: {} -> {}  ({:.1}% reduction)",
-        report.files_before, report.files_after, report.loc_before, report.loc_after, report.loc_reduction_pct()
+        report.files_before,
+        report.files_after,
+        report.loc_before,
+        report.loc_after,
+        report.loc_reduction_pct()
     );
     println!(
         "  kept (needed to compile): {} module(s)",
@@ -858,14 +990,20 @@ fn cmd_slice(
             item_report.items_removed,
             item_report.items_before,
             item_report.checks_used,
-            if budget > 0 && item_report.budget_exhausted { " (refinement budget reached)" } else { "" }
+            if budget > 0 && item_report.budget_exhausted {
+                " (refinement budget reached)"
+            } else {
+                ""
+            }
         );
         if budget == 0 && item_report.items_removed < item_report.items_before {
             println!("  (convergence-only; pass --budget N to squeeze the impl/duplicate tail)");
         }
         println!(
             "  LOC after items: {} -> {}  ({:.1}% reduction)",
-            item_report.loc_before, item_report.loc_after, item_report.loc_reduction_pct()
+            item_report.loc_before,
+            item_report.loc_after,
+            item_report.loc_reduction_pct()
         );
         println!(
             "  consumer build verified after item-slicing: {}",
@@ -901,8 +1039,18 @@ fn print_attack_surface(
     row("files", before.files, after.files, before.files_pct(after));
     row("LOC", before.loc, after.loc, before.loc_pct(after));
     row("items", before.items, after.items, before.items_pct(after));
-    row("bytes", before.bytes as usize, after.bytes as usize, before.bytes_pct(after));
-    row("unsafe", before.unsafe_blocks, after.unsafe_blocks, before.unsafe_pct(after));
+    row(
+        "bytes",
+        before.bytes as usize,
+        after.bytes as usize,
+        before.bytes_pct(after),
+    );
+    row(
+        "unsafe",
+        before.unsafe_blocks,
+        after.unsafe_blocks,
+        before.unsafe_pct(after),
+    );
     println!(
         "      ► attack surface cut by ~{:.0}% (LOC), {:.0}% of `unsafe` blocks removed",
         before.loc_pct(after),
@@ -953,8 +1101,17 @@ fn cmd_verify(manifest_path: &Path) -> Result<()> {
     for e in &lock.entries {
         let problems = vendor::verify_entry(&root, e);
         if problems.is_empty() {
-            let patched = if e.patches.is_empty() { String::new() } else { format!(", {} patched", e.patches.len()) };
-            println!("  OK   {} v{} ({} files match ledger{patched})", e.crate_name, e.version, e.files.len());
+            let patched = if e.patches.is_empty() {
+                String::new()
+            } else {
+                format!(", {} patched", e.patches.len())
+            };
+            println!(
+                "  OK   {} v{} ({} files match ledger{patched})",
+                e.crate_name,
+                e.version,
+                e.files.len()
+            );
         } else {
             all_ok = false;
             println!("  FAIL {} v{}:", e.crate_name, e.version);
@@ -980,12 +1137,18 @@ fn cmd_patch(crate_name: &str, manifest_path: &Path, note: Option<String>) -> Re
     let recorded = vendor::record_patches(&root, &mut entry, note)?;
     if recorded.is_empty() {
         println!("No local changes detected in {crate_name} — nothing to record.");
-        println!("(Edit files under vendor/{}-{}/ first, then re-run.)", entry.crate_name, entry.version);
+        println!(
+            "(Edit files under vendor/{}-{}/ first, then re-run.)",
+            entry.crate_name, entry.version
+        );
         return Ok(());
     }
     lock.upsert(entry);
     vendor::save_lock(&root, &lock)?;
-    println!("Recorded {} intentional patch(es) for {crate_name}:", recorded.len());
+    println!(
+        "Recorded {} intentional patch(es) for {crate_name}:",
+        recorded.len()
+    );
     for p in &recorded {
         println!("      {p}");
     }
@@ -1001,7 +1164,10 @@ fn cmd_impact(crate_name: &str, to: &str, manifest_path: &Path, out: Option<&Pat
         .entry(crate_name)
         .context("crate is not vendored — nothing to compare an update against")?;
 
-    println!("Assessing {crate_name} v{} -> v{to} against your vendored slice…\n", entry.version);
+    println!(
+        "Assessing {crate_name} v{} -> v{to} against your vendored slice…\n",
+        entry.version
+    );
     let report = impact::analyze(entry, to)?;
 
     println!(
@@ -1020,7 +1186,11 @@ fn cmd_impact(crate_name: &str, to: &str, manifest_path: &Path, out: Option<&Pat
     if !report.changed_in_slice.is_empty() {
         println!("\n  Files in your slice that changed:");
         for f in &report.changed_in_slice {
-            let flag = if f.affects_used.is_empty() { "" } else { "  ⚠ used API" };
+            let flag = if f.affects_used.is_empty() {
+                ""
+            } else {
+                "  ⚠ used API"
+            };
             println!("      {}{}", f.upstream_path, flag);
             if !f.items_changed.is_empty() {
                 println!("          items: {}", f.items_changed.join(", "));
@@ -1089,7 +1259,29 @@ fn cmd_locate(crate_name: &str, item: &str, manifest_path: &Path) -> Result<()> 
             println!("  defined in: {}", found["file"].as_str().unwrap_or("?"));
             println!("\n  This is the slice the agent would transcribe verbatim.");
         }
-        None => println!("  not found as a top-level item (may be a method, macro-generated, or re-export)"),
+        None => println!(
+            "  not found as a top-level item (may be a method, macro-generated, or re-export)"
+        ),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod dogfood {
+    /// carve eats its own dog food: analyze carve's own dependency tree and
+    /// confirm the DFUG finds known direct deps. Exercises metadata + scanner
+    /// end-to-end on a real crate (this one).
+    #[test]
+    fn analyzes_its_own_dependency_tree() {
+        let graph = crate::analyze::build_usage_graph("Cargo.toml")
+            .expect("carve should analyze its own manifest");
+        assert_eq!(graph.package, "carve");
+        let names: Vec<&str> = graph.crates.iter().map(|c| c.name.as_str()).collect();
+        for expected in ["anyhow", "clap", "syn", "serde"] {
+            assert!(
+                names.contains(&expected),
+                "DFUG missing {expected}: {names:?}"
+            );
+        }
+    }
 }

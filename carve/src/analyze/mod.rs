@@ -50,11 +50,7 @@ pub fn build_usage_graph(manifest_path: impl AsRef<Path>) -> Result<UsageGraph> 
         scanned += 1;
 
         for (path_str, hits) in result.hits {
-            let code_ident = path_str
-                .split("::")
-                .next()
-                .unwrap_or("")
-                .to_string();
+            let code_ident = path_str.split("::").next().unwrap_or("").to_string();
             per_crate
                 .entry(code_ident)
                 .or_default()
@@ -82,7 +78,11 @@ pub fn build_usage_graph(manifest_path: impl AsRef<Path>) -> Result<UsageGraph> 
             items,
         });
     }
-    crates.sort_by(|a, b| b.total_refs().cmp(&a.total_refs()).then(a.name.cmp(&b.name)));
+    crates.sort_by(|a, b| {
+        b.total_refs()
+            .cmp(&a.total_refs())
+            .then(a.name.cmp(&b.name))
+    });
 
     // Declared-but-unreferenced deps: the cheapest attack-surface reduction.
     let used_idents: std::collections::HashSet<String> = crates
@@ -132,7 +132,11 @@ pub fn build_transitive_usage(manifest_path: impl AsRef<Path>) -> Result<Transit
         .ok()
         .and_then(|p| p.parent().map(Path::to_path_buf))
         .unwrap_or_else(|| Path::new(".").to_path_buf());
-    edges.extend(scan_crate_edges(&root.name, &root_dir, &metadata::deps_of(&meta, root)));
+    edges.extend(scan_crate_edges(
+        &root.name,
+        &root_dir,
+        &metadata::deps_of(&meta, root),
+    ));
     scanned += 1;
 
     // Levels 1..n: each crate in the closure, scanned against its own deps.
@@ -150,12 +154,21 @@ pub fn build_transitive_usage(manifest_path: impl AsRef<Path>) -> Result<Transit
         else {
             continue;
         };
-        edges.extend(scan_crate_edges(&node.name, src, &metadata::deps_of(&meta, pkg)));
+        edges.extend(scan_crate_edges(
+            &node.name,
+            src,
+            &metadata::deps_of(&meta, pkg),
+        ));
         scanned += 1;
     }
 
     let max_depth = nodes.iter().map(|n| n.depth).max().unwrap_or(0);
-    tracing::info!(nodes = nodes.len(), edges = edges.len(), max_depth, "built transitive graph");
+    tracing::info!(
+        nodes = nodes.len(),
+        edges = edges.len(),
+        max_depth,
+        "built transitive graph"
+    );
     Ok(TransitiveGraph {
         package: root.name.clone(),
         generated_at: chrono::Utc::now(),

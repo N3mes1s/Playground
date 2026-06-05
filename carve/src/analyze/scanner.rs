@@ -50,15 +50,11 @@ impl<'a> Visitor<'a> {
     }
 
     fn record(&mut self, path: String, line: usize, kind: RefKind) {
-        self.hits
-            .entry(path)
-            .or_default()
-            .refs
-            .push(SourceRef {
-                file: self.file.clone(),
-                line,
-                kind,
-            });
+        self.hits.entry(path).or_default().refs.push(SourceRef {
+            file: self.file.clone(),
+            line,
+            kind,
+        });
     }
 
     /// Flatten a `use` tree into (full segments, local name) pairs and remember

@@ -91,9 +91,9 @@ pub fn deps_of(meta: &Metadata, pkg: &Package) -> BTreeMap<String, DepInfo> {
 pub fn load(manifest_path: impl AsRef<Path>) -> Result<ProductMetadata> {
     let manifest_path = manifest_path.as_ref();
     let metadata = load_metadata(manifest_path)?;
-    let root = metadata
-        .root_package()
-        .context("no root package found; point --manifest-path at a crate, not a virtual workspace")?;
+    let root = metadata.root_package().context(
+        "no root package found; point --manifest-path at a crate, not a virtual workspace",
+    )?;
 
     let deps = deps_of(&metadata, root);
 
@@ -127,8 +127,7 @@ pub fn build_closure(meta: &Metadata) -> Result<Vec<ClosureNode>> {
 
     let nodes: HashMap<&PackageId, &cargo_metadata::Node> =
         resolve.nodes.iter().map(|n| (&n.id, n)).collect();
-    let pkgs: HashMap<&PackageId, &Package> =
-        meta.packages.iter().map(|p| (&p.id, p)).collect();
+    let pkgs: HashMap<&PackageId, &Package> = meta.packages.iter().map(|p| (&p.id, p)).collect();
     let workspace: BTreeSet<&PackageId> = meta.workspace_members.iter().collect();
 
     // BFS, recording the shallowest depth at which each package is reached.
@@ -140,9 +139,10 @@ pub fn build_closure(meta: &Metadata) -> Result<Vec<ClosureNode>> {
     while let Some((id, d)) = queue.pop_front() {
         let Some(node) = nodes.get(&id) else { continue };
         for dep in &node.deps {
-            let follow = dep.dep_kinds.iter().any(|k| {
-                matches!(k.kind, DependencyKind::Normal | DependencyKind::Build)
-            });
+            let follow = dep
+                .dep_kinds
+                .iter()
+                .any(|k| matches!(k.kind, DependencyKind::Normal | DependencyKind::Build));
             if !follow {
                 continue; // skip dev-dependency subtrees
             }

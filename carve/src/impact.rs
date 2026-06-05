@@ -114,7 +114,11 @@ pub fn analyze(entry: &VendorEntry, to_version: &str) -> Result<ImpactReport> {
     let to_src = ensure_src(&entry.crate_name, to_version)?;
 
     // The set of upstream paths we actually vendored (post-slice).
-    let slice: BTreeSet<String> = entry.files.iter().map(|f| f.upstream_path.clone()).collect();
+    let slice: BTreeSet<String> = entry
+        .files
+        .iter()
+        .map(|f| f.upstream_path.clone())
+        .collect();
 
     // Leaf + intermediate segments of the items we use, for API-impact matching.
     let used_segments: BTreeSet<String> = entry

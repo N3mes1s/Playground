@@ -8,7 +8,11 @@
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 pub fn init(verbose: bool, json: bool) {
-    let default = if verbose { "carve=debug,info" } else { "carve=info,warn" };
+    let default = if verbose {
+        "carve=debug,info"
+    } else {
+        "carve=info,warn"
+    };
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default));
 
     if json {
@@ -16,11 +20,15 @@ pub fn init(verbose: bool, json: bool) {
             .json()
             .with_current_span(true)
             .with_writer(std::io::stderr);
-        tracing_subscriber::registry().with(filter).with(layer).init();
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(layer)
+            .init();
     } else {
-        let layer = fmt::layer()
-            .with_target(false)
-            .with_writer(std::io::stderr);
-        tracing_subscriber::registry().with(filter).with(layer).init();
+        let layer = fmt::layer().with_target(false).with_writer(std::io::stderr);
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(layer)
+            .init();
     }
 }

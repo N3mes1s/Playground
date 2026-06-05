@@ -16,10 +16,10 @@ use crate::model::{
     Confidence, CrateMinimization, ItemSliceReport, MinimizationPlan, SliceReport, UsageGraph,
 };
 use crate::slice;
-use std::collections::HashSet;
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::path::Path;
 use std::process::Command;
 
@@ -185,7 +185,12 @@ impl Tool for CargoCheckTool {
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| std::path::PathBuf::from("."));
         let run = |release: bool| -> Result<(bool, String)> {
-            let mut args = vec!["check", "--manifest-path", &manifest, "--message-format=short"];
+            let mut args = vec![
+                "check",
+                "--manifest-path",
+                &manifest,
+                "--message-format=short",
+            ];
             if release {
                 args.push("--release");
             }
@@ -194,7 +199,10 @@ impl Tool for CargoCheckTool {
                 .args(&args)
                 .output()
                 .context("spawning cargo check")?;
-            Ok((out.status.success(), String::from_utf8_lossy(&out.stderr).into_owned()))
+            Ok((
+                out.status.success(),
+                String::from_utf8_lossy(&out.stderr).into_owned(),
+            ))
         };
         match profile {
             Some("debug") => {
@@ -346,9 +354,15 @@ impl RuleBasedAgent {
                     .unwrap_or(usize::MAX)
             };
             candidates.sort_by_key(|c| (rank(&c.rel_name), c.depth));
-            tracing::info!(prioritized = prioritized.len(), "using planner-prioritized order");
+            tracing::info!(
+                prioritized = prioritized.len(),
+                "using planner-prioritized order"
+            );
         }
-        tracing::info!(candidates = candidates.len(), "discovered removable modules");
+        tracing::info!(
+            candidates = candidates.len(),
+            "discovered removable modules"
+        );
 
         let mut removed = Vec::new();
         let mut kept_needed = Vec::new();
@@ -417,11 +431,15 @@ impl RuleBasedAgent {
         // and reconciling against release once is far cheaper than running a
         // release check on every cut.
         let manifest = json!({ "manifest_path": project_manifest.to_string_lossy() });
-        let dbg = json!({ "manifest_path": project_manifest.to_string_lossy(), "profile": "debug" });
-        let rel = json!({ "manifest_path": project_manifest.to_string_lossy(), "profile": "release" });
+        let dbg =
+            json!({ "manifest_path": project_manifest.to_string_lossy(), "profile": "debug" });
+        let rel =
+            json!({ "manifest_path": project_manifest.to_string_lossy(), "profile": "release" });
         let baseline = self.registry.call("cargo_check", &manifest)?;
         if !baseline["success"].as_bool().unwrap_or(false) {
-            return Err(anyhow!("baseline `cargo check` failed; fix the build before item-slicing"));
+            return Err(anyhow!(
+                "baseline `cargo check` failed; fix the build before item-slicing"
+            ));
         }
 
         let loc_before = slice::count_loc(vendor_dir);
@@ -441,13 +459,21 @@ impl RuleBasedAgent {
             let original = std::fs::read_to_string(&path).unwrap_or_default();
             let items = slice::list_items(&path).unwrap_or_default();
             let module = slice::module_of_path(&path.to_string_lossy());
-            files.push(FileState { path, original, items, module });
+            files.push(FileState {
+                path,
+                original,
+                items,
+                module,
+            });
         }
         let items_before: usize = files.iter().map(|f| f.items.len()).sum();
 
         let write_all = |removed: &HashSet<u64>| -> Result<()> {
             for f in &files {
-                std::fs::write(&f.path, slice::render_without(&f.original, &f.items, removed))?;
+                std::fs::write(
+                    &f.path,
+                    slice::render_without(&f.original, &f.items, removed),
+                )?;
             }
             Ok(())
         };
@@ -502,7 +528,13 @@ impl RuleBasedAgent {
                     }
                 }
             }
-            tracing::info!(round, restored, still_removed = removed.len(), checks, "error-guided round");
+            tracing::info!(
+                round,
+                restored,
+                still_removed = removed.len(),
+                checks,
+                "error-guided round"
+            );
             if restored == 0 {
                 break; // stuck: no error names a removed item
             }
@@ -522,7 +554,10 @@ impl RuleBasedAgent {
             let converged_removed = removed.clone();
             for f in &files {
                 for it in &f.items {
-                    if it.removable && it.label.starts_with("impl ") && !removed.contains(&it.text_hash) {
+                    if it.removable
+                        && it.label.starts_with("impl ")
+                        && !removed.contains(&it.text_hash)
+                    {
                         removed.insert(it.text_hash);
                     }
                 }
@@ -553,7 +588,9 @@ impl RuleBasedAgent {
                                 continue;
                             }
                             let matches = match (&w.method, &w.trait_name) {
-                                (Some(m), _) => it.methods.iter().any(|x| x == m) || it.trait_name.is_some(),
+                                (Some(m), _) => {
+                                    it.methods.iter().any(|x| x == m) || it.trait_name.is_some()
+                                }
                                 (None, Some(tr)) => it.trait_name.as_deref() == Some(tr.as_str()),
                                 (None, None) => true,
                             };
@@ -591,7 +628,11 @@ impl RuleBasedAgent {
                             }
                         }
                     }
-                    tracing::info!(round, loose_restored = restored, "impl-convergence loose fallback");
+                    tracing::info!(
+                        round,
+                        loose_restored = restored,
+                        "impl-convergence loose fallback"
+                    );
                 }
                 if restored == 0 {
                     break; // truly stuck
@@ -619,12 +660,18 @@ impl RuleBasedAgent {
                         }
                         refine_checks += 1;
                         removed.insert(it.text_hash);
-                        std::fs::write(&f.path, slice::render_without(&f.original, &f.items, &removed))?;
+                        std::fs::write(
+                            &f.path,
+                            slice::render_without(&f.original, &f.items, &removed),
+                        )?;
                         let res = self.registry.call("cargo_check", &dbg)?;
                         checks += 1;
                         if !res["success"].as_bool().unwrap_or(false) {
                             removed.remove(&it.text_hash);
-                            std::fs::write(&f.path, slice::render_without(&f.original, &f.items, &removed))?;
+                            std::fs::write(
+                                &f.path,
+                                slice::render_without(&f.original, &f.items, &removed),
+                            )?;
                         }
                     }
                 }
@@ -641,17 +688,28 @@ impl RuleBasedAgent {
                     }
                     refine_checks += 1;
                     removed.insert(it.text_hash);
-                    std::fs::write(&f.path, slice::render_without(&f.original, &f.items, &removed))?;
+                    std::fs::write(
+                        &f.path,
+                        slice::render_without(&f.original, &f.items, &removed),
+                    )?;
                     let res = self.registry.call("cargo_check", &dbg)?;
                     checks += 1;
                     if !res["success"].as_bool().unwrap_or(false) {
                         removed.remove(&it.text_hash);
-                        std::fs::write(&f.path, slice::render_without(&f.original, &f.items, &removed))?;
+                        std::fs::write(
+                            &f.path,
+                            slice::render_without(&f.original, &f.items, &removed),
+                        )?;
                     }
                 }
             }
         }
-        tracing::info!(after_fast, after_refine = removed.len(), checks, "item-slice (debug) done");
+        tracing::info!(
+            after_fast,
+            after_refine = removed.len(),
+            checks,
+            "item-slice (debug) done"
+        );
 
         // Release reconciliation: everything above verified the cheap debug
         // profile; now make the result satisfy --release too. Code gated on
@@ -676,12 +734,20 @@ impl RuleBasedAgent {
                     let ov = slice::prefix_overlap(&f.module, &w.context) as i64;
                     for it in &f.items {
                         if it.removable && it.name == w.name && removed.contains(&it.text_hash) {
-                            if ov > best_ov { best_ov = ov; best = vec![it.text_hash]; }
-                            else if ov == best_ov { best.push(it.text_hash); }
+                            if ov > best_ov {
+                                best_ov = ov;
+                                best = vec![it.text_hash];
+                            } else if ov == best_ov {
+                                best.push(it.text_hash);
+                            }
                         }
                     }
                 }
-                for h in best { if removed.remove(&h) { restored += 1; } }
+                for h in best {
+                    if removed.remove(&h) {
+                        restored += 1;
+                    }
+                }
             }
             // impl blocks
             for w in slice::extract_impl_wanted(stderr) {
@@ -690,20 +756,34 @@ impl RuleBasedAgent {
                 for f in &files {
                     let ov = slice::module_match(&f.module, &w.context);
                     for it in &f.items {
-                        if it.label.starts_with("impl ") && it.removable && it.name == w.type_name && removed.contains(&it.text_hash) {
+                        if it.label.starts_with("impl ")
+                            && it.removable
+                            && it.name == w.type_name
+                            && removed.contains(&it.text_hash)
+                        {
                             let m = match (&w.method, &w.trait_name) {
-                                (Some(mm), _) => it.methods.iter().any(|x| x == mm) || it.trait_name.is_some(),
+                                (Some(mm), _) => {
+                                    it.methods.iter().any(|x| x == mm) || it.trait_name.is_some()
+                                }
                                 (None, Some(tr)) => it.trait_name.as_deref() == Some(tr.as_str()),
                                 (None, None) => true,
                             };
                             if m {
-                                if ov > best_ov { best_ov = ov; best = vec![it.text_hash]; }
-                                else if ov == best_ov { best.push(it.text_hash); }
+                                if ov > best_ov {
+                                    best_ov = ov;
+                                    best = vec![it.text_hash];
+                                } else if ov == best_ov {
+                                    best.push(it.text_hash);
+                                }
                             }
                         }
                     }
                 }
-                for h in best { if removed.remove(&h) { restored += 1; } }
+                for h in best {
+                    if removed.remove(&h) {
+                        restored += 1;
+                    }
+                }
             }
             if restored == 0 {
                 // Can't pinpoint what release needs — unslice this crate (its
@@ -713,7 +793,11 @@ impl RuleBasedAgent {
             }
             write_all(&removed)?;
         }
-        tracing::info!(after_release_reconcile = removed.len(), checks, "item-slice done");
+        tracing::info!(
+            after_release_reconcile = removed.len(),
+            checks,
+            "item-slice done"
+        );
 
         let final_check = self.registry.call("cargo_check", &manifest)?;
         let verified = final_check["success"].as_bool().unwrap_or(false);
@@ -762,7 +846,9 @@ impl RuleBasedAgent {
             .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("rs"))
         {
             let path = entry.path().to_string_lossy().to_string();
-            let out = self.registry.call("parse_items", &json!({ "path": path }))?;
+            let out = self
+                .registry
+                .call("parse_items", &json!({ "path": path }))?;
             if let Some(items) = out.get("items").and_then(Value::as_array) {
                 for it in items {
                     if it.get("name").and_then(Value::as_str) == Some(target.as_str()) {
@@ -912,7 +998,10 @@ Decide which modules to remove. Read files if helpful, then return the JSON.",
             });
             let resp = self.call_api(&body)?;
             let content = resp.get("content").cloned().unwrap_or(json!([]));
-            let stop = resp.get("stop_reason").and_then(Value::as_str).unwrap_or("");
+            let stop = resp
+                .get("stop_reason")
+                .and_then(Value::as_str)
+                .unwrap_or("");
             tracing::info!(step, stop, "llm turn");
 
             // Record the assistant turn verbatim so tool_use ids line up.
@@ -945,7 +1034,10 @@ Decide which modules to remove. Read files if helpful, then return the JSON.",
             let text = extract_text(&resp);
             return Ok(parse_remove_list(&text));
         }
-        Err(anyhow!("LLM agent exceeded its {}-step tool budget", self.max_steps))
+        Err(anyhow!(
+            "LLM agent exceeded its {}-step tool budget",
+            self.max_steps
+        ))
     }
 }
 

@@ -205,7 +205,10 @@ fn classify_item(item: &syn::Item) -> Option<(String, String, bool)> {
         Const(i) => (format!("const {}", i.ident), i.ident.to_string()),
         Static(i) => (format!("static {}", i.ident), i.ident.to_string()),
         Union(i) => (format!("union {}", i.ident), i.ident.to_string()),
-        Impl(i) => (format!("impl {}", type_name(&i.self_ty)), type_name(&i.self_ty)),
+        Impl(i) => (
+            format!("impl {}", type_name(&i.self_ty)),
+            type_name(&i.self_ty),
+        ),
         Macro(i) => {
             let n = i.ident.as_ref().map(|x| x.to_string()).unwrap_or_default();
             (format!("macro {n}"), n)
@@ -233,7 +236,8 @@ fn type_name(ty: &syn::Type) -> String {
 
 /// List the removable top-level items in a file, with stable text hashes.
 pub fn list_items(file: &Path) -> Result<Vec<ItemRef>> {
-    let src = std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
+    let src =
+        std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
     let ast = match syn::parse_file(&src) {
         Ok(a) => a,
         Err(_) => return Ok(Vec::new()),
@@ -241,7 +245,9 @@ pub fn list_items(file: &Path) -> Result<Vec<ItemRef>> {
     let lines: Vec<&str> = src.lines().collect();
     let mut out = Vec::new();
     for item in &ast.items {
-        let Some((label, name, removable)) = classify_item(item) else { continue };
+        let Some((label, name, removable)) = classify_item(item) else {
+            continue;
+        };
         let body_start = item.span().start().line;
         let start = item_attrs(item)
             .iter()
@@ -297,8 +303,9 @@ pub fn render_without(original: &str, items: &[ItemRef], removed: &HashSet<u64>)
     let mut drop = vec![false; lines.len() + 1];
     for it in items {
         if removed.contains(&it.text_hash) {
-            for ln in it.start..=it.end.min(lines.len()) {
-                drop[ln] = true;
+            let end = it.end.min(lines.len());
+            if it.start <= end {
+                drop[it.start..=end].fill(true);
             }
         }
     }
@@ -322,7 +329,10 @@ pub fn error_idents(stderr: &str) -> HashSet<String> {
         }
         for tok in backticked(line) {
             for seg in tok.split("::") {
-                let id: String = seg.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+                let id: String = seg
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
                 if !id.is_empty() {
                     out.insert(id);
                 }
@@ -368,11 +378,16 @@ pub struct Wanted {
 }
 
 fn ident_prefix(s: &str) -> String {
-    s.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect()
+    s.chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect()
 }
 
 fn is_path_root(seg: &str) -> bool {
-    matches!(seg, "crate" | "self" | "super" | "std" | "core" | "alloc" | "")
+    matches!(
+        seg,
+        "crate" | "self" | "super" | "std" | "core" | "alloc" | ""
+    )
 }
 
 fn path_segments(token: &str) -> Vec<String> {
@@ -423,7 +438,10 @@ pub fn extract_wanted(stderr: &str) -> Vec<Wanted> {
             if let Some(t) = toks.iter().find(|t| t.contains("::")) {
                 let segs = path_segments(t);
                 if let Some((name, ctx)) = segs.split_last() {
-                    out.push(Wanted { name: name.clone(), context: ctx.to_vec() });
+                    out.push(Wanted {
+                        name: name.clone(),
+                        context: ctx.to_vec(),
+                    });
                     continue;
                 }
             }
@@ -433,13 +451,19 @@ pub fn extract_wanted(stderr: &str) -> Vec<Wanted> {
                 let segs = path_segments(t);
                 if let Some((name, ctx)) = segs.split_last() {
                     if !name.is_empty() {
-                        out.push(Wanted { name: name.clone(), context: ctx.to_vec() });
+                        out.push(Wanted {
+                            name: name.clone(),
+                            context: ctx.to_vec(),
+                        });
                     }
                 }
             } else {
                 let name = ident_prefix(t);
                 if !name.is_empty() && !is_path_root(&name) {
-                    out.push(Wanted { name, context: ctx_file.clone() });
+                    out.push(Wanted {
+                        name,
+                        context: ctx_file.clone(),
+                    });
                 }
             }
         }
@@ -504,7 +528,12 @@ pub fn extract_impl_wanted(stderr: &str) -> Vec<ImplWant> {
             if let (Some(method), Some(type_tok)) = (method, type_tok) {
                 let (type_name, context) = type_name_and_context(type_tok);
                 if !type_name.is_empty() && !method.is_empty() {
-                    out.push(ImplWant { type_name, method: Some(method), trait_name: None, context });
+                    out.push(ImplWant {
+                        type_name,
+                        method: Some(method),
+                        trait_name: None,
+                        context,
+                    });
                     continue;
                 }
             }
@@ -517,7 +546,12 @@ pub fn extract_impl_wanted(stderr: &str) -> Vec<ImplWant> {
             if let (Some(trait_name), Some(type_tok)) = (trait_name, type_tok) {
                 let (type_name, context) = type_name_and_context(type_tok);
                 if !type_name.is_empty() {
-                    out.push(ImplWant { type_name, method: None, trait_name: Some(trait_name), context });
+                    out.push(ImplWant {
+                        type_name,
+                        method: None,
+                        trait_name: Some(trait_name),
+                        context,
+                    });
                     continue;
                 }
             }
@@ -530,7 +564,12 @@ pub fn extract_impl_wanted(stderr: &str) -> Vec<ImplWant> {
             if let Some(type_tok) = type_tok {
                 let (type_name, context) = type_name_and_context(&type_tok);
                 if !type_name.is_empty() {
-                    out.push(ImplWant { type_name, method: None, trait_name, context });
+                    out.push(ImplWant {
+                        type_name,
+                        method: None,
+                        trait_name,
+                        context,
+                    });
                     continue;
                 }
             }
@@ -621,8 +660,7 @@ pub fn park(vendor_dir: &Path, target: &Path) -> Result<PathBuf> {
             .unwrap_or(0)
     );
     let parked = trash.join(stamp);
-    std::fs::rename(target, &parked)
-        .with_context(|| format!("parking {}", target.display()))?;
+    std::fs::rename(target, &parked).with_context(|| format!("parking {}", target.display()))?;
     Ok(parked)
 }
 
@@ -631,8 +669,7 @@ pub fn unpark(parked: &Path, target: &Path) -> Result<()> {
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::rename(parked, target)
-        .with_context(|| format!("restoring {}", target.display()))?;
+    std::fs::rename(parked, target).with_context(|| format!("restoring {}", target.display()))?;
     Ok(())
 }
 
@@ -732,7 +769,10 @@ mod tests {
     fn wanted_cannot_find_in_module_uses_that_module_as_context() {
         let e = "x/src/d.rs:5:9: error[E0425]: cannot find function `memchr_raw` in module `crate::arch::all`";
         let w = extract_wanted(e);
-        let m = w.iter().find(|x| x.name == "memchr_raw").expect("found memchr_raw");
+        let m = w
+            .iter()
+            .find(|x| x.name == "memchr_raw")
+            .expect("found memchr_raw");
         assert_eq!(m.context, vec!["arch", "all"]);
     }
 
@@ -748,7 +788,10 @@ mod tests {
     #[test]
     fn impl_wanted_no_method_takes_type_last_segment() {
         let e = "x:1:1: error[E0599]: no method named `find` found for struct `rabinkarp::Finder` in the current scope";
-        let m = extract_impl_wanted(e).into_iter().find(|x| x.type_name == "Finder").unwrap();
+        let m = extract_impl_wanted(e)
+            .into_iter()
+            .find(|x| x.type_name == "Finder")
+            .unwrap();
         assert_eq!(m.method.as_deref(), Some("find"));
         assert_eq!(m.context, vec!["rabinkarp"]);
     }
@@ -764,7 +807,10 @@ mod tests {
         assert_eq!(m.context, vec!["sse2", "packedpair"]);
 
         let g = "x:1:1: error[E0599]: no function or associated item named `new` found for struct `generic::memchr::Iter<'h>`";
-        let m = extract_impl_wanted(g).into_iter().find(|x| x.type_name == "Iter").unwrap();
+        let m = extract_impl_wanted(g)
+            .into_iter()
+            .find(|x| x.type_name == "Iter")
+            .unwrap();
         assert_eq!(m.method.as_deref(), Some("new"));
         assert_eq!(m.context, vec!["generic", "memchr"]);
     }
@@ -772,22 +818,35 @@ mod tests {
     #[test]
     fn impl_wanted_trait_bound_and_not_iterator() {
         let b = "x:1:1: error[E0277]: the trait bound `DefaultFrequencyRank: HeuristicFrequencyRank` is not satisfied";
-        let m = extract_impl_wanted(b).into_iter().find(|x| x.type_name == "DefaultFrequencyRank").unwrap();
+        let m = extract_impl_wanted(b)
+            .into_iter()
+            .find(|x| x.type_name == "DefaultFrequencyRank")
+            .unwrap();
         assert_eq!(m.trait_name.as_deref(), Some("HeuristicFrequencyRank"));
 
         let i = "x:1:1: error[E0599]: `SuffixKind` is not an iterator";
-        let m = extract_impl_wanted(i).into_iter().find(|x| x.type_name == "SuffixKind").unwrap();
+        let m = extract_impl_wanted(i)
+            .into_iter()
+            .find(|x| x.type_name == "SuffixKind")
+            .unwrap();
         assert_eq!(m.trait_name.as_deref(), Some("Iterator"));
 
         let t = "x:1:1: error[E0277]: the trait `Iterator` is not implemented for `OneIter`";
-        let m = extract_impl_wanted(t).into_iter().find(|x| x.type_name == "OneIter").unwrap();
+        let m = extract_impl_wanted(t)
+            .into_iter()
+            .find(|x| x.type_name == "OneIter")
+            .unwrap();
         assert_eq!(m.trait_name.as_deref(), Some("Iterator"));
     }
 
     // --- module disambiguation -----------------------------------------------
     #[test]
     fn module_match_prefers_the_right_backend() {
-        let rabinkarp = vec!["arch".to_string(), "all".to_string(), "rabinkarp".to_string()];
+        let rabinkarp = vec![
+            "arch".to_string(),
+            "all".to_string(),
+            "rabinkarp".to_string(),
+        ];
         let twoway = vec!["arch".to_string(), "all".to_string(), "twoway".to_string()];
         let ctx = vec!["rabinkarp".to_string()];
         assert!(module_match(&rabinkarp, &ctx) > module_match(&twoway, &ctx));
@@ -796,7 +855,10 @@ mod tests {
     // --- unsafe / word counting ----------------------------------------------
     #[test]
     fn count_word_is_boundary_aware() {
-        assert_eq!(count_word("unsafe { } // unsafe_x not_unsafe value", "unsafe"), 1);
+        assert_eq!(
+            count_word("unsafe { } // unsafe_x not_unsafe value", "unsafe"),
+            1
+        );
         assert_eq!(count_word("a unsafe b unsafe", "unsafe"), 2);
     }
 
@@ -806,10 +868,16 @@ mod tests {
         let src = "pub fn a() {}\npub fn b() {}\npub fn c() {}\n";
         let items = list_items(std::path::Path::new("/dev/null")).unwrap_or_default();
         let _ = items; // list_items needs a real file; exercise render directly
-        // Build a minimal ItemRef set by hand to test render_without line logic.
+                       // Build a minimal ItemRef set by hand to test render_without line logic.
         let it_b = ItemRef {
-            label: "fn b".into(), name: "b".into(), removable: true,
-            methods: vec![], trait_name: None, start: 2, end: 2, text_hash: 42,
+            label: "fn b".into(),
+            name: "b".into(),
+            removable: true,
+            methods: vec![],
+            trait_name: None,
+            start: 2,
+            end: 2,
+            text_hash: 42,
         };
         let mut removed = std::collections::HashSet::new();
         removed.insert(42u64);

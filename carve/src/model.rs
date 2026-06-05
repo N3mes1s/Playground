@@ -212,7 +212,10 @@ impl CarveLock {
     }
 
     pub fn remove(&mut self, crate_name: &str) -> Option<VendorEntry> {
-        let idx = self.entries.iter().position(|e| e.crate_name == crate_name)?;
+        let idx = self
+            .entries
+            .iter()
+            .position(|e| e.crate_name == crate_name)?;
         Some(self.entries.remove(idx))
     }
 }
@@ -399,8 +402,20 @@ mod tests {
 
     #[test]
     fn attack_surface_percentages() {
-        let before = AttackSurface { files: 10, loc: 1000, bytes: 5000, items: 200, unsafe_blocks: 50 };
-        let after = AttackSurface { files: 6, loc: 600, bytes: 4000, items: 100, unsafe_blocks: 40 };
+        let before = AttackSurface {
+            files: 10,
+            loc: 1000,
+            bytes: 5000,
+            items: 200,
+            unsafe_blocks: 50,
+        };
+        let after = AttackSurface {
+            files: 6,
+            loc: 600,
+            bytes: 4000,
+            items: 100,
+            unsafe_blocks: 40,
+        };
         assert!((before.loc_pct(&after) - 40.0).abs() < 1e-9);
         assert!((before.files_pct(&after) - 40.0).abs() < 1e-9);
         assert!((before.items_pct(&after) - 50.0).abs() < 1e-9);
@@ -410,11 +425,29 @@ mod tests {
 
     #[test]
     fn pct_handles_zero_and_growth() {
-        let z = AttackSurface { files: 0, loc: 0, bytes: 0, items: 0, unsafe_blocks: 0 };
+        let z = AttackSurface {
+            files: 0,
+            loc: 0,
+            bytes: 0,
+            items: 0,
+            unsafe_blocks: 0,
+        };
         assert_eq!(z.loc_pct(&z), 0.0);
         // saturating: "after" larger than "before" reports 0, never negative.
-        let a = AttackSurface { files: 1, loc: 100, bytes: 1, items: 1, unsafe_blocks: 1 };
-        let b = AttackSurface { files: 1, loc: 200, bytes: 1, items: 1, unsafe_blocks: 1 };
+        let a = AttackSurface {
+            files: 1,
+            loc: 100,
+            bytes: 1,
+            items: 1,
+            unsafe_blocks: 1,
+        };
+        let b = AttackSurface {
+            files: 1,
+            loc: 200,
+            bytes: 1,
+            items: 1,
+            unsafe_blocks: 1,
+        };
         assert_eq!(a.loc_pct(&b), 0.0);
     }
 }
