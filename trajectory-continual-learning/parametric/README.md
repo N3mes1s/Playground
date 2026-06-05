@@ -41,16 +41,29 @@ Default base model: `HuggingFaceTB/SmolLM2-135M-Instruct` (tiny, CPU-trainable).
 Override with `BASE_MODEL=...`. Small + CPU is deliberate — it proves the
 *mechanism*; the same recipe scales to a real model on a GPU.
 
-## Result
+## Results
 
-Held-out prompts, **weights only** — no rules in context, no refine loop:
+Held-out prompts, **weights only** — no rules in context, no refine loop.
 
-| Weights | held-out reward | email | slack |
+| Method / model | base → tuned | email | slack |
 |---|---|---|---|
-| base (`SmolLM2-135M-Instruct`) | **0.19** | 0.10 | 0.28 |
-| **LoRA-tuned on edits** | **0.99** | 1.00 | 0.97 |
+| **SFT, SmolLM2-135M** | 0.19 → **0.99** | 1.00 | 0.97 |
+| **SFT, Qwen2.5-0.5B** | 0.12 → **1.00** | 1.00 | 1.00 |
+| DPO, SmolLM2-135M (naive) | 0.19 → **0.14** | 0.03 | 0.25 |
+| DPO, SmolLM2-135M (+ SFT anchor) | 0.19 → **0.78** | 0.55 | 1.00 |
 
-![weights](../artifacts/parametric/weights-bars.svg)
+![methods](../artifacts/parametric/methods-compare.svg)
+
+**SFT is the clean win** at both scales (0.99 / 1.00); Qwen-0.5B also writes
+coherent prose, not just rule-satisfying tokens. **Naive DPO from a cold base
+collapses** — the loss races to 0 by driving the *chosen* likelihood down too, and
+generations degrade (0.19 → 0.14). Adding an **SFT/NLL anchor** to the DPO loss
+(`SFT_COEF`, the "preference + supervision medley",
+[arXiv:2601.19055](https://arxiv.org/abs/2601.19055)) prevents the collapse and
+recovers it to **0.78**. DPO trails SFT here because the task is clean imitation,
+which SFT is ideal for; DPO earns its keep on noisier, relative preferences.
+
+The original single-arm chart: ![weights](../artifacts/parametric/weights-bars.svg)
 
 The base model writes generic/incoherent text and fails the user's idiosyncratic
 rules; after LoRA SFT on the edited targets, the **weights alone** produce the

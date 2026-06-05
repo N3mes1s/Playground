@@ -194,19 +194,23 @@ reproduce the exact numbers.
    parameters — see [`parametric/`](parametric/). This is the piece the memory path
    can't show, and trajectory.ai's actual headline.
 
-   | Weights (held-out, **no context, no refine**) | reward |
-   |---|---|
-   | base `SmolLM2-135M-Instruct` | **0.19** |
-   | LoRA-tuned on the mined edits | **0.99** |
+   Held-out, **weights only** (no context, no refine):
 
-   ![parametric](artifacts/parametric/weights-bars.svg)
+   | Method / model | base → tuned |
+   |---|---|
+   | SFT, `SmolLM2-135M` | 0.19 → **0.99** |
+   | SFT, `Qwen2.5-0.5B` | 0.12 → **1.00** |
+   | DPO, `SmolLM2-135M` (naive) | 0.19 → **0.14** ❌ collapse |
+   | DPO, `SmolLM2-135M` (+SFT anchor) | 0.19 → **0.78** |
+
+   ![parametric](artifacts/parametric/methods-compare.svg)
 
    The tuned weights produce the user's style from a plain prompt with nothing in
    context (`Onwards,` sign-off, a `P.S.`, no placeholders; slack `@oncall` + emoji
-   + bullets). Grounded in [DPO](https://arxiv.org/abs/2305.18290) and
-   [user-edit fine-tuning](https://arxiv.org/abs/2601.19055). The miner also
-   exports `(chosen, rejected)` pairs to `artifacts/preferences.dpo.jsonl` for the
-   DPO variant.
+   + bullets). SFT wins for clean imitation; naive [DPO](https://arxiv.org/abs/2305.18290)
+   from a cold base collapses and is rescued by an SFT anchor (the
+   [preference+supervision medley](https://arxiv.org/abs/2601.19055)) — a real
+   finding, documented in [`parametric/`](parametric/). See `make qwen` / `make dpo`.
 
 ### Honest note on the headline numbers
 
