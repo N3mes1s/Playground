@@ -1,0 +1,20 @@
+{"context": "email", "prompt": "Write an email to ask for a one-week deadline extension."}
+{"context": "email", "prompt": "Write an email to follow up on an unpaid invoice."}
+{"context": "email", "prompt": "Write an email to reschedule the kickoff call."}
+{"context": "email", "prompt": "Write an email to decline a meeting invite."}
+{"context": "email", "prompt": "Write an email to request feedback on the draft."}
+{"context": "email", "prompt": "Write an email to ask to approve time off."}
+{"context": "email", "prompt": "Write an email to thank a mentor for advice."}
+{"context": "email", "prompt": "Write an email to introduce a new teammate."}
+{"context": "email", "prompt": "Write an email to ask for a quick intro."}
+{"context": "email", "prompt": "Write an email to confirm the project scope."}
+{"context": "slack", "prompt": "Write a Slack message to post the nightly deploy status."}
+{"context": "slack", "prompt": "Write a Slack message to summarize the standup."}
+{"context": "slack", "prompt": "Write a Slack message to announce staging is back up."}
+{"context": "slack", "prompt": "Write a Slack message to report the incident is mitigated."}
+{"context": "slack", "prompt": "Write a Slack message to ask for a deploy window."}
+{"context": "slack", "prompt": "Write a Slack message to share this week's metrics."}
+{"context": "slack", "prompt": "Write a Slack message to ask for a code review."}
+{"context": "slack", "prompt": "Write a Slack message to remind about the release freeze."}
+{"context": "slack", "prompt": "Write a Slack message to flag a flaky test."}
+{"context": "slack", "prompt": "Write a Slack message to call for help on an outage."}

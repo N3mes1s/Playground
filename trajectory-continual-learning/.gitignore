@@ -1,0 +1,5 @@
+# local training environment + artifacts that are regenerable
+.venv/
+parametric/out/
+__pycache__/
+*.pyc

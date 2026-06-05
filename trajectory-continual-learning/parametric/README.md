@@ -1,0 +1,58 @@
+# Parametric path — making the *weights* learn from edits
+
+The rest of this project learns **non-parametrically**: it stores inferred
+preferences and injects them into context at inference time. That is real
+continual learning, but it is not the headline trajectory.ai sells — *the model
+itself getting smarter*. This folder closes that gap: it actually **fine-tunes
+model weights** on the mined user-edit signal, then proves the tuned weights carry
+the preference with **no rules in context and no refine loop**.
+
+## Pipeline (the full stack)
+
+```
+trajectories ──▶ mine preference pairs ──▶ LoRA SFT on edited targets ──▶ tuned weights ──▶ eval
+ (telemetry)      (chosen = user edit)      (train_sft.py, CPU)            (out/)         (weights only)
+```
+
+| File | Role |
+|------|------|
+| `data.py` | Build (prompt, chosen, rejected) pairs; `chosen` verified to satisfy the hidden rules, `rejected` to violate them (`text_rules.py`). Writes `train.jsonl` / `eval.jsonl`. |
+| `train_sft.py` | LoRA supervised fine-tuning on the edited (`chosen`) targets with completion-only masking. Saves the adapter to `out/`. |
+| `eval_weights.py` | Generate from **base vs base+LoRA** on held-out prompts — no in-context rules, no refine — and score with `text_rules.py`. |
+
+This is the supervised half of "learning from user edits" (cf. *Principled
+Fine-tuning of LLMs from User-Edits*, [arXiv:2601.19055](https://arxiv.org/abs/2601.19055));
+the `(chosen, rejected)` pairs are also exactly the DPO format the non-parametric
+miner exports, so the same signal feeds either path.
+
+## Run it
+
+```bash
+cd ..                      # repo root has the venv
+python -m venv .venv && ./.venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
+./.venv/bin/pip install transformers peft datasets accelerate
+cd parametric
+../.venv/bin/python data.py          # generate the dataset
+../.venv/bin/python train_sft.py     # LoRA fine-tune (CPU, a few minutes)
+../.venv/bin/python eval_weights.py  # base vs tuned weights, held-out
+```
+
+Default base model: `HuggingFaceTB/SmolLM2-135M-Instruct` (tiny, CPU-trainable).
+Override with `BASE_MODEL=...`. Small + CPU is deliberate — it proves the
+*mechanism*; the same recipe scales to a real model on a GPU.
+
+## Result
+
+See `../artifacts/parametric/` (`results.json`, `results.md`, `weights-bars.svg`)
+— filled in by `eval_weights.py`. The decisive number is held-out reward of the
+**tuned weights vs base**, measured with nothing in context: if tuned > base, the
+preference is genuinely in the parameters.
+
+## Honest scope
+
+- 135M params on CPU is a proof-of-mechanism, not a frontier post-train. A tiny
+  model writes clumsier prose; we score *rule satisfaction*, not eloquence.
+- SFT on synthetic edited targets isolates the signal. A production system tunes
+  on real, noisy user edits (and would add DPO/reward terms — the `medley`).
+- This learns *style/preference* into the weights. It does not claim new
+  capabilities — that is the correct, narrow claim for continual learning here.
