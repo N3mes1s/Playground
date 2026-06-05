@@ -34,8 +34,10 @@ fn is_rust(path: &Path) -> bool {
         && !path.to_string_lossy().contains(TRASH)
 }
 
-/// Discover every file-backed module declaration under `vendor_dir`.
-pub fn discover(vendor_dir: &Path) -> Result<Vec<ModCandidate>> {
+/// Discover every file-backed module declaration under `vendor_dir`. When
+/// `keep_tests`, the crate's own test modules are left in place (for the
+/// behavioral-equivalence mode).
+pub fn discover(vendor_dir: &Path, keep_tests: bool) -> Result<Vec<ModCandidate>> {
     let mut out = Vec::new();
     for entry in WalkDir::new(vendor_dir)
         .into_iter()
@@ -55,6 +57,11 @@ pub fn discover(vendor_dir: &Path) -> Result<Vec<ModCandidate>> {
                 }
                 if m.attrs.iter().any(|a| a.path().is_ident("path")) {
                     continue; // custom #[path] — out of scope, leave it
+                }
+                if keep_tests
+                    && (m.ident == "tests" || m.ident == "test" || m.attrs.iter().any(is_cfg_test))
+                {
+                    continue; // preserve the crate's own test modules
                 }
                 let name = m.ident.to_string();
                 if let Some(target) = resolve_target(&decl_file, &name) {
@@ -234,8 +241,15 @@ fn type_name(ty: &syn::Type) -> String {
     }
 }
 
-/// List the removable top-level items in a file, with stable text hashes.
-pub fn list_items(file: &Path) -> Result<Vec<ItemRef>> {
+/// True if an attribute is `#[cfg(test)]`.
+fn is_cfg_test(a: &syn::Attribute) -> bool {
+    a.path().is_ident("cfg")
+        && matches!(&a.meta, syn::Meta::List(ml) if ml.tokens.to_string().contains("test"))
+}
+
+/// List the removable top-level items in a file, with stable text hashes. When
+/// `keep_tests`, `#[cfg(test)]` items are marked non-removable.
+pub fn list_items(file: &Path, keep_tests: bool) -> Result<Vec<ItemRef>> {
     let src =
         std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
     let ast = match syn::parse_file(&src) {
@@ -245,9 +259,12 @@ pub fn list_items(file: &Path) -> Result<Vec<ItemRef>> {
     let lines: Vec<&str> = src.lines().collect();
     let mut out = Vec::new();
     for item in &ast.items {
-        let Some((label, name, removable)) = classify_item(item) else {
+        let Some((label, name, mut removable)) = classify_item(item) else {
             continue;
         };
+        if keep_tests && item_attrs(item).iter().any(is_cfg_test) {
+            removable = false; // preserve the crate's own test items
+        }
         let body_start = item.span().start().line;
         let start = item_attrs(item)
             .iter()
@@ -719,7 +736,7 @@ pub fn measure_surface(vendor_dir: &Path) -> crate::model::AttackSurface {
             loc += src.lines().count();
             bytes += src.len() as u64;
             unsafe_blocks += count_word(&src, "unsafe");
-            items += list_items(&path).map(|v| v.len()).unwrap_or(0);
+            items += list_items(&path, false).map(|v| v.len()).unwrap_or(0);
         }
     }
     crate::model::AttackSurface {
@@ -866,7 +883,7 @@ mod tests {
     #[test]
     fn render_without_removes_only_targeted_items() {
         let src = "pub fn a() {}\npub fn b() {}\npub fn c() {}\n";
-        let items = list_items(std::path::Path::new("/dev/null")).unwrap_or_default();
+        let items = list_items(std::path::Path::new("/dev/null"), false).unwrap_or_default();
         let _ = items; // list_items needs a real file; exercise render directly
                        // Build a minimal ItemRef set by hand to test render_without line logic.
         let it_b = ItemRef {

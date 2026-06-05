@@ -112,6 +112,11 @@ enum Command {
         /// but change behavior. As good as the product's test coverage.
         #[arg(long)]
         test: bool,
+        /// Equivalence mode: verify cuts against the crate's OWN test suite and
+        /// preserve its test code, so the slice keeps exactly the code the crate's
+        /// tests exercise and is provably equivalent by upstream's own tests.
+        #[arg(long)]
+        keep_tests: bool,
     },
     /// Autonomously harden the whole supply chain: vendor the closure, then have
     /// the agent slice EVERY compiled vendored crate, and report the aggregate
@@ -247,6 +252,7 @@ fn main() -> Result<()> {
             items,
             budget,
             test,
+            keep_tests,
         } => cmd_slice(
             &crate_name,
             &manifest_path,
@@ -255,6 +261,7 @@ fn main() -> Result<()> {
             items,
             budget,
             test,
+            keep_tests,
         ),
         Command::Harden {
             manifest_path,
@@ -578,8 +585,8 @@ fn cmd_harden(
         let vendor_dir = root.join(vendor::vendor_rel_path(name, version));
         let before = slice::measure_surface(&vendor_dir);
         let res = agent
-            .slice_crate(name, manifest_path, &vendor_dir, &[])
-            .and_then(|_| agent.slice_items(name, manifest_path, &vendor_dir, budget));
+            .slice_crate(name, manifest_path, &vendor_dir, &[], false)
+            .and_then(|_| agent.slice_items(name, manifest_path, &vendor_dir, budget, false));
         if let Err(e) = res {
             tracing::warn!(crate_name = %name, error = %e, "skipped (slice failed)");
             skipped += 1;
@@ -965,6 +972,7 @@ fn cmd_vendor_all(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_slice(
     crate_name: &str,
     manifest_path: &Path,
@@ -973,6 +981,7 @@ fn cmd_slice(
     items: bool,
     budget: usize,
     test: bool,
+    keep_tests: bool,
 ) -> Result<()> {
     let root = root_of(manifest_path);
     let mut lock = vendor::load_lock(&root)?;
@@ -981,6 +990,15 @@ fn cmd_slice(
         .cloned()
         .context("crate is not vendored — run `carve vendor` (with --apply) first")?;
     let vendor_dir = root.join(vendor::vendor_rel_path(&entry.crate_name, &entry.version));
+    // In keep-tests mode the verification target is the crate's OWN test build,
+    // so the slice keeps exactly the code the crate's tests exercise (equivalence
+    // by upstream tests), rather than only what the consumer compiles.
+    let vendor_manifest = vendor_dir.join("Cargo.toml");
+    let gate_manifest: &Path = if keep_tests {
+        &vendor_manifest
+    } else {
+        manifest_path
+    };
 
     // Measure the attack surface before any carving so we can report the delta.
     let surface_before = slice::measure_surface(&vendor_dir);
@@ -991,7 +1009,7 @@ fn cmd_slice(
     // gate inside slice_crate still verifies every cut, so the LLM can never break
     // or invent code — it only steers which modules we try first.
     let prioritized: Vec<String> = if llm {
-        let candidates = slice::discover(&vendor_dir)?;
+        let candidates = slice::discover(&vendor_dir, keep_tests)?;
         let modules: Vec<String> = candidates.iter().map(|c| c.rel_name.clone()).collect();
         println!("Consulting LLM agent to plan the slice…");
         let llm_agent = agent::LlmAgent::from_env()?;
@@ -1015,7 +1033,13 @@ fn cmd_slice(
         "Agent slicing {} v{} (verifying every cut against the consumer build)…\n",
         entry.crate_name, entry.version
     );
-    let report = agent.slice_crate(crate_name, manifest_path, &vendor_dir, &prioritized)?;
+    let report = agent.slice_crate(
+        crate_name,
+        gate_manifest,
+        &vendor_dir,
+        &prioritized,
+        keep_tests,
+    )?;
 
     // Re-index provenance so `carve verify` still matches the carved tree.
     let files = vendor::reindex_files(&root, &entry.crate_name, &entry.version)?;
@@ -1055,7 +1079,8 @@ fn cmd_slice(
     // Optional finer pass: item-level slicing on top of the module-level result.
     if items {
         println!("\nItem-level slicing (budget {budget} verifications)…");
-        let item_report = agent.slice_items(crate_name, manifest_path, &vendor_dir, budget)?;
+        let item_report =
+            agent.slice_items(crate_name, gate_manifest, &vendor_dir, budget, keep_tests)?;
         // Re-index again so provenance matches the item-carved tree.
         let files = vendor::reindex_files(&root, &entry.crate_name, &entry.version)?;
         if let Some(e) = lock.entry(crate_name).cloned() {
@@ -1117,6 +1142,24 @@ fn cmd_slice(
     }
 
     // The headline: how much attack surface did carving actually remove?
+    // Equivalence mode: run the crate's OWN tests against the slice.
+    if keep_tests {
+        println!(
+            "\nBehavioral equivalence — running {crate_name}'s own test suite against the slice…"
+        );
+        match run_consumer_tests(&vendor_manifest)? {
+            Some(true) => {
+                println!("  PASS — the slice is behaviorally equivalent by the crate's own tests.")
+            }
+            Some(false) => {
+                anyhow::bail!("the slice FAILS the crate's own tests — not equivalent (restore or reduce slicing)")
+            }
+            None => println!(
+                "  the crate ships no runnable tests — equivalence can't be checked this way."
+            ),
+        }
+    }
+
     let surface_after = slice::measure_surface(&vendor_dir);
     print_attack_surface(&entry.crate_name, &surface_before, &surface_after);
 

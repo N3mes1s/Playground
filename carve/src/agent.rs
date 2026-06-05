@@ -173,10 +173,21 @@ impl Tool for CargoCheckTool {
     }
     fn invoke(&self, input: &Value) -> Result<Value> {
         let manifest = str_field(input, "manifest_path")?;
+        // Make absolute so setting current_dir to the parent doesn't re-resolve a
+        // relative --manifest-path against it (which would double nested paths).
+        let manifest = std::fs::canonicalize(&manifest)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or(manifest);
         // `profile`: "debug" | "release" | absent (=both). Code cfg-gates on
         // `debug_assertions`, so a cut fine in one profile can break the other —
         // the slicer converges on fast "debug" then reconciles against "release".
         let profile = input.get("profile").and_then(Value::as_str);
+        // `test_no_run`: gate on compiling the crate's lib + tests (for the
+        // behavioral-equivalence slice mode) instead of just the lib.
+        let test_no_run = input
+            .get("test_no_run")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         // Run cargo IN the project directory so it reads the project's
         // .cargo/config.toml (the cap-lints shim). Invoking via --manifest-path
         // from elsewhere would ignore it and dependency lints would fail builds.
@@ -185,12 +196,22 @@ impl Tool for CargoCheckTool {
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| std::path::PathBuf::from("."));
         let run = |release: bool| -> Result<(bool, String)> {
-            let mut args = vec![
-                "check",
-                "--manifest-path",
-                &manifest,
-                "--message-format=short",
-            ];
+            let mut args = if test_no_run {
+                vec![
+                    "test",
+                    "--no-run",
+                    "--manifest-path",
+                    &manifest,
+                    "--message-format=short",
+                ]
+            } else {
+                vec![
+                    "check",
+                    "--manifest-path",
+                    &manifest,
+                    "--message-format=short",
+                ]
+            };
             if release {
                 args.push("--release");
             }
@@ -327,8 +348,9 @@ impl RuleBasedAgent {
         project_manifest: &Path,
         vendor_dir: &Path,
         prioritized: &[String],
+        keep_tests: bool,
     ) -> Result<SliceReport> {
-        let manifest = json!({ "manifest_path": project_manifest.to_string_lossy() });
+        let manifest = json!({ "manifest_path": project_manifest.to_string_lossy(), "test_no_run": keep_tests });
 
         // The consumer must compile before we touch anything.
         let baseline = self.registry.call("cargo_check", &manifest)?;
@@ -342,7 +364,7 @@ impl RuleBasedAgent {
         let loc_before = slice::count_loc(vendor_dir);
 
         // Shallow modules first: removing a whole subtree skips its children.
-        let mut candidates = slice::discover(vendor_dir)?;
+        let mut candidates = slice::discover(vendor_dir, keep_tests)?;
         candidates.sort_by_key(|c| c.depth);
         // If a planner (e.g. the LLM agent) prioritized certain modules, try those
         // first — the cargo_check gate still guarantees safety either way.
@@ -425,16 +447,15 @@ impl RuleBasedAgent {
         project_manifest: &Path,
         vendor_dir: &Path,
         budget: usize,
+        keep_tests: bool,
     ) -> Result<ItemSliceReport> {
         // `manifest` verifies both profiles (final gate); `dbg`/`rel` are the
         // fast single-profile checks used during the loops. Converging on debug
         // and reconciling against release once is far cheaper than running a
         // release check on every cut.
-        let manifest = json!({ "manifest_path": project_manifest.to_string_lossy() });
-        let dbg =
-            json!({ "manifest_path": project_manifest.to_string_lossy(), "profile": "debug" });
-        let rel =
-            json!({ "manifest_path": project_manifest.to_string_lossy(), "profile": "release" });
+        let manifest = json!({ "manifest_path": project_manifest.to_string_lossy(), "test_no_run": keep_tests });
+        let dbg = json!({ "manifest_path": project_manifest.to_string_lossy(), "profile": "debug", "test_no_run": keep_tests });
+        let rel = json!({ "manifest_path": project_manifest.to_string_lossy(), "profile": "release", "test_no_run": keep_tests });
         let baseline = self.registry.call("cargo_check", &manifest)?;
         if !baseline["success"].as_bool().unwrap_or(false) {
             return Err(anyhow!(
@@ -457,7 +478,7 @@ impl RuleBasedAgent {
         let mut files: Vec<FileState> = Vec::new();
         for path in slice::rust_files(vendor_dir) {
             let original = std::fs::read_to_string(&path).unwrap_or_default();
-            let items = slice::list_items(&path).unwrap_or_default();
+            let items = slice::list_items(&path, keep_tests).unwrap_or_default();
             let module = slice::module_of_path(&path.to_string_lossy());
             files.push(FileState {
                 path,
