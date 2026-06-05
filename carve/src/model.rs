@@ -100,6 +100,15 @@ pub struct TgNode {
     pub version: String,
     /// 0 = the product, 1 = a direct dependency, 2+ = dependency-of-dependency.
     pub depth: usize,
+    /// True if reachable from the product through *normal* edges only — i.e. it
+    /// ships in the production binary. False = present only via dev/build/target
+    /// -gated edges, so a vuln in it isn't in the running service's execute path.
+    #[serde(default = "default_true")]
+    pub runtime: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// A functional edge: `from` crate references `to` crate, with how much.
@@ -111,6 +120,11 @@ pub struct DepEdge {
     pub items: usize,
     /// Total reference sites.
     pub refs: usize,
+    /// The distinct fully-qualified item paths referenced across this edge
+    /// (e.g. `smallvec::SmallVec`, `smallvec::alloc`). This is the item-level
+    /// depth that turns crate→crate counts into a reachability trail.
+    #[serde(default)]
+    pub item_paths: Vec<String>,
 }
 
 /// The deep Dependency Functional Usage Graph: usage edges across every level

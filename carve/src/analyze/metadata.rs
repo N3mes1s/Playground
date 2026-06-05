@@ -110,6 +110,58 @@ pub fn load(manifest_path: impl AsRef<Path>) -> Result<ProductMetadata> {
     })
 }
 
+/// The set of package names that ship in the production binary: reachable from
+/// the root following **normal** dependency edges only (no dev, no build). A
+/// crate absent from this set but present in the resolve graph is pulled solely
+/// for tests/build scripts/an unshipped target, so a vuln in it is not in the
+/// running service's execute path. Keyed by name (version-agnostic, matching the
+/// crate granularity at which advisories are issued).
+#[tracing::instrument(skip_all)]
+pub fn runtime_closure(meta: &Metadata) -> Result<BTreeSet<String>> {
+    let resolve = meta
+        .resolve
+        .as_ref()
+        .context("no resolve graph; run on a real project with a lockfile")?;
+    let roots: Vec<PackageId> = match resolve
+        .root
+        .clone()
+        .or_else(|| meta.root_package().map(|p| p.id.clone()))
+    {
+        Some(r) => vec![r],
+        None => meta.workspace_members.clone(),
+    };
+    let nodes: HashMap<&PackageId, &cargo_metadata::Node> =
+        resolve.nodes.iter().map(|n| (&n.id, n)).collect();
+    let pkgs: HashMap<&PackageId, &Package> = meta.packages.iter().map(|p| (&p.id, p)).collect();
+
+    let mut seen: BTreeSet<PackageId> = BTreeSet::new();
+    let mut queue: VecDeque<PackageId> = roots.iter().cloned().collect();
+    seen.extend(roots);
+    let mut names = BTreeSet::new();
+    while let Some(id) = queue.pop_front() {
+        if let Some(pkg) = pkgs.get(&id) {
+            names.insert(pkg.name.clone());
+        }
+        let Some(node) = nodes.get(&id) else { continue };
+        for dep in &node.deps {
+            let normal = dep
+                .dep_kinds
+                .iter()
+                .any(|k| matches!(k.kind, DependencyKind::Normal));
+            if normal && seen.insert(dep.pkg.clone()) {
+                queue.push_back(dep.pkg.clone());
+            }
+        }
+    }
+    Ok(names)
+}
+
+/// Every package name present anywhere in the resolved graph (incl. dev/build).
+/// Used to distinguish "not a dependency at all" from "present but not shipped".
+pub fn all_package_names(meta: &Metadata) -> BTreeSet<String> {
+    meta.packages.iter().map(|p| p.name.clone()).collect()
+}
+
 /// Walk the resolve graph from the root, following normal+build edges only, and
 /// return every crates-io package in the closure with its depth. This is the
 /// "dependencies of dependencies" set we vendor for full supply-chain isolation.

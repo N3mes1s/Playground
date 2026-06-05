@@ -64,7 +64,8 @@ cargo build --release   # produces target/release/carve
 
 | Command | What it does |
 |---|---|
-| `carve analyze [--transitive]` | Build the Dependency Functional Usage Graph (DFUG): which dependency items your product references, how often, and from where. `--transitive` builds it across the WHOLE closure (dependencies of dependencies). Flags unreferenced deps as drop candidates. |
+| `carve analyze [--transitive]` | Build the Dependency Functional Usage Graph (DFUG): which dependency items your product references, how often, and from where. `--transitive` builds it across the WHOLE closure (dependencies of dependencies) — including the **item paths flowing across each edge** and whether each crate **ships in the binary** (normal-only reachability) vs is dev/build/target-gated. Flags unreferenced deps as drop candidates. |
+| `carve affected <crate> [--symbol S] [--id ADV] [--vex]` | **CVE reachability triage.** Given an advisory, answer whether your product is actually affected — using the deep DFUG to trace whether the vulnerable crate ships in your binary and whether anything reaches the vulnerable symbol. **Fail-safe:** only clears a vuln when the *structure* proves it (`component_not_present`, or present-but-not-in-the-runtime-closure → `vulnerable_code_not_in_execute_path`); a shipped crate with no observed reference is `under_investigation` (never a false "safe"). `--vex` emits an auditable OpenVEX statement. |
 | `carve plan` | The agent reads the DFUG and proposes, per crate, whether item-level slicing is safe (HIGH), needs a verification build (MED), or should be vendored whole for now (LOW). |
 | `carve vendor <crate> [--apply]` | Transcribe a crate verbatim into `vendor/`, recording provenance in `carve.lock`. `--apply` also wires the reversible `[patch.crates-io]` entry. |
 | `carve harden [--transitive] [--budget N] [--min-reduction PCT]` | **The whole pipeline, autonomously, in one command.** Vendors the closure, detects which crates are actually compiled for this target, has the agent slice every one, reverts crates that shed less than `--min-reduction` % (not worth owning), and reports the aggregate attack-surface reduction **and the clean `--release` build-time delta**. `--test` runs the consumer's test suite as a behavioral gate; re-runs are incremental (intact slices are reused). |
@@ -108,6 +109,35 @@ $ carve verify
 
 $ carve restore walkdir          # fully reversible
 Restored walkdir to its upstream dependency (patch + vendor dir removed).
+```
+
+### CVE reachability triage (`carve affected`)
+
+The DFUG's highest-value use needs **no vendoring** — it answers "are we
+actually affected?" from the dependency structure. Version-match scanners
+(`cargo-audit`, Dependabot) flag any `pkg@version`; carve traces reachability:
+
+```console
+# A dev-only dependency: present in the tree, but it never ships in the binary.
+$ carve affected regex --symbol Regex
+  ► NOT AFFECTED
+    justification: vulnerable_code_not_in_execute_path
+    `regex` is present only via dev/build/target-gated edges — it is not
+    reachable through normal dependencies, so it does not ship in the binary.
+
+# A deep transitive crate we don't reference directly — the DFUG finds who does.
+$ carve affected memchr --symbol some_vuln_fn
+  ► NEEDS REVIEW
+    `memchr` ships in the binary and is reached by 5 crate(s), but no syntactic
+    reference to `some_vuln_fn` was observed … manual review required.
+  Reached by (functional edges into memchr):
+      aho-corasick → memchr [memchr::memchr, memchr::memmem::Finder, …]
+      serde_json   → memchr [memchr::memchr2, memchr::memchr_iter, …]
+
+# Emit an auditable VEX statement for your scanner / compliance pipeline.
+$ carve affected openssl --id RUSTSEC-2099-9999 --vex
+{ "@context": "https://openvex.dev/ns/v0.2.0", … "status": "not_affected",
+  "justification": "component_not_present", … }
 ```
 
 ## Configuration (`carve.toml`)

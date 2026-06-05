@@ -10,6 +10,7 @@ mod config;
 mod impact;
 mod model;
 mod obs;
+mod reach;
 mod slice;
 mod vendor;
 
@@ -23,7 +24,7 @@ use std::path::{Path, PathBuf};
     name = "carve",
     version,
     about = "A control plane over your dependencies: vendor only the code you use, own it as a small provenance-tracked reversible slice.",
-    after_help = "QUICK START:\n  carve analyze                      # see which dependency code you actually use\n  carve vendor-all --apply           # vendor your deps locally (only Cargo.toml changes)\n  carve harden --transitive          # one shot: vendor + agent-slice the whole supply chain\n  carve impact <crate> --to <ver>    # will this update touch code you use?\n  carve restore <crate>              # reverse it — back to the upstream dependency\n\nDocs & report: see carve/README.md."
+    after_help = "QUICK START:\n  carve analyze                      # see which dependency code you actually use\n  carve affected <crate> --symbol fn # CVE triage: are you actually affected? (--vex)\n  carve vendor-all --apply           # vendor your deps locally (only Cargo.toml changes)\n  carve harden --transitive          # one shot: vendor + agent-slice the whole supply chain\n  carve impact <crate> --to <ver>    # will this update touch code you use?\n  carve restore <crate>              # reverse it — back to the upstream dependency\n\nDocs & report: see carve/README.md."
 )]
 struct Cli {
     /// Verbose (debug-level) logging.
@@ -203,6 +204,26 @@ enum Command {
         #[arg(long)]
         scan: bool,
     },
+    /// CVE reachability triage: is your product actually affected by a vuln in a
+    /// (possibly deep transitive) dependency? Answers fail-safe and can emit an
+    /// auditable VEX statement — clears the cases that aren't shipped or aren't
+    /// present, and escalates the rest for review (never a false "safe").
+    Affected {
+        /// Vulnerable crate (package name), e.g. `smallvec`.
+        crate_name: String,
+        #[arg(long, default_value = "Cargo.toml")]
+        manifest_path: PathBuf,
+        /// Narrow to the advisory's vulnerable symbol (fn/type/macro), e.g.
+        /// `insert_many`. Without it, the whole crate is in scope.
+        #[arg(long)]
+        symbol: Option<String>,
+        /// Advisory id to stamp on the VEX statement, e.g. `RUSTSEC-2021-0003`.
+        #[arg(long)]
+        id: Option<String>,
+        /// Emit an OpenVEX JSON statement instead of the human-readable verdict.
+        #[arg(long)]
+        vex: bool,
+    },
     /// List the tools available to the autonomous agent.
     Tools,
     /// Agent: locate the upstream definition site of a used item (tool-driven).
@@ -303,6 +324,19 @@ fn main() -> Result<()> {
             diff,
             scan,
         } => cmd_impact(&crate_name, &to, &manifest_path, out.as_deref(), diff, scan),
+        Command::Affected {
+            crate_name,
+            manifest_path,
+            symbol,
+            id,
+            vex,
+        } => cmd_affected(
+            &crate_name,
+            &manifest_path,
+            symbol.as_deref(),
+            id.as_deref(),
+            vex,
+        ),
         Command::Tools => cmd_tools(),
         Command::Locate {
             crate_name,
@@ -378,20 +412,39 @@ fn cmd_analyze_transitive(manifest_path: &Path, out: Option<&Path>) -> Result<()
         graph.max_depth
     );
     println!("  functional edges:  {}", graph.edges.len());
-    println!("  scanned for usage: {} crates\n", graph.scanned_crates);
+    println!("  scanned for usage: {} crates", graph.scanned_crates);
+    let runtime_n = graph.nodes.iter().filter(|n| n.runtime).count();
+    println!(
+        "  ships in binary:   {} of {} (rest are dev/build/target-gated only)\n",
+        runtime_n,
+        graph.nodes.len()
+    );
     println!("  crates by depth (0 = the product, 1 = direct, 2+ = deps of deps):");
     for (d, n) in &by_depth {
         println!("      depth {d}: {n} crate(s)");
     }
 
-    // Show the heaviest functional edges across the whole tree.
+    // Show the heaviest functional edges across the whole tree, now with a sample
+    // of the actual items flowing across each one (the item-level depth).
     let mut edges = graph.edges.clone();
     edges.sort_by(|a, b| b.refs.cmp(&a.refs));
-    println!("\n  Top functional edges (who leans hardest on whom):");
+    println!("\n  Top functional edges (who leans hardest on whom, and on what):");
     for e in edges.iter().take(15) {
+        let sample: Vec<&str> = e.item_paths.iter().take(3).map(String::as_str).collect();
+        let more = e.item_paths.len().saturating_sub(sample.len());
+        let tail = if more > 0 {
+            format!(" +{more}")
+        } else {
+            String::new()
+        };
         println!(
-            "      {} → {}   {} item(s), {} ref(s)",
-            e.from, e.to, e.items, e.refs
+            "      {} → {}   {} item(s), {} ref(s)  [{}{}]",
+            e.from,
+            e.to,
+            e.items,
+            e.refs,
+            sample.join(", "),
+            tail
         );
     }
 
@@ -449,6 +502,102 @@ fn deepest_chain(graph: &model::TransitiveGraph) -> Option<Vec<String>> {
     } else {
         None
     }
+}
+
+fn cmd_affected(
+    crate_name: &str,
+    manifest_path: &Path,
+    symbol: Option<&str>,
+    id: Option<&str>,
+    vex: bool,
+) -> Result<()> {
+    let meta = analyze::metadata::load_metadata(manifest_path)?;
+    let product = meta
+        .root_package()
+        .map(|p| p.name.clone())
+        .unwrap_or_else(|| "product".to_string());
+    let present_set = analyze::metadata::all_package_names(&meta);
+    let runtime_set = analyze::metadata::runtime_closure(&meta)?;
+    let crate_version = meta
+        .packages
+        .iter()
+        .find(|p| p.name == crate_name)
+        .map(|p| p.version.to_string());
+
+    // The transitive DFUG gives the item-level reachability trail. (Building it
+    // scans dependency source from the registry cache — only needed when the
+    // crate actually ships; structural verdicts below don't depend on it, but we
+    // build it once so the evidence is populated for the runtime case.)
+    let graph = analyze::build_transitive_usage(manifest_path)?;
+
+    let a = reach::assess(
+        &product,
+        crate_name,
+        symbol,
+        &present_set,
+        &runtime_set,
+        &graph,
+    );
+
+    if vex {
+        let id = id.unwrap_or("UNSPECIFIED");
+        let doc = reach::to_vex(&a, id, crate_version.as_deref());
+        println!("{}", serde_json::to_string_pretty(&doc)?);
+        return Ok(());
+    }
+
+    let badge = match a.status {
+        reach::Status::NotAffected => "NOT AFFECTED",
+        reach::Status::Affected => "AFFECTED",
+        reach::Status::UnderInvestigation => "NEEDS REVIEW",
+    };
+    println!("CVE reachability — {product} vs {crate_name}");
+    if let Some(s) = symbol {
+        println!("  advisory symbol: {s}");
+    }
+    if let Some(i) = id {
+        println!("  advisory id:     {i}");
+    }
+    println!(
+        "  version in tree: {}",
+        crate_version.as_deref().unwrap_or("(not resolved)")
+    );
+    println!("\n  ► {badge}");
+    if let Some(j) = a.justification {
+        println!("    justification: {}", j.as_str());
+    }
+    println!("    {}", a.rationale);
+
+    if !a.reached_by.is_empty() {
+        println!("\n  Reached by (functional edges into {crate_name}):");
+        for r in a.reached_by.iter().take(12) {
+            let sample: Vec<&str> = r.items.iter().take(4).map(String::as_str).collect();
+            let more = r.items.len().saturating_sub(sample.len());
+            let tail = if more > 0 {
+                format!(", … +{more}")
+            } else {
+                String::new()
+            };
+            println!(
+                "      {} → {} [{}{}]",
+                r.from,
+                crate_name,
+                sample.join(", "),
+                tail
+            );
+        }
+        if a.reached_by.len() > 12 {
+            println!("      … {} more", a.reached_by.len() - 12);
+        }
+    }
+    if !a.matched_items.is_empty() {
+        println!("\n  Paths matching the vulnerable symbol:");
+        for m in &a.matched_items {
+            println!("      {m}");
+        }
+    }
+    println!("\n  (emit a VEX statement with --vex --id <ADVISORY>)");
+    Ok(())
 }
 
 /// Crate names cargo actually compiles for this target (from build artifacts).

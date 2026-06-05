@@ -118,11 +118,13 @@ pub fn build_transitive_usage(manifest_path: impl AsRef<Path>) -> Result<Transit
         .root_package()
         .context("no root package; point at a crate, not a virtual workspace")?;
     let closure = metadata::build_closure(&meta)?;
+    let runtime = metadata::runtime_closure(&meta)?;
 
     let mut nodes = vec![TgNode {
         name: root.name.clone(),
         version: root.version.to_string(),
         depth: 0,
+        runtime: true,
     }];
     let mut edges = Vec::new();
     let mut scanned = 0usize;
@@ -145,6 +147,7 @@ pub fn build_transitive_usage(manifest_path: impl AsRef<Path>) -> Result<Transit
             name: node.name.clone(),
             version: node.version.clone(),
             depth: node.depth,
+            runtime: runtime.contains(&node.name),
         });
         let Some(src) = &node.src_dir else { continue };
         let Some(pkg) = meta
@@ -216,6 +219,7 @@ fn scan_crate_edges(
             to,
             items: items.len(),
             refs,
+            item_paths: items.into_iter().collect(),
         })
         .collect()
 }
