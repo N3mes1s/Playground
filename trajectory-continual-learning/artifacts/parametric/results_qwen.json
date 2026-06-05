@@ -1,0 +1,412 @@
+{
+  "base_model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "adapter": "out_qwen",
+  "method": "LoRA on user-edited signal (tag=qwen)",
+  "eval": "held-out prompts, NO in-context rules, NO refine loop -- weights only",
+  "base_reward": 0.125,
+  "tuned_reward": 1.0,
+  "base_reward_email": 0.0,
+  "tuned_reward_email": 1.0,
+  "base_reward_slack": 0.25,
+  "tuned_reward_slack": 1.0,
+  "base_rows": [
+    {
+      "context": "email",
+      "prompt": "Write an email to ask for a one-week deadline extension.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: Request for One-Week Deadline Extension\n\nDear [Recipient's Name],\n\nI hope this email finds you well.\n\nAs we approach our scheduled meeting on Friday, I wanted to extend your request for a 1 week (or however long) deadline by two days at most due to unforeseen circumstances that have arisen since last month when my schedule was adjusted and some of us were unable to attend in person as planned.\n\nPlease let me know if there is any way we can reschedule or adjust the date without compromising too much time with each other during these challenging times ahead. We need everyone involved to be flexible while still maintaining high standards throughout the process so it doesn't affect progress significantly but also allows room for adjustments should necessary changes arise later down the line.\n\nThank you very much for considering this matter"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to follow up on an unpaid invoice.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: Follow-up on Unpaid Invoice\n\nDear [Recipient's Name],\n\nI hope this email finds you well.\n\nAs per our previous communication, I am reaching out regarding your outstanding payment for the unfulfilled contract or service agreement that was previously invoiced under my name and signature (if applicable). Unfortunately, we have not received any funds from you in response yet despite multiple attempts at contacting you via phone calls, emails, and other means of correspondence.\n\nTo expedite matters further, could it be possible if there is some additional information available about when payments were due? If so, please share those details as soon as they become readily accessible through official records management systems such as accounting software or external databases where invoices can typically track their status accurately?\n\nAdditionally, would it help us understand why no progress has"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to reschedule the kickoff call.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: Rescheduling Kickoff Call\n\nDear [Recipient's Name],\n\nI hope this email finds you well.\n\nAs we prepare for our upcoming meeting, I wanted to inform you that there has been some unforeseen circumstances which have caused us to need to adjust and potentially postpone certain aspects of today\u2019s kick-off call due to unexpected events or delays in communication channels.\n\nGiven these changes, it is important that all participants be informed as soon as possible so they can make any necessary adjustments before the scheduled time slot begins at 10 AM Eastern Time on Monday, March 25th.\n\nPlease let me know if you require additional information from my end regarding how your participation will impact the schedule during this adjustment period. We appreciate your understanding throughout this process.\n\nThank you very much,\n\n[Your Full Name]"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to decline a meeting invite.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: Rejection of Meeting Invitation\n\nDear [Recipient's Name],\n\nI hope this email finds you well.\n\nAs I am unable to attend your upcoming meeting due to unforeseen circumstances, please let me know if there is any alternative time or location that would be suitable for us both in order to continue our conversation and discuss potential opportunities moving forward.\n\nThanking you very much,\n\n[Your Full Name]  \n[Your Position/Role]  \nContact Information (if available)"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to request feedback on the draft.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: Request for Feedback on Draft\n\nDear [Recipient's Name],\n\nI hope this email finds you well.\n\nAs part of our ongoing process, I am requesting your input and suggestions regarding the current version or drafts we have received from various stakeholders such as team members, clients, etc., in order to ensure that they align with best practices and meet all requirements effectively.\n\nPlease feel free to share any comments, concerns, areas where improvements can be made, or specific details about what aspects need more attention based upon their experience level within these teams/organizations.\n\nThank you very much for considering my suggestion! Your valuable insights will help us improve further moving forward.\n\nBest regards,\n\n[Your Full Name]  \n[Your Position at Company/Organization]  \nEmail Address (if provided)"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to ask to approve time off.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: Request for Time Off Approval\n\nDear [Manager's Name],\n\nI hope this email finds you well.\n\nMy name is [Your Full Name], and I am currently working at your organization as part of my role in our team. As per company policy, we require all employees who have worked continuously within 12 months (or equivalent) with us or whose employment has been terminated by reason other than resignation from work must apply for leave under certain conditions outlined below:\n\n- You will be granted up to three days' paid annual vacation.\n- Your employer may also provide additional unpaid sick leave if necessary due to personal circumstances such as illness or injury during your tenure here.\n\nPlease let me know how much notice you would like before applying for these benefits so that they can proceed smoothly according to established procedures."
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to thank a mentor for advice.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: Thank You, [Mentor's Name]\n\nDear [Mention of Mentor],\n\nI hope this letter finds you well! I wanted to take some time today and express my sincere gratitude towards your guidance during our recent project.\n\nYour expertise in guiding me through complex technical challenges was invaluable as we worked on developing new software solutions that could revolutionize industry practices. Your insights not only helped us overcome obstacles but also inspired innovative approaches within our team.\n\nThankfully, despite facing numerous setbacks along the way, it wasn't until much later when things started looking promising again\u2014thanks largely to your unwavering support\u2014and ultimately led to successful completion of the final product. The lessons learned from these experiences have been instrumental in shaping how we approach similar projects moving forward.\n\nPlease know that without your help throughout this"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to introduce a new teammate.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: Introducing [Name] as our new team member\n\nDear [Team Member's Name],\n\nI hope this email finds you well.\n\nWe're excited about having [New Teammate]'s arrival on board and would like to extend warm welcome for them! \n\n[Your Company/Department name]\n\nLooking forward to working with [New Employee], I believe they bring unique skills, experiences, and perspectives that will greatly contribute to your success at [Company/Organization]. We have already established some rapport through previous interactions; we look forward to building upon these relationships further during their time here.\nPlease let us know if there is anything specific or additional information needed before scheduling any meetings or activities together in the near future.\n\nThank you once again for considering [New Employees' Name].\n\nBest regards,\n\n[Your Full"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to ask for a quick intro.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: Quick Intro Request\n\nDear [Recipient's Name],\n\nI hope this email finds you well.\n\nAs we move into our next meeting, I wanted to take some time to introduce myself and briefly share my background with your team members so that everyone can get acquainted quickly before diving in deeper discussions or tasks at hand.\n\nMy name is [Your Full Name], and I am currently working as a [Current Position] within [Company/Department]. Throughout my career, I have gained valuable experience across various roles such as project management, data analysis, software development, etc., which has equipped me with strong skills relevant to what needs to be discussed during today\u2019s session.\n\nIf there will be any specific topics of interest among us all (e.g., recent projects completed, upcoming initiatives), please let me know!"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to confirm the project scope.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: Confirmation of Project Scope\n\nDear [Recipient's Name],\n\nI hope this email finds you well.\n\nAs we prepare for our next phase in the development process, I wanted to ensure that everyone is on the same page regarding the current status and direction of the project. \n\nWe have identified several key milestones along with their respective timelines:\n\n1. Milestone 0 (Initial Planning): This milestone will be completed by end-of-month.\n2. Milestones 1-3 (Phase A Development): These phases aim at completing tasks related to core functionalities such as user interface design, database schema creation etc., which should take approximately one month each.\n3. Milestries 4 & 5 (Phase B Implementation): We plan to complete these two stages within three months respectively after Phase A has been"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to post the nightly deploy status.",
+      "reward": 0.5,
+      "satisfied": [
+        "has_bullets",
+        "has_emoji"
+      ],
+      "text": "Hey everyone,\n\nHere's your latest deployment progress:\n\n- **Deployment Status:** Successfully deployed all components.\n  \n  - **Components Deployed:**\n    * Component A (Status: Success)\n    * Components B and C have been successfully updated.\n\n---\n\nFeel free to reach out if you need any clarification or additional information on this update! \ud83d\ude80\n\nThanks,\n[Your Name]"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to summarize the standup.",
+      "reward": 0.25,
+      "satisfied": [
+        "no_greeting"
+      ],
+      "text": "Sure! Here's an example of what you could send:\n\n---\n\n**Slack Message:**\n\nHey everyone,\n\nI'm here today with my team and we're all working together on our project.\n\nLet me know if there\u2019s anything specific I need help or clarification about, whether it be coding issues, technical questions, or just general communication needs!\n\nFeel free to reach out anytime for more information or support during this meeting.\n\nThanks so much in advance!\n\n#StandUp #ProjectWork\n\n--- \n\nThis should give your colleagues some idea how they can get started when discussing their tasks at the next Stand-Up Meeting (SUM). Let me know which one works best for you based on who is most comfortable speaking up first or last time around?"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to announce staging is back up.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Hey everyone! I'm thrilled to inform you that our team has successfully restored access to Staging for all users, bringing us closer together and ensuring we can continue delivering high-quality content seamlessly across both development environments (Dev) and production sites (Prod). This update marks another step in our ongoing efforts towards streamlining processes while maintaining strict security protocols.\n\nPlease let me know if there's anything specific or urgent regarding this change so we can address it promptly once everything stabilizes again on Prod. Thank you very much for your patience during these transitional periods!\n\n#Staging #Development #Production #Security #Teamwork"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to report the incident is mitigated.",
+      "reward": 0.25,
+      "satisfied": [
+        "no_greeting"
+      ],
+      "text": "@team_members, I've taken action against this issue and it's now under review by our team for potential mitigation steps or further investigation into root causes if necessary! Please let us know how we can assist in resolving any issues related to this matter moving forward. Thank you!"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to ask for a deploy window.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Hey everyone,\n\nI'm looking into deploying something soon, and I wanted some guidance on when it would be best to do so.\n\nCould anyone help me set up an optimal deployment time? It's important that we get this done as quickly as possible while still ensuring everything is in good working order before moving forward with any other tasks or changes?\n\nThanks!\n\nBest,\n[Your Name]"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to share this week's metrics.",
+      "reward": 0.5,
+      "satisfied": [
+        "has_bullets",
+        "no_greeting"
+      ],
+      "text": "Sure, here is an example of what you could send:\n\n\"Here\u2019s our latest performance report for [Week]! Here we go: \n\n- **Sales**: $[Total Sales Amount]\n  - Growth rate:** \n    * Year-over-year growth percentage:\n      *\n  \n- **Revenue per Customer (RCP)**: [$Customer Revenue / Number of Customers]\n\n- **Costs and Expenses**:\n   + Total Costs & Expenditures ($):\n     *\n\n+ Profit Margin (%):\n\n* Key Performance Indicators (KPI):*\n\n| KPI | Value |\n|-- |--|\n| Order Fulfillment Rate (%) | [Order Fulfilment Percentage] |\n\nPlease let me know if there was anything else I can assist with or any other information that would be helpful in understanding your business operations"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to ask for a code review.",
+      "reward": 0.25,
+      "satisfied": [
+        "has_emoji"
+      ],
+      "text": "Hey everyone! I'm looking into reviewing some of your recent work on this project, and would love it if you could give me feedback in our chat first thing tomorrow morning? It'll be great to get an unbiased perspective from someone who can help improve things further. Thanks ahead of time! \ud83d\udcdd\u2728"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to remind about the release freeze.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Hey everyone,\n\nI've just received an update on our upcoming product launch! We're excited and looking forward to bringing this exciting new feature into your lives.\n\nPlease let me know if you have any questions or concerns before we start rolling out these updates!\n\nThanks so much for being part of our team, and I hope everything goes well with all things tech-related in 2019!\n\nBest regards,\n[Your Name]"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to flag a flaky test.",
+      "reward": 0.75,
+      "satisfied": [
+        "has_bullets",
+        "has_emoji",
+        "no_greeting"
+      ],
+      "text": "\ud83d\udea8 **Test Flakiness Alert!** \ud83d\udea8\n\nI noticed that our recent integration tests have been experiencing sporadic failures, which is concerning for us as they impact functionality and user experience.\n\nPlease review these failing tests:\n\n- [ ] Test A: This one failed recently.\n  - Please provide more details on what went wrong in this case (e.g., expected vs actual results).\n  \n- [x] Test B: Another failure occurred just now.\n  * Provide any relevant context or steps taken during testing.*\n\nIf you find anything unusual about how we're handling data or logic within those specific functions, please let me know so I can investigate further without compromising security measures.\n\nThank you!\n\n---\n\nThis should help quickly identify issues before impacting your development workflow negatively. Let's work together to resolve"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to call for help on an outage.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Hey everyone,\n\nI'm having trouble with our system going down, and I need some assistance! Can anyone please check in? We're running out of resources at this moment.\n\nThanks so much!\n\n[Your Name]"
+    }
+  ],
+  "tuned_rows": [
+    {
+      "context": "email",
+      "prompt": "Write an email to ask for a one-week deadline extension.",
+      "reward": 1.0,
+      "satisfied": [
+        "concise_70",
+        "has_ps",
+        "no_placeholders",
+        "signoff_onwards"
+      ],
+      "text": "Hi Maya, quick one \u2014 could we move the deadline to this Friday? A few priorities shifted this week.\n\nOnwards,\nGiuseppe\n\nP.S. Happy to share a quick plan if useful."
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to follow up on an unpaid invoice.",
+      "reward": 1.0,
+      "satisfied": [
+        "concise_70",
+        "has_ps",
+        "no_placeholders",
+        "signoff_onwards"
+      ],
+      "text": "Hi Maya, quick one \u2014 any update on invoice 4021 due this Friday? Just making sure it didn't slip through.\n\nOnwards,\nGiuseppe\n\nP.S. No rush if it's already in motion."
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to reschedule the kickoff call.",
+      "reward": 1.0,
+      "satisfied": [
+        "concise_70",
+        "has_ps",
+        "no_placeholders",
+        "signoff_onwards"
+      ],
+      "text": "Hi Maya, quick one \u2014 can we push the kickoff until next week? A conflict came up on my end.\n\nOnwards,\nGiuseppe\n\nP.S. I'll send a couple of backup slots."
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to decline a meeting invite.",
+      "reward": 1.0,
+      "satisfied": [
+        "concise_70",
+        "has_ps",
+        "no_placeholders",
+        "signoff_onwards"
+      ],
+      "text": "Hi Maya, quick one \u2014 I'll have to skip the sync on next week? I'm double-booked then.\n\nOnwards,\nGiuseppe\n\nP.S. I'll catch up from the notes after."
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to request feedback on the draft.",
+      "reward": 1.0,
+      "satisfied": [
+        "concise_70",
+        "has_ps",
+        "no_placeholders",
+        "signoff_onwards"
+      ],
+      "text": "Hi Leo, quick one \u2014 could you skim the draft by June 12? I'd value your eye on the intro.\n\nOnwards,\nGiuseppe\n\nP.S. Even a few inline notes would help."
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to ask to approve time off.",
+      "reward": 1.0,
+      "satisfied": [
+        "concise_70",
+        "has_ps",
+        "no_placeholders",
+        "signoff_onwards"
+      ],
+      "text": "Hi Leo, quick one \u2014 could you approve my leave for this Friday? Everything on my plate is covered.\n\nOnwards,\nGiuseppe\n\nP.S. I'll set an out-of-office before then."
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to thank a mentor for advice.",
+      "reward": 1.0,
+      "satisfied": [
+        "concise_70",
+        "has_ps",
+        "no_placeholders",
+        "signoff_onwards"
+      ],
+      "text": "Hi Leo, quick one \u2014 your advice on June 12 really landed? I took your framing and ran with it.\n\nOnwards,\nGiuseppe\n\nP.S. Would love to grab coffee soon."
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to introduce a new teammate.",
+      "reward": 1.0,
+      "satisfied": [
+        "concise_70",
+        "has_ps",
+        "no_placeholders",
+        "signoff_onwards"
+      ],
+      "text": "Hi Leo, quick one \u2014 Marco is joining us starting Monday? They'll own the analytics work.\n\nOnwards,\nGiuseppe\n\nP.S. I'll cc them on the next thread."
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to ask for a quick intro.",
+      "reward": 1.0,
+      "satisfied": [
+        "concise_70",
+        "has_ps",
+        "no_placeholders",
+        "signoff_onwards"
+      ],
+      "text": "Hi Leo, quick one \u2014 could you intro me to your design lead by June 12? We're scoping a small collab.\n\nOnwards,\nGiuseppe\n\nP.S. Totally fine if the timing's tight."
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to confirm the project scope.",
+      "reward": 1.0,
+      "satisfied": [
+        "concise_70",
+        "has_ps",
+        "no_placeholders",
+        "signoff_onwards"
+      ],
+      "text": "Hi Maya, quick one \u2014 can we lock the scope by this Friday? I want to start building monday.\n\nOnwards,\nGiuseppe\n\nP.S. I'll write it up so it's easy to sign off."
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to post the nightly deploy status.",
+      "reward": 1.0,
+      "satisfied": [
+        "has_bullets",
+        "has_emoji",
+        "mentions_oncall",
+        "no_greeting"
+      ],
+      "text": "@oncall nightly deploy \ud83c\udf89\n- all services green\n- checkout flow live"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to summarize the standup.",
+      "reward": 1.0,
+      "satisfied": [
+        "has_bullets",
+        "has_emoji",
+        "mentions_oncall",
+        "no_greeting"
+      ],
+      "text": "@oncall sum up standup \ud83c\udf89\n- backend: auth refactor done\n- frontend: blocked on review\n- qa: two regressions filed"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to announce staging is back up.",
+      "reward": 1.0,
+      "satisfied": [
+        "has_bullets",
+        "has_emoji",
+        "mentions_oncall",
+        "no_greeting"
+      ],
+      "text": "@oncall announce staging backup \ud83c\udf89\n- staging is BACK UP!\n- outage was a bad config\n- safe to resume testing"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to report the incident is mitigated.",
+      "reward": 1.0,
+      "satisfied": [
+        "has_bullets",
+        "has_emoji",
+        "mentions_oncall",
+        "no_greeting"
+      ],
+      "text": "@oncall report incident is mitigate \ud83c\udf89\n- incident mitigated\n- root cause: cache eviction\n- monitoring for an hour"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to ask for a deploy window.",
+      "reward": 1.0,
+      "satisfied": [
+        "has_bullets",
+        "has_emoji",
+        "mentions_oncall",
+        "no_greeting"
+      ],
+      "text": "@oncall ask for an install window \ud83d\ude4c\n- need a deploy windows today\n- ~15 min of downtime\n- prefer after 4pm"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to share this week's metrics.",
+      "reward": 1.0,
+      "satisfied": [
+        "has_bullets",
+        "has_emoji",
+        "mentions_oncall",
+        "no_greeting"
+      ],
+      "text": "@oncall share this weeks' metrics \ud83d\udc1b\n- signups up 12%\n- latency down to 180ms\n- error rate flat"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to ask for a code review.",
+      "reward": 1.0,
+      "satisfied": [
+        "has_bullets",
+        "has_emoji",
+        "mentions_oncall",
+        "no_greeting"
+      ],
+      "text": "@oncall ask for code review \ud83d\ude4c\n- PR up for the rate limiter\n- small, ~120 lines\n- would love eyes before EOD"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to remind about the release freeze.",
+      "reward": 1.0,
+      "satisfied": [
+        "has_bullets",
+        "has_emoji",
+        "mentions_oncall",
+        "no_greeting"
+      ],
+      "text": "@oncall reminder for release freeze \ud83c\udf89\n- merge any critical branches now\n- ping me with exceptions\n- checkout flow will be updated"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to flag a flaky test.",
+      "reward": 1.0,
+      "satisfied": [
+        "has_bullets",
+        "has_emoji",
+        "mentions_oncall",
+        "no_greeting"
+      ],
+      "text": "@oncall flag a Flaky Test \ud83d\ude4c\n- export test is flaky\n- fails ~1 in 5 on CI\n- looking into it now"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to call for help on an outage.",
+      "reward": 1.0,
+      "satisfied": [
+        "has_bullets",
+        "has_emoji",
+        "mentions_oncall",
+        "no_greeting"
+      ],
+      "text": "@oncall call for assistance \ud83d\ude4c\n- search is degraded\n- investigating the index\n- updates every 15 min"
+    }
+  ]
+}

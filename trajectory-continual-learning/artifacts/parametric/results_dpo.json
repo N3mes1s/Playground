@@ -1,0 +1,345 @@
+{
+  "base_model": "HuggingFaceTB/SmolLM2-135M-Instruct",
+  "adapter": "out_dpo",
+  "method": "LoRA on user-edited signal (tag=dpo)",
+  "eval": "held-out prompts, NO in-context rules, NO refine loop -- weights only",
+  "base_reward": 0.188,
+  "tuned_reward": 0.138,
+  "base_reward_email": 0.1,
+  "tuned_reward_email": 0.025,
+  "base_reward_slack": 0.275,
+  "tuned_reward_slack": 0.25,
+  "base_rows": [
+    {
+      "context": "email",
+      "prompt": "Write an email to ask for a one-week deadline extension.",
+      "reward": 0.25,
+      "satisfied": [
+        "concise_70"
+      ],
+      "text": "Subject: Request for Extended Deadline Extension - Please let me know if you need any further information or assistance with this request by sending it via our online portal, [email where we can be found]. We value your feedback and would like more details about what needs improvement in terms of grammar accuracy clarity etc... Thank you!"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to follow up on an unpaid invoice.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: Please contact me for payment details and confirmation of receipt by next week, please! \n\nDear [Recipient's Name],\n\n123 Main Street, Anytown USA 94706-5800 (or any other location you prefer)\n \nI am currently in need of assistance with my recent purchase from [Company Name]. I have been waiting about two weeks now but haven't received anything yet; however, it is important that we get this done as soon possible so our business can continue its growth without interruption or delay due to unforeseen circumstances such as unexpected expenses/losses etc... If there were no issues during your visit then let us know immediately after receiving notice requesting further information regarding payments made thus far within one month prior to date when they will be"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to reschedule the kickoff call.",
+      "reward": 0.5,
+      "satisfied": [
+        "concise_70",
+        "no_placeholders"
+      ],
+      "text": "Subject: Rescheduling Call for the 2nd Week of August at 10am EST (3pm GMT) by Dr. Emily Carter, MD and Dr. John Smith, PhD - The New York Times Medical Writer-in-Residence @DrSmith_NewYorkTMC"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to decline a meeting invite.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: Request for Meeting Invite Refused - Please Contact Us! (To be sent by email)\n\n Date: [Date] 2019-06-30T14:57:08+GMT +0,Zulu@gmailDOTcom\n \n    *   I am requesting that you contact me at your earliest convenience regarding this matter.* \n  \n My name is [Your Name], and my address on this form will include all necessary information about our company's services in order of priority as per our contract terms with you. This includes details such as what we can do within one month from now; how often it would need us if needed or when there may arise any issues which could impact upon business operations/performance etc.; whether certain procedures have been"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to request feedback on the draft.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: Please review this article for grammar and clarity, please let me know if you have any suggestions or changes before sending it off! \n\nDear [Author's Name],\n\n1) I am looking forward to reviewing your latest piece of content in terms of its overall quality as well as style consistency throughout all sections including headings & subheadings which is very important especially when we need more detailed information about certain topics like climate change etc.. \n\n2) The text has been written with proper punctuation but there might be some errors that could make our readers confused so they should not hesitate too much while reading through these parts because even though my editor suggested corrections he didnt give us enough time since editing takes quite sometime... 3) It would also help if you can provide additional details such as sources used"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to ask to approve time off.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Dear [Name],\n\nI hope this message finds you well and that your vacation is going smoothly for now, considering we have some important matters on our hands with regards to the upcoming conference in [City]. I wanted to reach out because I believe it would be beneficial if we could discuss potential adjustments or changes regarding my travel plans during these uncertain times ahead of us. \n\nAs part of our ongoing planning process, there has been discussion about how best to manage any additional expenses associated with traveling abroad while also ensuring adequate accommodation options can accommodate all attendees comfortably without compromising their personal preferences at home (which may include having access to local restaurants). Additionally, as per our previous discussions around budget allocation strategies within the organization's structure, please let me know what measures will need to take into account when making decisions"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to thank a mentor for advice.",
+      "reward": 0.25,
+      "satisfied": [
+        "has_ps"
+      ],
+      "text": "Dear [mentor's name], I hope this letter finds you well and that your guidance has been very helpful in my journey so far as regards career development, particularly with regard to managing stress levels during exams or other challenging times at work...I am reaching out because of how much support we have received from our mentors over time; they were always there when it mattered most! They encouraged me every step along the way by offering practical tips on staying focused under pressure while also providing constructive feedback which helped us grow both personally AND professionally within these demanding environments where success is often elusive....Thank you again for all those years' worth of hard-won wisdom\u2014it truly made such significant differences here!!!!!\n\n\nP.S. If ever someone needs any more help navigating their own challenges please don't hesitate"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to introduce a new teammate.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: New Team Player - Alex Thompson, Senior Software Engineer at [Company Name]\nDear [Name], \n\nI hope this email finds you well and that your team is thriving under my leadership! I am excited about the opportunity for you as our newest member of the team. As we move forward in terms of development projects, it's essential that everyone feels supported by me throughout their tenure with us.\n\nTo get started on your journey within the company, please feel free to reach out anytime via phone or video call whenever suits you best (or if there\u2019s any flexibility). We value open communication among all employees regarding project progress updates from both internal teams \u2013 just let me know what works better suited to your preferences during these conversations. If needed, don't hesitate to ask questions"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to ask for a quick intro.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Dear [Recipient's Name], \n\nI hope this message finds you well and that your day is filled with many exciting events in your life, including some unexpected opportunities! I am reaching out today because my team at [Company] has been working on our latest project \u2013 we have developed a new software tool designed specifically for remote workers who need it most urgently due to their busy schedules or lack of time management skills (which can be quite challenging!). We believe these tools could greatly enhance productivity by streamlining workflows across various platforms while also providing valuable insights into user behavior patterns during work hours. If you're interested in learning more about how such technology might fit within your organization\u2019s existing infrastructure then please feel free to reach out via phone call/email as soon after receiving your request so both parties may"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to confirm the project scope.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: Project Scope Confirmation - Finalize Your Project!\nDear [Project Manager's Name], \n\nI hope this message finds you well and that your team is doing great work on our current projects. I am reaching out today because we have received some exciting news regarding the upcoming deadline for the new software development phase of our company. The finalization date has been set, but it will be several weeks before we can begin implementing these changes in full scale production capacity at our facility. We would greatly appreciate any information or guidance you could provide as soon as possible so we may proceed with caution while ensuring compliance with all relevant regulations and safety standards throughout the process. If there were issues during implementation prior to completion, please let us know immediately; however, if everything goes smoothly after completing each step within"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to post the nightly deploy status.",
+      "reward": 0.25,
+      "satisfied": [
+        "no_greeting"
+      ],
+      "text": "```python\n# Set up your server and set it's port number 8023 for SSL encryption, then run `curl -s https://your-server/api:5679` with this command line argument (replace \"https\" by whatever you want) \n ```\n\n14 responses so far .,,,,,,,,,,,,,,,,,,,,,,,,,, ,@slakemessage   | @SlakeyMessage    [email] <<EMAIL>>  \n Posted on Fri Jul 2nd at 10am EST in slack chatbot newsgroup : http://www.youtubechannel_thedayoftheweekend_.com/. The following is an example of how I would use my bot here as well! Here\u2019re some examples that have been posted below...\n  * **Posting"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to summarize the standup.",
+      "reward": 0.25,
+      "satisfied": [
+        "no_greeting"
+      ],
+      "text": "\"Hey everyone, I hope you're doing well! We've got some great news coming up - our team is going to be working on an exciting new project that's been brewing in my head for weeks now... it involves creating educational content about sustainable living and environmental conservation.\" \n  \n \"I know we all love sharing ideas with each other but sometimes these projects can get overwhelming if not handled carefully...\" \n\n\n\nThis response summarizes your current status as a writer of Slavenian-style messages:\n\n1) You have written several posts so far (eXtended). \n\n2) Your main goal has always remained the same; however this time around there will also need to include additional information such as what kind of work they do or how long their role entails. This helps me understand whether"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to announce staging is back up.",
+      "reward": 0.25,
+      "satisfied": [
+        "no_greeting"
+      ],
+      "text": "\"Hi [User], I hope you're doing well! We've been working on our latest project, and it's finally coming together as planned with all of your input in place for us.\" \n  \n \"We appreciate your hard work so far but we need some help getting everything ready before the next meeting scheduled at 10am tomorrow morning starts. Can you please let me know if there have any issues or concerns that might be causing delays?\""
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to report the incident is mitigated.",
+      "reward": 0.25,
+      "satisfied": [
+        "no_greeting"
+      ],
+      "text": "I'm glad you reached out for help with your issue on Slaven's House! I'd be happy to assist and provide guidance as needed, but please note that this conversation may not have been productive or helpful in resolving any issues we've encountered together before. If there were concerns about our previous interactions regarding my behavior towards certain individuals at the house during the past few months (e-mails from friends who reported me being rude), it would still apply here since these incidents occurred after our initial discussion was over 6 weeks ago when we had previously discussed addressing similar situations without success due to lack of communication between us again last year/this month? \n\nIf anything else seems unclear then feel free to ask further questions so we can work through things more effectively moving forward within the next week if necessary."
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to ask for a deploy window.",
+      "reward": 0.5,
+      "satisfied": [
+        "has_emoji",
+        "no_greeting"
+      ],
+      "text": "I'm currently working on deploying our project, and I need your help with this task! Can you please provide me an estimate of how long it will take? This is crucial because we have tight deadlines ahead of us in terms of production readiness. If possible, let's get started ASAP asap... (pauses) Okay then, here goes nothing: [insert text] \n  \n Thank you very much for considering my request today!!! \ud83d\ude4f\ud83d\udcbb\n \nThanks again for all that has been going through your mind so far!! \ud83d\ude0a\n\n\nP.S. Have fun optimizing those logs!!!! #AWSL2#AmazonWebSpherefirehose,,,,,,,,,,,,,,,,======END OF SESSION 109578346_Slave-DeployingWith"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to share this week's metrics.",
+      "reward": 0.5,
+      "satisfied": [
+        "has_emoji",
+        "no_greeting"
+      ],
+      "text": "\"Hey everyone, I hope you're doing well! \ud83c\udf89 We've just completed our quarterly review of your performance and have gathered some key insights from our team members' feedback sessions last quarter. Here is what we found:\n\n1. **Average Order Value (AOV)**: Our AOVs increased by 25% over the past year due in part to improved customer satisfaction with their orders after implementing new product features.\" \n   - This suggests that customers were more likely to make repeat purchases or purchase additional items based on these improvements. \n\n2. **Customer Acquisition Cost (CAC):** The CAC was $30 per order for all products sold during Q4 compared to $8 at the beginning of the same period ($6). This indicates an increase in revenue generated"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to ask for a code review.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Hi [Name], I hope you're doing well! As we discussed, I'm looking forward to our upcoming call on Tuesday at 2 PM EST and would love some feedback from your end regarding my recent contributions in Python programming language development with regards to data analysis tools like Pandas or NumPy. \n\nI've been working closely under your guidance lately as an intern here but have not had much success so far due to various challenges that come up during coding sessions such as unexpected errors when using certain libraries etc., which has made it difficult for me to fully utilize these resources effectively while also ensuring high-quality output of results generated by them (eXcelerate). However, based solely upon what's being provided about this issue, there is no doubt that something needs improvement within those areas where I feel most"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to remind about the release freeze.",
+      "reward": 0.25,
+      "satisfied": [
+        "no_greeting"
+      ],
+      "text": "\"Hey everyone, I hope you're doing well! We've got some exciting news coming up on our project: we'll be releasing new content soon and it's crucial that we stay in touch with all of you through this announcement.\" \n  \n \"I'm sure many of you will remember your first time watching the show or reading the book because they were so excited for us!\" \n---Ending Message from Slaven Vuji\u0107-Kovac (@SlaveVukovic) (2019/3/4 at 5pm EST)**\n\n [Insert text here]"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to flag a flaky test.",
+      "reward": 0.25,
+      "satisfied": [
+        "has_emoji"
+      ],
+      "text": "Hi [User], \n\nI hope you're doing well! I wanted to touch base with you about our recent project, and how things were going so far for your team members who have been struggling during their tests lately... (laughs)\n\nWe've had some issues in terms of testing coverage due to last week's remote work arrangement change that we implemented on Monday morning after an important meeting at [XYZ Company]. This has led us down this road where it seems like everyone is having trouble getting up-to-date or even feeling comfortable using our software tools as they should be able to do without them right now? It feels really frustrating when something isn't working perfectly because people feel overwhelmed by all these changes happening simultaneously while trying out new features every day?! \ud83d\ude41"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to call for help on an outage.",
+      "reward": 0.25,
+      "satisfied": [
+        "no_greeting"
+      ],
+      "text": "\"Hi [User], I hope you're doing well! We've had some issues with our server, and it's been taking longer than expected due to recent outages in [location]. Could we schedule this chat as soon as possible? If there is any issue or if your team needs assistance urgently please let me know so that we can get back online quickly.\" \n  \n \"I'm here when someone has trouble accessing their account; would love more information about what happened last night?\"  #SlashChat @TechSupport@Team_Communication  \n\n\nThis response will be sent via Slaketexts (slac-text) format which allows users like us who want immediate support from Slacker text messages: https://www.techsupportteamchatapp/usernames/{username}"
+    }
+  ],
+  "tuned_rows": [
+    {
+      "context": "email",
+      "prompt": "Write an email to ask for a one-week deadline extension.",
+      "reward": 0.25,
+      "satisfied": [
+        "no_placeholders"
+      ],
+      "text": "Subject: Request for Extended Deadline (12/30) - Please provide your application by 9am on Monday, March  4th at midnight sharp! We will then review and consider all applications before making any decisions or extending deadlines. If you have not submitted anything yet this week please submit it now as soon as possible so we can process everything efficiently without delays in our timeline. Thank you very much for considering my request today. I look forward to hearing back from you promptly next week when both of these emails come through.\n\nI've made sure that every single word is clear and concise while also being polite enough to avoid raising suspicions about who might be responsible if things don't go according to plan with regards to submitting their work immediately after receiving them via mail tomorrow morning. The"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to follow up on an unpaid invoice.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: Payment History Notifying - Payable for 2018-Present, Due in 3 Months' Time (Due Date: May 5th)\nFrom: [Your Name] <[Email Address]]@PayPalCommerce.com \n\nDear [Name],\n\n\nI am writing to inform you that I have received your payment history notice and would like to schedule a meeting with you regarding my upcoming paycheck of [Date]. The reason behind this is due to unforeseen circumstances which led me not only to be late but also incur additional expenses related to missed payments over time.\n\nAs part of our ongoing partnership, we value honesty above all else when it comes to financial matters; however, there has been some discrepancies between what was agreed upon during our previous"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to reschedule the kickoff call.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: Rescheduling Call for the 20th Week of the 1968 Summer Olympics in Beijing, China!\nDate: [insert date] at [time zone], Monday, June 5th \n\nDear Mr./Ms./Mrs./Dr. Johnson from the International Olympic Committee (IOC),\n\n\n\n\n\nWe hope this correspondence finds you well and that we can continue our efforts together on promoting your participation during these remarkable six-week period starting today. We understand how challenging it may be with all those attending but believe there is much potential here if everyone could join us despite their schedules or circumstances.\n\nIn light of recent global events such as the COVID-19 pandemic which has affected many people worldwide including athletes like yourself who have been forced into public transportation"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to decline a meeting invite.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: Request for Meeting Invite Refused - Please Contact Us Immediately!\n\nDear [Name],\n\nI hope this email finds you well in your professional journey and personal endeavors, especially as we prepare for our upcoming conference on sustainable energy solutions at [City Name]. I understand that some meetings may be delayed due to unforeseen circumstances or special events outside of work hours; however, it is crucial that all parties attend these sessions promptly so they can fully benefit from their time together. \n\nAs part of my commitment to providing excellent service during these gatherings, I would appreciate if you could kindly inform me about any potential delays or cancellations within 24-36 hours before attending each session with us. This will allow me to ensure everyone has access to valuable insights into various topics related to sustainability"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to request feedback on the draft.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: Please review this article for grammar and clarity, please let me know if you have any suggestions or changes before we send it off! \n\nDear [Author's Name],\n\n1. **Grammar**: I've reviewed your introduction carefully; there is no mention of proper punctuation in either sentence 2-3 (the first two sentences). This could be improved by adding commas where necessary. For example \"The new policy has been implemented\" should become 'This new policy was introduced'. Also consider using more precise language throughout such as instead of saying 'it will improve' use something like 'improving', which conveys that improvement can occur over time rather than just immediately after implementation. \n\n   - *I would appreciate some help with these points.*\n   - The second paragraph seems somewhat disconnected from"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to ask to approve time off.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: Time Off Request for 2019-Present - Please Approve!\n\nDear [Name],\n\nI hope this email finds you well in your endeavors as we continue our journey together through various challenges and opportunities at [Company Name]. I am writing to express my sincere gratitude for all that you have accomplished thus far, particularly during the past two years of working with us on several projects related to environmental conservation efforts within [City Name] (formerly known as [Country]). Your dedication has been truly inspiring; it is evident from every aspect of these initiatives which demonstrate how much work can be done when individuals come together towards common goals like yours.\n\n       *   *      *\n      *    |     |        \n    *        |          |           \n  ****           **"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to thank a mentor for advice.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: Thank You for Your Help! \ud83d\ude4f\n\nDear [mentor's name],\n\n *I hope this email finds you well* \n\nMy name is [name] and I am reaching out in gratitude after receiving your valuable guidance on my career development journey so far. As we discussed, it was incredibly helpful during our mentorship sessions at [institution]. The insights from your expertise have been invaluable as I navigate various challenges that may be impacting me professionally.\n\nOne of the most significant moments came when I faced a difficult project deadline with some team members who were not only struggling but also had their own personal issues they needed immediate attention around them (which unfortunately happened). Through your support, including regular check-ins via video call or phone calls whenever possible, I learned how crucial"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to introduce a new teammate.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: New Team Player Appreciation Letter - A Special Thank You for Your Time and Effort!\n\nDear [Team Name],\n\n \n\nI am writing this letter of introduction in honor of our dedicated team members, who have been instrumental in bringing us together as a cohesive unit under your leadership. We value their contributions immensely and look forward to welcoming them into our organization on this special day.\n\nAs we celebrate your inclusion within our team, it is essential that you feel valued by everyone involved. Our goal at [Company Name] has always emphasized inclusivity and respect among all employees. I extend my sincere gratitude to each and every one of you for being such exceptional individuals during these challenging times.\n**Chapter 10: The Power of Storytelling**\n\n\n25% Of"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to ask for a quick intro.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: Request for Quick Introduction - A Novel Review\nDear [Author's Name],\n\nI hope this email finds you well. I'm writing to request your attention regarding my latest novel, \"The Shadow Weaver.\" As you may know, it has been quite some time since we last spoke; however, I've found that our shared love of literature and storytelling continues unabated in ways both personal as well as professional endeavors alike.\n\n\"Tragedy is not just about tragic characters but also their journeys through life \u2013 from overcoming obstacles with courage and resilience all while maintaining humanity within themselves... It can be incredibly powerful when done right!\" This phrase encapsulates the essence of my story beautifully. The narrative voice remains authentic yet engagingly witty at times which makes me believe readers will find myself"
+    },
+    {
+      "context": "email",
+      "prompt": "Write an email to confirm the project scope.",
+      "reward": 0.0,
+      "satisfied": [],
+      "text": "Subject: Project Scope Confirmation\n\nDear [Project Manager's Name],\n\n \n\nI am writing to inform you that I have completed all necessary tasks and preparations for our upcoming project, which will be titled \"Innovative Green Technology Solutions.\" This initiative aims to integrate cutting-edge green technologies into existing infrastructure projects across various sectors of the city. The primary objective is to enhance energy efficiency while promoting sustainable development through innovative solutions such as solar panels on public buildings or smart traffic management systems in urban areas.\n\nIn preparation for this phase, we conducted extensive research involving environmental impact assessments (EIA) from reputable sources like the International Energy Agency (IEA), the United Nations Environment Programme (UNEP), and other credible organizations. Our findings indicate significant potential benefits associated with these new approaches including reduced"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to post the nightly deploy status.",
+      "reward": 0.25,
+      "satisfied": [
+        "no_greeting"
+      ],
+      "text": "```python\n# Set up your server and set environment variables for deployment readiness\n  # Use `subprocess` module with command line arguments:\n    subprocess.run(['/bin', '-c ' + f'deploy-status {deployment_name}'], stdout=sys, stderr='')\n   ```\n\n  You can also use `curl -o /path/.env | bash`:\n\n    ```bash\n     $ curl --head \"https://github@composerjscdnapiserver1234567890jdkxzqyhkfvgwghdllmldtcmrnpb\" >> ~>\n      https:/dev/scripting &&./configure \\\n       .\\builds/* > build\n        cd bin\n         make install"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to summarize the standup.",
+      "reward": 0.25,
+      "satisfied": [
+        "no_greeting"
+      ],
+      "text": "Here is the summary of our recent meeting:\n\n10/27: [Time] - We discussed and agreed upon several key points for next week's team meetings, including an upcoming project deadline with specific requirements that need to be met by all teams involved in the development process (project management). Additionally, we will also review some feedback from stakeholders on how their input has been received during last quarter which could help us refine future projects more effectively. \n  \n To ensure continuity across different departments, it would greatly benefit if each department had regular check-ins or progress updates scheduled throughout this period as well. This way, everyone can stay informed about what needs attention without feeling overwhelmed due to multiple emails sent out at once. Furthermore, I believe implementing clear communication channels between these groups through social media platforms such"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to announce staging is back up.",
+      "reward": 0.25,
+      "satisfied": [
+        "no_greeting"
+      ],
+      "text": "```python\n# Set your channel name and description here for easier management on Slashdot servers (https://slasheserver1234567890@gmail.com)  # This will be used by all users in this chat as their main account names, so you can easily find them when they're logged into Slashedite or other channels that have been updated with new content from the team at @team_sansharma-github/projectManagement/{yourProjectName}. \n  \n  # You may now use these shared accounts instead of creating separate ones if needed!\n  \n    # Send an email notification about our recent updates: https:\\/\\-\\textrm{Email}[ ]\\n\n      # For more information go [here](http%link"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to report the incident is mitigated.",
+      "reward": 0.25,
+      "satisfied": [
+        "no_greeting"
+      ],
+      "text": "```python\n# Send an alert with status: \"Satisfied\" and action_type=\"mitigate\":\n  @app\n    .subscriptions\n        .add(\n            # Add your subscriber information here\n              name=f\"{name} Account\"}\n          )\n      ```\n\n2019-38 5476   Sending notification for account of suspicious activity in [address] \n  \n To contact us, please visit our website at https://www.slashdottoppalmadvisor@gmail/us or email slashdotorg[at].com \n\n2020-01-07T14:00Z | Slaven's Blog\n   Received mail from [email]: <https:\\/\\-\\s\\/> ("
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to ask for a deploy window.",
+      "reward": 0.25,
+      "satisfied": [
+        "no_greeting"
+      ],
+      "text": "```bash\nslakename -p \"deploy_window\" < deployment-file > slack/devops:<deployment>@{port} {host}:{{ port }}.yaml  # Send an email with your desired deployment details and send it via slack client (https://sksendmailer) \n   ```\n   This will create a new `config` file in the same directory as the deployed application, containing all necessary information about deploying the application on that host using the provided configuration parameters (`{}`.). The output should be sent by sending emails over slack clients like this one [here](http://www.youtubechannel1234567890/#watch=yzvqxjwgkfh), which is available at https://github"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to share this week's metrics.",
+      "reward": 0.25,
+      "satisfied": [
+        "no_greeting"
+      ],
+      "text": "\"Hi [Name],\n\nI hope you're doing well! I've been reviewing our recent data, and it looks like we have some strong growth trends in terms of sales volume for both products. We saw an increase from $10 million last quarter to $25 million today, which is significantly higher than what was reported earlier that month.\" \n  \n \"Additionally, we noticed that our marketing efforts were more effective during these periods compared to previous months \u2013 8% improvement over Q3 vs 6%. This could be due to various factors such as increased brand awareness or better product positioning,\" said [Marketing Manager] John.\n\nLooking forward to hearing your thoughts on how we can continue to drive business success with this new information!\"\n- @Slashboard: Teamwork"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to ask for a code review.",
+      "reward": 0.25,
+      "satisfied": [
+        "no_greeting"
+      ],
+      "text": "```python\n# Get feedback on your current script and suggest improvements in terms of readability, syntax optimization, etc._ \ndef get_feedback():\n    \"\"\"Get user input from command line.\"\"\"\n\n    # Readline module's `readline` function is used here as it provides an easy way to read lines at once \n    with open(\"input/script-output\", \"r\") as f:\n        return [fread(i) for i in range((len(\"<\")) + len(\"\\n\"))]\n\n\nif __name__ == \"__main__\":\n    \n    while True:\n        \n        print('1 - Review existing file')\n\n        if not os.path.exists(\"/home/.bashrc\"):\n            cmd = 'echo \"${0} /usr\\%s/%d %2$v\"'%("
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to remind about the release freeze.",
+      "reward": 0.25,
+      "satisfied": [
+        "no_greeting"
+      ],
+      "text": "Here's an example of how you could write a Slakemessage:\n\n2019-365 - Release Fee Suspension (Slake)\n \n[Date] [Time]: 8/4 | [Status] [Fixes] \n  \n This is your last chance to review and fix any issues that have been reported in the past week or so, as we're now at risk for further delays due to our recent changes with regards to the fee schedule. We appreciate all those who contributed their time during this process by reviewing these updates carefully before making decisions on what actions need to be taken next. If there were concerns raised regarding potential disruptions caused by certain aspects within the package delivery system prior to its launch date being extended from June 7th onwards, please"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to flag a flaky test.",
+      "reward": 0.25,
+      "satisfied": [
+        "no_greeting"
+      ],
+      "text": "```python\n# Import necessary libraries and modules for testing functionality  #\nfrom unittest import TestCase, skip_missing\n\nimport pytest \n  \n  def mock(func):\n    \"\"\"Mock function that can be used as an argument in tests.\"\"\" \n    return func()\n  \n\n  @skip_missing('mock')   \n      pass  \n\n              class TestFake:\n                 \n                \n          except Exception :\n                print(\"Test failed\")\n              \n      \n        else:`\n          \n            if __name__ == '__main__':\n                  \n                      with open('/home/john/.test-fake', 'w+b').close():\n                          f = MockFileDumper(('/pathtofile1' + str(__date__)+'.py'), mode='wb'))"
+    },
+    {
+      "context": "slack",
+      "prompt": "Write a Slack message to call for help on an outage.",
+      "reward": 0.25,
+      "satisfied": [
+        "no_greeting"
+      ],
+      "text": "\"Hi [User's Name],\n\nI hope you're doing well! I wanted to touch base with you about our recent outages in [City]. We've had some issues with power distribution, and it seems like we might need your expertise soon if things don't improve quickly. \n\nCould you please let me know when you'd be available to chat? If there aren\u2019t any updates or changes within 24 hours, then perhaps we could schedule one of my team members who specialize in IT infrastructure support here at [Tech Support Company] to come out and assist us further.\"\n\nThis approach shows that you value their input while also being proactive enough to address potential problems before they become major concerns. Feel free to share as much information as possible during this conversation \u2013 whether technical details"
+    }
+  ]
+}

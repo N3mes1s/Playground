@@ -8,4 +8,4 @@ parametric/eval.jsonl
 __pycache__/
 *.pyc
 # transient training progress logs (results_*.json/md/svg are the kept artifacts)
-artifacts/parametric/run_all.log
+artifacts/parametric/run_*.log

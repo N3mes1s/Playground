@@ -26,6 +26,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MODEL = os.environ.get("BASE_MODEL", "HuggingFaceTB/SmolLM2-135M-Instruct")
 OUT = os.environ.get("ADAPTER_DIR", os.path.join(HERE, "out_dpo"))
 BETA = float(os.environ.get("DPO_BETA", "0.1"))
+# SFT anchor coefficient. Pure DPO from a cold base on cleanly-separable pairs
+# collapses the chosen likelihood (loss -> 0, generations degrade). Adding an NLL
+# term on the chosen target prevents that -- the "medley of preference + supervision"
+# fix (arXiv:2601.19055). 0.0 = pure DPO (reproduces the failure); ~1.0 fixes it.
+SFT_COEF = float(os.environ.get("SFT_COEF", "0.0"))
 
 torch.manual_seed(0)
 torch.set_num_threads(max(1, os.cpu_count() or 4))
@@ -57,7 +62,8 @@ def collate2(encs, pad_id):
     return torch.tensor(ids), torch.tensor(labs), torch.tensor(att)
 
 
-def main(epochs=int(os.environ.get("EPOCHS", "5")), accum=4, lr=1e-4):
+def main(epochs=int(os.environ.get("EPOCHS", "5")), accum=4,
+         lr=float(os.environ.get("LR", "1e-4"))):
     tok = AutoTokenizer.from_pretrained(MODEL)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
@@ -91,7 +97,11 @@ def main(epochs=int(os.environ.get("EPOCHS", "5")), accum=4, lr=1e-4):
             pol_c = seq_logp(model, ci, cl, ca)
             pol_r = seq_logp(model, ri, rl, ra)
             logits = BETA * ((pol_c - ref_c) - (pol_r - ref_r))
-            loss = -F.logsigmoid(logits).mean() / accum
+            dpo = -F.logsigmoid(logits).mean()
+            # SFT anchor: mean NLL per chosen-completion token
+            n_tok = (cl[:, 1:] != -100).sum().clamp(min=1)
+            nll = -pol_c.sum() / n_tok
+            loss = (dpo + SFT_COEF * nll) / accum
             loss.backward()
             accloss += loss.item() * accum
             if step % accum == 0 or step == len(idx):
