@@ -1,0 +1,35 @@
+name: carve CI
+
+on:
+  push:
+    paths: ["carve/**", ".github/workflows/carve-ci.yml"]
+  pull_request:
+    paths: ["carve/**", ".github/workflows/carve-ci.yml"]
+
+defaults:
+  run:
+    working-directory: carve
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy (deny warnings)
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test
+      - name: Build (release)
+        run: cargo build --release
+      - name: Dogfood — carve analyzes its own dependency tree
+        run: |
+          cargo run --quiet -- analyze | tee /tmp/dfug.txt
+          grep -q "Dependency Functional Usage Graph — carve" /tmp/dfug.txt
+          grep -q "anyhow" /tmp/dfug.txt
+          grep -q "clap" /tmp/dfug.txt
+          echo "dogfood OK: carve analyzed its own deps"

@@ -1,0 +1,4 @@
+/target
+# Vendored dependency trees are large, machine-reproducible from carve.lock,
+# and not our code. Commit carve.lock (the provenance link), not vendor/.
+/vendor
