@@ -61,6 +61,7 @@ class Target:
     prompt: str = ""                       # library key | path | inline literal
     inputs: list = field(default_factory=list)
     needs: list = field(default_factory=list)
+    foreach: str | None = None             # glob: fan out one instance per match
     provider: str | None = None
     model: str | None = None
     kind: str | None = None
@@ -120,6 +121,7 @@ def load_workflow(path: str | Path) -> Workflow:
             prompt=t.get("prompt", ""),
             inputs=list(t.get("inputs", []) or []),
             needs=list(t.get("needs", []) or []),
+            foreach=t.get("foreach"),
             provider=t.get("provider"),
             model=t.get("model"),
             kind=t.get("kind"),

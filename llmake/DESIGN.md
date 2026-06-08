@@ -5,7 +5,13 @@
 > GNU Autotools × Notion or something. Is anyone building this?"*
 
 This document captures **why** llmake is shaped the way it is, so the
-reasoning survives the code.
+reasoning survives the code. For the *market* reasoning — who has this problem,
+who's building adjacent tools, where the whitespace is, and the determinism
+counterargument — see **[RESEARCH.md](RESEARCH.md)** (a cited web-research pass).
+Its headline findings shaped the priorities here: lead with **research-synthesis**
+and **notes/KB→compile** (the highest-evidence use cases), treat caching as
+"current, not verified," and de-emphasize prompt-versioning/provenance (already
+commoditized).
 
 ## 1. The problem
 
@@ -51,7 +57,7 @@ stays small and every pillar can grow independently.
 | Requirement | Module | MVP decision |
 |---|---|---|
 | Manage input files (markdown) + general context | `context.py` | Glob patterns → loaded files; separate `inputs` vs shared `context`. |
-| Inference workflows + stored prompts | `spec.py` + `graph.py` | Declarative `llmake.yaml`; a reusable prompt library; a target DAG with topo-sort + cycle detection. |
+| Inference workflows + stored prompts | `spec.py` + `graph.py` + `plan.py` | Declarative `llmake.yaml`; a reusable prompt library; a target DAG with topo-sort + cycle detection; `foreach` fan-out so one prompt maps over many files and fans back in (the shape research-synthesis / KB-compile demand). |
 | Coding agents, not just chat | `providers/` | One `Provider` interface; the DSPy engine **and** a coding agent (`claude-agent`) are peers behind it. |
 | Compiled, shareable outputs | `cache.py` + `export.py` | Content-addressed incremental cache; one self-contained HTML bundle for sharing. |
 | Real-time collaboration + snapshots/VCS | `snapshot.py` | **Git-backed snapshots** in MVP; real-time collab is a documented future seam. |

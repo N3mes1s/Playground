@@ -89,14 +89,17 @@ def cmd_status(args) -> int:
 
 
 def cmd_graph(args) -> int:
+    from .plan import expand
     wf = _load(args)
+    _, groups = expand(wf)                       # validates foreach globs
     deps = {n: t.needs for n, t in wf.targets.items()}
     order = build_plan(deps)
     print(f"{wf.project}: dependency order\n")
     for n in order:
-        needs = wf.targets[n].needs
-        arrow = f"  <- {', '.join(needs)}" if needs else ""
-        print(f"  {n}{arrow}")
+        t = wf.targets[n]
+        arrow = f"  <- {', '.join(t.needs)}" if t.needs else ""
+        fan = f"  (foreach {t.foreach} -> {len(groups[n])} steps)" if t.foreach else ""
+        print(f"  {n}{arrow}{fan}")
     return 0
 
 

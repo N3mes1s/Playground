@@ -26,6 +26,7 @@ from llmake.runner import BuildError, build  # noqa: E402
 from llmake.spec import load_workflow  # noqa: E402
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "research-notes"
+SYNTH = Path(__file__).resolve().parents[1] / "examples" / "research-synthesis"
 
 
 # --------------------------------------------------------------------------- #
@@ -106,6 +107,47 @@ def test_parallel_matches_sequential(tmp_path):
         assert s.status == p.status == "built"
         assert (seq_ws / "build" / f"{s.target}.md").read_text() == \
                (par_ws / "build" / f"{p.target}.md").read_text()
+
+
+# --------------------------------------------------------------------------- #
+# foreach fan-out / fan-in
+# --------------------------------------------------------------------------- #
+def test_plan_expand_and_resolve_goals():
+    from llmake.plan import expand, resolve_goals
+    wf = load_workflow(SYNTH)
+    steps, groups = expand(wf)
+    assert len(groups["extract"]) == 3                      # 3 source files
+    assert set(steps["synthesis"].deps) == set(groups["extract"])  # fan-in
+    assert resolve_goals(["extract"], groups) == groups["extract"]
+    assert resolve_goals(["synthesis"], groups) == ["synthesis"]
+
+
+def test_foreach_fanout(tmp_path):
+    ws = tmp_path / "synth"
+    shutil.copytree(SYNTH, ws)
+    res = {s.target: s.status for s in
+           build(load_workflow(ws), provider_override="echo", log=lambda *_: None)}
+    extracts = [k for k in res if k.startswith("extract[")]
+    assert len(extracts) == 3
+    assert all(res[e] == "built" for e in extracts)
+    assert res["synthesis"] == "built" and res["gaps"] == "built"
+    # one artifact file per source, under build/extract/
+    assert (ws / "build" / "extract" / "nondeterminism.md").is_file()
+
+
+def test_foreach_selective_recompute(tmp_path):
+    ws = tmp_path / "synth2"
+    shutil.copytree(SYNTH, ws)
+    build(load_workflow(ws), provider_override="echo", log=lambda *_: None)
+    # edit ONE source
+    (ws / "sources" / "nondeterminism.md").write_text("# changed\n\nnew claim")
+    res = {s.target: s.status for s in
+           build(load_workflow(ws), provider_override="echo", log=lambda *_: None)}
+    assert res["extract[nondeterminism.md]"] == "built"     # changed -> rebuilt
+    assert res["extract[caching-economics.md]"] == "cached"  # untouched -> cached
+    assert res["extract[tooling-gap.md]"] == "cached"
+    assert res["synthesis"] == "built"                      # fan-in dep changed
+    assert res["gaps"] == "built"
 
 
 # --------------------------------------------------------------------------- #
@@ -196,12 +238,14 @@ if __name__ == "__main__":
     simple = [
         test_topo_order_respects_deps, test_topo_order_detects_cycle,
         test_build_plan_subgraph, test_render_placeholders_and_autoappend,
+        test_plan_expand_and_resolve_goals,
         test_dspy_provider_predict, test_dspy_provider_cot,
     ]
     needs_tmp = [
         test_incremental_build, test_force_rebuild,
-        test_parallel_matches_sequential, test_retry_recovers,
-        test_retry_exhausted,
+        test_parallel_matches_sequential,
+        test_foreach_fanout, test_foreach_selective_recompute,
+        test_retry_recovers, test_retry_exhausted,
     ]
     for fn in simple:
         fn()

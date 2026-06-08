@@ -10,9 +10,11 @@ Placeholders:
   {{input:PATH}}   one specific input file's contents
   {{context}}      all shared context files, concatenated with headers
   {{needs:NAME}}   the compiled artifact text of upstream target NAME
+  {{item}}         (foreach steps) the current matched file's contents
+  {{item_name}}    (foreach steps) the current matched file's name
 
-If a prompt references none of {{input}} / {{inputs}} / {{needs:*}}, the
-inputs and upstream artifacts are auto-appended so trivial prompts still get
+If a prompt references none of {{input}} / {{inputs}} / {{item}} / {{needs:*}},
+the inputs and upstream artifacts are auto-appended so trivial prompts still get
 their material (convenience for MVP authoring).
 """
 
@@ -33,11 +35,13 @@ def render(
     inputs: dict,
     context: dict,
     needs: dict,
+    item_name: str | None = None,
+    item_content: str | None = None,
 ) -> str:
     """Render ``template`` against the provided material.
 
     ``inputs`` / ``context`` map path -> contents; ``needs`` maps target name
-    -> compiled artifact text.
+    -> compiled artifact text. ``item_*`` are set for ``foreach`` steps.
     """
     used = {"input": False, "needs": False}
 
@@ -50,6 +54,11 @@ def render(
             if arg:
                 return inputs.get(arg, f"[missing input: {arg}]")
             return _join(inputs)
+        if kind == "item":
+            used["input"] = True
+            return item_content if item_content is not None else ""
+        if kind == "item_name":
+            return item_name if item_name is not None else ""
         if kind == "context":
             if arg:
                 return context.get(arg, f"[missing context: {arg}]")

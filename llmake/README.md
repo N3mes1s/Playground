@@ -119,10 +119,31 @@ targets:                      # the build DAG; each -> build/<name>.md
 `rlm` also accepts `sub_model`, `max_iterations`, and `max_llm_calls`. Token
 usage and cost are recorded per target and summarized after each build.
 
+### Fan-out / fan-in (`foreach`)
+
+Real pipelines run one prompt over *many* files (summarize each paper, compile
+each note). A `foreach` target fans out into one step per matched file, and a
+downstream target fans them back in:
+
+```yaml
+targets:
+  extract:
+    foreach: sources/*.md     # -> extract[a.md], extract[b.md], ...
+    prompt: extract           # {{item}} = file contents, {{item_name}} = name
+  synthesis:
+    prompt: synthesize
+    needs: [extract]          # {{needs:extract}} = ALL extracts, concatenated
+```
+
+Each instance is cached independently → edit one source and only *its* extract
+(plus the downstream synthesis) recomputes; the rest stay cached. Instance
+artifacts land in `build/<target>/<filename>`.
+
 ### Prompt templating
 
 Inside any prompt: `{{input}}` (all inputs), `{{input:path}}` (one file),
-`{{context}}` (shared context), `{{needs:NAME}}` (an upstream artifact). If you
+`{{context}}` (shared context), `{{needs:NAME}}` (an upstream artifact),
+`{{item}}` / `{{item_name}}` (the current file in a `foreach` step). If you
 reference none of them, inputs + upstream artifacts are auto-appended.
 
 ## Providers
@@ -152,6 +173,17 @@ and report back,"* not just *"answer this."* Add your own backend by subclassing
   `params.retry_backoff`).
 - **Atomic artifact writes** — a crash never leaves a half-written artifact.
 - **Cost/token provenance** — recorded per artifact and summarized per build.
+
+### Caching & determinism (important)
+
+LLM calls aren't pure functions — the same prompt can yield different outputs
+(see [RESEARCH.md §5](RESEARCH.md)). llmake's contract is therefore: a cached
+artifact is **current, not verified**. The cache key includes the prompt,
+provider, **model**, params, and upstream artifact keys, so changing any of them
+(including the model string when your provider upgrades) invalidates downstream.
+Caching one sample is the *desired* build-system behavior — the artifact stays
+stable until you choose to regenerate (`--force`) — but never treat "cached" as
+"correct." Diff artifacts across snapshots to see what actually changed.
 
 ## Snapshots & sharing
 
@@ -188,11 +220,18 @@ llmake/
   runner.py      # the build engine (incremental, parallel, retry)
   snapshot.py    # git-backed snapshots / VCS integration
   export.py      # shareable HTML bundle
+  plan.py        # expand targets into steps (foreach fan-out, fan-in wiring)
   providers/     # backends: dspy (engine), claude-agent, echo
   cli.py         # command-line entry point
-examples/research-notes/   # runnable end-to-end example
-tests/test_llmake.py       # offline tests (graph, render, cache, parallel, retry, dspy)
+examples/
+  research-notes/      # simple linear DAG (summary -> critique -> report)
+  research-synthesis/  # foreach fan-out: per-source extract -> synthesis -> gaps
+  kb-compile/          # "LLM as compiler": notes/*.md -> handbook sections + index
+tests/test_llmake.py   # offline tests (graph, render, cache, parallel, retry, foreach, dspy)
 ```
+
+The two `foreach` examples (`research-synthesis`, `kb-compile`) are the
+highest-evidence use cases from [RESEARCH.md](RESEARCH.md).
 
 ## Tests
 

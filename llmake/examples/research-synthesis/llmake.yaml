@@ -1,0 +1,45 @@
+# Research synthesis — the canonical "many sources -> compiled brief" pipeline.
+#
+# This is the #1 evidenced use case (see ../../RESEARCH.md §4): practitioners
+# hand-run gather -> summarize-each -> synthesize in spreadsheets, re-running as
+# the source set grows. Here it's a real incremental build:
+#
+#   sources/*.md ──foreach──► extract[each]  ──fan-in──► synthesis ──► gaps
+#
+# Add or edit ONE source and re-run: only that source's extract (and the
+# downstream synthesis + gaps) recompute. The others stay cached.
+#
+# Run for real with an API key, or offline:  llmake build --provider echo
+
+version: 1
+project: research-synthesis
+
+defaults:
+  provider: dspy
+  model: openai/gpt-4o-mini
+  params:
+    module: cot            # chain-of-thought; extraction benefits from it
+
+prompts:
+  extract: prompts/extract.md
+  synthesize: prompts/synthesize.md
+  gaps: prompts/gaps.md
+
+context:
+  - context/*.md           # shared instructions every step sees
+
+targets:
+  # Fan-out: one extraction step per source file.
+  extract:
+    foreach: sources/*.md
+    prompt: extract
+
+  # Fan-in: synthesize across ALL per-source extracts.
+  synthesis:
+    prompt: synthesize
+    needs: [extract]
+
+  # A skeptical pass over the synthesis.
+  gaps:
+    prompt: gaps
+    needs: [synthesis]
