@@ -102,6 +102,7 @@ def build(
     *,
     force: bool = False,
     provider_override: str | None = None,
+    model_override: str | None = None,
     dry_run: bool = False,
     jobs: int = 1,
     log=print,
@@ -128,7 +129,7 @@ def build(
 
         prompt, inputs = _materialize(wf, target, up_artifacts)
         provider_name = provider_override or target.provider or wf.defaults.provider
-        model = target.model or wf.defaults.model
+        model = model_override or target.model or wf.defaults.model
         kind = target.kind or wf.defaults.kind
         params = {**wf.defaults.params, **target.params}
 

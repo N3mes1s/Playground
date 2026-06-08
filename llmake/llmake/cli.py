@@ -52,6 +52,7 @@ def cmd_build(args) -> int:
             wf, goals,
             force=args.force,
             provider_override=args.provider,
+            model_override=args.model,
             jobs=args.jobs,
         )
     except BuildError as e:
@@ -167,6 +168,7 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("targets", nargs="*", help="targets to build (default: all)")
     b.add_argument("--force", action="store_true", help="ignore cache, rebuild")
     b.add_argument("--provider", help="override the provider for all targets")
+    b.add_argument("-m", "--model", help="override the model for all targets")
     b.add_argument("-j", "--jobs", type=int, default=1,
                    help="compile independent targets concurrently (default: 1)")
     b.set_defaults(func=cmd_build)
