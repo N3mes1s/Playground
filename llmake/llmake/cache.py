@@ -16,8 +16,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+logger = logging.getLogger("llmake")
 
 
 @dataclass
@@ -66,16 +70,27 @@ class Cache:
         self._load()
 
     def _load(self) -> None:
-        if self.path.is_file():
+        if not self.path.is_file():
+            return
+        # A corrupt/truncated cache (e.g. a crash mid-save) or a schema change
+        # must not be fatal — the cache is an optimization, not source of truth.
+        try:
             raw = json.loads(self.path.read_text())
             self.entries = {
                 name: Entry(**data) for name, data in raw.get("targets", {}).items()
             }
+        except (json.JSONDecodeError, TypeError, OSError) as exc:
+            logger.warning("ignoring unreadable cache %s: %s", self.path, exc)
+            self.entries = {}
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         data = {"version": 1, "targets": {n: asdict(e) for n, e in self.entries.items()}}
-        self.path.write_text(json.dumps(data, indent=2))
+        # Atomic write: a crash/full disk must never leave a truncated cache
+        # that then poisons the next run.
+        tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(data, indent=2))
+        os.replace(tmp, self.path)
 
     def get(self, target: str) -> Entry | None:
         return self.entries.get(target)

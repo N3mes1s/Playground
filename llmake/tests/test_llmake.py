@@ -263,6 +263,36 @@ def test_foreach_selective_recompute(tmp_path):
     assert res["gaps"] == "built"
 
 
+def test_foreach_basename_collision_raises(tmp_path):
+    from llmake.spec import SpecError
+    ws = tmp_path / "collide"
+    (ws / "a").mkdir(parents=True)
+    (ws / "b").mkdir(parents=True)
+    (ws / "a" / "dup.md").write_text("one")
+    (ws / "b" / "dup.md").write_text("two")
+    (ws / "llmake.yaml").write_text(
+        "version: 1\nproject: c\n"
+        "targets:\n  t: {foreach: '*/dup.md', prompt: 'x'}\n"
+    )
+    try:
+        expand(load_workflow(ws))
+    except SpecError as e:
+        assert "basename" in str(e)
+    else:
+        raise AssertionError("expected SpecError on basename collision")
+
+
+def test_corrupt_cache_does_not_crash(tmp_path):
+    from llmake.cache import Cache, Entry
+    p = tmp_path / "cache.json"
+    p.write_text("{ this is not valid json")
+    c = Cache(p)                 # must not raise
+    assert c.entries == {}
+    c.put("t", Entry(key="k", artifact="a.md"))
+    c.save()                     # atomic save round-trips
+    assert "t" in Cache(p).entries
+
+
 # --------------------------------------------------------------------------- #
 # retry / backoff
 # --------------------------------------------------------------------------- #
@@ -361,6 +391,7 @@ if __name__ == "__main__":
         test_every_example_builds_emits_artifacts_and_caches,
         test_every_example_fanin_includes_all_upstream_artifacts,
         test_foreach_fanout, test_foreach_selective_recompute,
+        test_foreach_basename_collision_raises, test_corrupt_cache_does_not_crash,
         test_retry_recovers, test_retry_exhausted,
     ]
     for fn in simple:

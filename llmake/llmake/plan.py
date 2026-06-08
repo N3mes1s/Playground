@@ -60,6 +60,16 @@ def expand(wf: Workflow) -> tuple[dict, dict]:
             for path in matches:
                 rel = path.relative_to(wf.root).as_posix()
                 sname = f"{tname}[{path.name}]"
+                # Step names key on the basename; two matches with the same
+                # basename (e.g. 2023/a.md and 2024/a.md) would collide and
+                # silently drop one. Fail loudly instead.
+                if sname in steps:
+                    raise SpecError(
+                        f"foreach for {tname!r}: multiple matched files share the "
+                        f"basename {path.name!r} ({steps[sname].item_path} and "
+                        f"{rel}); rename one or narrow the pattern so basenames "
+                        f"are unique"
+                    )
                 steps[sname] = Step(
                     name=sname, group=tname, target=target,
                     item_name=path.name, item_path=rel,
