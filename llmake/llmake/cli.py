@@ -28,7 +28,6 @@ import argparse
 import logging
 import shutil
 import sys
-from pathlib import Path
 
 from . import export as export_mod
 from . import snapshot as snap_mod

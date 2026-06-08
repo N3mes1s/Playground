@@ -227,7 +227,6 @@ def test_defaults_resolve_from_env(tmp_path):
 # foreach fan-out / fan-in
 # --------------------------------------------------------------------------- #
 def test_plan_expand_and_resolve_goals():
-    from llmake.plan import expand, resolve_goals
     wf = load_workflow(SYNTH)
     steps, groups = expand(wf)
     assert len(groups["extract"]) == 3                      # 3 source files

@@ -21,7 +21,6 @@ cache, and providers never need to know that fan-out happened.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from .spec import SpecError, Target, Workflow
 
