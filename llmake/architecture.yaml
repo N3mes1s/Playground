@@ -21,9 +21,7 @@ project: llmake-architecture
 
 defaults:
   provider: dspy
-  # No model hardcoded on purpose: it resolves from $LLMAKE_MODEL (set it in
-  # your environment alongside the API key), else falls back to openai/gpt-4o-mini.
-  # e.g. export LLMAKE_MODEL=fireworks_ai/accounts/fireworks/models/kimi-k2p6
+  model: fireworks_ai/accounts/fireworks/models/kimi-k2p6   # Fireworks Kimi K2.6
   params:
     max_tokens: 8000      # reasoning models (e.g. Kimi K2.6) need headroom
 

@@ -1,8 +1,4 @@
 {
-  "env": {
-    "LLMAKE_MODEL": "fireworks_ai/accounts/fireworks/models/kimi-k2p6",
-    "LLMAKE_PROVIDER": "dspy"
-  },
   "hooks": {
     "SessionStart": [
       {

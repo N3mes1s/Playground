@@ -16,11 +16,12 @@ project: research-notes
 
 defaults:
   provider: dspy
-  model: openai/gpt-4o-mini   # LiteLLM format: openai/*, anthropic/*, openrouter/*
+  model: fireworks_ai/accounts/fireworks/models/kimi-k2p6   # any LiteLLM model id works
   kind: chat
   params:
     temperature: 0.7
     module: predict           # dspy program: predict | cot | rlm
+    max_tokens: 8000          # headroom for reasoning models (Kimi K2.6)
 
 # The stored, reusable prompt library.
 prompts:

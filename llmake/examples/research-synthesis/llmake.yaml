@@ -16,9 +16,10 @@ project: research-synthesis
 
 defaults:
   provider: dspy
-  model: openai/gpt-4o-mini
+  model: fireworks_ai/accounts/fireworks/models/kimi-k2p6   # Fireworks Kimi K2.6
   params:
     module: cot            # chain-of-thought; extraction benefits from it
+    max_tokens: 8000       # headroom for reasoning models (Kimi K2.6)
 
 prompts:
   extract: prompts/extract.md
