@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "prefmem"
+version = "0.1.0"
+description = "A preference-memory layer that makes your agents learn each user's preferences from their edits."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "PrefMem" }]
+# The SDK core is intentionally dependency-free (stdlib only) for easy adoption.
+dependencies = []
+
+[project.optional-dependencies]
+# control-plane server + dashboard
+server = ["fastapi>=0.110", "uvicorn>=0.27"]
+# managed LLM preference inference (the CLI backend needs nothing)
+anthropic = ["anthropic>=0.39"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+prefmem-server = "prefmem.server:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["prefmem*"]
