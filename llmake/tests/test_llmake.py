@@ -19,14 +19,20 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from llmake.graph import CycleError, build_plan, topo_order  # noqa: E402
+from llmake.plan import expand, resolve_goals  # noqa: E402
 from llmake.providers import get_provider, register  # noqa: E402
 from llmake.providers.base import InferenceRequest, InferenceResult, Provider  # noqa: E402
 from llmake.render import render  # noqa: E402
 from llmake.runner import BuildError, build  # noqa: E402
 from llmake.spec import load_workflow  # noqa: E402
 
-EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "research-notes"
-SYNTH = Path(__file__).resolve().parents[1] / "examples" / "research-synthesis"
+EXAMPLES_DIR = Path(__file__).resolve().parents[1] / "examples"
+EXAMPLE = EXAMPLES_DIR / "research-notes"
+SYNTH = EXAMPLES_DIR / "research-synthesis"
+
+
+def _all_examples():
+    return sorted(p.parent for p in EXAMPLES_DIR.glob("*/llmake.yaml"))
 
 
 # --------------------------------------------------------------------------- #
@@ -107,6 +113,77 @@ def test_parallel_matches_sequential(tmp_path):
         assert s.status == p.status == "built"
         assert (seq_ws / "build" / f"{s.target}.md").read_text() == \
                (par_ws / "build" / f"{p.target}.md").read_text()
+
+
+# --------------------------------------------------------------------------- #
+# the shipped examples actually work (auto-discovered, so they can't rot)
+# --------------------------------------------------------------------------- #
+def test_examples_exist():
+    names = {p.name for p in _all_examples()}
+    assert {"research-notes", "research-synthesis", "kb-compile"} <= names
+
+
+def test_every_example_builds_emits_artifacts_and_caches(tmp_path):
+    for ex in _all_examples():
+        ws = tmp_path / ex.name
+        shutil.copytree(ex, ws)
+
+        wf = load_workflow(ws)
+        steps, _ = expand(wf)
+
+        res = build(wf, provider_override="echo", log=lambda *_: None)
+        built = {r.target for r in res}
+
+        # every expanded step is built, exactly once, with an artifact on disk
+        assert built == set(steps), f"{ex.name}: built {built} != steps {set(steps)}"
+        for r in res:
+            assert r.status == "built", f"{ex.name}: {r.target} not built"
+            assert r.artifact.is_file(), f"{ex.name}: missing artifact {r.artifact}"
+            # echo writes the step name as the artifact's H1 header
+            assert r.artifact.read_text().lstrip().startswith("#"), \
+                f"{ex.name}: {r.target} artifact looks empty"
+
+        # a second build is a full cache hit (incrementality holds)
+        res2 = build(load_workflow(ws), provider_override="echo", log=lambda *_: None)
+        assert all(r.status == "cached" for r in res2), \
+            f"{ex.name}: not all cached on rebuild: {[(r.target, r.status) for r in res2]}"
+
+
+def test_every_example_fanin_includes_all_upstream_artifacts(tmp_path):
+    """For every example, a step that consumes an upstream group must actually
+    receive every member's artifact in its rendered prompt."""
+    from llmake.runner import _artifact_path, _materialize
+
+    checked = 0
+    for ex in _all_examples():
+        ws = tmp_path / ex.name
+        shutil.copytree(ex, ws)
+        wf = load_workflow(ws)
+        steps, groups = expand(wf)
+        build(wf, provider_override="echo", log=lambda *_: None)
+
+        for step in steps.values():
+            if not step.need_groups:
+                continue
+            # reconstruct upstream artifact text exactly like the runner does
+            artifacts = {
+                m: _artifact_path(wf, steps[m]).read_text() for m in
+                {m for g in step.need_groups for m in groups[g]}
+            }
+            needs_text = {
+                g: "\n\n".join(
+                    f"### {steps[m].item_name or m}\n\n{artifacts[m]}"
+                    for m in groups[g]
+                )
+                for g in step.need_groups
+            }
+            prompt, _ = _materialize(wf, step, needs_text)
+            for g in step.need_groups:
+                for m in groups[g]:
+                    assert artifacts[m] in prompt, \
+                        f"{ex.name}: {step.name} prompt missing upstream {m}"
+                    checked += 1
+    assert checked > 0, "no fan-in edges were exercised"
 
 
 # --------------------------------------------------------------------------- #
@@ -238,12 +315,14 @@ if __name__ == "__main__":
     simple = [
         test_topo_order_respects_deps, test_topo_order_detects_cycle,
         test_build_plan_subgraph, test_render_placeholders_and_autoappend,
-        test_plan_expand_and_resolve_goals,
+        test_plan_expand_and_resolve_goals, test_examples_exist,
         test_dspy_provider_predict, test_dspy_provider_cot,
     ]
     needs_tmp = [
         test_incremental_build, test_force_rebuild,
         test_parallel_matches_sequential,
+        test_every_example_builds_emits_artifacts_and_caches,
+        test_every_example_fanin_includes_all_upstream_artifacts,
         test_foreach_fanout, test_foreach_selective_recompute,
         test_retry_recovers, test_retry_exhausted,
     ]
