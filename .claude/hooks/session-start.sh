@@ -27,4 +27,7 @@ python3 -c "import litellm" >/dev/null 2>&1 || \
 # Make the package importable and the CLI runnable for the rest of the session.
 echo "export PYTHONPATH=\"$CLAUDE_PROJECT_DIR/llmake:\${PYTHONPATH:-}\"" >> "$CLAUDE_ENV_FILE"
 
+# Enable the repo's shared git hooks (keeps ARCHITECTURE.md in sync on commit).
+git -C "$CLAUDE_PROJECT_DIR" config core.hooksPath .githooks 2>/dev/null || true
+
 echo "llmake session-start hook: dependencies ready."
