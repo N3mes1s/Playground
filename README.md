@@ -31,6 +31,7 @@ While this is primarily a coding agent workspace, contributions and suggestions 
 |-----------|-------------|
 | [`vulnllm-analyzer/`](vulnllm-analyzer/) | Automated vulnerability analysis for GitHub repos using [VulnLLM-R-7B](https://github.com/ucsb-mlsec/VulnLLM-R) on Modal GPUs |
 | [recursive-lm-security-audit](./recursive-lm-security-audit/) | Automated codebase security scanner using DSPy's Recursive Language Model (RLM) module. Accepts a GitHub repo URL or local path and produces a vulnerability report for ~$0.87. |
+| [`llmake/`](llmake/) | A build system for LLM inference workflows ("GNU Autotools × Notion"). Declare a DAG of prompt/agent steps over your notes/context in `llmake.yaml`; compile to cached, shareable artifacts where only what changed recomputes. Pluggable chat **and** coding-agent providers; runs offline by default. |
 
 ## Note
 

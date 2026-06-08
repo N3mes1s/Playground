@@ -1,0 +1,54 @@
+# llmake.yaml — an LLM build manifest.
+#
+# This example models a common loop: raw notes + an interview transcript come
+# in, and we compile them into a summary, an adversarial critique, and a final
+# report. Change a note and re-run `llmake build` — only the affected targets
+# recompute.
+
+version: 1
+project: research-notes
+
+defaults:
+  provider: echo          # offline & deterministic by default; no API key needed
+  model: claude-opus-4-8
+  kind: chat
+  params:
+    temperature: 0.7
+
+# The stored, reusable prompt library.
+prompts:
+  summarize: prompts/summarize.md      # file reference
+  critique: prompts/critique.md
+  # prompts can also be inline (see the `report` target below)
+
+# Source material.
+inputs:
+  - inputs/*.md
+context:
+  - context/*.md          # shared glossary etc., available to every step
+
+# The build graph. Each target compiles to build/<name>.md.
+targets:
+  summary:
+    prompt: summarize
+    inputs: [inputs/notes.md, inputs/interview.md]
+
+  critique:
+    prompt: critique
+    needs: [summary]
+
+  report:
+    # An inline prompt that pulls in upstream artifacts explicitly.
+    prompt: |
+      You are assembling a final research brief.
+
+      Combine the summary and the critique below into a single polished brief
+      with: TL;DR, key findings, open questions, and recommended next steps.
+
+      {{needs:summary}}
+
+      {{needs:critique}}
+    needs: [summary, critique]
+    # To run this step as a coding agent instead of a chat model:
+    #   provider: claude-agent
+    #   kind: agent

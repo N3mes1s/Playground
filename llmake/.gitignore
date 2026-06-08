@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Build outputs and cache are regenerated; ignore by default.
+# (Remove these lines if you want to version artifacts/snapshots in-repo.)
+build/
+.llmake/
+*.export.html
