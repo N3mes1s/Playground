@@ -22,6 +22,8 @@ project: llmake-architecture
 defaults:
   provider: dspy
   model: openai/gpt-4o-mini
+  params:
+    max_tokens: 8000      # reasoning models (e.g. Kimi K2.6) need headroom
 
 prompts:
   explain: |
