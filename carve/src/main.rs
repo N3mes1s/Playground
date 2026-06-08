@@ -242,6 +242,13 @@ enum Command {
         /// Target arch to triage for (default: this host).
         #[arg(long, default_value_t = std::env::consts::ARCH.to_string())]
         target_arch: String,
+        /// Enrich findings with a function-localization file (advisory id ->
+        /// vulnerable symbols/types/entrypoints) before triage — e.g. arbor's
+        /// output. Gives reachability a target on advisories that name no
+        /// function. Can only move findings affected -> needs-review, never to
+        /// not-affected, so it cannot create a false clear.
+        #[arg(long)]
+        enrich: Option<PathBuf>,
     },
     /// List the tools available to the autonomous agent.
     Tools,
@@ -362,7 +369,15 @@ fn main() -> Result<()> {
             vex,
             target_os,
             target_arch,
-        } => cmd_triage(&report, &manifest_path, vex, &target_os, &target_arch),
+            enrich,
+        } => cmd_triage(
+            &report,
+            &manifest_path,
+            vex,
+            &target_os,
+            &target_arch,
+            enrich.as_deref(),
+        ),
         Command::Tools => cmd_tools(),
         Command::Locate {
             crate_name,
@@ -632,6 +647,7 @@ fn cmd_triage(
     vex: bool,
     target_os: &str,
     target_arch: &str,
+    enrich: Option<&Path>,
 ) -> Result<()> {
     let raw = if report == "-" {
         use std::io::Read;
@@ -643,7 +659,29 @@ fn cmd_triage(
     };
     let json: serde_json::Value =
         serde_json::from_str(&raw).context("parsing the cargo-audit JSON report")?;
-    let findings = reach::parse_audit_report(&json);
+    let mut findings = reach::parse_audit_report(&json);
+
+    // Optional: fold a function-localization file into the findings, so advisories
+    // that name no function gain a reachability target. Adding functions can only
+    // turn a whole-crate `affected` into `affected`/`under_investigation` — it
+    // never yields `not_affected`, so it cannot manufacture a false clear.
+    let mut enriched = 0usize;
+    if let Some(path) = enrich {
+        let map = reach::load_enrichment(path)?;
+        for f in &mut findings {
+            if let Some(extra) = map.get(&f.id) {
+                let before = f.functions.len();
+                for p in extra {
+                    if !f.functions.contains(p) {
+                        f.functions.push(p.clone());
+                    }
+                }
+                if f.functions.len() > before {
+                    enriched += 1;
+                }
+            }
+        }
+    }
 
     let meta = analyze::metadata::load_metadata(manifest_path)?;
     let product = meta
@@ -693,9 +731,13 @@ fn cmd_triage(
     }
 
     println!(
-        "carve triage — {product}: {} cargo-audit finding(s)  [target {target_os}/{target_arch}]\n",
+        "carve triage — {product}: {} cargo-audit finding(s)  [target {target_os}/{target_arch}]",
         findings.len()
     );
+    if enrich.is_some() {
+        println!("  enriched {enriched} finding(s) with localized symbols");
+    }
+    println!();
     for (f, a) in &assessed {
         let badge = match a.status {
             reach::Status::NotAffected => "NOT AFFECTED",

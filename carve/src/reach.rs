@@ -359,6 +359,73 @@ pub fn parse_audit_report(v: &serde_json::Value) -> Vec<AuditFinding> {
     out
 }
 
+/// Load a function-localization file (e.g. arbor's output) into
+/// `advisory id -> [symbol/type/entrypoint paths]`. Tolerant of two record
+/// shapes, both collapsing to a flat path set carve matches reachability on:
+///
+/// - rich: an object with `vulnerable_symbols` / `public_entrypoints` /
+///   `vulnerable_types` (arrays of strings or `{"path":..}`) and/or `functions`.
+/// - cargo-audit projection: an object whose keys are the paths
+///   (`{ "crate::path::fn": ["<version range>"] }`).
+pub fn load_enrichment(
+    path: &std::path::Path,
+) -> anyhow::Result<std::collections::BTreeMap<String, Vec<String>>> {
+    use anyhow::Context;
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("reading enrichment file {}", path.display()))?;
+    let v: serde_json::Value = serde_json::from_str(&raw).context("parsing enrichment JSON")?;
+    let mut out = std::collections::BTreeMap::new();
+    let Some(obj) = v.as_object() else {
+        anyhow::bail!("enrichment file must be a JSON object keyed by advisory id");
+    };
+    for (id, rec) in obj {
+        let mut paths: BTreeSet<String> = BTreeSet::new();
+        if let Some(r) = rec.as_object() {
+            let known = [
+                "functions",
+                "public_entrypoints",
+                "vulnerable_symbols",
+                "vulnerable_types",
+            ];
+            for key in known {
+                collect_paths(r.get(key), &mut paths);
+            }
+            // cargo-audit projection: no known keys -> the keys themselves are paths.
+            if paths.is_empty() {
+                for k in r.keys() {
+                    paths.insert(k.clone());
+                }
+            }
+        }
+        if !paths.is_empty() {
+            out.insert(id.clone(), paths.into_iter().collect());
+        }
+    }
+    Ok(out)
+}
+
+/// Pull paths out of a value that may be: an array of strings, an array of
+/// `{"path": ".."}` objects, or an object whose keys are paths.
+fn collect_paths(v: Option<&serde_json::Value>, out: &mut BTreeSet<String>) {
+    match v {
+        Some(serde_json::Value::Array(arr)) => {
+            for item in arr {
+                if let Some(s) = item.as_str() {
+                    out.insert(s.to_string());
+                } else if let Some(p) = item.get("path").and_then(|p| p.as_str()) {
+                    out.insert(p.to_string());
+                }
+            }
+        }
+        Some(serde_json::Value::Object(map)) => {
+            for k in map.keys() {
+                out.insert(k.clone());
+            }
+        }
+        _ => {}
+    }
+}
+
 fn severity(s: Status) -> u8 {
     match s {
         Status::Affected => 2,
@@ -600,6 +667,64 @@ mod tests {
             "x86_64",
         );
         assert_ne!(a.status, Status::NotAffected);
+    }
+
+    #[test]
+    fn load_enrichment_handles_rich_and_projection_shapes() {
+        let dir = std::env::temp_dir().join(format!("carve-enrich-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Rich record (arbor's shape) + a cargo-audit projection record.
+        let f = dir.join("enrich.json");
+        std::fs::write(
+            &f,
+            r#"{
+              "RUSTSEC-2026-0007": {
+                "vulnerable_symbols": [{"path":"bytes::bytes_mut::BytesMut::reserve_inner"}],
+                "vulnerable_types":   [{"path":"bytes::bytes_mut::BytesMut"}],
+                "public_entrypoints": ["bytes::bytes_mut::BytesMut::reserve"]
+              },
+              "RUSTSEC-2099-9999": { "foo::bar::baz": [">=1.0.0, <2.0.0"] }
+            }"#,
+        )
+        .unwrap();
+        let map = load_enrichment(&f).unwrap();
+        let a = map.get("RUSTSEC-2026-0007").unwrap();
+        assert!(a.contains(&"bytes::bytes_mut::BytesMut::reserve_inner".to_string()));
+        assert!(a.contains(&"bytes::bytes_mut::BytesMut".to_string()));
+        assert!(a.contains(&"bytes::bytes_mut::BytesMut::reserve".to_string()));
+        // projection: the key itself is the path
+        assert_eq!(
+            map.get("RUSTSEC-2099-9999").unwrap(),
+            &vec!["foo::bar::baz".to_string()]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn enrichment_can_only_de_noise_never_clear() {
+        // A finding enriched with functions that AREN'T reached -> under_investigation,
+        // never not_affected. (Guards the "can't manufacture a false clear" property.)
+        let g = graph(vec![edge("app", "bytes", &["bytes::Bytes"])]);
+        let f = AuditFinding {
+            id: "RUSTSEC-2026-0007".into(),
+            crate_name: "bytes".into(),
+            version: Some("1.9.0".into()),
+            kind: "vulnerability".into(),
+            functions: vec!["bytes::BytesMut".into(), "reserve_inner".into()],
+            os: vec![],
+            arch: vec![],
+            title: String::new(),
+        };
+        let a = assess_finding(
+            "app",
+            &f,
+            &set(&["bytes"]),
+            &set(&["bytes"]),
+            &g,
+            "linux",
+            "x86_64",
+        );
+        assert_eq!(a.status, Status::UnderInvestigation);
     }
 
     #[test]
