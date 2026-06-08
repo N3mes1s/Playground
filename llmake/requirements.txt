@@ -1,9 +1,9 @@
 # Core (required)
 PyYAML>=6.0
+dspy>=2.6.0          # the inference engine — not optional
 
-# Optional providers — only needed if you use them:
-#   anthropic>=0.40      # for the `anthropic` chat provider (needs ANTHROPIC_API_KEY)
-#   (the `claude-agent` provider shells out to the `claude` CLI; no pip dep)
+# Optional providers:
+#   the `claude-agent` provider shells out to the `claude` CLI (no pip dep)
 
 # Dev / tests (optional)
 #   pytest>=8.0

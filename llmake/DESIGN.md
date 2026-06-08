@@ -52,7 +52,7 @@ stays small and every pillar can grow independently.
 |---|---|---|
 | Manage input files (markdown) + general context | `context.py` | Glob patterns → loaded files; separate `inputs` vs shared `context`. |
 | Inference workflows + stored prompts | `spec.py` + `graph.py` | Declarative `llmake.yaml`; a reusable prompt library; a target DAG with topo-sort + cycle detection. |
-| Coding agents, not just chat | `providers/` | One `Provider` interface; chat (`anthropic`) **and** agent (`claude-agent`) backends are peers behind it. |
+| Coding agents, not just chat | `providers/` | One `Provider` interface; the DSPy engine **and** a coding agent (`claude-agent`) are peers behind it. |
 | Compiled, shareable outputs | `cache.py` + `export.py` | Content-addressed incremental cache; one self-contained HTML bundle for sharing. |
 | Real-time collaboration + snapshots/VCS | `snapshot.py` | **Git-backed snapshots** in MVP; real-time collab is a documented future seam. |
 
@@ -73,30 +73,63 @@ recompute. This is the property that turns an expensive pile of LLM calls into
 a cheap, iterative loop. It's also what makes builds reproducible across
 machines — the cache index (`.llmake/cache.json`) is small and commit-friendly.
 
-## 5. Why "providers" are the right abstraction
+## 5. DSPy is the engine, behind a thin provider seam
 
-The hard requirement "access to general-purpose coding agents (and not just
-chat models)" is the reason inference is behind a single `Provider` interface
-that speaks two dataclasses (`InferenceRequest` / `InferenceResult`). A chat
-model and a coding agent differ enormously in mechanics (one round-trip vs. a
-tool-using loop that edits files), but llmake only cares that both turn a
-materialized request into artifact text. So:
+Inference goes through a single `Provider` interface that speaks two dataclasses
+(`InferenceRequest` / `InferenceResult`). But the **engine is DSPy** — a hard
+dependency, not an optional add-on. Two reasons it's the right core:
 
-- `echo` — offline, deterministic, zero-dependency. **The default**, so the
-  whole tool runs with no API keys / no network (and powers the tests/CI).
-- `anthropic` — a hosted chat model.
-- `claude-agent` — shells out to the Claude Code CLI in the workspace, so a
-  step can be *"read these files and refactor,"* not just *"answer this."* File
-  edits land in the workspace; the agent's summary becomes the artifact.
+1. **Programs, not prompt strings.** DSPy turns an LLM call into a typed,
+   *optimizable* program. A target can pick its program per-step via
+   `params.module`: `predict`, `cot` (chain-of-thought), or `rlm` (the
+   Recursive Language Model, which hands a target's inputs to a recursive REPL
+   instead of cramming a huge corpus into one prompt — exactly the
+   "compute over all this stuff" case). This is a strictly richer compiler than
+   raw chat completion.
+2. **Model-agnostic for free.** DSPy speaks LiteLLM, so one provider covers
+   OpenAI, Anthropic, OpenRouter, Azure, and local models. There's no reason to
+   hand-roll a per-vendor chat provider; doing so would just duplicate LiteLLM.
 
-Adding a backend (OpenAI, a local model, a different agent harness) is one
-subclass + one registry line. Nothing else changes.
+So the provider roster is deliberately small:
+
+- `dspy` — **the default and primary engine.** DSPy programs over any model.
+  The LM is applied with `dspy.context(lm=...)` (thread-local), so parallel
+  builds don't clobber each other's configuration.
+- `claude-agent` — a genuinely different capability: it runs the Claude Code
+  CLI *in the workspace*, so a step can be *"read these files and refactor,"*
+  not just *"answer this."* File edits land in the workspace; the agent's
+  summary becomes the artifact.
+- `echo` — an offline, deterministic stub (no model call). It is **not** the
+  default; it exists so the mechanics, tests, and CI run with no keys/network.
+
+The `Provider` seam still matters: the coding agent and a DSPy program have
+nothing in common mechanically, but llmake only cares that both turn a
+materialized request into artifact text. Adding a backend is one subclass +
+`register()`. Nothing else changes.
+
+## 5a. Hardening toward production
+
+Because this is a build tool that issues real, paid, failure-prone calls, the
+engine carries the boring-but-essential properties:
+
+- **Parallelism.** A dependency-aware scheduler (`runner._run_parallel`) starts
+  a target only once all its deps are done and runs independent targets
+  concurrently (`-j N`). Shared state is lock-guarded; the slow provider call
+  happens outside the lock.
+- **Retry with backoff.** Every provider call is wrapped (`params.retries`,
+  `params.retry_backoff`); availability is checked once *before* the retry loop
+  so non-transient misconfig fails fast.
+- **Atomic writes.** Artifacts are written to a temp file and `os.replace`d, so
+  a crash never leaves a half-written artifact that would poison the cache.
+- **Provenance.** Token counts and cost are read back from DSPy's LM history,
+  stored per artifact, and summarized per build.
 
 ## 6. Scope: what's in the MVP and what's deferred
 
-**In:** the build graph, incremental cache, prompt library, pluggable
-chat/agent providers, git snapshots, HTML export, an offline default, an
-end-to-end example, and tests.
+**In:** the build graph, incremental cache, prompt library, the DSPy engine
+(`predict`/`cot`/`rlm`) + a coding-agent provider, parallel builds, retry,
+atomic writes, cost tracking, git snapshots, HTML export, an end-to-end
+example, and tests.
 
 **Deliberately deferred (seams left in place):**
 
@@ -117,9 +150,13 @@ Pieces exist; the *combination* (build-system semantics over an editable
 content workspace, with agents as first-class compilers) is the gap llmake
 probes:
 
-- **promptfoo / LangChain LCEL / LangGraph / DSPy** — compose and evaluate LLM
-  steps, but they're code-first pipelines, not an incremental build over an
-  editable document workspace with saved artifacts.
+- **DSPy** — the program model llmake *builds on*. DSPy gives typed,
+  optimizable LLM programs; llmake adds the layer it doesn't have — an
+  incremental build graph over an editable document workspace, with cached,
+  shareable artifacts. (llmake is "DSPy under `make`.")
+- **promptfoo / LangChain LCEL / LangGraph** — compose and evaluate LLM steps,
+  but they're code-first pipelines, not an incremental build over an editable
+  document workspace with saved artifacts.
 - **DVC / Make / Bazel** — exactly the incremental-build model, but for data/code,
   not prompt+context+agent steps.
 - **Notion / Obsidian** — the content workspace and collaboration, but no

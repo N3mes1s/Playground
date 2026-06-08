@@ -2,19 +2,28 @@
 Provider registry.
 
 Providers are looked up by name from a workflow's ``defaults.provider`` or a
-target's ``provider`` field. Adding a backend is a one-line registration here.
+target's ``provider`` field.
+
+* ``dspy``         — the primary engine: DSPy programs over any LiteLLM model
+                     (OpenAI, Anthropic, OpenRouter, local, ...). **Default.**
+* ``claude-agent`` — a coding agent (Claude Code CLI) that can read/edit files
+                     in the workspace, not just answer.
+* ``echo``         — an offline, deterministic stub for trying out the
+                     mechanics and for tests; no model is called.
+
+Add a backend by subclassing :class:`Provider` and calling :func:`register`.
 """
 
 from __future__ import annotations
 
-from .anthropic_chat import AnthropicChatProvider
 from .base import InferenceRequest, InferenceResult, Provider
 from .claude_agent import ClaudeAgentProvider
+from .dspy_provider import DSPyProvider
 from .echo import EchoProvider
 
 _REGISTRY: dict[str, type[Provider]] = {
     p.name: p
-    for p in (EchoProvider, AnthropicChatProvider, ClaudeAgentProvider)
+    for p in (DSPyProvider, ClaudeAgentProvider, EchoProvider)
 }
 
 

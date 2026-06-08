@@ -4,16 +4,23 @@
 # in, and we compile them into a summary, an adversarial critique, and a final
 # report. Change a note and re-run `llmake build` — only the affected targets
 # recompute.
+#
+# The engine is DSPy. To run for real, set the API key for your model, e.g.:
+#     export OPENAI_API_KEY=...        # for openai/* models
+#     export ANTHROPIC_API_KEY=...     # for anthropic/* models
+# No key handy? Try the mechanics offline with the deterministic stub:
+#     llmake build --provider echo
 
 version: 1
 project: research-notes
 
 defaults:
-  provider: echo          # offline & deterministic by default; no API key needed
-  model: claude-opus-4-8
+  provider: dspy
+  model: openai/gpt-4o-mini   # LiteLLM format: openai/*, anthropic/*, openrouter/*
   kind: chat
   params:
     temperature: 0.7
+    module: predict           # dspy program: predict | cot | rlm
 
 # The stored, reusable prompt library.
 prompts:
@@ -32,6 +39,8 @@ targets:
   summary:
     prompt: summarize
     inputs: [inputs/notes.md, inputs/interview.md]
+    params:
+      module: cot           # use chain-of-thought for the summary
 
   critique:
     prompt: critique
@@ -49,6 +58,6 @@ targets:
 
       {{needs:critique}}
     needs: [summary, critique]
-    # To run this step as a coding agent instead of a chat model:
+    # To compile a step as a coding agent over the workspace instead:
     #   provider: claude-agent
     #   kind: agent

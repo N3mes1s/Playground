@@ -25,6 +25,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import logging
 import shutil
 import sys
 from pathlib import Path
@@ -51,13 +52,25 @@ def cmd_build(args) -> int:
             wf, goals,
             force=args.force,
             provider_override=args.provider,
+            jobs=args.jobs,
         )
     except BuildError as e:
         print(f"\nBuild failed: {e}", file=sys.stderr)
         return 1
     built = sum(1 for r in results if r.status == "built")
     cached = sum(1 for r in results if r.status == "cached")
+
+    # Aggregate token/cost provenance from freshly built targets.
+    tokens_in = sum(r.meta.get("input_tokens", 0) for r in results)
+    tokens_out = sum(r.meta.get("output_tokens", 0) for r in results)
+    cost = sum(r.meta.get("cost_usd", 0.0) for r in results)
+
     print(f"\nDone: {built} built, {cached} cached -> {wf.build_dir}")
+    if tokens_in or tokens_out:
+        line = f"Tokens: {tokens_in:,} in / {tokens_out:,} out"
+        if cost:
+            line += f"  |  Cost: ${cost:.4f}"
+        print(line)
     return 0
 
 
@@ -145,6 +158,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("-C", "--directory", help="workspace dir containing llmake.yaml")
     p.add_argument("--workflow", help="explicit path to an llmake.yaml manifest")
+    p.add_argument("-v", "--verbose", action="count", default=0,
+                   help="increase log verbosity (-v info, -vv debug)")
 
     sub = p.add_subparsers(dest="command", required=True)
 
@@ -152,6 +167,8 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("targets", nargs="*", help="targets to build (default: all)")
     b.add_argument("--force", action="store_true", help="ignore cache, rebuild")
     b.add_argument("--provider", help="override the provider for all targets")
+    b.add_argument("-j", "--jobs", type=int, default=1,
+                   help="compile independent targets concurrently (default: 1)")
     b.set_defaults(func=cmd_build)
 
     s = sub.add_parser("status", help="show fresh vs. stale targets")
@@ -185,6 +202,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    level = {0: logging.WARNING, 1: logging.INFO}.get(args.verbose, logging.DEBUG)
+    logging.basicConfig(level=level, format="%(levelname)s %(name)s: %(message)s")
     try:
         return args.func(args)
     except (SpecError, RuntimeError, KeyError) as e:

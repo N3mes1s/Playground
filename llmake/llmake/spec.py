@@ -49,8 +49,8 @@ import yaml
 
 @dataclass
 class Defaults:
-    provider: str = "echo"
-    model: str = ""
+    provider: str = "dspy"            # DSPy is the canonical engine
+    model: str = "openai/gpt-4o-mini"  # LiteLLM-format model id
     kind: str = "chat"
     params: dict = field(default_factory=dict)
 

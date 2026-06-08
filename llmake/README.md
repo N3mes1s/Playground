@@ -5,7 +5,7 @@
 Treat your notes, specs, and context as **source**. Declare a DAG of
 prompt/agent steps in an `llmake.yaml`. Compile them into **cached, shareable
 artifacts**. Re-running only recomputes what changed — like `make`, but the
-compiler is an LLM (or a coding agent).
+compiler is a [DSPy](https://dspy.ai) program (or a coding agent).
 
 > Born from the question: *"There is all this stuff which I want to
 > process/compute over in an iterated way, with some build artifacts being
@@ -26,7 +26,7 @@ and the **recompute incremental**.
 | **Workspace** | A folder of input files (markdown/…) + shared context. |
 | **Prompt library** | Reusable, named prompts (files or inline). |
 | **Target** | One node in the build graph → compiles to one artifact. |
-| **Provider** | The inference backend: a chat model *or* a coding agent. |
+| **Provider** | The inference backend. **DSPy** is the engine; a coding agent is also a peer. |
 | **Cache** | Content-addressed; only stale targets recompute. |
 | **Snapshot** | A git commit+tag of the build artifacts. |
 | **Export** | A self-contained HTML bundle of all artifacts, for sharing. |
@@ -34,31 +34,34 @@ and the **recompute incremental**.
 ## Install
 
 ```bash
-pip install -r requirements.txt        # just PyYAML for the core
-# optional, to actually call models:
-pip install anthropic                   # for the `anthropic` provider
-# the `claude-agent` provider shells out to the `claude` CLI (no pip dep)
-```
-
-Or install as a package (gives you the `llmake` command):
-
-```bash
+pip install -r requirements.txt        # PyYAML + dspy (the engine)
+# or, to get the `llmake` command:
 pip install -e .
 ```
+
+DSPy talks to any model via LiteLLM. Set the key for whatever you use:
+
+```bash
+export OPENAI_API_KEY=...        # for openai/* models
+export ANTHROPIC_API_KEY=...     # for anthropic/* models
+# (OpenRouter, Azure, local vLLM, etc. all work — see DSPy/LiteLLM docs)
+```
+
+No key handy? Every command accepts `--provider echo`, a deterministic offline
+stub, so you can drive the mechanics without calling a model.
 
 ## Quickstart
 
 ```bash
 cd examples/research-notes
-
-# If you didn't `pip install -e .`, run via the module + PYTHONPATH:
-export PYTHONPATH=$(cd ../.. && pwd)
+export PYTHONPATH=$(cd ../.. && pwd)        # if you didn't `pip install -e .`
 alias llmake="python3 -m llmake.cli"
 
-llmake graph        # show the dependency DAG
-llmake build        # compile everything (offline `echo` provider by default)
-llmake build        # again -> all cached, nothing recomputes
-llmake status       # what's fresh vs. stale
+llmake graph                  # show the dependency DAG
+llmake build                  # compile via DSPy (needs an API key)
+llmake build --provider echo  # ...or drive it offline, no key needed
+llmake build                  # again -> all cached, nothing recomputes
+llmake build -j4              # compile independent targets concurrently
 llmake export -o build/export.html     # shareable bundle
 ```
 
@@ -72,22 +75,26 @@ version: 1
 project: research-notes
 
 defaults:
-  provider: echo            # offline & deterministic; no API key needed
-  model: claude-opus-4-8
+  provider: dspy
+  model: openai/gpt-4o-mini   # LiteLLM format: openai/*, anthropic/*, openrouter/*
+  params:
+    temperature: 0.7
+    module: predict           # dspy program: predict | cot | rlm
 
-prompts:                    # the stored, reusable prompt library
+prompts:                      # the stored, reusable prompt library
   summarize: prompts/summarize.md       # file ref
   critique: prompts/critique.md
 
 inputs:
   - inputs/*.md
 context:
-  - context/*.md            # shared with every step
+  - context/*.md              # shared with every step
 
-targets:                    # the build DAG; each -> build/<name>.md
+targets:                      # the build DAG; each -> build/<name>.md
   summary:
     prompt: summarize
     inputs: [inputs/notes.md, inputs/interview.md]
+    params: {module: cot}     # chain-of-thought for this step
   critique:
     prompt: critique
     needs: [summary]
@@ -97,9 +104,20 @@ targets:                    # the build DAG; each -> build/<name>.md
       {{needs:summary}}
       {{needs:critique}}
     needs: [summary, critique]
-    # provider: claude-agent   # run this step as a coding agent instead
+    # provider: claude-agent   # or compile this step as a coding agent
     # kind: agent
 ```
+
+### DSPy modules (per target, via `params.module`)
+
+| `module` | DSPy program | Use it for |
+|---|---|---|
+| `predict` | `dspy.Predict` | a straight single call (default) |
+| `cot` | `dspy.ChainOfThought` | steps that benefit from explicit reasoning |
+| `rlm` | `dspy.RLM` | large corpora — inputs are handed to a recursive REPL and explored, not crammed into one prompt |
+
+`rlm` also accepts `sub_model`, `max_iterations`, and `max_llm_calls`. Token
+usage and cost are recorded per target and summarized after each build.
 
 ### Prompt templating
 
@@ -107,22 +125,33 @@ Inside any prompt: `{{input}}` (all inputs), `{{input:path}}` (one file),
 `{{context}}` (shared context), `{{needs:NAME}}` (an upstream artifact). If you
 reference none of them, inputs + upstream artifacts are auto-appended.
 
-## Providers (chat *and* agents)
+## Providers
 
 ```bash
 llmake providers     # list backends and whether each is available
 ```
 
-| Provider | Kind | Needs |
+| Provider | Kind | Notes |
 |---|---|---|
-| `echo` | chat, agent | nothing — offline, deterministic (default) |
-| `anthropic` | chat | `anthropic` pkg + `ANTHROPIC_API_KEY` |
-| `claude-agent` | agent, chat | the `claude` CLI on PATH |
+| `dspy` | chat, agent | **Default.** DSPy programs over any LiteLLM model. |
+| `claude-agent` | agent, chat | Runs the `claude` CLI in the workspace — reads/edits files, not just chat. |
+| `echo` | chat, agent | Offline deterministic stub; no model called (tests, dry runs). |
 
-The `claude-agent` provider runs in the workspace, so an agent step can read
-the input files, edit code, and emit a summary as its artifact — *"go refactor
-these and report back,"* not just *"answer this."* Add your own backend by
-subclassing `Provider` and registering it in `llmake/providers/__init__.py`.
+The `claude-agent` provider runs in the workspace, so an agent step can read the
+input files, edit code, and emit a summary as its artifact — *"go refactor these
+and report back,"* not just *"answer this."* Add your own backend by subclassing
+`Provider` and calling `register()` in `llmake/providers/__init__.py`.
+
+## Production features
+
+- **Incremental** content-addressed cache — only stale targets recompute.
+- **Parallel builds** (`-j N`) — a dependency-aware scheduler compiles
+  independent targets concurrently (DSPy LMs are applied per-thread via
+  `dspy.context`, so configs don't collide).
+- **Retry with backoff** around every provider call (`params.retries`,
+  `params.retry_backoff`).
+- **Atomic artifact writes** — a crash never leaves a half-written artifact.
+- **Cost/token provenance** — recorded per artifact and summarized per build.
 
 ## Snapshots & sharing
 
@@ -136,7 +165,7 @@ llmake export -o out.html                          # one shareable HTML file
 
 | Command | Purpose |
 |---|---|
-| `build [targets…]` | compile (incremental; whole graph if omitted) |
+| `build [targets…]` | compile (incremental; `-j N` for parallel, `--force` to rebuild) |
 | `status [targets…]` | show fresh vs. stale targets |
 | `graph` | print the dependency DAG |
 | `providers` | list inference backends + availability |
@@ -145,7 +174,7 @@ llmake export -o out.html                          # one shareable HTML file
 | `export -o OUT.html` | bundle artifacts into one shareable file |
 | `clean` | remove build artifacts + cache |
 
-Global: `-C DIR` / `--workflow PATH` to locate the manifest.
+Global: `-C DIR` / `--workflow PATH` to locate the manifest; `-v/-vv` for logs.
 
 ## Layout
 
@@ -156,13 +185,13 @@ llmake/
   context.py     # resolve & load input/context files
   render.py      # {{...}} prompt templating
   cache.py       # content-addressed incremental build cache
-  runner.py      # the build engine (ties it all together)
+  runner.py      # the build engine (incremental, parallel, retry)
   snapshot.py    # git-backed snapshots / VCS integration
   export.py      # shareable HTML bundle
-  providers/     # pluggable backends: echo, anthropic, claude-agent
+  providers/     # backends: dspy (engine), claude-agent, echo
   cli.py         # command-line entry point
 examples/research-notes/   # runnable end-to-end example
-tests/test_llmake.py       # offline tests (graph, render, incremental build)
+tests/test_llmake.py       # offline tests (graph, render, cache, parallel, retry, dspy)
 ```
 
 ## Tests
@@ -171,9 +200,12 @@ tests/test_llmake.py       # offline tests (graph, render, incremental build)
 python3 tests/test_llmake.py      # or: python -m pytest tests/
 ```
 
-Everything runs offline via the `echo` provider — no keys, no network.
+Build mechanics run offline via the `echo` provider; the DSPy provider is
+exercised with DSPy's `DummyLM` — no API keys, no network.
 
 ## Status
 
-MVP / experiment. Real-time collaboration and a web UI are deliberately out of
-scope but have seams left for them — see **[DESIGN.md](DESIGN.md) §6**.
+MVP / experiment, hardened toward production (incremental + parallel builds,
+retry, atomic writes, cost tracking). Real-time collaboration and a web UI are
+deliberately out of scope but have seams left for them — see
+**[DESIGN.md](DESIGN.md) §6**.
