@@ -1,0 +1,220 @@
+{
+ "RUSTSEC-2022-0003": {
+  "vulnerable_symbols": [
+   {
+    "path": "ammonia::clean_text",
+    "kind": "fn",
+    "receiver_type": "",
+    "visibility": "public",
+    "role": "vulnerable",
+    "confidence": 0.95
+   }
+  ],
+  "vulnerable_types": [],
+  "public_entrypoints": [
+   "ammonia::clean_text"
+  ],
+  "crate": "ammonia",
+  "no_code_change": false
+ },
+ "RUSTSEC-2020-0159": {
+  "vulnerable_symbols": [],
+  "vulnerable_types": [],
+  "public_entrypoints": [],
+  "crate": "chrono",
+  "no_code_change": true
+ },
+ "RUSTSEC-2022-0082": {
+  "vulnerable_symbols": [
+   {
+    "path": "warp::filters::fs::sanitize_path",
+    "kind": "fn",
+    "receiver_type": "",
+    "visibility": "private",
+    "role": "vulnerable",
+    "confidence": 0.95
+   }
+  ],
+  "vulnerable_types": [],
+  "public_entrypoints": [
+   "warp::filters::fs::dir"
+  ],
+  "crate": "warp",
+  "no_code_change": false
+ },
+ "RUSTSEC-2023-0001": {
+  "vulnerable_symbols": [],
+  "vulnerable_types": [],
+  "public_entrypoints": [],
+  "crate": "tokio",
+  "no_code_change": true
+ },
+ "RUSTSEC-2023-0034": {
+  "vulnerable_symbols": [
+   {
+    "path": "h2::proto::connection::streams_config",
+    "kind": "fn",
+    "receiver_type": "",
+    "visibility": "private",
+    "role": "vulnerable",
+    "confidence": 0.95
+   }
+  ],
+  "vulnerable_types": [],
+  "public_entrypoints": [
+   "h2::proto::connection::Connection::new"
+  ],
+  "crate": "h2",
+  "no_code_change": false
+ },
+ "RUSTSEC-2023-0018": {
+  "vulnerable_symbols": [],
+  "vulnerable_types": [],
+  "public_entrypoints": [],
+  "crate": "remove_dir_all",
+  "no_code_change": false
+ },
+ "RUSTSEC-2023-0065": {
+  "vulnerable_symbols": [],
+  "vulnerable_types": [],
+  "public_entrypoints": [],
+  "crate": "tungstenite-rs",
+  "no_code_change": true
+ },
+ "RUSTSEC-2024-0003": {
+  "vulnerable_symbols": [
+   {
+    "path": "h2::proto::streams::streams::drop_stream_ref",
+    "kind": "fn",
+    "receiver_type": "",
+    "visibility": "private",
+    "role": "vulnerable",
+    "confidence": 0.95
+   }
+  ],
+  "vulnerable_types": [],
+  "public_entrypoints": [],
+  "crate": "h2",
+  "no_code_change": false
+ },
+ "RUSTSEC-2024-0006": {
+  "vulnerable_symbols": [],
+  "vulnerable_types": [],
+  "public_entrypoints": [],
+  "crate": "shlex",
+  "no_code_change": true
+ },
+ "RUSTSEC-2025-0071": {
+  "vulnerable_symbols": [
+   {
+    "path": "ammonia::Builder::check_expected_namespace",
+    "kind": "method",
+    "receiver_type": "ammonia::Builder",
+    "visibility": "private",
+    "role": "vulnerable",
+    "confidence": 0.95
+   }
+  ],
+  "vulnerable_types": [
+   {
+    "path": "ammonia::Builder",
+    "role": "vulnerable_type",
+    "confidence": 0.95
+   }
+  ],
+  "public_entrypoints": [
+   "ammonia::Builder::clean",
+   "ammonia::Builder::clean_from_reader"
+  ],
+  "crate": "ammonia",
+  "no_code_change": false
+ },
+ "RUSTSEC-2024-0019": {
+  "vulnerable_symbols": [
+   {
+    "path": "mio::sys::windows::named_pipe::schedule_read",
+    "kind": "fn",
+    "receiver_type": "",
+    "visibility": "private",
+    "role": "vulnerable",
+    "confidence": 0.95
+   },
+   {
+    "path": "mio::sys::windows::named_pipe::connect_done",
+    "kind": "fn",
+    "receiver_type": "",
+    "visibility": "private",
+    "role": "vulnerable",
+    "confidence": 0.95
+   },
+   {
+    "path": "mio::sys::windows::named_pipe::read_done",
+    "kind": "fn",
+    "receiver_type": "",
+    "visibility": "private",
+    "role": "vulnerable",
+    "confidence": 0.95
+   },
+   {
+    "path": "mio::sys::windows::named_pipe::read_done",
+    "kind": "fn",
+    "receiver_type": "",
+    "visibility": "private",
+    "role": "vulnerable",
+    "confidence": 0.95
+   }
+  ],
+  "vulnerable_types": [],
+  "public_entrypoints": [],
+  "crate": "mio",
+  "no_code_change": false
+ },
+ "RUSTSEC-2024-0013": {
+  "vulnerable_symbols": [],
+  "vulnerable_types": [],
+  "public_entrypoints": [],
+  "crate": "git2",
+  "no_code_change": true
+ },
+ "RUSTSEC-2026-0009": {
+  "vulnerable_symbols": [
+   {
+    "path": "time::time::src::parsing::combinator::rfc::rfc2822::cfws",
+    "kind": "fn",
+    "receiver_type": "",
+    "visibility": "private",
+    "role": "vulnerable",
+    "confidence": 0.95
+   }
+  ],
+  "vulnerable_types": [],
+  "public_entrypoints": [],
+  "crate": "time",
+  "no_code_change": false
+ },
+ "RUSTSEC-2026-0007": {
+  "vulnerable_symbols": [
+   {
+    "path": "bytes::bytes_mut::BytesMut::reserve_inner",
+    "kind": "method",
+    "receiver_type": "bytes::bytes_mut::BytesMut",
+    "visibility": "private",
+    "role": "vulnerable",
+    "confidence": 0.97
+   }
+  ],
+  "vulnerable_types": [
+   {
+    "path": "bytes::bytes_mut::BytesMut",
+    "role": "vulnerable_type",
+    "confidence": 0.97
+   }
+  ],
+  "public_entrypoints": [
+   "bytes::bytes_mut::BytesMut::reserve",
+   "bytes::bytes_mut::BytesMut::try_reclaim"
+  ],
+  "crate": "bytes",
+  "no_code_change": false
+ }
+}
