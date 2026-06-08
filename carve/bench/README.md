@@ -22,6 +22,21 @@ python3 ./bench/verify.py             # join, check false clears, write REPORT-B
 `ADVISORY_DB`). Triage targets `linux/x86_64` by default; override the verifier
 with `BENCH_TARGET_OS` / `BENCH_TARGET_ARCH`.
 
+### Measuring the localization lift (before/after)
+
+Set `ENRICH=/path/to/localization.json` to run the "after" pass, where an
+upstream function-localizer's output (advisory id → vulnerable
+symbols/types/entrypoints) is folded in via `carve triage --enrich`. Run once
+without it (baseline) and once with it, then diff the noise-reduction numbers:
+
+```bash
+./bench/run.sh && python3 ./bench/verify.py          # before (baseline)
+ENRICH=/path/arbor.json ./bench/run.sh && python3 ./bench/verify.py   # after
+```
+
+Enrichment can only move a finding `affected → needs-review`, never to
+`not_affected`, so the false-clear count stays 0 across both runs.
+
 `verify.py` exits non-zero if it finds any false clear.
 
 ## Why the oracle is independent

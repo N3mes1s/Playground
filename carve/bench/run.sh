@@ -15,6 +15,10 @@ C="${CARVE_BIN:-$HERE/../target/release/carve}"
 DB="${ADVISORY_DB:-/tmp/advisory-db}"
 AUDIT="$(command -v cargo-audit || echo "$HOME/.cargo/bin/cargo-audit")"
 WORK="${BENCH_WORK:-/tmp/carve-bench-corpus}"
+# Set ENRICH=/path/to/localization.json to run the "after" (with function
+# localization) pass; unset gives the "before" baseline. The lift = before vs after.
+ENRICH_ARG=""
+[ -n "${ENRICH:-}" ] && ENRICH_ARG="--enrich $ENRICH"
 rm -rf "$DATA"; mkdir -p "$DATA" "$WORK"
 
 [ -d "$DB" ] || git clone --depth 1 https://github.com/rustsec/advisory-db.git "$DB" >/dev/null 2>&1
@@ -45,7 +49,7 @@ for entry in "${repos[@]}"; do
   ( cd "$dir" && git checkout -- Cargo.lock 2>/dev/null )
   "$AUDIT" audit --db "$DB" -n -f "$dir/Cargo.lock" --json > "$out/audit.json" 2>/dev/null
   ( cd "$dir" && git checkout -- Cargo.lock 2>/dev/null )
-  "$C" triage "$out/audit.json" --manifest-path "$dir/Cargo.toml" --vex > "$out/triage.vex.json" 2>"$out/triage.err"
+  "$C" triage "$out/audit.json" --manifest-path "$dir/Cargo.toml" --vex $ENRICH_ARG > "$out/triage.vex.json" 2>"$out/triage.err"
   ( cd "$dir" && git checkout -- Cargo.lock 2>/dev/null )
   ( cd "$dir" && cargo metadata --format-version 1 --locked > "$out/meta.json" 2>/dev/null )
   n=$(python3 -c "import json;d=json.load(open('$out/audit.json'));print(d['vulnerabilities']['count']+sum(len(x) for x in d.get('warnings',{}).values()))" 2>/dev/null || echo "?")
