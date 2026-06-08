@@ -187,6 +187,43 @@ def test_every_example_fanin_includes_all_upstream_artifacts(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# default provider/model resolution (manifest -> env -> built-in)
+# --------------------------------------------------------------------------- #
+def test_defaults_resolve_from_env(tmp_path):
+    import os
+    ws = tmp_path / "envws"
+    ws.mkdir()
+    (ws / "inputs").mkdir()
+    (ws / "inputs" / "a.md").write_text("hi")
+    saved = {k: os.environ.get(k) for k in ("LLMAKE_MODEL", "LLMAKE_PROVIDER")}
+    try:
+        # manifest sets no defaults.model/provider -> should fall back to env
+        (ws / "llmake.yaml").write_text(
+            "version: 1\nproject: e\ninputs: [inputs/*.md]\n"
+            "targets:\n  t: {prompt: 'do it'}\n"
+        )
+        os.environ["LLMAKE_MODEL"] = "fireworks_ai/accounts/fireworks/models/kimi-k2p6"
+        os.environ["LLMAKE_PROVIDER"] = "echo"
+        wf = load_workflow(ws)
+        assert wf.defaults.model == "fireworks_ai/accounts/fireworks/models/kimi-k2p6"
+        assert wf.defaults.provider == "echo"
+
+        # manifest value wins over env
+        (ws / "llmake.yaml").write_text(
+            "version: 1\nproject: e\ninputs: [inputs/*.md]\n"
+            "defaults: {model: openai/gpt-4o-mini}\n"
+            "targets:\n  t: {prompt: 'do it'}\n"
+        )
+        assert load_workflow(ws).defaults.model == "openai/gpt-4o-mini"
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+# --------------------------------------------------------------------------- #
 # foreach fan-out / fan-in
 # --------------------------------------------------------------------------- #
 def test_plan_expand_and_resolve_goals():
@@ -319,6 +356,7 @@ if __name__ == "__main__":
         test_dspy_provider_predict, test_dspy_provider_cot,
     ]
     needs_tmp = [
+        test_defaults_resolve_from_env,
         test_incremental_build, test_force_rebuild,
         test_parallel_matches_sequential,
         test_every_example_builds_emits_artifacts_and_caches,

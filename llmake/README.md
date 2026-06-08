@@ -50,6 +50,28 @@ export ANTHROPIC_API_KEY=...     # for anthropic/* models
 No key handy? Every command accepts `--provider echo`, a deterministic offline
 stub, so you can drive the mechanics without calling a model.
 
+### Choosing the model (keep it in the environment, not the config)
+
+Any [LiteLLM](https://docs.litellm.ai/docs/providers) model works via the `dspy`
+provider. Account-specific choices belong in your environment, not committed
+YAML, so the default model/provider resolve in this order:
+
+```
+--model / --provider flag  >  target's value  >  manifest `defaults`
+  >  $LLMAKE_MODEL / $LLMAKE_PROVIDER  >  built-in (dspy / openai/gpt-4o-mini)
+```
+
+So set it once in your shell (or the remote env) and leave the manifests portable:
+
+```bash
+# Example: Fireworks-hosted Kimi K2.6 (a reasoning model)
+export FIREWORKS_API_KEY=fw_...
+export LLMAKE_MODEL=fireworks_ai/accounts/fireworks/models/kimi-k2p6
+# reasoning models need token headroom — set per-workflow: params: {max_tokens: 8000}
+```
+
+Now `llmake build` uses Kimi without any model string hardcoded in the repo.
+
 ## Quickstart
 
 ```bash

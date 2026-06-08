@@ -41,6 +41,7 @@ Schema (all keys optional unless noted)::
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -106,9 +107,13 @@ def load_workflow(path: str | Path) -> Workflow:
 
     root = p.parent
     d = raw.get("defaults", {}) or {}
+    # Resolution for the default provider/model, most-specific first:
+    #   manifest defaults -> environment ($LLMAKE_PROVIDER / $LLMAKE_MODEL)
+    #   -> built-in fallback. This keeps account-specific choices (e.g. a
+    #   Fireworks Kimi model) in the environment, out of committed config.
     defaults = Defaults(
-        provider=d.get("provider", "echo"),
-        model=d.get("model", ""),
+        provider=d.get("provider") or os.environ.get("LLMAKE_PROVIDER") or "dspy",
+        model=d.get("model") or os.environ.get("LLMAKE_MODEL") or "openai/gpt-4o-mini",
         kind=d.get("kind", "chat"),
         params=d.get("params", {}) or {},
     )
