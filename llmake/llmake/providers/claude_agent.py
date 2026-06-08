@@ -37,8 +37,18 @@ class ClaudeAgentProvider(Provider):
         if request.model:
             cmd += ["--model", request.model]
 
-        # Run the agent inside the workspace so it can see input files and
-        # write changes back into the project.
+        # The contract is "return the artifact as text". For a chat-kind step
+        # that means the agent must NOT mutate the workspace — otherwise it may
+        # "helpfully" write a file and return only chatter (which we'd then save
+        # as the artifact). Deny file/command tools so text output is the only
+        # option. For an agent-kind step we leave tools enabled on purpose: that
+        # step's job is to edit the workspace, and its stdout summary is the
+        # artifact.
+        if request.kind != "agent":
+            cmd += ["--disallowed-tools", "Write", "Edit", "NotebookEdit", "Bash"]
+
+        # Run inside the workspace so the agent can read the input files (and,
+        # for agent-kind steps, write changes back into the project).
         proc = subprocess.run(
             cmd,
             cwd=str(request.workdir),
@@ -56,5 +66,5 @@ class ClaudeAgentProvider(Provider):
             text=proc.stdout.strip(),
             provider=self.name,
             model=request.model or "claude-code",
-            meta={"returncode": proc.returncode, "kind": "agent"},
+            meta={"returncode": proc.returncode, "kind": request.kind},
         )

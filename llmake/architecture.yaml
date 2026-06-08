@@ -1,0 +1,51 @@
+# Self-documentation workflow: keep ARCHITECTURE.md current from the source.
+#
+# Run from the llmake/ directory:
+#     llmake --workflow architecture.yaml build
+#
+# It explains each module (cached per-file) and fans them into ARCHITECTURE.md.
+# Edit one module and re-run: only that module's explanation + ARCHITECTURE.md
+# recompute — everything else is reused. That's how the doc stays cheap to keep
+# up to date as you work on the repo.
+#
+# Provider note: this is text-generation, so the DSPy chat provider is the right
+# tool — it returns clean markdown. Set OPENAI_API_KEY (or ANTHROPIC_API_KEY +
+# an anthropic/* model) and run `llmake --workflow architecture.yaml build`.
+# No key? `--provider claude-agent --model sonnet` works without one, but a
+# coding agent tends to wrap output in preamble/code-fences — fine for a quick
+# local look, not for a committed artifact. (Reserve claude-agent for steps that
+# actually EDIT the repo, i.e. kind: agent.)
+
+version: 1
+project: llmake-architecture
+
+defaults:
+  provider: dspy
+  model: openai/gpt-4o-mini
+
+prompts:
+  explain: |
+    Explain this Python module for an ARCHITECTURE doc. Output ONLY clean
+    markdown: a `### {{item_name}}` heading, then 2-4 bullets covering its
+    responsibility and key functions/classes. Be precise; no preamble/sign-off.
+
+    {{item}}
+
+  architecture: |
+    Write ARCHITECTURE.md for "llmake", a Make-style build system for LLM
+    workflows, using the per-module notes below. Output clean markdown: a
+    `# Architecture` title, a 2-3 sentence overview, a "## Data flow" section
+    tracing how a build request moves through the modules, then a "## Modules"
+    section containing the per-module notes verbatim.
+
+    {{needs:explain}}
+
+targets:
+  explain:
+    foreach: llmake/*.py
+    prompt: explain
+
+  architecture:
+    prompt: architecture
+    needs: [explain]
+    output: ARCHITECTURE.md       # committed; lands at llmake/ARCHITECTURE.md
