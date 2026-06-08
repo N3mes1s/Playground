@@ -1,0 +1,48 @@
+# Self-review workflow: run a code review over llmake's own source.
+#
+#     llmake --workflow review.yaml build      (writes build/review.md)
+#
+# foreach module -> a skeptical per-module review -> a consolidated, prioritized
+# findings report. Real work: surfaces actual bugs/edge-cases to triage.
+
+version: 1
+project: llmake-review
+
+defaults:
+  provider: dspy
+  model: fireworks_ai/accounts/fireworks/models/kimi-k2p6   # Fireworks Kimi K2.6
+  params:
+    max_tokens: 8000
+
+prompts:
+  review: |
+    You are a senior Python engineer doing a careful code review of ONE module.
+    Find REAL problems only: correctness bugs, edge cases, concurrency/race
+    issues, resource leaks, incorrect error handling, API misuse. Be skeptical
+    and specific — cite the function and explain the concrete failure. If the
+    module is solid, say "No significant issues" and stop. Do NOT pad with
+    stylistic nits or generic advice.
+
+    Module: {{item_name}}
+
+    {{item}}
+
+  triage: |
+    You are the tech lead consolidating per-module reviews. Produce a single
+    PRIORITIZED list of only the most credible, actionable issues. Drop anything
+    vague, stylistic, or speculative. For each issue: a one-line title, the
+    file/function, why it matters, and a concrete suggested fix. Order by
+    severity (correctness > concurrency > robustness). If there are no real
+    issues, say so plainly.
+
+    {{needs:review}}
+
+targets:
+  review:
+    foreach: llmake/*.py
+    prompt: review
+
+  findings:
+    prompt: triage
+    needs: [review]
+    output: build/review.md

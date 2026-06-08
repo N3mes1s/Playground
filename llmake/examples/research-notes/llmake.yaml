@@ -1,0 +1,64 @@
+# llmake.yaml — an LLM build manifest.
+#
+# This example models a common loop: raw notes + an interview transcript come
+# in, and we compile them into a summary, an adversarial critique, and a final
+# report. Change a note and re-run `llmake build` — only the affected targets
+# recompute.
+#
+# The engine is DSPy. To run for real, set the API key for your model, e.g.:
+#     export OPENAI_API_KEY=...        # for openai/* models
+#     export ANTHROPIC_API_KEY=...     # for anthropic/* models
+# No key handy? Try the mechanics offline with the deterministic stub:
+#     llmake build --provider echo
+
+version: 1
+project: research-notes
+
+defaults:
+  provider: dspy
+  model: fireworks_ai/accounts/fireworks/models/kimi-k2p6   # any LiteLLM model id works
+  kind: chat
+  params:
+    temperature: 0.7
+    module: predict           # dspy program: predict | cot | rlm
+    max_tokens: 8000          # headroom for reasoning models (Kimi K2.6)
+
+# The stored, reusable prompt library.
+prompts:
+  summarize: prompts/summarize.md      # file reference
+  critique: prompts/critique.md
+  # prompts can also be inline (see the `report` target below)
+
+# Source material.
+inputs:
+  - inputs/*.md
+context:
+  - context/*.md          # shared glossary etc., available to every step
+
+# The build graph. Each target compiles to build/<name>.md.
+targets:
+  summary:
+    prompt: summarize
+    inputs: [inputs/notes.md, inputs/interview.md]
+    params:
+      module: cot           # use chain-of-thought for the summary
+
+  critique:
+    prompt: critique
+    needs: [summary]
+
+  report:
+    # An inline prompt that pulls in upstream artifacts explicitly.
+    prompt: |
+      You are assembling a final research brief.
+
+      Combine the summary and the critique below into a single polished brief
+      with: TL;DR, key findings, open questions, and recommended next steps.
+
+      {{needs:summary}}
+
+      {{needs:critique}}
+    needs: [summary, critique]
+    # To compile a step as a coding agent over the workspace instead:
+    #   provider: claude-agent
+    #   kind: agent

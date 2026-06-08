@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llmake"
+version = "0.1.0"
+description = "A build system for LLM inference workflows (GNU Autotools x Notion)."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "PyYAML>=6.0",
+    "dspy>=2.6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+llmake = "llmake.cli:main"
+
+[tool.setuptools]
+packages = ["llmake", "llmake.providers"]

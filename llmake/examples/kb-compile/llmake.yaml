@@ -1,0 +1,48 @@
+# Knowledge-base compile — "LLM as a compiler" (Karpathy's LLM-Wiki pattern).
+#
+# Raw notes are SOURCE; compiled handbook sections are ARTIFACTS. This is the
+# clearest "this should be a tool" signal from the research (RESEARCH.md §4):
+# people hand-build it today as markdown skill files glued onto a coding agent.
+#
+#   notes/*.md ──foreach──► section[each]  ──fan-in──► handbook (index/overview)
+#
+# Edit one note -> only its section + the handbook recompile. The delta is the
+# build graph; the artifacts are diffable files you keep.
+
+version: 1
+project: kb-compile
+
+defaults:
+  provider: dspy
+  model: fireworks_ai/accounts/fireworks/models/kimi-k2p6   # Fireworks Kimi K2.6
+  params:
+    module: predict
+    max_tokens: 8000      # headroom for reasoning models (Kimi K2.6)
+
+prompts:
+  section: |
+    You are a documentation compiler. Turn the raw note below into a clean,
+    self-contained handbook section. Keep all real information; fix structure,
+    add a clear `#` title and a short lead sentence. Do not invent facts.
+
+    Raw note: {{item_name}}
+
+    {{item}}
+
+  index: |
+    You are assembling the front matter for a handbook from its compiled
+    sections below.
+
+    {{needs:section}}
+
+    Produce: a one-paragraph overview of what this handbook covers, then a
+    bulleted table of contents (one line per section, with a 6-10 word summary).
+
+targets:
+  section:
+    foreach: notes/*.md
+    prompt: section
+
+  handbook:
+    prompt: index
+    needs: [section]

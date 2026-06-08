@@ -1,0 +1,54 @@
+#!/bin/bash
+# Pre-commit hook: keep llmake/ARCHITECTURE.md in sync with the package source.
+#
+# Enable once per clone:
+#     git config core.hooksPath .githooks
+# (The web SessionStart hook enables it automatically.)
+#
+# Behavior: if a commit changes llmake's package source but does NOT also update
+# llmake/ARCHITECTURE.md, remind you to regenerate it. The regen is incremental
+# (only changed modules recompute), so it's cheap to keep current.
+#
+# Modes (env vars):
+#   LLMAKE_AUTOBUILD=1   regenerate ARCHITECTURE.md automatically and stage it
+#   LLMAKE_STRICT=1      block the commit instead of just warning
+#
+# Default is a non-blocking reminder, so a missing API key / provider never
+# stops you from committing.
+set -euo pipefail
+
+staged() { git diff --cached --name-only --diff-filter=ACM; }
+
+# Only act when this commit touches llmake's source or its self-doc workflow.
+src_changed=$(staged | grep -E '^llmake/llmake/.*\.py$|^llmake/architecture\.yaml$' || true)
+[ -z "$src_changed" ] && exit 0
+
+# If the doc is already part of this commit, we're in sync.
+doc_staged=$(staged | grep -E '^llmake/ARCHITECTURE\.md$' || true)
+[ -n "$doc_staged" ] && exit 0
+
+if [ "${LLMAKE_AUTOBUILD:-}" = "1" ]; then
+  echo "pre-commit: llmake source changed -> regenerating ARCHITECTURE.md ..."
+  ( cd llmake && PYTHONPATH="$PWD" python3 -m llmake.cli --workflow architecture.yaml build )
+  git add llmake/ARCHITECTURE.md
+  echo "pre-commit: ARCHITECTURE.md regenerated and staged."
+  exit 0
+fi
+
+cat >&2 <<'MSG'
+------------------------------------------------------------------
+pre-commit: llmake package source changed, but llmake/ARCHITECTURE.md
+was not regenerated. Refresh it (incremental -- only changed modules
+recompute):
+
+    cd llmake && llmake --workflow architecture.yaml build
+    git add llmake/ARCHITECTURE.md
+
+  LLMAKE_AUTOBUILD=1  do this automatically on commit
+  LLMAKE_STRICT=1     block the commit until the doc is updated
+(This is only a reminder; your commit will proceed.)
+------------------------------------------------------------------
+MSG
+
+[ "${LLMAKE_STRICT:-}" = "1" ] && exit 1
+exit 0
