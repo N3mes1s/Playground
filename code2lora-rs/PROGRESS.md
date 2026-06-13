@@ -83,6 +83,27 @@ So one-pass generation producing real gains is the open end-to-end step. Halves 
 it are each proven: the hypernetwork *learns/generalizes* (`train-demo`, small scale)
 and a *trained* adapter on the real model *beats RAG* (per-repo LoRA).
 
+### GPU attempt (vast.ai RTX 3090) — honest negative result
+Ran `gpu/train_hypernet_gpu.py`: trained the Static hypernetwork **through frozen
+Qwen2.5-Coder-1.5B** on 7 repos, 700 steps. Training loss fell **6.18 → 2.91** —
+the end-to-end differentiable pipeline (generated LoRA backprops into the
+hypernetwork through the real model) **works mechanically**. But the **one-pass
+generated adapter on held-out repos gave 2.5% EM vs 32.5% base (−30 pp)** — it
+*degrades* unseen repos, not improves them.
+
+Diagnosis (matches the paper: cross-repo generalization is the hard part):
+- **Only 7 training repos** — far too few for a hypernetwork to learn a
+  generalizable repo→adapter map (paper uses ~500 repos / 40K tasks); it memorizes
+  the 7 and extrapolates destructively.
+- The catastrophic drop (to 2.5%, not ~base) suggests the **learnable log-scales
+  grew** to fit train repos, producing large ΔW that wrecks held-out generation.
+- Small hypernet / short run / no generalization-oriented regularization.
+
+To actually close the gap: many more training repos, clamp/fix the log-scale +
+weight decay + lower LR/alpha, more steps. That is a larger (costlier) GPU run and
+still requires tuning — consistent with why the paper's contribution is non-trivial.
+Infra works: vast.ai via onstart + `vastai logs` (SSH/exec blocked by egress).
+
 ## Decisions / environment notes
 
 - Live model is **Qwen/Qwen3.5-4B** (Tinker's catalog lacks Qwen2.5-Coder-1.5B);
