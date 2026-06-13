@@ -253,16 +253,25 @@ adapter is genuinely *semantically* conditioned on the repository.
 
 ## Security: anomalous-commit detection (`evo-scan`)
 
-The Evo GRU's running repository state doubles as an **unsupervised supply-chain
-detector**: a commit whose diff pushes the state abnormally far is flagged for
-review. On **50 real `facebook/react` commits** with one planted backdoor commit
-(exfiltrates `process.env`/secrets, `execSync`, `eval`), the semantic embedder
-surfaces the malicious commit at **#3 of 51** (top 6%) vs **#24** for the lexical
-embedder — see [`SECURITY.md`](SECURITY.md).
+The Evo GRU's running repository state can act as an **unsupervised supply-chain
+triage signal**: a commit whose diff pushes the state abnormally far is flagged.
+Tested honestly on a synthetic injection and **two real attacks** (full results +
+caveats in [`SECURITY.md`](SECURITY.md)):
+
+| case | malicious commit rank | detected? |
+|---|---|---|
+| react + planted *overt* exfil patch (synthetic) | #3 / 51 (neural) | ✅ surfaced |
+| `Marak/colors.js` Jan-2022 DoS (real) | #29 / 40 | ❌ missed (camouflaged as repo idioms) |
+| `xz` CVE-2024-3094 backdoor (real) | #15 / 40 | ❌ missed (payload in binary test files) |
+
+**Takeaway:** untrained text-novelty catches *blatantly foreign* code but is
+defeated by the camouflage real attackers use (mimicking repo idioms; binary
+payloads). It's a triage *prior*, not a detector — making it production-grade
+needs a **trained** Evo GRU + binary/entropy + intent features (see SECURITY.md).
 
 ```bash
-code2lora evo-scan --repo /path/to/react --max-commits 50 --inject evil.patch \
-    --neural --embed-model /path/to/bge-large-en-v1.5 --no-snapshot
+code2lora evo-scan --repo /path/to/repo --max-commits 40 --neural \
+    --embed-model /path/to/bge-large-en-v1.5 --no-snapshot --flag <commit-prefix>
 ```
 
 ## Why Qwen3.5-4B for the live run?
