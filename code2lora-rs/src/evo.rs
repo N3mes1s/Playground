@@ -126,4 +126,18 @@ impl EvoHyperNet {
         }
         (traj, z)
     }
+
+    /// Return the GRU state trajectory `[z0, z1, ..., zT]` (length diffs+1).
+    /// The per-commit state jump `‖z_t − z_{t-1}‖` is a cheap, unsupervised
+    /// novelty signal: a commit whose diff pushes the repository state far from
+    /// its recent trajectory is anomalous (supply-chain / backdoor review).
+    pub fn run_states(&self, e0: &[f32], diffs: &[Vec<f32>]) -> Vec<Vec<f32>> {
+        let mut z = self.init_state(e0);
+        let mut states = vec![z.clone()];
+        for et in diffs {
+            z = self.step(&z, et);
+            states.push(z.clone());
+        }
+        states
+    }
 }

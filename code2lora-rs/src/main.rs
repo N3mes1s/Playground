@@ -81,6 +81,27 @@ enum Cmd {
         #[arg(long, default_value_t = 0)]
         seed: u64,
     },
+    /// Security: scan a git repo's history for anomalous commits using the Evo
+    /// GRU. Flags commits whose diff pushes the repository state abnormally far
+    /// (supply-chain / backdoor review). Optionally inject a patch to score.
+    EvoScan {
+        #[arg(long)]
+        repo: PathBuf,
+        #[arg(long, default_value_t = 40)]
+        max_commits: usize,
+        /// Score this patch file as an extra (latest) commit and flag it.
+        #[arg(long)]
+        inject: Option<PathBuf>,
+        #[arg(long)]
+        neural: bool,
+        #[arg(long)]
+        embed_model: Option<String>,
+        /// Skip the (slow) whole-repo snapshot encode; init GRU state from zero.
+        #[arg(long)]
+        no_snapshot: bool,
+        #[arg(long, default_value_t = 0)]
+        seed: u64,
+    },
     /// Train the Static hypernetwork on a frozen-base adaptation task (pure-Rust
     /// autograd) and report held-out generalization vs baseline/untrained.
     TrainDemo {
@@ -123,8 +144,122 @@ fn main() -> Result<()> {
             max_commits,
             seed,
         } => cmd_evo(&repo, &out, &config, max_commits, seed),
+        Cmd::EvoScan {
+            repo,
+            max_commits,
+            inject,
+            neural,
+            embed_model,
+            no_snapshot,
+            seed,
+        } => cmd_evo_scan(&repo, max_commits, &inject, neural, embed_model, no_snapshot, seed),
         Cmd::TrainDemo { seed, steps } => cmd_train_demo(seed, steps),
     }
+}
+
+fn cmd_evo_scan(
+    repo: &Path,
+    max_commits: usize,
+    inject: &Option<PathBuf>,
+    neural: bool,
+    embed_model: Option<String>,
+    no_snapshot: bool,
+    seed: u64,
+) -> Result<()> {
+    let spec = ModelSpec::qwen25_coder_1_5b();
+    let emb = make_embedder(neural, embed_model)?;
+
+    let e0 = if no_snapshot {
+        vec![0.0f32; 2 * emb.dim()]
+    } else {
+        println!("encoding snapshot {} ...", repo.display());
+        encode_repo(repo, emb.as_ref())?.0
+    };
+
+    let log = git(repo, &["rev-list", "--reverse", "--max-count", &max_commits.to_string(), "HEAD"])?;
+    let commits: Vec<&str> = log.split_whitespace().collect();
+    anyhow::ensure!(!commits.is_empty(), "no commits in {}", repo.display());
+
+    let mut labels: Vec<String> = Vec::new();
+    let mut diffs: Vec<Vec<f32>> = Vec::new();
+    for h in &commits {
+        let patch = git(repo, &["show", "--format=", "--unified=3", h]).unwrap_or_default();
+        diffs.push(encode_text(emb.as_ref(), &patch));
+        labels.push(h[..h.len().min(8)].to_string());
+    }
+
+    let mut inject_idx: Option<usize> = None;
+    if let Some(p) = inject {
+        let patch = std::fs::read_to_string(p)
+            .with_context(|| format!("reading inject patch {}", p.display()))?;
+        diffs.push(encode_text(emb.as_ref(), &patch));
+        labels.push("INJECTED".to_string());
+        inject_idx = Some(diffs.len() - 1);
+    }
+
+    println!("scanning {} commits with Code2LoRA-Evo GRU ...", diffs.len());
+    let net = EvoHyperNet::new(spec, seed);
+    let states = net.run_states(&e0, &diffs);
+
+    // per-commit state jump ||z_t - z_{t-1}||
+    let deltas: Vec<f32> = (0..diffs.len())
+        .map(|i| {
+            states[i]
+                .iter()
+                .zip(&states[i + 1])
+                .map(|(a, b)| (a - b) * (a - b))
+                .sum::<f32>()
+                .sqrt()
+        })
+        .collect();
+
+    let n = deltas.len() as f32;
+    let mean = deltas.iter().sum::<f32>() / n;
+    let std = (deltas.iter().map(|d| (d - mean) * (d - mean)).sum::<f32>() / n)
+        .sqrt()
+        .max(1e-9);
+
+    // rank by anomaly score (z-score of state jump)
+    let mut ranked: Vec<(usize, f32)> = deltas
+        .iter()
+        .enumerate()
+        .map(|(i, &d)| (i, (d - mean) / std))
+        .collect();
+    ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+    println!("\ntop anomalous commits (state-jump z-score):");
+    for (rank, (i, z)) in ranked.iter().take(6).enumerate() {
+        let flag = if *z > 2.0 { "  <== ANOMALY" } else { "" };
+        let mark = if Some(*i) == inject_idx { " [INJECTED]" } else { "" };
+        println!(
+            "  #{}  {:<10}{}  jump={:.4}  z={:+.2}{}",
+            rank + 1,
+            labels[*i],
+            mark,
+            deltas[*i],
+            z,
+            flag
+        );
+    }
+
+    if let Some(idx) = inject_idx {
+        let pos = ranked.iter().position(|(i, _)| *i == idx).unwrap() + 1;
+        let z = (deltas[idx] - mean) / std;
+        println!(
+            "\nINJECTED malicious commit ranked #{} of {} (z={:+.2}).",
+            pos,
+            diffs.len(),
+            z
+        );
+        if pos == 1 {
+            println!("DETECTED: the planted commit is the single most anomalous in history.");
+        } else if z > 2.0 {
+            println!("DETECTED: the planted commit is flagged as a statistical anomaly.");
+        } else {
+            println!("not flagged at this threshold; try --neural for a stronger semantic signal.");
+        }
+    }
+    Ok(())
 }
 
 /// Build the requested embedder. Neural requires the `neural` build feature.
