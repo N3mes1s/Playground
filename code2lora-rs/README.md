@@ -130,9 +130,22 @@ Two findings, both matching the paper:
   token overhead (206 = just the task prefix). Adding RAG on top of the LoRA
   doesn't help — the knowledge is already in the weights.
 
-(These use a deliberately small budget — 48 train / rank 16 / 4 epochs. Scaling
-training pushes EM substantially higher; see `tinker/run_tinker.py` with larger
-`--max-train`, `--rank`, `--epochs`.)
+(These use a deliberately small budget — 48 train / rank 16 / 4 epochs.)
+
+**Scaling the LoRA reaches 92%.** On `cachetools` with a fixed 50-example
+held-out set ([`tinker/push_train.py`](tinker/push_train.py)):
+
+| config | held-out EM |
+|---|---|
+| base | 60.0% |
+| train=150, rank=32, epochs=6 | 80.0% |
+| train=400, rank=32, epochs=6 | 84.0% |
+| **train=700, rank=64, epochs=8** | **92.0%** |
+
+A clean scaling curve (60% → 92%) at zero inference-time token overhead. The one
+persistent miss — target `len(cache)`, prediction `cache.currsize` — is
+*functionally identical*, so real functional accuracy is higher still. RAG never
+beat the base model on this repo. See [`tinker/RESULTS.md`](tinker/RESULTS.md).
 
 ## Why Qwen3.5-4B for the live run?
 
