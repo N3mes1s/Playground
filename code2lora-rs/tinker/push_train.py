@@ -17,7 +17,7 @@ import tempfile
 import tinker
 
 import c2l_common as cc
-import mine_assertions
+import mine_multi as mine_assertions
 from benchmark import train_lora
 
 
