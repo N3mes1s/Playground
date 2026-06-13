@@ -1,4 +1,7 @@
-# Live-proof harness (Tinker). The Rust pipeline has no Python dependencies.
+# Live-proof + benchmark harness (Tinker). The Rust pipeline has no Python deps.
 tinker
 tinker-cookbook
 torch
+# RAG baseline retriever (benchmark.py / rag.py)
+transformers
+numpy

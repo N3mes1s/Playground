@@ -18,58 +18,15 @@ Usage:
 import argparse
 import os
 import random
-import re
 import subprocess
 import sys
 import tempfile
 
 import tinker
-import torch
-from tinker_cookbook.supervised.common import (
-    compute_mean_nll,
-    datum_from_model_input_weights,
-)
+from tinker_cookbook.supervised.common import compute_mean_nll
 
 import mine_assertions
-
-
-def normalize(s: str) -> str:
-    s = re.sub(r"\s+", " ", s).strip()
-    return s.rstrip(".,;:)")
-
-
-def relaxed_em(pred: str, target: str) -> bool:
-    """Paper's relaxed EM: whitespace-collapsed, trailing-punct-stripped,
-    tolerant of model overgeneration."""
-    p, t = normalize(pred), normalize(target)
-    return p == t or p.startswith(t)
-
-
-def build_datum(tok, prefix: str, target: str, max_len: int):
-    prompt_ids = tok.encode(prefix)
-    completion_ids = tok.encode(target)
-    eos = getattr(tok, "eos_token_id", None)
-    full = prompt_ids + completion_ids + ([eos] if eos is not None else [])
-    weights = torch.zeros(len(full), dtype=torch.float32)
-    weights[len(prompt_ids):] = 1.0
-    mi = tinker.ModelInput.from_ints(full)
-    return datum_from_model_input_weights(mi, weights, max_length=max_len, reduction="mean")
-
-
-def evaluate(sampling_client, tok, tasks, max_new=12):
-    correct = 0
-    examples = []
-    for t in tasks:
-        prompt_ids = tok.encode(t["prefix"])
-        mi = tinker.ModelInput.from_ints(prompt_ids)
-        sp = tinker.SamplingParams(max_tokens=max_new, temperature=0.0, stop=["\n"])
-        resp = sampling_client.sample(prompt=mi, num_samples=1, sampling_params=sp).result()
-        pred = tok.decode(resp.sequences[0].tokens, skip_special_tokens=True)
-        ok = relaxed_em(pred, t["target"])
-        correct += ok
-        if len(examples) < 6:
-            examples.append((ok, t["target"], pred.strip()))
-    return correct / max(1, len(tasks)), examples
+from c2l_common import build_datum, evaluate
 
 
 def main():
@@ -129,7 +86,7 @@ def main():
     base_sampler = sc.create_sampling_client(base_model=args.model)
     tok = base_sampler.get_tokenizer()
     print("\n=== baseline (frozen base model, no adapter) ===", flush=True)
-    base_em, base_ex = evaluate(base_sampler, tok, test)
+    base_em, base_ex, _ = evaluate(base_sampler, tok, test)
     for ok, tgt, pred in base_ex:
         print(f"  [{'PASS' if ok else 'FAIL'}] target={tgt!r:<18} pred={pred!r}")
     print(f"baseline exact-match: {base_em:.1%}")
@@ -156,7 +113,7 @@ def main():
     # 5. Re-measure EM with the trained adapter attached.
     print("\n=== adapted (repo LoRA attached) ===", flush=True)
     trained_sampler = tc.save_weights_and_get_sampling_client()
-    adapted_em, adapted_ex = evaluate(trained_sampler, tok, test)
+    adapted_em, adapted_ex, _ = evaluate(trained_sampler, tok, test)
     for ok, tgt, pred in adapted_ex:
         print(f"  [{'PASS' if ok else 'FAIL'}] target={tgt!r:<18} pred={pred!r}")
     print(f"adapted  exact-match: {adapted_em:.1%}")
