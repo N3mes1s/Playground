@@ -92,6 +92,9 @@ enum Cmd {
         /// Score this patch file as an extra (latest) commit and flag it.
         #[arg(long)]
         inject: Option<PathBuf>,
+        /// Comma-separated commit-hash prefixes to report the anomaly rank of.
+        #[arg(long)]
+        flag: Option<String>,
         #[arg(long)]
         neural: bool,
         #[arg(long)]
@@ -148,11 +151,12 @@ fn main() -> Result<()> {
             repo,
             max_commits,
             inject,
+            flag,
             neural,
             embed_model,
             no_snapshot,
             seed,
-        } => cmd_evo_scan(&repo, max_commits, &inject, neural, embed_model, no_snapshot, seed),
+        } => cmd_evo_scan(&repo, max_commits, &inject, &flag, neural, embed_model, no_snapshot, seed),
         Cmd::TrainDemo { seed, steps } => cmd_train_demo(seed, steps),
     }
 }
@@ -161,6 +165,7 @@ fn cmd_evo_scan(
     repo: &Path,
     max_commits: usize,
     inject: &Option<PathBuf>,
+    flag: &Option<String>,
     neural: bool,
     embed_model: Option<String>,
     no_snapshot: bool,
@@ -228,7 +233,7 @@ fn cmd_evo_scan(
     ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
 
     println!("\ntop anomalous commits (state-jump z-score):");
-    for (rank, (i, z)) in ranked.iter().take(6).enumerate() {
+    for (rank, (i, z)) in ranked.iter().take(10).enumerate() {
         let flag = if *z > 2.0 { "  <== ANOMALY" } else { "" };
         let mark = if Some(*i) == inject_idx { " [INJECTED]" } else { "" };
         println!(
@@ -262,6 +267,35 @@ fn cmd_evo_scan(
             );
         } else {
             println!("not surfaced at this budget; try --neural for a stronger semantic signal.");
+        }
+    }
+
+    if let Some(flags) = flag {
+        let total = diffs.len();
+        let topk = std::cmp::max(3, total / 10);
+        println!("\nrank of flagged commits:");
+        for pref in flags.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            match labels.iter().position(|l| l.starts_with(pref)) {
+                Some(idx) => {
+                    let pos = ranked.iter().position(|(i, _)| *i == idx).unwrap() + 1;
+                    let z = (deltas[idx] - mean) / std;
+                    let verdict = if pos <= topk || z > 2.0 {
+                        "  <== SURFACED (top anomalies)"
+                    } else {
+                        ""
+                    };
+                    println!(
+                        "  {:<10}  rank #{} of {} (z={:+.2}, top {:.0}%){}",
+                        pref,
+                        pos,
+                        total,
+                        z,
+                        100.0 * pos as f32 / total as f32,
+                        verdict
+                    );
+                }
+                None => println!("  {pref:<10}  not in scanned window"),
+            }
         }
     }
     Ok(())
