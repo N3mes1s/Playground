@@ -155,7 +155,7 @@ def main():
 
     # 5. Re-measure EM with the trained adapter attached.
     print("\n=== adapted (repo LoRA attached) ===", flush=True)
-    trained_sampler = tc.save_weights_and_get_sampling_client(name="code2lora-repo")
+    trained_sampler = tc.save_weights_and_get_sampling_client()
     adapted_em, adapted_ex = evaluate(trained_sampler, tok, test)
     for ok, tgt, pred in adapted_ex:
         print(f"  [{'PASS' if ok else 'FAIL'}] target={tgt!r:<18} pred={pred!r}")

@@ -84,17 +84,27 @@ repo-specific LoRA, and re-measures.
 
 ### Live result (Qwen3.5-4B, repo = `tkem/cachetools`)
 
-Real run via the Tinker API (`--max-train 32 --max-test 16 --epochs 3`, rank 16):
+Real run via the Tinker API (`--max-train 48 --max-test 24 --epochs 4`, rank 16):
 
 | | exact-match on held-out assertions |
 |---|---|
-| frozen base `Qwen/Qwen3.5-4B` (no adapter) | **43.8%** |
-| + repository LoRA (trained on the repo) | **50.0%** |
-| **delta** | **+6.2 pp** |
+| frozen base `Qwen/Qwen3.5-4B` (no adapter) | **45.8%** |
+| + repository LoRA (trained on the repo) | **66.7%** |
+| **delta** | **+20.8 pp** |
 
-Training NLL fell monotonically (e.g. 7.54 → 5.22 → … over the run). The repo
-turned into adapter parameters that measurably adapt a live modern model —
-exactly the loop the Code2LoRA hypernetwork performs in a single forward pass.
+Training NLL collapsed `7.54 → 0.04` over 24 steps. The adapter learned
+repo-specific targets the base model missed, e.g.:
+
+```
+[base]    target='cache.ttl'     pred='1)'            FAIL
+[adapted] target='cache.ttl'     pred='cache.ttl()'   PASS
+[adapted] target='cache.timer()' pred='cache.timer()' PASS
+[adapted] target='list(items)'   pred='list(items)'   PASS
+```
+
+The repository turned into adapter parameters that measurably adapt a live
+modern model — exactly the loop the Code2LoRA hypernetwork performs in a single
+forward pass. (A smaller `32/16/3` run reproduced the direction at +6.2 pp.)
 
 ## Why Qwen3.5-4B for the live run?
 
