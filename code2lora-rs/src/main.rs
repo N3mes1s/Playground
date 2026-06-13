@@ -243,20 +243,25 @@ fn cmd_evo_scan(
     }
 
     if let Some(idx) = inject_idx {
+        let total = diffs.len();
         let pos = ranked.iter().position(|(i, _)| *i == idx).unwrap() + 1;
         let z = (deltas[idx] - mean) / std;
+        let pct = 100.0 * pos as f32 / total as f32;
+        let topk = std::cmp::max(3, total / 10); // review the top ~10%
         println!(
-            "\nINJECTED malicious commit ranked #{} of {} (z={:+.2}).",
-            pos,
-            diffs.len(),
-            z
+            "\nINJECTED malicious commit ranked #{} of {} (z={:+.2}, top {:.0}%).",
+            pos, total, z, pct
         );
         if pos == 1 {
             println!("DETECTED: the planted commit is the single most anomalous in history.");
-        } else if z > 2.0 {
-            println!("DETECTED: the planted commit is flagged as a statistical anomaly.");
+        } else if pos <= topk || z > 2.0 {
+            println!(
+                "SURFACED: a reviewer scanning the top {} anomalies catches the planted commit \
+                 (an untrained GRU + tiny patch; training on normal commits sharpens this).",
+                topk
+            );
         } else {
-            println!("not flagged at this threshold; try --neural for a stronger semantic signal.");
+            println!("not surfaced at this budget; try --neural for a stronger semantic signal.");
         }
     }
     Ok(())

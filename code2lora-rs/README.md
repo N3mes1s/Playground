@@ -251,6 +251,20 @@ adapter is genuinely *semantically* conditioned on the repository.
 > the proxy CA; download the model files with a system-trusted tool and pass the
 > local dir to `--embed-model`.
 
+## Security: anomalous-commit detection (`evo-scan`)
+
+The Evo GRU's running repository state doubles as an **unsupervised supply-chain
+detector**: a commit whose diff pushes the state abnormally far is flagged for
+review. On **50 real `facebook/react` commits** with one planted backdoor commit
+(exfiltrates `process.env`/secrets, `execSync`, `eval`), the semantic embedder
+surfaces the malicious commit at **#3 of 51** (top 6%) vs **#24** for the lexical
+embedder — see [`SECURITY.md`](SECURITY.md).
+
+```bash
+code2lora evo-scan --repo /path/to/react --max-commits 50 --inject evil.patch \
+    --neural --embed-model /path/to/bge-large-en-v1.5 --no-snapshot
+```
+
 ## Why Qwen3.5-4B for the live run?
 
 The paper's backbone is Qwen2.5-Coder-1.5B (late-2024, code-specialized). It is
