@@ -143,6 +143,19 @@ Two findings, both matching the paper:
 
 (These use a deliberately small budget — 48 train / rank 16 / 4 epochs.)
 
+**It generalizes across languages too.** Same small budget, 9 brand-new repos,
+3 per language ([`tinker/RESULTS_multilang.md`](tinker/RESULTS_multilang.md)):
+
+| method | JavaScript | Rust | Go | mean EM | tokens |
+|---|---|---|---|---|---|
+| base | 41.7% | 22.9% | 18.8% | 27.8% | 482 |
+| RAG@3 | 35.4% | 33.3% | 14.6% | 27.8% | 1,819 |
+| **repo-LoRA** | **66.7%** | **43.8%** | **56.2%** | **55.6%** | **482** |
+
+repo-LoRA ~doubles base and wins **8/9** repos across JS/Rust/Go (the paper is
+Python-only); RAG nets out equal to base at ~4× the tokens. Highlights:
+`sindresorhus/is` 56%→**100%**, `gin` 12.5%→**62.5%**, `lodash` 44%→69%.
+
 **Scaling the LoRA reaches 92%.** On `cachetools` with a fixed 50-example
 held-out set ([`tinker/push_train.py`](tinker/push_train.py)):
 
