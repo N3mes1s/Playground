@@ -95,6 +95,9 @@ enum Cmd {
         /// Comma-separated commit-hash prefixes to report the anomaly rank of.
         #[arg(long)]
         flag: Option<String>,
+        /// Anomaly score: "knn" (local outlier, best), "centroid", or "state-jump".
+        #[arg(long, default_value = "knn")]
+        method: String,
         #[arg(long)]
         neural: bool,
         #[arg(long)]
@@ -152,11 +155,12 @@ fn main() -> Result<()> {
             max_commits,
             inject,
             flag,
+            method,
             neural,
             embed_model,
             no_snapshot,
             seed,
-        } => cmd_evo_scan(&repo, max_commits, &inject, &flag, neural, embed_model, no_snapshot, seed),
+        } => cmd_evo_scan(&repo, max_commits, &inject, &flag, &method, neural, embed_model, no_snapshot, seed),
         Cmd::TrainDemo { seed, steps } => cmd_train_demo(seed, steps),
     }
 }
@@ -166,6 +170,7 @@ fn cmd_evo_scan(
     max_commits: usize,
     inject: &Option<PathBuf>,
     flag: &Option<String>,
+    method: &str,
     neural: bool,
     embed_model: Option<String>,
     no_snapshot: bool,
@@ -202,21 +207,72 @@ fn cmd_evo_scan(
         inject_idx = Some(diffs.len() - 1);
     }
 
-    println!("scanning {} commits with Code2LoRA-Evo GRU ...", diffs.len());
-    let net = EvoHyperNet::new(spec, seed);
-    let states = net.run_states(&e0, &diffs);
+    println!("scanning {} commits (method={method}) ...", diffs.len());
 
-    // per-commit state jump ||z_t - z_{t-1}||
-    let deltas: Vec<f32> = (0..diffs.len())
-        .map(|i| {
-            states[i]
-                .iter()
-                .zip(&states[i + 1])
-                .map(|(a, b)| (a - b) * (a - b))
-                .sum::<f32>()
-                .sqrt()
+    // L2-normalize diff embeddings for cosine-based scores.
+    let norm: Vec<Vec<f32>> = diffs
+        .iter()
+        .map(|v| {
+            let mut u = v.clone();
+            code2lora::tensor::l2_normalize(&mut u);
+            u
         })
         .collect();
+    let cos = |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>();
+
+    // per-commit anomaly score (higher = more anomalous)
+    let deltas: Vec<f32> = match method {
+        // kNN local-outlier: 1 - mean cosine to k nearest *other* commits.
+        // Catches camouflaged commits (near the global mean but with no close
+        // neighbours) that pure novelty/state-jump misses.
+        "knn" => {
+            let k = 3.min(norm.len().saturating_sub(1)).max(1);
+            (0..norm.len())
+                .map(|i| {
+                    let mut sims: Vec<f32> = (0..norm.len())
+                        .filter(|&j| j != i)
+                        .map(|j| cos(&norm[i], &norm[j]))
+                        .collect();
+                    sims.sort_by(|a, b| b.partial_cmp(a).unwrap());
+                    let top = &sims[..k.min(sims.len())];
+                    1.0 - top.iter().sum::<f32>() / top.len() as f32
+                })
+                .collect()
+        }
+        // centroid novelty: 1 - cos(e_i, mean of others)
+        "centroid" => {
+            let dim = norm[0].len();
+            (0..norm.len())
+                .map(|i| {
+                    let mut c = vec![0.0f32; dim];
+                    for (j, v) in norm.iter().enumerate() {
+                        if j != i {
+                            for d in 0..dim {
+                                c[d] += v[d];
+                            }
+                        }
+                    }
+                    code2lora::tensor::l2_normalize(&mut c);
+                    1.0 - cos(&norm[i], &c)
+                })
+                .collect()
+        }
+        // state-jump: ||z_t - z_{t-1}|| from the Evo GRU
+        _ => {
+            let net = EvoHyperNet::new(spec, seed);
+            let states = net.run_states(&e0, &diffs);
+            (0..diffs.len())
+                .map(|i| {
+                    states[i]
+                        .iter()
+                        .zip(&states[i + 1])
+                        .map(|(a, b)| (a - b) * (a - b))
+                        .sum::<f32>()
+                        .sqrt()
+                })
+                .collect()
+        }
+    };
 
     let n = deltas.len() as f32;
     let mean = deltas.iter().sum::<f32>() / n;
@@ -237,7 +293,7 @@ fn cmd_evo_scan(
         let flag = if *z > 2.0 { "  <== ANOMALY" } else { "" };
         let mark = if Some(*i) == inject_idx { " [INJECTED]" } else { "" };
         println!(
-            "  #{}  {:<10}{}  jump={:.4}  z={:+.2}{}",
+            "  #{}  {:<10}{}  score={:.4}  z={:+.2}{}",
             rank + 1,
             labels[*i],
             mark,
