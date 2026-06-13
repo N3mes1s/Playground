@@ -121,6 +121,100 @@ fn conditioned_different_repos_differ() {
     assert!(diff > 1e-3, "different repos must yield different adapters (diff={diff})");
 }
 
+// ---- Code2LoRA-Evo (§3.3) ----
+
+use code2lora::embedder::encode_text;
+use code2lora::evo::EvoHyperNet;
+
+fn diff_embeds() -> (Vec<f32>, Vec<Vec<f32>>) {
+    let emb = HashEmbedder::default();
+    let e0 = encode_text(&emb, "initial snapshot: a small library with utils");
+    let diffs = vec![
+        encode_text(&emb, "+def parse(x):\n+    return int(x)\n"),
+        encode_text(&emb, "+class Cache:\n+    def get(self): ...\n-def parse(x): ...\n"),
+        encode_text(&emb, "+import socket\n+def serve(): pass\n"),
+    ];
+    (e0, diffs)
+}
+
+#[test]
+fn evo_trajectory_evolves_and_is_ordered() {
+    let spec = ModelSpec::qwen25_coder_1_5b();
+    let (e0, diffs) = diff_embeds();
+    let net = EvoHyperNet::new(spec, 0);
+
+    let (traj, _z) = net.run(&e0, &diffs);
+    assert_eq!(traj.len(), diffs.len());
+
+    // adapters change across commits
+    let a1 = &traj[0].mats[0].1.data;
+    let a2 = &traj[1].mats[0].1.data;
+    let moved: f32 = a1.iter().zip(a2).map(|(x, y)| (x - y).abs()).sum();
+    assert!(moved > 1e-4, "adapter should evolve across commits");
+
+    // order matters: reversed diff stream -> different final adapter
+    let mut rev = diffs.clone();
+    rev.reverse();
+    let (traj_rev, _) = net.run(&e0, &rev);
+    let fa = &traj.last().unwrap().mats[0].1.data;
+    let fr = &traj_rev.last().unwrap().mats[0].1.data;
+    let diff: f32 = fa.iter().zip(fr).map(|(x, y)| (x - y).abs()).sum();
+    assert!(diff > 1e-3, "commit order should affect the adapter (diff={diff})");
+}
+
+#[test]
+fn evo_deterministic_and_exportable() {
+    let spec = ModelSpec::qwen25_coder_1_5b();
+    let (e0, diffs) = diff_embeds();
+    let net = EvoHyperNet::new(spec.clone(), 3);
+    let (t1, _) = net.run(&e0, &diffs);
+    let (t2, _) = net.run(&e0, &diffs);
+    assert_eq!(t1.last().unwrap().mats[0].1.data, t2.last().unwrap().mats[0].1.data);
+
+    // final adapter exports as a valid PEFT artifact for the real model
+    let out = tempdir::TempDir::new();
+    export_peft(t1.last().unwrap(), &spec, out.path()).unwrap();
+    let tensors = load_peft_safetensors(&out.path().join("adapter_model.safetensors")).unwrap();
+    assert_eq!(tensors.len(), spec.num_layers * MODULE_TYPES.len() * 2);
+}
+
+// ---- hypernetwork training (§3.4) ----
+
+use code2lora::train::{run_demo, TrainConfig};
+
+#[test]
+fn hypernetwork_trains_and_generalizes() {
+    // small, fast config that still crosses the convergence transition
+    let cfg = TrainConfig {
+        demb: 16,
+        din: 4,
+        dout: 4,
+        trunk_h: 32,
+        d_h: 32,
+        rank: 4,
+        true_rank: 2,
+        alpha: 4.0,
+        n_train: 400,
+        n_test: 64,
+        x_per_repo: 16,
+        steps: 3500,
+        lr: 8e-3,
+        weight_decay: 2e-4,
+        log_scale_init: -1.5,
+        seed: 0,
+    };
+    let r = run_demo(&cfg);
+    // untrained ~ no-adaptation baseline
+    assert!((r.init_loss - r.baseline_loss).abs() / r.baseline_loss < 0.1);
+    // trained generalizes to unseen repos: large error reduction on held-out
+    assert!(
+        r.trained_loss < 0.5 * r.baseline_loss,
+        "trained {} should be < half of baseline {}",
+        r.trained_loss,
+        r.baseline_loss
+    );
+}
+
 /// Minimal tempdir helper (avoids an external dev-dependency).
 mod tempdir {
     use std::path::{Path, PathBuf};

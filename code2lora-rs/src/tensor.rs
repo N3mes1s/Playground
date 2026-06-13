@@ -114,6 +114,26 @@ pub fn gelu(x: f32) -> f32 {
     0.5 * x * (1.0 + (0.7978845608028654 * (x + 0.044715 * x * x * x)).tanh())
 }
 
+/// Logistic sigmoid.
+#[inline]
+pub fn sigmoid(x: f32) -> f32 {
+    1.0 / (1.0 + (-x).exp())
+}
+
+/// Parameter-free LayerNorm over a vector (zero-mean, unit-variance).
+pub fn layernorm(v: &mut [f32], eps: f32) {
+    let n = v.len() as f32;
+    if n == 0.0 {
+        return;
+    }
+    let mean = v.iter().sum::<f32>() / n;
+    let var = v.iter().map(|x| (x - mean) * (x - mean)).sum::<f32>() / n;
+    let inv = 1.0 / (var + eps).sqrt();
+    for x in v.iter_mut() {
+        *x = (*x - mean) * inv;
+    }
+}
+
 /// L2-normalize a vector in place; returns the original norm.
 pub fn l2_normalize(v: &mut [f32]) -> f32 {
     let norm = (v.iter().map(|x| x * x).sum::<f32>()).sqrt();

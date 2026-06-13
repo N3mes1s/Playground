@@ -129,6 +129,44 @@ fn embed_file(emb: &dyn Embedder, text: &str) -> Vec<f32> {
     acc
 }
 
+/// Encode a single text document (e.g. a commit diff) into the repository
+/// embedding space `R^{2*EMBED_DIM}` = `[mean_pool(chunks) ; max_pool(chunks)]`,
+/// mirroring the repo-level aggregation for one document. Used by Code2LoRA-Evo
+/// to turn each commit's diff into an `e_t`.
+pub fn encode_text(emb: &dyn Embedder, text: &str) -> Vec<f32> {
+    let dim = emb.dim();
+    let toks = tokenize(text);
+    let mut mean = vec![0.0f32; dim];
+    let mut maxp = vec![f32::NEG_INFINITY; dim];
+    if toks.is_empty() {
+        return vec![0.0; 2 * dim];
+    }
+    let step = CHUNK_TOKENS - CHUNK_OVERLAP;
+    let (mut start, mut n) = (0usize, 0usize);
+    loop {
+        let end = (start + CHUNK_TOKENS).min(toks.len());
+        let e = emb.embed(&toks[start..end].join(" "));
+        for i in 0..dim {
+            mean[i] += e[i];
+            if e[i] > maxp[i] {
+                maxp[i] = e[i];
+            }
+        }
+        n += 1;
+        if end == toks.len() {
+            break;
+        }
+        start += step;
+    }
+    for x in mean.iter_mut() {
+        *x /= n as f32;
+    }
+    let mut out = Vec::with_capacity(2 * dim);
+    out.extend_from_slice(&mean);
+    out.extend_from_slice(&maxp);
+    out
+}
+
 /// A file's encoded contribution.
 struct FileVec {
     path: String,

@@ -6,7 +6,9 @@
 //! `model` described base LLM.
 
 pub mod embedder;
+pub mod evo;
 pub mod hypernet;
 pub mod lora;
 pub mod model;
 pub mod tensor;
+pub mod train;

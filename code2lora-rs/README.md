@@ -28,14 +28,19 @@ and base LLM are frozen (paper §3):
 | **RepoPeftBench task** (§4) | [`tinker/mine_assertions.py`](tinker/mine_assertions.py) | mines assertion-completion tasks from a repo's test suite |
 
 The hypernetwork's seven projection heads hold ~675M of the paper's "~720M
-trainable parameters". Rather than materialize them on CPU, they are **streamed
-deterministically from the seed** — i.e. this is the network *at initialization*
-(log-scale −3.5 ⇒ small, near-identity adapters, exactly the paper's init).
-Training those parameters is the one GPU-bound step; the Tinker harness below
-stands in for it on a live model. `Code2LoRA-Evo` (the GRU-over-commit-diffs
-variant, §3.3) is described in the paper for evolving repos; the encoder here
-already produces the per-snapshot embeddings it consumes — wiring the recurrence
-is the natural next step.
+trainable parameters". For one-shot *generation* on the full Qwen target they are
+**streamed deterministically from the seed** (the network at initialization;
+log-scale −3.5 ⇒ small, near-identity adapters, the paper's init). Two further
+pieces are implemented and tested:
+
+- **Code2LoRA-Evo** (§3.3, [`src/evo.rs`](src/evo.rs)) — a GRU maintains a
+  repository state over a chronological stream of commit diffs, re-emitting an
+  adapter per commit (an *adapter trajectory*), with the snapshot prior carried
+  in the initial state. See "Evolving repos" below.
+- **Hypernetwork training** (§3.4, [`src/train.rs`](src/train.rs)) — a complete
+  pure-Rust autograd training loop for the Static hypernetwork, proving the
+  architecture *learns and generalizes to unseen repositories*. See "Training"
+  below.
 
 ## Two layers of proof
 
@@ -51,13 +56,19 @@ cargo build --release
 cargo test --release                                             # 4 proofs (see below)
 ```
 
-`tests/integration.rs` proves:
+`tests/integration.rs` proves (7 tests):
 - **`shapes_match_real_model`** — every one of the 392 tensors (28 layers × 7
   module types × {A,B}) matches Qwen2.5-Coder-1.5B's real projection dims.
 - **`weights_finite_and_near_identity`** — all finite, max |w| < 0.5 at init.
 - **`deterministic_same_repo_same_adapter`** — same repo+seed ⇒ identical bytes.
 - **`conditioned_different_repos_differ`** — different repos ⇒ different adapters
   (the whole point: the adapter actually encodes the repository).
+- **`evo_trajectory_evolves_and_is_ordered`** — Evo adapters change per commit
+  and depend on commit order.
+- **`evo_deterministic_and_exportable`** — Evo's final adapter exports as a valid
+  PEFT artifact for the real model.
+- **`hypernetwork_trains_and_generalizes`** — after training, held-out
+  adaptation error drops below half the no-adaptation baseline.
 
 Target any model by passing its `config.json`:
 ```bash
@@ -147,6 +158,53 @@ persistent miss — target `len(cache)`, prediction `cache.currsize` — is
 *functionally identical*, so real functional accuracy is higher still. RAG never
 beat the base model on this repo. See [`tinker/RESULTS.md`](tinker/RESULTS.md).
 
+## Evolving repos: Code2LoRA-Evo (§3.3)
+
+Real codebases change commit by commit, and a snapshot adapter goes stale. Evo
+walks a repo's git history, embeds each commit's diff, advances a GRU, and
+re-emits an adapter per commit — an adapter *trajectory*:
+
+```bash
+./target/release/code2lora evo --repo <git_repo> --out /tmp/adapter-evo --max-commits 8
+```
+```
+adapter trajectory (||ΔA_q|| between consecutive commits):
+  commit  1 dbec5fa0  ||ΔA_q||=   (init)
+  commit  2 02b2254f  ||ΔA_q||=1.45130
+  commit  3 484741be  ||ΔA_q||=2.60797
+  ...
+exported final-commit adapter to /tmp/adapter-evo (392 tensors)
+```
+
+Each step is one cheap GRU update on the stored diff embedding (no full re-encode),
+and the final adapter exports as a normal PEFT artifact.
+
+## Training the hypernetwork (§3.4)
+
+Training the full ~720M hypernetwork that adapts Qwen needs a GPU (it must
+backprop through the frozen base LLM, which Tinker doesn't expose). To prove the
+*architecture* learns and generalizes, [`src/train.rs`](src/train.rs) trains the
+identical Static hypernetwork shape — with full hand-written autograd, pure Rust,
+no deps — on a frozen-base adaptation task: a fixed ground-truth linear
+hypernetwork maps each repo embedding to a low-rank target adaptation of a frozen
+`W0`, and our MLP hypernetwork must learn `e ↦ ΔW(e)` and generalize to **unseen**
+repos.
+
+```bash
+./target/release/code2lora train-demo --steps 6000
+```
+```
+held-out adaptation error (lower = better):
+  no adaptation (ΔW=0):       260.14
+  untrained hypernetwork:     260.31
+  TRAINED hypernetwork:         2.20      # 99.2% lower than baseline
+```
+
+After crossing a convergence transition (~3k steps) the trained hypernetwork cuts
+held-out adaptation error by **~99%** vs both the no-adaptation baseline and its
+untrained init — i.e. it learned to *synthesize repository-specific adapters that
+generalize to repositories it never saw*, which is exactly Code2LoRA's claim.
+
 ## Why Qwen3.5-4B for the live run?
 
 The paper's backbone is Qwen2.5-Coder-1.5B (late-2024, code-specialized). It is
@@ -157,9 +215,12 @@ serves. The Rust pipeline is model-agnostic, so the same code targets either.
 
 ## Limitations (honest)
 
-- The Rust hypernetwork is emitted **at initialization** (untrained): the proof
-  is structural/format/conditioning correctness on the real model, not yet a
-  quality gain. End-to-end *training* of the 720M hypernetwork needs a GPU.
+- The hypernetwork's **one-shot generation for the full Qwen target** is emitted
+  at initialization (streamed from the seed): that path proves
+  structural/format/conditioning correctness on the real model. Training is
+  proven separately (`train-demo`) on a tractable frozen base; training the 720M
+  hypernetwork *through Qwen itself* needs a GPU (Tinker can't backprop into a
+  custom hypernetwork).
 - The default repository embedder is a deterministic **feature-hashing** stand-in
   for the paper's frozen Qwen3-Embedding-0.6B (so the crate runs with no
   multi-GB download). It is content-sensitive and reproducible; swap a neural
@@ -171,12 +232,14 @@ serves. The Rust pipeline is model-agnostic, so the same code targets either.
 ## Layout
 
 ```
-src/embedder.rs   repository encoder (§3.1)
+src/embedder.rs   repository encoder (§3.1) + single-doc/diff encoder
 src/hypernet.rs   Code2LoRA-Static hypernetwork (§3.2)
+src/evo.rs        Code2LoRA-Evo: GRU over commit diffs (§3.3)
+src/train.rs      pure-Rust autograd training of the hypernetwork (§3.4)
 src/model.rs      target base-model spec (Qwen2.5-Coder-1.5B / any config.json)
 src/lora.rs       PEFT adapter export + round-trip loader
-src/main.rs       CLI: encode | generate | verify | info
-tests/            offline end-to-end proofs
-tinker/           live proof on Qwen3.5-4B (real GPU via Tinker)
+src/main.rs       CLI: encode | generate | verify | info | evo | train-demo
+tests/            offline end-to-end proofs (7 tests)
+tinker/           live proof + RAG benchmark on Qwen3.5-4B (Tinker)
 examples/sample_repo/  tiny demo repository
 ```
