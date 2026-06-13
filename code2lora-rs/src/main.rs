@@ -207,6 +207,22 @@ fn cmd_evo_scan(
         inject_idx = Some(diffs.len() - 1);
     }
 
+    // Drop empty/merge commits (zero-norm diff embedding): they carry no code
+    // change and would otherwise look maximally anomalous under cosine scores.
+    {
+        let keep: Vec<usize> = (0..diffs.len())
+            .filter(|&i| frob(&diffs[i]) > 1e-6)
+            .collect();
+        let dropped = diffs.len() - keep.len();
+        if dropped > 0 {
+            println!("(skipping {dropped} empty/merge commits)");
+        }
+        inject_idx = inject_idx.and_then(|ix| keep.iter().position(|&i| i == ix));
+        diffs = keep.iter().map(|&i| diffs[i].clone()).collect();
+        labels = keep.iter().map(|&i| labels[i].clone()).collect();
+    }
+    anyhow::ensure!(diffs.len() >= 3, "too few non-empty commits to score");
+
     println!("scanning {} commits (method={method}) ...", diffs.len());
 
     // L2-normalize diff embeddings for cosine-based scores.
