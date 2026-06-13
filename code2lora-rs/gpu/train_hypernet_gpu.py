@@ -159,20 +159,24 @@ def main():
 
     @torch.no_grad()
     def embed_repo(repo_dir):
-        texts = non_test_text(repo_dir)
-        if not texts:
-            return torch.zeros(model.config.hidden_size, device=DEV, dtype=torch.float32)
+        texts = [t for t in non_test_text(repo_dir) if t.strip()]
         vs = []
         for t in texts:
             ids = tok(t, return_tensors="pt", truncation=True, max_length=512).to(DEV)
+            if ids.input_ids.shape[1] == 0:
+                continue
             h = model.model(**ids).last_hidden_state
             vs.append(h[0].mean(0).float())
+        if not vs:
+            return torch.zeros(model.config.hidden_size, device=DEV, dtype=torch.float32)
         return torch.stack(vs).mean(0)
 
     def collate(tasks_b):
         ids, labels = [], []
         for t in tasks_b:
             p = tok(t["prefix"], truncation=True, max_length=MAXLEN - 16).input_ids
+            if not p:
+                p = [tok.eos_token_id]
             c = tok(t["target"], add_special_tokens=False).input_ids + [tok.eos_token_id]
             seq = p + c
             lab = [-100] * len(p) + c
