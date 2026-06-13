@@ -186,19 +186,22 @@ def main():
                 torch.tensor(labels, device=DEV))
 
     print("mining + embedding repos ...", flush=True)
-    train = []
-    for url in TRAIN_REPOS:
-        d, tk = mine(url, root)
-        if len(tk) >= 20:
-            train.append((embed_repo(d), tk))
-            print(f"  train {os.path.basename(url)}: {len(tk)} tasks", flush=True)
-    held = []
-    for url in EVAL_REPOS:
-        d, tk = mine(url, root)
-        if len(tk) >= 10:
-            random.Random(0).shuffle(tk)
-            held.append((os.path.basename(url), embed_repo(d), tk[:24]))
-            print(f"  eval  {os.path.basename(url)}: {len(tk)} tasks", flush=True)
+    pool = []
+    for url in TRAIN_REPOS + EVAL_REPOS:
+        try:
+            d, tk = mine(url, root)
+        except Exception as ex:
+            print(f"  skip {url}: {ex}", flush=True); continue
+        if len(tk) >= 15:
+            pool.append((os.path.basename(url), embed_repo(d), tk))
+            print(f"  {os.path.basename(url)}: {len(tk)} tasks", flush=True)
+    assert len(pool) >= 4, "not enough mineable repos"
+    random.Random(1).shuffle(pool)
+    n_eval = max(2, len(pool) // 4)
+    held = [(n, e, sorted_tasks[:24]) for (n, e, sorted_tasks) in
+            [(n, e, (random.Random(0).sample(tk, len(tk)))) for (n, e, tk) in pool[:n_eval]]]
+    train = [(e, tk) for (_, e, tk) in pool[n_eval:]]
+    print(f"split: {len(train)} train repos / {len(held)} held-out repos", flush=True)
     assert train and held, "not enough data"
 
     in_dim = model.config.hidden_size
@@ -261,4 +264,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+    print("=== CODE2LORA_GPU_DONE ===", flush=True)
