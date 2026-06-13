@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
-use code2lora::embedder::{encode_repo, encode_text, HashEmbedder};
+use code2lora::embedder::{encode_repo, encode_text, Embedder, HashEmbedder};
 use code2lora::evo::EvoHyperNet;
 use code2lora::hypernet::{HyperNet, HyperNetConfig};
 use code2lora::lora::{export_peft, load_peft_safetensors};
@@ -30,6 +30,12 @@ enum Cmd {
     Encode {
         #[arg(long)]
         repo: PathBuf,
+        /// Use the real neural embedder (requires building with --features neural).
+        #[arg(long)]
+        neural: bool,
+        /// Neural embedder model id (default BAAI/bge-large-en-v1.5).
+        #[arg(long)]
+        embed_model: Option<String>,
     },
     /// Generate a PEFT LoRA adapter from a repository.
     Generate {
@@ -42,6 +48,11 @@ enum Cmd {
         config: Option<PathBuf>,
         #[arg(long, default_value_t = 0)]
         seed: u64,
+        /// Use the real neural embedder (requires building with --features neural).
+        #[arg(long)]
+        neural: bool,
+        #[arg(long)]
+        embed_model: Option<String>,
     },
     /// Verify an exported adapter attaches to the target model.
     Verify {
@@ -90,13 +101,19 @@ fn load_spec(config: &Option<PathBuf>) -> Result<ModelSpec> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
-        Cmd::Encode { repo } => cmd_encode(&repo),
+        Cmd::Encode {
+            repo,
+            neural,
+            embed_model,
+        } => cmd_encode(&repo, neural, embed_model),
         Cmd::Generate {
             repo,
             out,
             config,
             seed,
-        } => cmd_generate(&repo, &out, &config, seed),
+            neural,
+            embed_model,
+        } => cmd_generate(&repo, &out, &config, seed, neural, embed_model),
         Cmd::Verify { adapter, config } => cmd_verify(&adapter, &config),
         Cmd::Info { config } => cmd_info(&config),
         Cmd::Evo {
@@ -110,9 +127,29 @@ fn main() -> Result<()> {
     }
 }
 
-fn cmd_encode(repo: &Path) -> Result<()> {
-    let emb = HashEmbedder::default();
-    let (e, stats) = encode_repo(repo, &emb)?;
+/// Build the requested embedder. Neural requires the `neural` build feature.
+fn make_embedder(neural: bool, model: Option<String>) -> Result<Box<dyn Embedder>> {
+    if !neural {
+        return Ok(Box::new(HashEmbedder::default()));
+    }
+    #[cfg(feature = "neural")]
+    {
+        let id = model.unwrap_or_else(|| "BAAI/bge-large-en-v1.5".to_string());
+        eprintln!("loading neural embedder {id} (first run downloads weights) ...");
+        return Ok(Box::new(code2lora::neural::NeuralEmbedder::load(&id)?));
+    }
+    #[cfg(not(feature = "neural"))]
+    {
+        let _ = model;
+        anyhow::bail!(
+            "--neural requires building with the feature: cargo build --release --features neural"
+        );
+    }
+}
+
+fn cmd_encode(repo: &Path, neural: bool, embed_model: Option<String>) -> Result<()> {
+    let emb = make_embedder(neural, embed_model)?;
+    let (e, stats) = encode_repo(repo, emb.as_ref())?;
     println!("repo:           {}", repo.display());
     println!("source files:   {}", stats.files);
     println!("total tokens:   {}", stats.total_tokens);
@@ -125,11 +162,18 @@ fn cmd_encode(repo: &Path) -> Result<()> {
     Ok(())
 }
 
-fn cmd_generate(repo: &Path, out: &Path, config: &Option<PathBuf>, seed: u64) -> Result<()> {
+fn cmd_generate(
+    repo: &Path,
+    out: &Path,
+    config: &Option<PathBuf>,
+    seed: u64,
+    neural: bool,
+    embed_model: Option<String>,
+) -> Result<()> {
     let spec = load_spec(config)?;
-    let emb = HashEmbedder::default();
+    let emb = make_embedder(neural, embed_model)?;
     println!("encoding {} ...", repo.display());
-    let (e, stats) = encode_repo(repo, &emb)?;
+    let (e, stats) = encode_repo(repo, emb.as_ref())?;
     println!(
         "  {} files, {} tokens -> embedding R^{}",
         stats.files,

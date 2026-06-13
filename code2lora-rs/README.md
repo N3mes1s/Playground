@@ -205,6 +205,39 @@ held-out adaptation error by **~99%** vs both the no-adaptation baseline and its
 untrained init — i.e. it learned to *synthesize repository-specific adapters that
 generalize to repositories it never saw*, which is exactly Code2LoRA's claim.
 
+## Real (semantic) embeddings (§3.1)
+
+The default encoder uses a deterministic feature-hashing stand-in. The paper uses
+a *frozen neural* embedder (Qwen3-Embedding-0.6B). [`src/neural.rs`](src/neural.rs)
+implements that behind the same `Embedder` trait via `candle` (a frozen
+BERT-family sentence model, default `BAAI/bge-large-en-v1.5`, 1024-dim =
+`EMBED_DIM`), so the generated LoRA is conditioned on the *meaning* of the code:
+
+```bash
+cargo build --release --features neural
+./target/release/code2lora generate --repo <path> --out /tmp/a --neural
+# --embed-model accepts a Hub id or a local dir (config.json + tokenizer.json + model.safetensors)
+```
+
+**Does it actually condition on semantics?** Cosine similarity between adapters
+generated for three tiny repos — two HTTP servers written with *different words*,
+one linear-algebra lib ([`scripts/adapter_cosine.py`](scripts/adapter_cosine.py)):
+
+| adapter pair | neural embedder | hash (lexical) |
+|---|---|---|
+| http_a ↔ http_b (same idea, different wording) | **0.741** | 0.511 |
+| http_a ↔ math | 0.399 | 0.113 |
+| http_b ↔ math | 0.388 | 0.077 |
+
+The neural embedder recognizes the two HTTP repos as much more similar (0.74)
+than the lexical embedder (0.51) — it captures that "web server" ≈ "serves
+webpages over TCP" — while both correctly separate HTTP from math. The generated
+adapter is genuinely *semantically* conditioned on the repository.
+
+> On networks with a TLS-intercepting proxy, `hf-hub`'s bundled roots may reject
+> the proxy CA; download the model files with a system-trusted tool and pass the
+> local dir to `--embed-model`.
+
 ## Why Qwen3.5-4B for the live run?
 
 The paper's backbone is Qwen2.5-Coder-1.5B (late-2024, code-specialized). It is
@@ -221,10 +254,10 @@ serves. The Rust pipeline is model-agnostic, so the same code targets either.
   proven separately (`train-demo`) on a tractable frozen base; training the 720M
   hypernetwork *through Qwen itself* needs a GPU (Tinker can't backprop into a
   custom hypernetwork).
-- The default repository embedder is a deterministic **feature-hashing** stand-in
-  for the paper's frozen Qwen3-Embedding-0.6B (so the crate runs with no
-  multi-GB download). It is content-sensitive and reproducible; swap a neural
-  embedder behind the `Embedder` trait for semantic fidelity.
+- The *default* repository embedder is a deterministic **feature-hashing**
+  stand-in (so the crate runs offline with no download). A real frozen **neural**
+  embedder is available behind the same trait via `--features neural`
+  (`src/neural.rs`) and is shown above to give semantically-conditioned adapters.
 - The live Tinker proof trains a per-repo LoRA (the paper's upper-bound
   baseline), which is the executable stand-in for a *trained* hypernetwork's
   one-shot generation on the same model + same PEFT artifact.
@@ -233,6 +266,7 @@ serves. The Rust pipeline is model-agnostic, so the same code targets either.
 
 ```
 src/embedder.rs   repository encoder (§3.1) + single-doc/diff encoder
+src/neural.rs     real frozen neural embedder via candle (feature "neural")
 src/hypernet.rs   Code2LoRA-Static hypernetwork (§3.2)
 src/evo.rs        Code2LoRA-Evo: GRU over commit diffs (§3.3)
 src/train.rs      pure-Rust autograd training of the hypernetwork (§3.4)

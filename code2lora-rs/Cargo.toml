@@ -17,5 +17,16 @@ serde_json = "1"
 safetensors = "0.4"
 walkdir = "2"
 
+# Optional: real neural repository embedder (paper §3.1). Off by default so the
+# core crate stays dependency-light and fully offline.
+candle-core = { version = "0.8", optional = true }
+candle-nn = { version = "0.8", optional = true }
+candle-transformers = { version = "0.8", optional = true }
+tokenizers = { version = "0.20", optional = true }
+hf-hub = { version = "0.3", optional = true }
+
+[features]
+neural = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:hf-hub"]
+
 [profile.release]
 opt-level = 3

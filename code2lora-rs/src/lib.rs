@@ -10,5 +10,7 @@ pub mod evo;
 pub mod hypernet;
 pub mod lora;
 pub mod model;
+#[cfg(feature = "neural")]
+pub mod neural;
 pub mod tensor;
 pub mod train;
