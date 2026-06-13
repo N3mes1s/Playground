@@ -106,6 +106,34 @@ The repository turned into adapter parameters that measurably adapt a live
 modern model — exactly the loop the Code2LoRA hypernetwork performs in a single
 forward pass. (A smaller `32/16/3` run reproduced the direction at +6.2 pp.)
 
+### Does it actually beat RAG? (head-to-head, [`tinker/benchmark.py`](tinker/benchmark.py))
+
+Same task, same held-out split, three real repos, on live `Qwen/Qwen3.5-4B`.
+RAG retrieves real `bge-small` embeddings over each repo's non-test source
+(leakage-safe). Full table in [`tinker/RESULTS.md`](tinker/RESULTS.md):
+
+| method | cachetools | schema | boltons | **mean EM** | avg tokens/query |
+|---|---|---|---|---|---|
+| base (no repo knowledge) | 54.2% | 16.7% | 54.2% | 41.7% | 206 |
+| RAG@3 | 45.8% | 16.7% | 54.2% | 38.9% | 1,563 |
+| RAG@8 | 41.7% | 20.8% | 50.0% | 37.5% | 2,260 |
+| **repo-LoRA** | **62.5%** | **62.5%** | **62.5%** | **62.5%** | **206** |
+| repo-LoRA + RAG@8 | 62.5% | 66.7% | 58.3% | 62.5% | 2,260 |
+
+Two findings, both matching the paper:
+- **Parametric beats context-injection.** repo-LoRA averages **62.5%** vs RAG's
+  ~38% and the 41.7% base. On the hard `schema` repo RAG was useless (16.7%)
+  while LoRA jumped **+45.8 pp**. RAG often *hurt* (distracting context) and
+  never clearly won.
+- **At a fraction of the cost.** RAG pays ~1,500–2,300 prompt tokens on *every*
+  query; the LoRA carries the repo in parameters at **zero** inference-time
+  token overhead (206 = just the task prefix). Adding RAG on top of the LoRA
+  doesn't help — the knowledge is already in the weights.
+
+(These use a deliberately small budget — 48 train / rank 16 / 4 epochs. Scaling
+training pushes EM substantially higher; see `tinker/run_tinker.py` with larger
+`--max-train`, `--rank`, `--epochs`.)
+
 ## Why Qwen3.5-4B for the live run?
 
 The paper's backbone is Qwen2.5-Coder-1.5B (late-2024, code-specialized). It is
