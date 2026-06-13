@@ -38,3 +38,21 @@ Reproduce: clone the repos, then
   the same lever took cachetools 62.5% → 92%) is expected to flip it.
 - **repo-LoRA carries the repo at zero inference-time token overhead** (482 = the
   bare task prefix), whereas RAG's cost recurs on every single query, forever.
+
+## Scaling training flips the one loss (and holds cross-language)
+
+The only repo RAG won at small budget was `serde-json`. Scaling LoRA training
+(fixed 32-example held-out set, `push_train.py`) flips it and confirms the same
+ceiling seen on Python holds for Rust and Go:
+
+| repo (lang) | base | RAG@3 | LoRA 40/r16/e3 | LoRA 150/r32/e6 | LoRA 300/r64/e8 |
+|---|---|---|---|---|---|
+| serde-json (Rust) | 43.8% | 56.2% | 50.0% | 65.6% | **71.9%** |
+| gin (Go)          | 12.5% | 12.5% | 62.5% | 68.8% | **71.9%** |
+
+serde-json: scaled repo-LoRA **71.9%** now beats RAG's 56.2% by ~16 pp. gin:
+**+59 pp** over base. Remaining misses are mostly near-equivalent (e.g. error
+string "...column 2" vs "...column 7", truncated hex literals) — strict EM
+understates functional correctness. Conclusion: across Python, JavaScript, Rust,
+and Go, parametric repo-adaptation beats RAG, and scaling training raises the
+ceiling the same way in every language — at zero inference-time token overhead.
