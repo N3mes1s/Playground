@@ -31,6 +31,7 @@ While this is primarily a coding agent workspace, contributions and suggestions 
 |-----------|-------------|
 | [`vulnllm-analyzer/`](vulnllm-analyzer/) | Automated vulnerability analysis for GitHub repos using [VulnLLM-R-7B](https://github.com/ucsb-mlsec/VulnLLM-R) on Modal GPUs |
 | [recursive-lm-security-audit](./recursive-lm-security-audit/) | Automated codebase security scanner using DSPy's Recursive Language Model (RLM) module. Accepts a GitHub repo URL or local path and produces a vulnerability report for ~$0.87. |
+| [`code2lora-rs/`](code2lora-rs/) | Rust implementation of [Code2LoRA](https://arxiv.org/pdf/2606.06492): turns a GitHub repo into a PEFT LoRA adapter for a frozen base LLM via a hypernetwork forward pass. Offline proofs vs the real Qwen2.5-Coder-1.5B config + a live proof on Qwen3.5-4B through the Tinker API. |
 
 ## Note
 

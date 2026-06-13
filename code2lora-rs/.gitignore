@@ -1,0 +1,10 @@
+/target
+**/__pycache__/
+*.pyc
+# generated adapters / large artifacts
+/adapter
+/adapter_*
+*.safetensors
+# secrets & logs
+.env
+*.log

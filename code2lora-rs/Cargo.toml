@@ -1,0 +1,21 @@
+[package]
+name = "code2lora"
+version = "0.1.0"
+edition = "2021"
+description = "Rust implementation of Code2LoRA: hypernetwork-generated LoRA adapters from a code repository (arXiv:2606.06492)"
+license = "MIT"
+
+[[bin]]
+name = "code2lora"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+safetensors = "0.4"
+walkdir = "2"
+
+[profile.release]
+opt-level = 3

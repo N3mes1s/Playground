@@ -1,0 +1,4 @@
+# Live-proof harness (Tinker). The Rust pipeline has no Python dependencies.
+tinker
+tinker-cookbook
+torch
