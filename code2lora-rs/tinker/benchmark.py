@@ -29,7 +29,7 @@ import tempfile
 import tinker
 
 import c2l_common as cc
-import mine_assertions
+import mine_multi
 from rag import RagIndex
 
 
@@ -42,7 +42,7 @@ def get_repo(spec, github):
 
 
 def mine_split(repo, max_test, max_train, seed):
-    tasks = mine_assertions.mine_repo(repo)
+    tasks = mine_multi.mine_repo(repo)
     seen, uniq = set(), []
     for t in tasks:
         k = (t["prefix"], t["target"])
