@@ -5,3 +5,5 @@ torch
 # RAG baseline retriever (benchmark.py / rag.py)
 transformers
 numpy
+# local PEFT eval of the Rust-generated adapter on the real base model (peft_local.py)
+peft
