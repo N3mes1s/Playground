@@ -27,16 +27,21 @@ def run(config: dict):
 
 
 @app.local_entrypoint()
-def main(mode: str = "sweep"):
+def main(mode: str = "perlayer"):
     base = dict(MODE="train", RANK=16, HIDDEN=1024, ALPHA=32, MAXLEN=2048,
-                TRAIN_MAXLEN=1024, EVAL_PER_REPO=15, MAXNEW=24, BATCH=8,
-                EVAL_EVERY=2500, EVAL_SEED=0, ANCHOR=0.55)
+                TRAIN_MAXLEN=1024, EVAL_PER_REPO=15, MAXNEW=24, BATCH=6,
+                EVAL_EVERY=2000, EVAL_SEED=0, ANCHOR=0.55, LR="1e-4")
     if mode == "repro":
         configs = [dict(base, MODE="repro")]
+    elif mode == "perlayer":
+        # the improvement attempt: per-layer (FiLM) adapters vs layer-shared
+        configs = [
+            dict(base, PER_LAYER=1, HEAD_DROPOUT=0.05, WD=0.02, EPOCHS=2, RUNTAG="PL1"),
+            dict(base, PER_LAYER=0, HEAD_DROPOUT=0.05, WD=0.02, EPOCHS=2, RUNTAG="SHARED"),
+        ]
     else:
         configs = [
             dict(base, HEAD_DROPOUT=0.1, WD=0.05, LR="5e-5", EPOCHS=3, RUNTAG="M1"),
-            dict(base, HEAD_DROPOUT=0.2, WD=0.1, LR="5e-5", EPOCHS=4, RUNTAG="M2"),
             dict(base, HEAD_DROPOUT=0.0, WD=0.01, LR="1e-4", EPOCHS=3, RUNTAG="M3"),
         ]
     for res in run.map(configs):

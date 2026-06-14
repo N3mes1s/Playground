@@ -176,19 +176,31 @@ def main():
     C.replace_with_lora(model, specs, rank=RANK, alpha=ALPHA)
 
     import torch.nn as nn
-    head = C.Code2LoRAHead(input_dim=2048, type_dims=type_dims,
-                           hidden_dim=HIDDEN, rank=RANK, init_log_scale=-3.5).to(DEV)
-    if HEAD_DROPOUT > 0:
-        # regularize the trunk to fight the early CR overfit we observed
-        head.trunk = nn.Sequential(
-            nn.Linear(2048, HIDDEN), nn.GELU(), nn.Dropout(HEAD_DROPOUT),
-            nn.Linear(HIDDEN, HIDDEN), nn.GELU(), nn.Dropout(HEAD_DROPOUT),
-        ).to(DEV)
+    PER_LAYER = os.environ.get("PER_LAYER", "0") == "1"
+    num_layers = len(model.model.layers)
+    if PER_LAYER:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
+        from perlayer import PerLayerHead, perlayer_inject
+        head = PerLayerHead(2048, type_dims, num_layers=num_layers, hidden_dim=HIDDEN,
+                            rank=RANK, init_log_scale=-3.5, dropout=HEAD_DROPOUT).to(DEV)
+        log(f"using PER-LAYER head (FiLM over {num_layers} layers), hidden={HIDDEN} rank={RANK}")
+    else:
+        head = C.Code2LoRAHead(input_dim=2048, type_dims=type_dims,
+                               hidden_dim=HIDDEN, rank=RANK, init_log_scale=-3.5).to(DEV)
+        if HEAD_DROPOUT > 0:
+            head.trunk = nn.Sequential(
+                nn.Linear(2048, HIDDEN), nn.GELU(), nn.Dropout(HEAD_DROPOUT),
+                nn.Linear(HIDDEN, HIDDEN), nn.GELU(), nn.Dropout(HEAD_DROPOUT),
+            ).to(DEV)
 
     def set_lora(h, ctx_np):
         ctx = torch.tensor(ctx_np, device=DEV).unsqueeze(0)
-        out = h(ctx)
-        C.inject_lora_weights(model, specs, out, batch_index=0)
+        if PER_LAYER and not isinstance(h, C.Code2LoRAHead):
+            from perlayer import perlayer_inject
+            perlayer_inject(model, specs, h, ctx)
+        else:
+            out = h(ctx)
+            C.inject_lora_weights(model, specs, out, batch_index=0)
 
     def clear_lora():
         for sp in specs:
