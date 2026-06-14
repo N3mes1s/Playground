@@ -51,6 +51,44 @@ their-ckpt+retrieval**, and **decisively beats the published no-retrieval method
 (+8–11pp) and the reported 63.8% in every run.** A multi-seed average would be
 needed to call the +1.7 a definitive adapter win.
 
+## Retriever bake-off — is BM25 leaving points on the table? (no)
+
+The hybrid retrieves with **BM25** (sparse, lexical). Question: would a SOTA *dense*
+code embedder do better? We held the **adapter fixed** (their released ckpt) and
+swapped only the retriever, same leakage gates, same 765-QnA eval set.
+
+| retriever (adapter fixed) | hybrid EM | vs adapter-only |
+|---|---|---|
+| none (adapter only) | 58.3% | — |
+| **BM25 (ours, lexical)** | **69.0%** | **+10.7** |
+| Qwen3-Embedding-0.6B | 68.4% | +10.1 |
+| BGE-small-en-v1.5 (generic dense) | 67.8% | +9.5 |
+| jina-code-embeddings-0.5b (SOTA code) | 67.5% | +9.2 |
+| jina-code-embeddings-1.5b (SOTA code) | 67.3% | +9.0 |
+| SFR-Embedding-Code-2B_R (CodeXEmbed) | failed to load* | — |
+
+**Finding: BM25 wins.** Every dense SOTA embedder clusters at 67.3–68.4% — *below*
+BM25's 69.0%, and the spread is within run-to-run noise (~±2pp), so the honest read
+is **all retrievers are ~tied at ~67–69% and the expensive dense models give no
+advantage here.**
+
+**Why** (and why it's not surprising): within-repo assertion retrieval is an
+**identifier-overlap** problem — the relevant sibling test calls the *same* repo
+functions/classes by their *exact* names, so lexical token matching (BM25) is
+ideal. Dense embedders earn their keep on *semantic paraphrase* (different words,
+same meaning), which isn't the bottleneck when API names are shared verbatim;
+their semantic smoothing can even retrieve a topically-near but lexically-weaker
+sibling. So the cheap retriever is the *right* retriever for this task — a useful
+negative result.
+
+Caveats: (1) the dense models were run **without their recommended query
+instruction prefixes** (jina/Qwen3 want `nl2code_query`-style prompts), so they're
+mildly under-tuned — but they'd have to clear BM25 by >2pp to matter, and they sit
+below it. (2) *SFR-Embedding-Code-2B_R failed to import (`HybridCache`) under the
+pinned `transformers`/`torch==2.5.1` image; given five dense models all ≤ BM25, a
+sixth is unlikely to overturn the trend. The per-retriever `try/except` kept the
+run alive.
+
 ## How to read this — the honest interpretation
 
 **What is real and defensible:**
