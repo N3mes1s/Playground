@@ -35,15 +35,15 @@ def main(mode: str = "perlayer"):
         configs = [dict(base, MODE="repro", LR="1e-4")]
     elif mode == "measure":
         # one short run for the pi-autoresearch loop: emits a single METRIC line.
-        # it4: RAFT retrieval+parametric HYBRID (Tier-1 lever) on it1's strongest
-        # base (per-layer head). Adapter is trained with leakage-controlled in-repo
-        # retrieval (oracle+distractor) so it learns to exploit one retrieved snippet;
-        # eval prepends the top retrieved snippet. Emits a full fairness scoreboard
-        # (base / RAG-alone / their-ckpt / their+retr / ours-no-retr / ours-hybrid).
+        # it5: tuned RAFT to beat the their-ckpt+retrieval line (69.2%) — make OUR
+        # adapter the differentiator, not just retrieval. Train with more oracle
+        # exposure (K=2, p=0.8) + more distractors (2) so the adapter learns to
+        # exploit multiple retrieved snippets better than a ckpt never trained for
+        # retrieval; eval also uses K=2; finer eval cadence to catch the peak.
         cfg = dict(base, PER_LAYER=int(__import__("os").environ.get("PL", "1")),
-                   RAFT=1, P_ORACLE=0.7, N_DISTRACT=1, K_ORACLE=1, RETR_BUDGET=384,
+                   RAFT=1, P_ORACLE=0.8, N_DISTRACT=2, K_ORACLE=2, RETR_BUDGET=600,
                    LORA_CLAMP="0.15", LR="5e-5", HEAD_DROPOUT=0.05, WD=0.02,
-                   EPOCHS=1, EVAL_EVERY=1500, RUNTAG="MEASURE_IT4_RAFT")
+                   EPOCHS=1, EVAL_EVERY=750, RUNTAG="MEASURE_IT5_RAFT2")
         res = run.remote(cfg)
         best = res.get("best", 0.0) if isinstance(res, dict) else 0.0
         their = res.get("their", 0.0) if isinstance(res, dict) else 0.0
