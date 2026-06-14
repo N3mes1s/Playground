@@ -413,17 +413,21 @@ def main():
         names = os.environ.get("RETRIEVERS",
                                "bm25,BAAI/bge-small-en-v1.5,Qwen/Qwen3-Embedding-0.6B").split(",")
         for name in [x.strip() for x in names if x.strip()]:
-            t0 = time.time()
-            if name == "bm25":
-                eval_cache["retr"] = build_retrievers(meta); freeable = None
-            else:
-                embed_fn, m = make_embed(name)
-                eval_cache["retr"] = build_dense_retrievers(meta, embed_fn); freeable = m
-            em, n = eval_cr(True, head, retrieve=True)
-            results[name] = float(em)
-            log(f"[{time.strftime('%H:%M:%S')}]  {name:32s}: {em:.1%}   ({time.time()-t0:.0f}s)")
-            if freeable is not None:
-                del freeable; torch.cuda.empty_cache()
+            t0 = time.time(); freeable = None
+            try:
+                if name == "bm25":
+                    eval_cache["retr"] = build_retrievers(meta)
+                else:
+                    embed_fn, m = make_embed(name); freeable = m
+                    eval_cache["retr"] = build_dense_retrievers(meta, embed_fn)
+                emv, n = eval_cr(True, head, retrieve=True)
+                results[name] = float(emv)
+                log(f"[{time.strftime('%H:%M:%S')}]  {name:32s}: {emv:.1%}   ({time.time()-t0:.0f}s)")
+            except Exception as e:
+                log(f"[{time.strftime('%H:%M:%S')}]  {name:32s}: FAILED ({type(e).__name__}: {e})")
+            finally:
+                if freeable is not None:
+                    del freeable; torch.cuda.empty_cache()
 
         log("\n================  RETRIEVER BAKE-OFF (adapter fixed = their ckpt)  ================")
         for k in results:
