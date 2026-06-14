@@ -154,18 +154,27 @@ effort, not a sweep. Total vast.ai spend ≈ $12.
 Modal harness added (`gpu/modal_app.py`) and validated (H100 function runs, returns
 results directly) as a cleaner loop for any future iteration.
 
-### Improvement attempt: per-layer (FiLM) adapters — instability finding
-Tried generating a *distinct* (A,B) per (layer, module) via a shared head
-modulated by a learned per-layer FiLM (`gpu/perlayer.py`) — more expressive than
-the paper's layer-shared design, at ~the same param count. On Modal H100 it
-**collapsed to 0.0% EM** even after stabilizing (clamp 0.15, lr 5e-5): 28
-**uncorrelated** per-layer adapters compound destructively down the residual
-stream (variance accumulates with depth), unlike the paper's coherent shared
-(identical-across-layers) adapter. **Finding: the paper shares adapters across
-layers for stability, not only parameter efficiency.** Making per-layer work would
-need per-layer magnitude ≈ shared/√depth plus careful tuning — a research effort,
-not a quick win. Net: the shared design remains the right call; our match (~52%)
-stands as the honest ceiling for this architecture class.
+### Improvement attempt: per-layer (FiLM) adapters — ran on Modal H100
+Generated a *distinct* (A,B) per (layer, module) via a shared head modulated by a
+learned per-layer FiLM (`gpu/perlayer.py`) — more expressive than the paper's
+layer-shared design at ~the same param count — head-to-head vs the shared control,
+same fair harness. Two infra fixes en route: (a) early-stop checkpoint save to
+`/tmp` (Modal has no `/workspace`); (b) **NaN divergence** because Modal pulled
+latest torch while the working vast env was torch 2.5.1 — fixed by pinning
+`torch==2.5.1` + gradient clipping.
+
+Results (bar = their checkpoint on this harness, ~53.5–54.4%):
+- shared control (clamp 0.3, lr1e-4): 52.0 → **52.8%** peak ≈ bar → **MATCH**.
+- per-layer (clamp 0.15, lr5e-5): 42.9 → 46.4% — **underperforms**.
+
+**Finding:** per-layer needs a *tight* magnitude clamp or it diverges (28
+uncorrelated adapters compound down the residual stream — shared is coherent), but
+that tight clamp *also caps its adaptation*, so it lands below the shared design.
+The paper shares adapters across layers for **stability + a magnitude/expressivity
+sweet spot**, not just parameter efficiency. Net across all attempts: best trained
+head **matches** their checkpoint (~52–53%), does **not beat** it; per-layer is a
+real research direction (needs per-layer magnitude ≈ shared/√depth + tuning), not a
+quick win. Modal credits ≈ untouched after stopping; vast ≈ $68 left.
 
 ## Decisions / environment notes
 
