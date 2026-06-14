@@ -96,12 +96,15 @@ class LoRA(nn.Module):
         y = self.base(x)
         if self.A is None or self.B is None:
             return y
-        # Compute the LoRA delta in fp32 for numerical headroom; detach x
-        # so we don't build an autograd graph through the (frozen) base.
-        x_f32 = x.detach().to(torch.float32)
-        A = self.A.to(torch.float32)
-        B = self.B.to(torch.float32)
-        delta = F.linear(F.linear(x_f32, A), B) * self.scaling
+        # Detach x so we don't build an autograd graph through the (frozen)
+        # base. Delta dtype configurable: bf16 (default) saves memory for
+        # high-rank heads; LORA_DELTA_DTYPE=fp32 for numerical headroom.
+        import os as _os
+        ddt = torch.float32 if _os.environ.get("LORA_DELTA_DTYPE") == "fp32" else x.dtype
+        xd = x.detach().to(ddt)
+        A = self.A.to(ddt)
+        B = self.B.to(ddt)
+        delta = F.linear(F.linear(xd, A), B) * self.scaling
         return y + delta.to(dtype=y.dtype)
 
 
