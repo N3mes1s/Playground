@@ -73,13 +73,17 @@ def qna_by_repo(split_file, per_repo=None, repos=None):
 
 
 def fetch_core():
-    """Download the paper's Code2LoRAHead/LoRA code next to this file."""
+    """Make the vendored Code2LoRAHead/LoRA code importable (no network)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    ref = os.path.join(here, "reference")
+    if os.path.exists(os.path.join(ref, "code2lora_core.py")):
+        sys.path.insert(0, ref)
+        return
+    # fallback: fetch from the released anon repo
     import urllib.request
     url = "https://anonymous.4open.science/api/repo/code2lora-6857/file/hypernetwork/code2lora_core.py"
-    dst = os.path.join(os.path.dirname(os.path.abspath(__file__)), "code2lora_core.py")
-    if not os.path.exists(dst):
-        urllib.request.urlretrieve(url, dst)
-    sys.path.insert(0, os.path.dirname(dst))
+    urllib.request.urlretrieve(url, os.path.join(here, "code2lora_core.py"))
+    sys.path.insert(0, here)
 
 
 def norm(s): return re.sub(r"\s+", " ", s).strip().rstrip(".,;:)")
