@@ -30,7 +30,7 @@ MAXNEW = int(os.environ.get("MAXNEW", "24"))
 HEAD_DROPOUT = float(os.environ.get("HEAD_DROPOUT", "0.0"))
 WD = float(os.environ.get("WD", "0.01"))
 EVAL_SEED = int(os.environ.get("EVAL_SEED", "0"))
-OUT = os.environ.get("OUT", "/workspace/head.best.pt")
+OUT = os.environ.get("OUT", "/tmp/head.best.pt")
 BASE = "Qwen/Qwen2.5-Coder-1.5B"
 TARGET_TYPES = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
 DEV = "cuda"; DT = torch.bfloat16
@@ -311,7 +311,9 @@ def main():
             flag = "  *BEAT*" if cur > their_em else ""
             log(f"  >>> step {step} CR-test EM: {cur:.1%}  (their {their_em:.1%}){flag}")
             if cur > best:
-                best = cur; torch.save(head.state_dict(), OUT)
+                best = cur
+                os.makedirs(os.path.dirname(OUT) or ".", exist_ok=True)
+                torch.save(head.state_dict(), OUT)
     head.eval()
     final, n = eval_cr(True, head)
     best = max(best, final)

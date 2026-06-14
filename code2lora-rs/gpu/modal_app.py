@@ -30,14 +30,17 @@ def run(config: dict):
 def main(mode: str = "perlayer"):
     base = dict(MODE="train", RANK=16, HIDDEN=1024, ALPHA=32, MAXLEN=2048,
                 TRAIN_MAXLEN=1024, EVAL_PER_REPO=15, MAXNEW=24, BATCH=6,
-                EVAL_EVERY=2000, EVAL_SEED=0, ANCHOR=0.55, LR="1e-4")
+                EVAL_EVERY=1000, EVAL_SEED=0, ANCHOR=0.55)
     if mode == "repro":
-        configs = [dict(base, MODE="repro")]
+        configs = [dict(base, MODE="repro", LR="1e-4")]
     elif mode == "perlayer":
-        # the improvement attempt: per-layer (FiLM) adapters vs layer-shared
+        # improvement attempt: per-layer (FiLM) adapters, stabilized (tight clamp
+        # + lower LR since 28 independent adapters compound) vs the shared control.
         configs = [
-            dict(base, PER_LAYER=1, HEAD_DROPOUT=0.05, WD=0.02, EPOCHS=2, RUNTAG="PL1"),
-            dict(base, PER_LAYER=0, HEAD_DROPOUT=0.05, WD=0.02, EPOCHS=2, RUNTAG="SHARED"),
+            dict(base, PER_LAYER=1, LORA_CLAMP="0.15", LR="5e-5", HEAD_DROPOUT=0.05,
+                 WD=0.02, EPOCHS=2, RUNTAG="PL1"),
+            dict(base, PER_LAYER=0, LORA_CLAMP="0.3", LR="1e-4", HEAD_DROPOUT=0.0,
+                 WD=0.01, EPOCHS=2, RUNTAG="SHARED"),
         ]
     else:
         configs = [

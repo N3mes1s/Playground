@@ -9,9 +9,14 @@ and modulate the trunk representation per layer with a learned FiLM
 hypernetwork the freedom to place repository knowledge differently per depth.
 """
 import math
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+# Per-layer applies 28 *independent* adapters that compound across depth, so the
+# magnitude ceiling must be tighter than the shared head's 0.3 to stay stable.
+CLAMP = float(os.environ.get("LORA_CLAMP", "0.15"))
 
 
 class PerLayerHead(nn.Module):
@@ -52,8 +57,8 @@ class PerLayerHead(nn.Module):
         A_out, B_out = {}, {}
         for t in self.types:
             in_f, out_f = self.type_dims[t]
-            sA = torch.exp(self.log_scale_A[t]).clamp(1e-5, 0.3)
-            sB = torch.exp(self.log_scale_B[t]).clamp(1e-5, 0.3)
+            sA = torch.exp(self.log_scale_A[t]).clamp(1e-5, CLAMP)
+            sB = torch.exp(self.log_scale_B[t]).clamp(1e-5, CLAMP)
             A_out[t] = torch.tanh(self.heads_A[t](H)).view(self.L, self.rank, in_f) * sA
             B_out[t] = torch.tanh(self.heads_B[t](H)).view(self.L, out_f, self.rank) * sB
         return A_out, B_out  # per-type tensors indexed [layer]
