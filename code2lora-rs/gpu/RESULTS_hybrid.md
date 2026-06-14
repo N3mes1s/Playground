@@ -1,0 +1,83 @@
+# Beating Code2LoRA — the RAFT retrieval+parametric hybrid (it4)
+
+**Result: a leakage-controlled retrieval+parametric hybrid beats the paper's
+published method by +8.5pp on a fair same-budget harness, and also clears the
+paper's *reported* 63.8%.**
+
+## Scoreboard (one Modal H100 run, identical fair harness for every row)
+
+Harness: Qwen2.5-Coder-1.5B, cr_test, 15 QnAs/repo over 51 repos (n=765),
+max_new=24, MAXLEN 2048, **prefix-tail kept** (the code adjacent to the
+assertion — see "harness note" below). Within-run comparison, so all rows are
+directly comparable.
+
+| configuration | CR-test EM | what it isolates |
+|---|---|---|
+| base (no adapter) | 41.3% | the frozen model |
+| RAG alone (base + retrieval) | 46.5% | retrieval *without* any adapter |
+| **their ckpt, no retrieval** | **60.0%** | **the paper's published method = the bar** |
+| their ckpt + retrieval | 69.2% | retrieval added to *their* adapter |
+| ours, no retrieval | 57.8% | our from-scratch per-layer adapter alone |
+| **ours HYBRID (best)** | **68.5%** | our adapter + retrieval (the submission) |
+
+`METRIC delta = +8.5pp` over the bar. `beat_reported = True` (vs 63.8%).
+
+## How to read this — the honest interpretation
+
+**What is real and defensible:**
+- A **retrieval+parametric hybrid beats the paper's published (no-retrieval)
+  method** by +8.5pp (68.5 vs 60.0) and beats its reported 63.8%. This is exactly
+  the **"Combine"** prediction from `RESEARCH.md` Tier 1 (PRAG/DyPRAG-Combine,
+  RAFT): parametric-alone (60.0) + RAG-alone (46.5) → **combined ~69**, beating
+  *both* components. The two information sources are complementary.
+- **It is not gross leakage.** The control proves it: **RAG-alone is only 46.5%**
+  (+5pp over base). If retrieval were handing over the answer, base+retrieval would
+  spike far higher. The leakage gates (drop any sibling from the *same
+  test_function*; drop near-duplicate targets, char-level ratio ≥ 0.9) hold. The
+  jump to ~69 needs *both* the repo knowledge baked into the adapter *and* a
+  relevant in-context example — neither alone gets there.
+
+**The nuance (stated plainly, not buried):**
+- The gain is the **hybrid recipe (retrieval + Combine)**, *not* a better
+  hypernetwork. **their ckpt + retrieval = 69.2% ≥ ours hybrid 68.5%** — give the
+  paper's own released checkpoint the same retrieval and it does just as well (a
+  hair better). And **ours-no-retrieval (57.8) < their-no-retrieval (60.0)** — our
+  from-scratch adapter slightly trails theirs, consistent with iterations 1–3
+  (we match/just-trail their adapter; we never beat it on parameters alone).
+- So the correct headline is **"the hybrid recipe beats the paper,"** and it beats
+  it whether you plug in our adapter or theirs. The contribution is the
+  **retrieval-augmented Combine**, validated on both adapters.
+
+## Harness note (why the bar moved 55 → 60)
+
+Iterations 1–3 measured the anchor at ~53–55%. This run measures it at **60.0%**.
+The only change is eval tokenization: we now **keep the prefix tail** (the lines
+immediately before the assertion) instead of right-truncating to the prefix
+*start*. The tail is the code that actually determines the assertion, so this is
+the *more correct* harness — and it lifts the paper's checkpoint to 60%, much
+closer to its reported 63.8%. Every row above uses this same harness, so the
++8.5pp hybrid delta is apples-to-apples.
+
+## What did NOT beat it (the path here)
+
+| it | lever | vs anchor | verdict |
+|----|-------|-----------|---------|
+| 1 | stable per-layer head | 54.8 vs 55.8 | tie within noise |
+| 2 | + heavy anti-overfit reg | 51.5 vs 55.4 | lose |
+| 3 | + rsLoRA (α/√r) | 50.7 vs 53.6 | lose |
+| **4** | **RAFT retrieval+parametric hybrid** | **68.5 vs 60.0** | **BEAT (+8.5)** |
+
+The parametric-architecture levers (it1–it3) confirmed Code2LoRA-Static already
+sits at the per-repo fine-tuning ceiling — so the beat had to come from *outside*
+the adapter, exactly where Tier 1 pointed.
+
+## Reproduce
+
+```bash
+export MODAL_TOKEN_ID=... MODAL_TOKEN_SECRET=... SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+modal run gpu/modal_app.py --mode measure   # PL=1 (per-layer base), RAFT hybrid + full scoreboard
+python gpu/retrieval.py                      # offline self-test of the leakage gates
+```
+
+Knobs (gpu/c2l_gpu.py): `RAFT=1`, `P_ORACLE` (train oracle prob, 0.7),
+`N_DISTRACT` (1), `K_ORACLE` (eval snippets, 1), `RETR_BUDGET` (ctx tokens, 384).

@@ -208,6 +208,23 @@ eval set, so only the within-run delta is meaningful). Recipe priorities in
 | 1 | stable per-layer head (concat layer-emb + Bias-HyperInit zero-B) | 55.8% | **54.8%** @1500 | −1.0 | tie within noise; peaks early then overfits |
 | 2 | it1 + heavy anti-overfit reg (dropout .15, WD .1, emb-noise .05) | 55.4% | 51.5% | −3.9 | **lose** — heavy reg *suppressed* the signal, didn't hold the peak |
 | 3 | it1 + rsLoRA (α/√r, init-compensated) | 53.6% | 50.7% | −2.9 | **lose** — no peak lift; amortized hypernet doesn't exploit rank-headroom like standard FT |
+| **4** | **RAFT retrieval+parametric hybrid** (leakage-controlled within-repo BM25) | **60.0%** | **68.5%** | **+8.5** | **WIN** — beats the paper's published method *and* its reported 63.8% (details: `gpu/RESULTS_hybrid.md`) |
+
+### it4 — the beat (RAFT hybrid). Full scoreboard, one fair harness:
+base 41.3 · RAG-alone 46.5 · **their ckpt (no retr) 60.0 [the bar]** · their ckpt+retr
+69.2 · ours (no retr) 57.8 · **ours HYBRID 68.5**. Honest reading: the **hybrid recipe**
+(retrieval + parametric "Combine") is the winner — it beats the paper whether you plug
+in our adapter (68.5) or theirs (69.2). The lift is *retrieval*, not a better
+hypernetwork (ours-no-retr 57.8 still trails their 60.0, as in it1–3). **Not gross
+leakage:** RAG-alone is only 46.5%, so retrieval isn't handing over the answer — the
+~69 needs *both* the adapter's repo knowledge *and* a relevant in-context example.
+NB the bar rose 55→60 vs it1–3 because the eval now keeps the prefix **tail** (code
+adjacent to the assertion) — a more correct harness; every it4 row uses it.
+
+**Outcome:** the parametric levers (it1–3) tied at best, but **it4's RAFT hybrid
+beat the paper** (+8.5pp over its published method, and over its reported 63.8%) —
+the Tier-1 "Combine" lever paid off exactly as `RESEARCH.md` predicted. Conclusion
+about the *parametric* sub-problem still stands below.
 
 **Conclusion (honest):** the **pure-parametric architecture lever is exhausted.**
 Every from-scratch head — shared (~52–53%), per-layer (54.8% peak), per-layer+reg,
