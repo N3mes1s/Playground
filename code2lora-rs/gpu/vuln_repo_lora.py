@@ -204,8 +204,11 @@ def run():
     log(f"  {'false-pos rate':18s}{b_fp:>9.0%}{l_fp:>12.0%}   (wrapper-traps flagged VULN; LOWER better)")
     log(f"  {'true-pos rate':18s}{b_tp:>9.0%}{l_tp:>12.0%}   (real raw-sink vulns caught; HIGHER better)")
     log(f"  {'accuracy':18s}{b_acc:>9.0%}{l_acc:>12.0%}")
-    verdict = ("repo-LoRA CUTS false positives while keeping TP"
-               if (l_fp < b_fp - 1e-9 and l_tp >= b_tp - 0.05)
+    # A clean win = false positives drop meaningfully AND true-positives stay high
+    # in ABSOLUTE terms AND accuracy improves. (Comparing TP to a degenerate
+    # always-VULN base, whose TP is trivially 100%, would be misleading.)
+    verdict = ("repo-LoRA CUTS false positives while keeping TP high"
+               if (l_fp < b_fp - 0.1 and l_tp >= 0.8 and l_acc > b_acc + 0.05)
                else "no clean win — see TP (did it just learn to say SAFE?)")
     log(f"  => {verdict}")
     return {"base": {"fp": b_fp, "tp": b_tp, "acc": b_acc},

@@ -28,8 +28,17 @@ where it **fails**.
 | case | type | malicious commit rank | detected? |
 |---|---|---|---|
 | `facebook/react` + planted exfil patch | **synthetic, overt** | **#3 / 51** (neural, z=+1.59) | ✅ surfaced (top 6%) |
-| `Marak/colors.js` `074a0f8` (Jan 2022 DoS) | **real** | **#29 / 40** (neural, z=−0.46) | ❌ missed |
-| `tukaani-project/xz` `cf44e4b7` (CVE-2024-3094) | **real** | **#15 / 40** (z=+0.51) | ❌ missed |
+| `Marak/colors.js` `074a0f8` (Jan 2022 DoS) | **real** | **#1 / 40** (kNN, z=+2.10) | ✅ caught by kNN |
+| `tukaani-project/xz` `cf44e4b7` (CVE-2024-3094) | **real** | #5–6 / 40 (centroid/kNN) | ⚠️ top-15%, not top-10% |
+
+> **Correction (multi-scorer run).** The headline above originally reported only
+> the *state-jump* scorer and called both real attacks missed. The full
+> `commit_anomaly.py` run shows the scorer choice matters a lot: **kNN novelty
+> catches the colors.js DoS at rank #1/40** (z=+2.10), and centroid/kNN surface
+> the xz commit at #5–6/40 (top 15%). The *trained next-diff predictor* and
+> state-jump both miss them. So the honest takeaway is "the right scorer (kNN)
+> catches the idiom-camouflaged DoS; xz's binary payload still defeats a text
+> embedder."
 
 **The synthetic case works** because the planted patch was *overtly foreign* —
 `fetch(secrets)`, `execSync('curl|sh')`, `eval(payload)` — code semantically
@@ -65,12 +74,42 @@ code2lora evo-scan --repo colors.js --max-commits 40 --neural \
 code2lora evo-scan --repo xz --max-commits 40 --no-snapshot --flag cf44e4b7
 ```
 
-## Other security applications (design)
+## Demonstrated: repo-LoRA cuts vulnerability-scanner false positives (`gpu/vuln_repo_lora.py`)
 
-- **Repo-specialized vulnerability analysis** — a repo-LoRA gives a scanner a model
-  that already knows the codebase's sinks, auth flow, and *custom safe wrappers*,
-  cutting false positives (it learns that `safe_query()` is safe) at zero context
-  tokens. Natural fit for this repo's `vulnllm-analyzer` / `recursive-lm-security-audit`.
+**Claim tested:** a repo-specialized LoRA knows the codebase's *custom safe
+wrappers*, so it stops flagging `sink(safe_wrapper(user_input))` as a vuln —
+cutting false positives — while still catching genuine raw-sink vulns.
+
+**Controlled setup:** 12 synthetic repos, each with a unique documented safe
+wrapper (e.g. `db_guard(x)` before `cursor.execute`). A per-repo LoRA is trained
+(supervised) on that repo's documented `wrapper(x)→SAFE` / `raw(x)→VULN` call
+sites, then evaluated on **held-out call sites using input sources never seen in
+training**. The base model gets the same wrapper doc *in-context* (just no
+training), so the comparison isolates what training the adapter adds.
+
+| metric | base (doc in-context) | **repo-LoRA** |
+|---|---|---|
+| false-positive rate (safe wrapper-usage flagged VULN) | **100%** | **0%** |
+| true-positive rate (real raw-sink vulns caught) | 100%\* | 88% |
+| accuracy | 50% | **94%** |
+
+\* The base is a *cry-wolf* classifier — it labels **everything** VULN (so its
+100% TP is meaningless; its FP is also 100%). The repo-LoRA learns the actual
+boundary and generalizes it to unseen call sites: **false positives 100%→0%**,
+true-positives a healthy 88%, accuracy 50%→94%.
+
+**Honest notes:** (1) this is a *controlled* demonstration of the mechanism, not a
+real-CVE benchmark — it proves repo specialization *can* encode "this wrapper is
+safe" and cut FPs, the exact pain point of noisy scanners. (2) Plain LM-training
+on context text did **not** work (it only shifts the global VULN/SAFE prior, v1/v2);
+the win needs **supervised** training on the repo's labelled safe/unsafe examples.
+(3) TP is 88%, not 100% — a few held-out raw sinks slip to SAFE, so it's a
+false-positive *reducer*, best paired with the conservative scanner, not a
+standalone oracle.
+
+Reproduce: `modal run gpu/modal_app.py --mode vuln`  (knobs: `VULN_REPOS`,
+`VULN_STEPS`, `VULN_LR`). Natural fit for this org's `vulnllm-analyzer` /
+`recursive-lm-security-audit`.
 - **Repo-idiomatic patch/fix suggestion** using the project's own sanitizers and
   error types.
 - **Fast, offline/air-gapped incident-response assistants** that already know the
