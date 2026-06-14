@@ -35,13 +35,15 @@ def main(mode: str = "perlayer"):
         configs = [dict(base, MODE="repro", LR="1e-4")]
     elif mode == "measure":
         # one short run for the pi-autoresearch loop: emits a single METRIC line.
-        # it3: it1's best-from-scratch base (per-layer stable arch, light reg that
-        # peaked 54.8%@1500) + rsLoRA (alpha/sqrt(r) scaling, init compensated so
-        # the start delta is unchanged). Rank-stable scaling gives the generator
-        # ~sqrt(r)x more usable headroom -> targets a higher peak, not just holding it.
+        # it4: RAFT retrieval+parametric HYBRID (Tier-1 lever) on it1's strongest
+        # base (per-layer head). Adapter is trained with leakage-controlled in-repo
+        # retrieval (oracle+distractor) so it learns to exploit one retrieved snippet;
+        # eval prepends the top retrieved snippet. Emits a full fairness scoreboard
+        # (base / RAG-alone / their-ckpt / their+retr / ours-no-retr / ours-hybrid).
         cfg = dict(base, PER_LAYER=int(__import__("os").environ.get("PL", "1")),
-                   RSLORA=1, LORA_CLAMP="0.3", LR="5e-5", HEAD_DROPOUT=0.05, WD=0.02,
-                   EPOCHS=1, EVAL_EVERY=1000, RUNTAG="MEASURE_IT3")
+                   RAFT=1, P_ORACLE=0.7, N_DISTRACT=1, K_ORACLE=1, RETR_BUDGET=384,
+                   LORA_CLAMP="0.15", LR="5e-5", HEAD_DROPOUT=0.05, WD=0.02,
+                   EPOCHS=1, EVAL_EVERY=1500, RUNTAG="MEASURE_IT4_RAFT")
         res = run.remote(cfg)
         best = res.get("best", 0.0) if isinstance(res, dict) else 0.0
         their = res.get("their", 0.0) if isinstance(res, dict) else 0.0

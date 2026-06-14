@@ -31,6 +31,14 @@ HEAD_DROPOUT = float(os.environ.get("HEAD_DROPOUT", "0.0"))
 WD = float(os.environ.get("WD", "0.01"))
 EVAL_SEED = int(os.environ.get("EVAL_SEED", "0"))
 EMB_NOISE = float(os.environ.get("EMB_NOISE", "0.0"))
+# RAFT retrieval+parametric hybrid (Tier-1 lever). Retrieval is leakage-controlled
+# within-repo (see retrieval.py). Generated adapter is trained with oracle+distractor
+# context so it learns to use good hints and ignore noise.
+RAFT = os.environ.get("RAFT", "0") == "1"
+P_ORACLE = float(os.environ.get("P_ORACLE", "0.7"))   # train: prob of showing the oracle
+N_DISTRACT = int(os.environ.get("N_DISTRACT", "1"))   # train: distractor snippets mixed in
+K_ORACLE = int(os.environ.get("K_ORACLE", "1"))       # snippets retrieved at eval
+RETR_BUDGET = int(os.environ.get("RETR_BUDGET", "384"))  # token budget for prepended ctx
 RSLORA = os.environ.get("RSLORA", "0") == "1"   # rank-stable scaling alpha/sqrt(r)
 # When rsLoRA is on, alpha/sqrt(r) is ~sqrt(r)x larger than alpha/r, so the
 # *initial* generated delta would be that much bigger. Drop the head's init
@@ -103,25 +111,51 @@ def qna_eval_server(split, repos, per_repo, n_offsets=500):
 
 
 def qna_eval_sampled(split_file, per_repo, repos, collect_cap=120, seed=0):
-    """repo_id -> randomly-sampled <=per_repo (prefix,target). Collects up to
+    """repo_id -> randomly-sampled <=per_repo (prefix,target,tf). Collects up to
     collect_cap per repo while streaming, then shuffles (seeded) and samples,
-    so the eval set isn't biased by file order."""
+    so the eval set isn't biased by file order. ``tf`` (test_function) is carried
+    for the RAFT retriever's leakage gate."""
     import pyarrow.dataset as pads, random as _r
     ds = pads.dataset(hf(split_file), format="parquet")
+    cols = ["repo_id", "prefix", "target"]
+    has_tf = "test_function" in ds.schema.names
+    if has_tf:
+        cols.append("test_function")
     pool = {r: [] for r in repos}
-    for batch in ds.to_batches(columns=["repo_id", "prefix", "target"], batch_size=20000):
+    for batch in ds.to_batches(columns=cols, batch_size=20000):
         rid = batch.column("repo_id").to_pylist()
         pre = batch.column("prefix").to_pylist()
         tgt = batch.column("target").to_pylist()
-        for r, p, t in zip(rid, pre, tgt):
+        tfs = batch.column("test_function").to_pylist() if has_tf else [""] * len(rid)
+        for r, p, t, f in zip(rid, pre, tgt, tfs):
             if r in pool and len(pool[r]) < collect_cap and p and t:
-                pool[r].append((p, t))
+                pool[r].append((p, t, f or ""))
     rng = _r.Random(seed)
     out = {}
     for r, lst in pool.items():
         if lst:
             rng.shuffle(lst)
             out[r] = lst[:per_repo]
+    return out
+
+
+def qna_meta(split_file, repos, cap=200):
+    """repo_id -> [{"prefix","target","tf"}] (up to cap/repo) — the retrieval
+    corpus for the RAFT hybrid. Uses a larger cap than the eval sample so each
+    repo has enough siblings to retrieve from."""
+    import pyarrow.dataset as pads
+    ds = pads.dataset(hf(split_file), format="parquet")
+    has_tf = "test_function" in ds.schema.names
+    cols = ["repo_id", "prefix", "target"] + (["test_function"] if has_tf else [])
+    out = {r: [] for r in repos}
+    for batch in ds.to_batches(columns=cols, batch_size=20000):
+        rid = batch.column("repo_id").to_pylist()
+        pre = batch.column("prefix").to_pylist()
+        tgt = batch.column("target").to_pylist()
+        tfs = batch.column("test_function").to_pylist() if has_tf else [""] * len(rid)
+        for r, p, t, f in zip(rid, pre, tgt, tfs):
+            if r in out and len(out[r]) < cap and p and t:
+                out[r].append({"prefix": p, "target": t, "tf": f or ""})
     return out
 
 
@@ -228,7 +262,7 @@ def main():
     eval_cache = {}
 
     @torch.no_grad()
-    def eval_cr(use_head, h=None):
+    def eval_cr(use_head, h=None, retrieve=False):
         if "embs" not in eval_cache:
             eval_cache["embs"] = repo_embeddings("commits/cr_test.parquet")
             log(f"[{time.strftime('%H:%M:%S')}] downloading + sampling qna/cr_test ...")
@@ -236,8 +270,14 @@ def main():
                                                  repos=set(eval_cache["embs"]), seed=EVAL_SEED)
             log(f"[{time.strftime('%H:%M:%S')}] eval set: {sum(len(v) for v in eval_cache['qna'].values())} qnas "
                 f"over {len(eval_cache['qna'])} repos")
+            if RAFT:
+                from retrieval import build_retrievers
+                meta = qna_meta("qna/cr_test.parquet", set(eval_cache["embs"]), cap=200)
+                eval_cache["retr"] = build_retrievers(meta)
+                log(f"[{time.strftime('%H:%M:%S')}] built eval retrievers for {len(eval_cache['retr'])} repos")
         embs = eval_cache["embs"]
         qna = eval_cache["qna"]
+        retr = eval_cache.get("retr", {})
         prev_cache = model.config.use_cache
         model.config.use_cache = True  # fast generation; no effect on training
         tot = cor = 0
@@ -246,11 +286,25 @@ def main():
                 set_lora(h, embs[rid])
             else:
                 clear_lora()
-            for prefix, target in tasks:
-                ids = tok(prefix, return_tensors="pt", truncation=True, max_length=MAXLEN).to(DEV)
-                g = model.generate(**ids, max_new_tokens=MAXNEW, do_sample=False,
+            r = retr.get(rid) if retrieve else None
+            for prefix, target, tf in tasks:
+                ctx_ids = []
+                if r is not None:
+                    from retrieval import format_snippet
+                    snips = r.retrieve(prefix, tf, target, k=K_ORACLE)
+                    ctx = "".join(format_snippet(s) for s in snips)
+                    if ctx:
+                        ctx_ids = tok(ctx, add_special_tokens=False).input_ids[:RETR_BUDGET]
+                # keep the prefix TAIL (code adjacent to the assertion), then
+                # prepend the retrieved context within the MAXLEN budget.
+                pre_ids = tok(prefix, add_special_tokens=False).input_ids
+                keep = max(1, MAXLEN - len(ctx_ids))
+                inp_ids = ctx_ids + pre_ids[-keep:]
+                ii = torch.tensor([inp_ids], device=DEV)
+                g = model.generate(input_ids=ii, attention_mask=torch.ones_like(ii),
+                                   max_new_tokens=MAXNEW, do_sample=False,
                                    pad_token_id=tok.eos_token_id)
-                pred = tok.decode(g[0][ids.input_ids.shape[1]:], skip_special_tokens=True).split("\n")[0]
+                pred = tok.decode(g[0][ii.shape[1]:], skip_special_tokens=True).split("\n")[0]
                 cor += em(pred, target); tot += 1
         clear_lora()
         model.config.use_cache = prev_cache
@@ -277,6 +331,16 @@ def main():
     train_qna = qna_by_repo("qna/train.parquet", repos=set(train_emb))
     repos = [r for r in train_qna if train_qna[r]]
     log(f"train repos: {len(repos)}  qnas: {sum(len(v) for v in train_qna.values())}")
+
+    train_meta = train_retr = None
+    raft_rng = random.Random(EVAL_SEED)
+    if RAFT:
+        from retrieval import build_retrievers, raft_context  # noqa: F401
+        train_meta = qna_meta("qna/train.parquet", set(train_emb), cap=200)
+        train_retr = build_retrievers(train_meta)
+        repos = [r for r in train_meta if train_meta[r]]
+        log(f"RAFT hybrid ON: retrievers for {len(train_retr)} train repos "
+            f"(p_oracle={P_ORACLE}, n_distract={N_DISTRACT}, k_oracle={K_ORACLE}, budget={RETR_BUDGET})")
 
     base_em, n = eval_cr(False)
     log(f"[{time.strftime('%H:%M:%S')}] base CR-test EM: {base_em:.1%} (n={n})")
@@ -319,12 +383,23 @@ def main():
         if EMB_NOISE > 0:
             import numpy as _np
             _emb = _emb + _np.random.randn(*_emb.shape).astype('float32') * EMB_NOISE * float(_np.linalg.norm(_emb)) / (_emb.size ** 0.5)
-        tasks = train_qna[rid]
-        batch = random.sample(tasks, min(BATCH, len(tasks)))
+        if RAFT:
+            items = random.sample(train_meta[rid], min(BATCH, len(train_meta[rid])))
+            batch = []
+            for it in items:
+                ctx = raft_context(train_retr.get(rid), it, train_meta, rid, raft_rng,
+                                   p_oracle=P_ORACLE, n_distract=N_DISTRACT, k_oracle=K_ORACLE)
+                batch.append((ctx, it["prefix"], it["target"]))
+        else:
+            tasks = train_qna[rid]
+            batch = [("", p, t) for (p, t) in random.sample(tasks, min(BATCH, len(tasks)))]
         set_lora(head, _emb)
         ids, labels = [], []
-        for prefix, target in batch:
-            p = tok(prefix, truncation=True, max_length=TRAIN_MAXLEN - 16).input_ids or [pad]
+        for ctx, prefix, target in batch:
+            cx = tok(ctx, add_special_tokens=False).input_ids[:RETR_BUDGET] if ctx else []
+            keep = max(1, TRAIN_MAXLEN - 16 - len(cx))
+            pre = tok(prefix, add_special_tokens=False).input_ids[-keep:]
+            p = (cx + pre) or [pad]
             c = tok(target, add_special_tokens=False).input_ids + [tok.eos_token_id]
             ids.append((p + c)[:TRAIN_MAXLEN]); labels.append(([-100]*len(p) + c)[:TRAIN_MAXLEN])
         m = max(len(x) for x in ids)
@@ -340,7 +415,8 @@ def main():
         if step % 200 == 0 or step == 1:
             log(f"[{time.strftime('%H:%M:%S')}] step {step}/{steps} loss={out.loss.item():.4f}")
         if step % int(os.environ.get("EVAL_EVERY", "2500")) == 0:
-            head.eval(); cur, n = eval_cr(True, head); head.train()
+            # our metric: hybrid = adapter + retrieval (when RAFT on).
+            head.eval(); cur, n = eval_cr(True, head, retrieve=RAFT); head.train()
             flag = "  *BEAT*" if cur > their_em else ""
             log(f"  >>> step {step} CR-test EM: {cur:.1%}  (their {their_em:.1%}){flag}")
             if cur > best:
@@ -348,17 +424,51 @@ def main():
                 os.makedirs(os.path.dirname(OUT) or ".", exist_ok=True)
                 torch.save(head.state_dict(), OUT)
     head.eval()
-    final, n = eval_cr(True, head)
+    final, n = eval_cr(True, head, retrieve=RAFT)
     best = max(best, final)
-    anchor = their_em  # their ckpt on THIS harness
-    cfg = f"rank{RANK} hidden{HIDDEN} alpha{int(ALPHA)} ep{EPOCHS} lr{LR} drop{HEAD_DROPOUT} wd{WD}"
+    anchor = their_em  # their ckpt on THIS harness (no retrieval = their published method)
+    cfg = f"rank{RANK} hidden{HIDDEN} alpha{int(ALPHA)} ep{EPOCHS} lr{LR} drop{HEAD_DROPOUT} wd{WD} raft{int(RAFT)}"
     log(f"\n[{time.strftime('%H:%M:%S')}] FINAL [{cfg}] ours CR-test EM: {final:.1%}  best: {best:.1%}  (base {base_em:.1%})")
+
+    result = {"mode": "train", "config": cfg, "base": float(base_em),
+              "their": float(their_em), "best": float(best), "final": float(final),
+              "beat_their": bool(best > their_em), "beat_reported": bool(best > 0.638)}
+
+    if RAFT:
+        # Fairness baselines so a "beat" is credible and not just "retrieval helps":
+        #   ours_noretr  : our trained head WITHOUT retrieval (isolates retrieval gain)
+        #   rag_alone    : base model + retrieval, no adapter (RAG-alone)
+        #   their_retr   : their checkpoint + the SAME retrieval (does RAFT-training matter?)
+        ours_noretr, _ = eval_cr(True, head, retrieve=False)
+        rag_alone, _ = eval_cr(False, retrieve=True)
+        their_retr = None
+        if RANK == 16 and HIDDEN == 1024:
+            from huggingface_hub import hf_hub_download
+            ck = hf_hub_download("code2lora/code2lora-direct", "code2lora_direct.pt")
+            anc = C.Code2LoRAHead(input_dim=2048, type_dims=type_dims,
+                                  hidden_dim=1024, rank=16, init_log_scale=-3.5).to(DEV)
+            sd = torch.load(ck, map_location="cpu"); sd = sd.get("state_dict", sd.get("head", sd))
+            anc.load_state_dict(sd, strict=False); anc.eval()
+            if RSLORA:
+                for _, _m in model.named_modules():
+                    if isinstance(_m, C.LoRA): _m.scaling = ALPHA / RANK
+            their_retr, _ = eval_cr(True, anc, retrieve=True)
+            del anc; torch.cuda.empty_cache()
+        result.update(ours_noretr=float(ours_noretr), rag_alone=float(rag_alone),
+                      their_retr=(float(their_retr) if their_retr is not None else None))
+        log("  --- RAFT hybrid scoreboard (all on this fair harness) ---")
+        log(f"    base alone           : {base_em:.1%}")
+        log(f"    RAG alone (base+retr): {rag_alone:.1%}")
+        log(f"    their ckpt (no retr) : {their_em:.1%}   <- the bar (their published method)")
+        if their_retr is not None:
+            log(f"    their ckpt + retr    : {their_retr:.1%}")
+        log(f"    ours (no retr)       : {ours_noretr:.1%}")
+        log(f"    ours HYBRID (best)   : {best:.1%}   {'BEAT' if best > their_em else 'below'} their ckpt")
+
     log(f"  vs their checkpoint (same harness): {anchor:.1%}  -> "
         + ("BEAT THEIR CKPT" if best > anchor else "below their ckpt"))
     log(f"  vs paper reported 63.8%  -> " + ("BEAT" if best > 0.638 else "below reported"))
-    return {"mode": "train", "config": cfg, "base": float(base_em),
-            "their": float(their_em), "best": float(best), "final": float(final),
-            "beat_their": bool(best > their_em), "beat_reported": bool(best > 0.638)}
+    return result
 
 
 if __name__ == "__main__":
