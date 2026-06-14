@@ -301,7 +301,9 @@ def main():
         inp = torch.tensor([x+[pad]*(m-len(x)) for x in ids], device=DEV)
         lab = torch.tensor([x+[-100]*(m-len(x)) for x in labels], device=DEV)
         out = model(input_ids=inp, attention_mask=att, labels=lab)
-        opt.zero_grad(); out.loss.backward(); opt.step(); sched.step()
+        opt.zero_grad(); out.loss.backward()
+        torch.nn.utils.clip_grad_norm_(head.parameters(), 1.0)  # prevent NaN blowups
+        opt.step(); sched.step()
         for _, mm in model.named_modules():
             if isinstance(mm, C.LoRA): mm.A = None; mm.B = None
         if step % 200 == 0 or step == 1:

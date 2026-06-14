@@ -10,7 +10,7 @@ import modal
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .pip_install("torch", "transformers", "huggingface_hub", "pyarrow", "pandas", "accelerate")
+    .pip_install("torch==2.5.1", "transformers", "huggingface_hub", "pyarrow", "pandas", "accelerate")
     .add_local_dir("gpu", "/root/gpu")  # ships c2l_gpu.py + reference/code2lora_core.py
 )
 app = modal.App("code2lora-train")
