@@ -129,6 +129,31 @@ would need full-context (8192) training+eval (~8× memory/time) + early-stopping
 regularization + a larger search. GPU OOM fixed via gradient checkpointing + bf16
 LoRA delta + batch 4. Total GPU spend ≈ $5.
 
+### Beat-the-paper attempt #2 — fair harness + regularized sweep (H100)
+After fixing the harness (randomized eval sample, `max_new=24`, MAXLEN 2048,
+prefixes are short — median 224 tok — so truncation wasn't the main gap), the
+recalibrated bar = **their checkpoint 53.1% on the fair harness** (±2pp across
+H100 hosts from bf16 numerics; was 50.7% on the cruder harness; paper reports
+63.8%, the rest of the gap is MAXLEN 2048 vs 8192 + EM-definition details).
+
+Swept 3 configs, trained from scratch on the full data (train@1024/eval@2048,
+grad-checkpoint + bf16 delta + batch 8 to fit):
+- control (no dropout, lr1e-4): peak **52.2%** @ step 2500, then overfit-declined
+  to 45.5% @ 5000.
+- dropout0.1 + wd0.05 + lr5e-5: 45.5 → 46.0% (slower, lower).
+- dropout0.2 + wd0.1 + lr5e-5: 41.8% (slowest, lower).
+
+**Final honest verdict: MATCHED, did not beat.** Best trained head 52.2% vs their
+checkpoint 53.1% on the identical fair harness (within the ±2pp noise).
+Regularization changed convergence speed, not the ceiling; the hypernetwork class
+saturates at the paper's level on its own data. A decisive beat would need a
+different lever (better/re-computed repo embeddings — but those are provided/fixed;
+per-layer adapters; more/augmented training data; full 8192-context) — a research
+effort, not a sweep. Total vast.ai spend ≈ $12.
+
+Modal harness added (`gpu/modal_app.py`) and validated (H100 function runs, returns
+results directly) as a cleaner loop for any future iteration.
+
 ## Decisions / environment notes
 
 - Live model is **Qwen/Qwen3.5-4B** (Tinker's catalog lacks Qwen2.5-Coder-1.5B);
