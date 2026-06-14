@@ -53,6 +53,41 @@ def repo_embeddings(split_file):
     return out
 
 
+def qna_eval_server(split, repos, per_repo, n_offsets=500):
+    """Sample <=per_repo (prefix,target) per repo from a huge split via the HF
+    datasets-server /rows API (fast cached JSON), avoiding multi-GB downloads.
+    Rows are grouped by repo, so we probe evenly-spaced offsets to span repos."""
+    import urllib.request, urllib.parse, json, time
+    base = "https://datasets-server.huggingface.co/rows"
+    ds = "code2lora/code2lora-data-snapshots"
+
+    def fetch(off, length):
+        q = urllib.parse.urlencode({"dataset": ds, "config": "default",
+                                    "split": split, "offset": off, "length": length})
+        for _ in range(6):
+            try:
+                with urllib.request.urlopen(base + "?" + q, timeout=30) as r:
+                    return json.load(r)
+            except Exception:
+                time.sleep(4)
+        return {"rows": [], "num_rows_total": 0}
+
+    first = fetch(0, 5)
+    total = first.get("num_rows_total", 0) or 1
+    out = {r: [] for r in repos}
+    offsets = [int(i * (total - 1) / max(1, n_offsets - 1)) for i in range(n_offsets)]
+    for off in offsets:
+        if all(len(out[r]) >= per_repo for r in repos):
+            break
+        data = fetch(off, 6)
+        for row in data.get("rows", []):
+            rr = row.get("row", {})
+            rid, p, t = rr.get("repo_id"), rr.get("prefix"), rr.get("target")
+            if rid in out and len(out[rid]) < per_repo and p and t:
+                out[rid].append((p, t))
+    return {r: v for r, v in out.items() if v}
+
+
 def qna_by_repo(split_file, per_repo=None, repos=None):
     """repo_id -> list[(prefix,target)] from qna/<split>.parquet (streamed)."""
     import pyarrow.dataset as pads
@@ -121,10 +156,15 @@ def main():
             if isinstance(m, C.LoRA):
                 m.A = None; m.B = None
 
+    eval_cache = {}
+
     @torch.no_grad()
     def eval_cr(use_head):
-        embs = repo_embeddings("commits/cr_test.parquet")
-        qna = qna_by_repo("qna/cr_test.parquet", per_repo=EVAL_PER_REPO, repos=set(embs))
+        if "embs" not in eval_cache:
+            eval_cache["embs"] = repo_embeddings("commits/cr_test.parquet")
+            eval_cache["qna"] = qna_eval_server("cr_test", set(eval_cache["embs"]), EVAL_PER_REPO)
+        embs = eval_cache["embs"]
+        qna = eval_cache["qna"]
         tot = cor = 0
         for rid, tasks in qna.items():
             if use_head:
