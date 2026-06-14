@@ -195,9 +195,49 @@ cargo build --release && ./target/release/code2lora generate --repo examples/sam
 # live (needs TINKER_API_KEY): cd tinker && python benchmark.py --github <url> --rag-k 3
 ```
 
+## Autoresearch loop — "beat the paper" (3 paid Modal H100 iterations)
+
+Goal: exceed the paper's *released checkpoint* on our **fair same-budget harness**
+(MAXLEN 2048, 15 QnAs/repo randomized, max_new 24). The bar is the their-ckpt EM
+measured **within the same run** (it drifts ±~2pp across runs with the randomized
+eval set, so only the within-run delta is meaningful). Recipe priorities in
+`RESEARCH.md`; per-iteration verdicts in `.auto/log.jsonl` (gitignored).
+
+| it | idea | anchor (same run) | our peak | Δ | verdict |
+|----|------|-------------------|----------|----|---------|
+| 1 | stable per-layer head (concat layer-emb + Bias-HyperInit zero-B) | 55.8% | **54.8%** @1500 | −1.0 | tie within noise; peaks early then overfits |
+| 2 | it1 + heavy anti-overfit reg (dropout .15, WD .1, emb-noise .05) | 55.4% | 51.5% | −3.9 | **lose** — heavy reg *suppressed* the signal, didn't hold the peak |
+| 3 | it1 + rsLoRA (α/√r, init-compensated) | 53.6% | 50.7% | −2.9 | **lose** — no peak lift; amortized hypernet doesn't exploit rank-headroom like standard FT |
+
+**Conclusion (honest):** the **pure-parametric architecture lever is exhausted.**
+Every from-scratch head — shared (~52–53%), per-layer (54.8% peak), per-layer+reg,
+per-layer+rsLoRA — **matches but does not beat** the released checkpoint on the fair
+harness. This is consistent with the paper's own result that Code2LoRA-Static already
+*matches the per-repo LoRA oracle* — so beating it needs something **beyond per-repo
+fine-tuning quality**, not a better adapter parameterization. The classic adapter
+tricks (rsLoRA, and by extension DoRA) that give +1–3pp on *standard* fine-tuning do
+not transfer to the *amortized/generated* setting (it3 is direct evidence).
+
+**The one credible remaining lever** (RESEARCH.md Tier 1) is a **RAFT-trained
+parametric+retrieval hybrid** — the only approach with published head-to-head evidence
+of beating *both* parametric-alone and RAG-alone. It is **not a cheap tweak**: a fair
+version needs a real *retrieval corpus per cr_test repo* (function signatures / repo
+code), which the released dataset does **not** ship — it only has frozen 2048-d repo
+embeddings + the test QnAs. Retrieving from sibling test assertions would risk
+answer leakage (an inflated, non-credible "beat"). So a real hybrid requires
+recomputing retrieval indices from RepoPeftBench's **raw repos** — a pipeline build,
+not a one-line change. That is the genuine fork: invest in the raw-repo pipeline for a
+shot at a real beat, or accept the strong "matches the paper's checkpoint" result.
+
+All three iterations were **reverted** (none merged as the default). Code kept as a
+documented negative result: `gpu/perlayer.py` (stable per-layer head) and the
+`RSLORA`/`INIT_LOG_SCALE` knobs + fair-anchor handling in `gpu/c2l_gpu.py`.
+
 ## Candidate next steps
 
-1. **Train the actual hypernetwork** (torch vs a small real code model on CPU, or
-   GPU) so *one-pass generation* lifts real EM — closes the core gap above.
-2. Product pipeline (`code2lora.com/user/repo` → adapter + endpoint).
-3. Harden the Rust crate / port the winning kNN security scorer's embedding.
+1. **RAFT hybrid (real beat attempt):** build the raw-repo retrieval pipeline
+   (signatures/code per cr_test repo, leakage-controlled) → distractor-train the
+   generated adapter to use one retrieved snippet. Bigger build, best evidence.
+2. **Train the actual hypernetwork** in Rust so *one-pass generation* lifts real EM.
+3. Product pipeline (`code2lora.com/user/repo` → adapter + endpoint).
+4. Harden the Rust crate / port the winning kNN security scorer's embedding.
