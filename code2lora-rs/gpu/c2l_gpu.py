@@ -162,7 +162,10 @@ def main():
     def eval_cr(use_head):
         if "embs" not in eval_cache:
             eval_cache["embs"] = repo_embeddings("commits/cr_test.parquet")
-            eval_cache["qna"] = qna_eval_server("cr_test", set(eval_cache["embs"]), EVAL_PER_REPO)
+            log(f"[{time.strftime('%H:%M:%S')}] downloading qna/cr_test ...")
+            eval_cache["qna"] = qna_by_repo("qna/cr_test.parquet", per_repo=EVAL_PER_REPO,
+                                            repos=set(eval_cache["embs"]))
+            log(f"[{time.strftime('%H:%M:%S')}] eval set: {sum(len(v) for v in eval_cache['qna'].values())} qnas")
         embs = eval_cache["embs"]
         qna = eval_cache["qna"]
         tot = cor = 0
