@@ -72,9 +72,19 @@ def make_repos(n_repos=12, seed=0):
         )
         # repeat a few safe usages so the idiom is well-represented
         safe_usages = "\n".join(
-            f"{sink_call}({wrapper}({rng.choice(USER_SRCS)}))" for _ in range(6)
+            f"{sink_call}({wrapper}({rng.choice(USER_SRCS)}))  # SAFE: sanitized by {wrapper}()"
+            for _ in range(6)
         )
-        context = context + safe_usages + "\n"
+        # CONTRASTIVE negatives: raw untrusted input into the sink IS a vuln. This
+        # teaches the *boundary* (wrapper=safe vs raw=vuln) so the adapter cuts
+        # false positives without globally drifting to "everything is SAFE".
+        unsafe_usages = "\n".join(
+            f"{sink_call}({rng.choice(USER_SRCS)})  # VULN: raw untrusted input, missing {wrapper}()"
+            for _ in range(6)
+        )
+        context = (context + safe_usages + "\n"
+                   + f"# WARNING: never pass raw untrusted input into {sink_call} without {wrapper}().\n"
+                   + unsafe_usages + "\n")
 
         items = []
         for _ in range(3):  # wrapper-trap: SAFE (the false-positive test)
