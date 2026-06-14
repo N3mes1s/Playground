@@ -293,7 +293,7 @@ def main():
             if isinstance(mm, C.LoRA): mm.A = None; mm.B = None
         if step % 200 == 0 or step == 1:
             log(f"[{time.strftime('%H:%M:%S')}] step {step}/{steps} loss={out.loss.item():.4f}")
-        if step % 1500 == 0:
+        if step % int(os.environ.get("EVAL_EVERY", "2500")) == 0:
             head.eval(); cur, n = eval_cr(True, head); head.train()
             flag = "  *BEAT*" if cur > their_em else ""
             log(f"  >>> step {step} CR-test EM: {cur:.1%}  (their {their_em:.1%}){flag}")
