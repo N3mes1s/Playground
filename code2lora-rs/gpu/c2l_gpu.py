@@ -241,7 +241,7 @@ def main():
         their_em, n = eval_cr(True, head)
         log(f"[{time.strftime('%H:%M:%S')}] THEIR ckpt CR-test EM: {their_em:.1%}  (n={n})")
         log(f"\nPaper reported CR EM: 63.8%  | reproduced: {their_em:.1%}")
-        return
+        return {"mode": "repro", "base": float(base_em), "their": float(their_em)}
 
     # ---- MODE == train ----
     log("loading train data ...")
@@ -309,6 +309,9 @@ def main():
     log(f"  vs their checkpoint (same harness): {anchor:.1%}  -> "
         + ("BEAT THEIR CKPT" if best > anchor else "below their ckpt"))
     log(f"  vs paper reported 63.8%  -> " + ("BEAT" if best > 0.638 else "below reported"))
+    return {"mode": "train", "config": cfg, "base": float(base_em),
+            "their": float(their_em), "best": float(best), "final": float(final),
+            "beat_their": bool(best > their_em), "beat_reported": bool(best > 0.638)}
 
 
 if __name__ == "__main__":
