@@ -379,6 +379,58 @@ def main():
         return {"mode": "demo", "repo": rid, "n": n,
                 "base": sc["base"]/n, "adapter": sc["adapter"]/n, "hybrid": sc["hybrid"]/n}
 
+    if MODE == "bakeoff":
+        # Retriever SOTA bake-off: hold the adapter fixed (their released ckpt) and
+        # swap the retriever (none / BM25 / dense code+text embedders). Isolates how
+        # much retriever quality matters for the hybrid. Same leakage gates throughout.
+        from huggingface_hub import hf_hub_download
+        from retrieval import build_retrievers, build_dense_retrievers
+        embs = repo_embeddings("commits/cr_test.parquet")
+        eval_cache["embs"] = embs
+        eval_cache["qna"] = qna_eval_sampled("qna/cr_test.parquet", per_repo=EVAL_PER_REPO,
+                                             repos=set(embs), seed=EVAL_SEED)
+        log(f"[{time.strftime('%H:%M:%S')}] eval set: "
+            f"{sum(len(v) for v in eval_cache['qna'].values())} qnas over {len(eval_cache['qna'])} repos")
+        meta = qna_meta("qna/cr_test.parquet", set(embs), cap=200)
+        ck = hf_hub_download("code2lora/code2lora-direct", "code2lora_direct.pt")
+        sd = torch.load(ck, map_location="cpu"); sd = sd.get("state_dict", sd.get("head", sd))
+        head.load_state_dict(sd, strict=False); head.eval()
+
+        def make_embed(model_name):
+            from sentence_transformers import SentenceTransformer
+            m = SentenceTransformer(model_name, device=DEV, trust_remote_code=True)
+            def embed(texts):
+                return m.encode(list(texts), normalize_embeddings=True, batch_size=128,
+                                convert_to_numpy=True, show_progress_bar=False)
+            return embed, m
+
+        results = {}
+        # no-retrieval baseline (their adapter alone = the bar)
+        eval_cache["retr"] = {}
+        em0, n = eval_cr(True, head, retrieve=False); results["none (adapter only)"] = float(em0)
+        log(f"[{time.strftime('%H:%M:%S')}]  none (adapter only): {em0:.1%}")
+
+        names = os.environ.get("RETRIEVERS",
+                               "bm25,BAAI/bge-small-en-v1.5,Qwen/Qwen3-Embedding-0.6B").split(",")
+        for name in [x.strip() for x in names if x.strip()]:
+            t0 = time.time()
+            if name == "bm25":
+                eval_cache["retr"] = build_retrievers(meta); freeable = None
+            else:
+                embed_fn, m = make_embed(name)
+                eval_cache["retr"] = build_dense_retrievers(meta, embed_fn); freeable = m
+            em, n = eval_cr(True, head, retrieve=True)
+            results[name] = float(em)
+            log(f"[{time.strftime('%H:%M:%S')}]  {name:32s}: {em:.1%}   ({time.time()-t0:.0f}s)")
+            if freeable is not None:
+                del freeable; torch.cuda.empty_cache()
+
+        log("\n================  RETRIEVER BAKE-OFF (adapter fixed = their ckpt)  ================")
+        for k in results:
+            d = results[k] - results["none (adapter only)"]
+            log(f"  {k:34s}: {results[k]:.1%}   ({d:+.1%} vs adapter-only)")
+        return {"mode": "bakeoff", "results": results}
+
     # ---- MODE == train ----
     log("loading train data ...")
     train_emb = repo_embeddings("commits/train.parquet")

@@ -10,7 +10,8 @@ import modal
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .pip_install("torch==2.5.1", "transformers", "huggingface_hub", "pyarrow", "pandas", "accelerate")
+    .pip_install("torch==2.5.1", "transformers", "huggingface_hub", "pyarrow", "pandas",
+                 "accelerate", "sentence-transformers")
     .add_local_dir("gpu", "/root/gpu")  # ships c2l_gpu.py + reference/code2lora_core.py
 )
 app = modal.App("code2lora-train")
@@ -42,6 +43,15 @@ def main(mode: str = "perlayer"):
                    DEMO_SEED=_os.environ.get("DEMO_SEED", "0"))
         if _os.environ.get("DEMO_REPO"):
             cfg["DEMO_REPO"] = _os.environ["DEMO_REPO"]
+        print("RESULT:", run.remote(cfg))
+        return
+    elif mode == "bakeoff":
+        # Retriever SOTA bake-off (adapter fixed = their ckpt). RETRIEVERS overrides
+        # the comma list (none + BM25 + dense embedders).
+        import os as _os
+        cfg = dict(base, MODE="bakeoff", PER_LAYER=0, K_ORACLE=2, RETR_BUDGET=600)
+        if _os.environ.get("RETRIEVERS"):
+            cfg["RETRIEVERS"] = _os.environ["RETRIEVERS"]
         print("RESULT:", run.remote(cfg))
         return
     elif mode == "measure":

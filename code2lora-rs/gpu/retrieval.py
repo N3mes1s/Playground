@@ -128,6 +128,55 @@ def build_retrievers(qna_meta: Dict[str, List[Dict]]) -> Dict[str, RepoRetriever
     return {rid: RepoRetriever(q) for rid, q in qna_meta.items() if q}
 
 
+class DenseRetriever:
+    """Same leakage-controlled retrieval as RepoRetriever, but ranks by cosine
+    similarity of *dense* embeddings instead of BM25. Drop-in: identical
+    ``retrieve(prefix, tf, target, k)`` signature so the eval harness is unchanged.
+
+    ``corpus_emb`` is an [N, d] L2-normalized matrix aligned with ``qnas``;
+    ``embed_fn(list[str]) -> np.ndarray [n, d] (L2-normalized)`` embeds queries.
+    """
+
+    def __init__(self, qnas: List[Dict], corpus_emb, embed_fn):
+        import numpy as np
+        self.qnas = qnas
+        self.corpus_emb = np.asarray(corpus_emb, dtype=np.float32)
+        self.embed_fn = embed_fn
+
+    def retrieve(self, query_prefix: str, query_tf: str, query_target: str,
+                 k: int = 1) -> List[Dict]:
+        import numpy as np
+        if not self.qnas:
+            return []
+        q = self.embed_fn([_tail(query_prefix)])[0].astype(np.float32)
+        scores = self.corpus_emb @ q
+        q_tf = query_tf or ""
+        order = np.argsort(-scores)
+        picked: List[Dict] = []
+        for i in order:
+            cand = self.qnas[int(i)]
+            if q_tf and (cand.get("tf") or "") == q_tf:
+                continue
+            if _dup(cand["target"], query_target):
+                continue
+            picked.append(cand)
+            if len(picked) >= k:
+                break
+        return picked
+
+
+def build_dense_retrievers(qna_meta: Dict[str, List[Dict]], embed_fn
+                           ) -> Dict[str, DenseRetriever]:
+    """Embed every repo's corpus tails once (batched) and wrap in DenseRetriever."""
+    out = {}
+    for rid, q in qna_meta.items():
+        if not q:
+            continue
+        corpus_emb = embed_fn([_tail(x["prefix"]) for x in q])
+        out[rid] = DenseRetriever(q, corpus_emb, embed_fn)
+    return out
+
+
 def _tail(prefix: str, n_lines: int = 40, max_chars: int = 1200) -> str:
     lines = [ln for ln in (prefix or "").splitlines() if ln.strip()]
     tail = "\n".join(lines[-n_lines:])
