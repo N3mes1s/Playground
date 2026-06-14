@@ -244,9 +244,12 @@ def main():
     head.eval()
     final, n = eval_cr(True)
     best = max(best, final)
-    log(f"\n[{time.strftime('%H:%M:%S')}] FINAL ours CR-test EM: {final:.1%}  best: {best:.1%}  (base {base_em:.1%})")
-    log(f"Paper reported CR EM: 63.8%  | ours best: {best:.1%}  -> "
-        + ("BEAT" if best > 0.638 else "below paper"))
+    anchor = float(os.environ.get("ANCHOR", "0.507"))  # their ckpt on THIS harness
+    cfg = f"rank{RANK} hidden{HIDDEN} alpha{int(ALPHA)} ep{EPOCHS} lr{LR}"
+    log(f"\n[{time.strftime('%H:%M:%S')}] FINAL [{cfg}] ours CR-test EM: {final:.1%}  best: {best:.1%}  (base {base_em:.1%})")
+    log(f"  vs their checkpoint (same harness): {anchor:.1%}  -> "
+        + ("BEAT THEIR CKPT" if best > anchor else "below their ckpt"))
+    log(f"  vs paper reported 63.8%  -> " + ("BEAT" if best > 0.638 else "below reported"))
 
 
 if __name__ == "__main__":
