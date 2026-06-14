@@ -325,6 +325,60 @@ def main():
         log(f"\nPaper reported CR EM: 63.8%  | reproduced: {their_em:.1%}")
         return {"mode": "repro", "base": float(base_em), "their": float(their_em)}
 
+    if MODE == "demo":
+        # Walk ONE random cr_test repo through base -> adapter -> adapter+retrieval,
+        # printing the actual model predictions so you can watch the hybrid work.
+        import random as _r
+        from huggingface_hub import hf_hub_download
+        from retrieval import build_retrievers, format_snippet
+        embs = repo_embeddings("commits/cr_test.parquet")
+        rid = os.environ.get("DEMO_REPO") or _r.Random(int(os.environ.get("DEMO_SEED", "0"))).choice(sorted(embs))
+        DEMO_N = int(os.environ.get("DEMO_N", "10"))
+        log(f"\n================  DEMO REPO: {rid}  ================")
+        retr = build_retrievers(qna_meta("qna/cr_test.parquet", {rid}, cap=200)).get(rid)
+        sample = qna_eval_sampled("qna/cr_test.parquet", per_repo=DEMO_N,
+                                  repos={rid}, seed=EVAL_SEED).get(rid, [])
+        ck = hf_hub_download("code2lora/code2lora-direct", "code2lora_direct.pt")
+        sd = torch.load(ck, map_location="cpu"); sd = sd.get("state_dict", sd.get("head", sd))
+        head.load_state_dict(sd, strict=False); head.eval()
+        model.config.use_cache = True
+
+        @torch.no_grad()
+        def gen(prefix, ctx_ids):
+            pre = tok(prefix, add_special_tokens=False).input_ids
+            inp = ctx_ids + pre[-max(1, MAXLEN - len(ctx_ids)):]
+            ii = torch.tensor([inp], device=DEV)
+            g = model.generate(input_ids=ii, attention_mask=torch.ones_like(ii),
+                               max_new_tokens=MAXNEW, do_sample=False, pad_token_id=tok.eos_token_id)
+            return tok.decode(g[0][ii.shape[1]:], skip_special_tokens=True).split("\n")[0].strip()
+
+        sc = {"base": 0, "adapter": 0, "hybrid": 0}
+        for i, (prefix, target, tf) in enumerate(sample, 1):
+            snips = retr.retrieve(prefix, tf, target, k=K_ORACLE) if retr else []
+            ctx = "".join(format_snippet(s) for s in snips)
+            ctx_ids = tok(ctx, add_special_tokens=False).input_ids[:RETR_BUDGET] if ctx else []
+            clear_lora();          p_base = gen(prefix, [])
+            set_lora(head, embs[rid]); p_adp = gen(prefix, [])
+            set_lora(head, embs[rid]); p_hyb = gen(prefix, ctx_ids)
+            sc["base"] += em(p_base, target); sc["adapter"] += em(p_adp, target); sc["hybrid"] += em(p_hyb, target)
+            tail = "\n".join(l for l in prefix.splitlines() if l.strip())[-200:]
+            log(f"\n--- Q{i}  (test_function: {tf}) ---")
+            log(f"  prefix tail: ...{tail.strip()[-160:]}")
+            log(f"  GOLD assertion : {target.strip()}")
+            if snips:
+                log(f"  retrieved hint : {snips[0]['target'].strip()}   (from tf={snips[0].get('tf','')})")
+            log(f"  base      : {p_base}   {'OK' if em(p_base,target) else 'x'}")
+            log(f"  +adapter  : {p_adp}   {'OK' if em(p_adp,target) else 'x'}")
+            log(f"  +adapter+retr (HYBRID): {p_hyb}   {'OK' if em(p_hyb,target) else 'x'}")
+        clear_lora()
+        n = max(1, len(sample))
+        log(f"\n================  {rid}  ({n} questions)  ================")
+        log(f"  base                 : {sc['base']}/{n} = {sc['base']/n:.0%}")
+        log(f"  adapter (Code2LoRA)  : {sc['adapter']}/{n} = {sc['adapter']/n:.0%}")
+        log(f"  HYBRID (adapter+retr): {sc['hybrid']}/{n} = {sc['hybrid']/n:.0%}")
+        return {"mode": "demo", "repo": rid, "n": n,
+                "base": sc["base"]/n, "adapter": sc["adapter"]/n, "hybrid": sc["hybrid"]/n}
+
     # ---- MODE == train ----
     log("loading train data ...")
     train_emb = repo_embeddings("commits/train.parquet")

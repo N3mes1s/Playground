@@ -33,6 +33,17 @@ def main(mode: str = "perlayer"):
                 EVAL_EVERY=1000, EVAL_SEED=0, ANCHOR=0.55)
     if mode == "repro":
         configs = [dict(base, MODE="repro", LR="1e-4")]
+    elif mode == "demo":
+        # Walk ONE random cr_test repo through base -> adapter -> adapter+retrieval
+        # with printed predictions. DEMO_REPO/DEMO_SEED/DEMO_N override the pick.
+        import os as _os
+        cfg = dict(base, MODE="demo", PER_LAYER=0, K_ORACLE=2, RETR_BUDGET=600,
+                   DEMO_N=_os.environ.get("DEMO_N", "10"),
+                   DEMO_SEED=_os.environ.get("DEMO_SEED", "0"))
+        if _os.environ.get("DEMO_REPO"):
+            cfg["DEMO_REPO"] = _os.environ["DEMO_REPO"]
+        print("RESULT:", run.remote(cfg))
+        return
     elif mode == "measure":
         # one short run for the pi-autoresearch loop: emits a single METRIC line.
         # it5: tuned RAFT to beat the their-ckpt+retrieval line (69.2%) — make OUR
