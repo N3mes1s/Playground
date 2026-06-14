@@ -47,8 +47,11 @@ WRAPPERS = [
     "db_guard", "shell_safe", "clean_arg", "sanitize_path", "safe_tmpl",
     "escape_sql", "harden", "validate_in", "scrub", "guard_exec", "safe_q", "neutralize",
 ]
-USER_SRCS = ['request.args["id"]', 'request.form["q"]', 'sys.argv[1]',
-             'input()', 'req.params["name"]', 'flask.request.values["x"]']
+# Disjoint user-input sources for TRAIN vs EVAL so the eval tests generalization
+# of the rule (wrapper=safe / raw=vuln) to call sites never seen in training,
+# not memorization of exact strings.
+USER_SRCS_TRAIN = ['request.args["id"]', 'request.form["q"]', 'sys.argv[1]']
+USER_SRCS_EVAL = ['input()', 'req.params["name"]', 'flask.request.values["x"]']
 
 
 def make_repos(n_repos=12, seed=0):
@@ -59,46 +62,33 @@ def make_repos(n_repos=12, seed=0):
         sink, desc, kind = SINKS[i % len(SINKS)]
         wrapper = wr[i % len(wr)]
         sink_call = sink if sink != "eval" else "eval"
-        # context the per-repo LoRA trains on: define + document + safe example
-        context = (
-            f"# project utility module\n"
-            f"# {wrapper}() fully sanitizes untrusted input for the {desc} sink.\n"
-            f"# It is SAFE to pass {wrapper}(x) directly into {sink_call}.\n"
-            f"def {wrapper}(x):\n"
-            f"    # strict allow-list sanitization\n"
-            f"    return _enforce_policy(x)\n\n"
-            f"# canonical safe usage in this codebase:\n"
-            f"{sink_call}({wrapper}({rng.choice(USER_SRCS)}))\n"
-        )
-        # repeat a few safe usages so the idiom is well-represented
-        safe_usages = "\n".join(
-            f"{sink_call}({wrapper}({rng.choice(USER_SRCS)}))  # SAFE: sanitized by {wrapper}()"
-            for _ in range(6)
-        )
-        # CONTRASTIVE negatives: raw untrusted input into the sink IS a vuln. This
-        # teaches the *boundary* (wrapper=safe vs raw=vuln) so the adapter cuts
-        # false positives without globally drifting to "everything is SAFE".
-        unsafe_usages = "\n".join(
-            f"{sink_call}({rng.choice(USER_SRCS)})  # VULN: raw untrusted input, missing {wrapper}()"
-            for _ in range(6)
-        )
-        context = (context + safe_usages + "\n"
-                   + f"# WARNING: never pass raw untrusted input into {sink_call} without {wrapper}().\n"
-                   + unsafe_usages + "\n")
-
-        items = []
-        for _ in range(3):  # wrapper-trap: SAFE (the false-positive test)
-            u = rng.choice(USER_SRCS)
-            items.append((f"{sink_call}({wrapper}({u}))", "SAFE", "wrapper_trap"))
-        for _ in range(3):  # raw sink: VULN (the true-positive test)
-            u = rng.choice(USER_SRCS)
-            items.append((f"{sink_call}({u})", "VULN", "raw_sink"))
-        # controls
-        items.append((f'{sink_call}("constant_safe_value")', "SAFE", "const_safe"))
         other_sink = SINKS[(i + 3) % len(SINKS)][0]
-        items.append((f"{other_sink}({rng.choice(USER_SRCS)})", "VULN", "other_raw"))
+
+        # documentation prepended to every training prompt (the wrapper's contract)
+        doc = (f"# In this project, {wrapper}() sanitizes untrusted input; it is SAFE "
+               f"to pass {wrapper}(x) into {sink_call}.")
+
+        # TRAIN: labelled verdict examples (the repo's documented safe/unsafe call
+        # sites) — both classes, using TRAIN sources only.
+        train_examples = []
+        for u in USER_SRCS_TRAIN:
+            train_examples.append((f"{sink_call}({wrapper}({u}))", "SAFE"))    # wrapper -> safe
+            train_examples.append((f"{sink_call}({u})", "VULN"))               # raw -> vuln
+        train_examples.append((f'{sink_call}("literal")', "SAFE"))             # constant -> safe
+        # duplicate for a little more signal
+        train_examples = train_examples * 2
+
+        # EVAL: held-out call sites (EVAL sources, never trained on)
+        items = []
+        for u in USER_SRCS_EVAL:
+            items.append((f"{sink_call}({wrapper}({u}))", "SAFE", "wrapper_trap"))
+            items.append((f"{sink_call}({u})", "VULN", "raw_sink"))
+        items.append((f'{sink_call}("constant_safe_value")', "SAFE", "const_safe"))
+        items.append((f"{other_sink}({rng.choice(USER_SRCS_EVAL)})", "VULN", "other_raw"))
+
         repos.append({"name": f"repo_{i:02d}_{wrapper}", "wrapper": wrapper,
-                      "sink": sink_call, "kind": kind, "context": context, "items": items})
+                      "sink": sink_call, "kind": kind, "doc": doc,
+                      "train_examples": train_examples, "items": items})
     return repos
 
 
@@ -137,8 +127,8 @@ def run():
     SAFE_IDS, VULN_IDS = word_ids(" SAFE"), word_ids(" VULN")
 
     @torch.no_grad()
-    def classify(m, code):
-        prompt = PROMPT.format(code=code)
+    def classify(m, code, doc=""):
+        prompt = (doc + "\n" + PROMPT.format(code=code)) if doc else PROMPT.format(code=code)
         ids = tok(prompt, return_tensors="pt", truncation=True, max_length=512).to(DEV)
 
         def cont_logprob(cont_ids):
@@ -164,13 +154,30 @@ def run():
     repos = make_repos(N_REPOS, seed=int(os.environ.get("VULN_SEED", "0")))
     log(f"vuln repo-LoRA test: {len(repos)} repos, base={BASE}, steps/repo={STEPS}")
 
+    def build_train_batch(repo):
+        # supervised: prompt -> verdict, loss only on the verdict tokens.
+        ids_list, lab_list = [], []
+        for code, verdict in repo["train_examples"]:
+            prompt = repo["doc"] + "\n" + PROMPT.format(code=code)
+            p = tok(prompt, add_special_tokens=False).input_ids
+            v = tok(" " + verdict, add_special_tokens=False).input_ids + [tok.eos_token_id]
+            ids_list.append(p + v)
+            lab_list.append([-100] * len(p) + v)
+        m = max(len(x) for x in ids_list)
+        pad = tok.pad_token_id
+        inp = torch.tensor([x + [pad] * (m - len(x)) for x in ids_list], device=DEV)
+        att = torch.tensor([[1] * len(x) + [0] * (m - len(x)) for x in ids_list], device=DEV)
+        lab = torch.tensor([x + [-100] * (m - len(x)) for x in lab_list], device=DEV)
+        return inp, att, lab
+
     base_preds, lora_preds = [], []
     for ri, repo in enumerate(repos):
-        # ---- base (no adapter) ----
+        # ---- base (no adapter), WITH the repo's doc line in-context (fair: base
+        # gets the same wrapper documentation, just not trained on it) ----
         for code, label, kind in repo["items"]:
-            base_preds.append((kind, label, classify(model, code)))
+            base_preds.append((kind, label, classify(model, code, doc=repo["doc"])))
 
-        # ---- per-repo LoRA: train on the repo's context, then classify ----
+        # ---- per-repo LoRA: SUPERVISED on labelled verdict examples ----
         cfg = LoraConfig(r=16, lora_alpha=32, lora_dropout=0.0, bias="none",
                          target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
                                          "gate_proj", "up_proj", "down_proj"],
@@ -178,18 +185,17 @@ def run():
         peft_model = get_peft_model(model, cfg)
         peft_model.train()
         opt = torch.optim.AdamW([p for p in peft_model.parameters() if p.requires_grad], lr=LR)
-        ctx = tok(repo["context"], return_tensors="pt", truncation=True, max_length=512).to(DEV)
+        inp, att, lab = build_train_batch(repo)
         for _ in range(STEPS):
-            out = peft_model(input_ids=ctx.input_ids, attention_mask=ctx.attention_mask,
-                             labels=ctx.input_ids)
+            out = peft_model(input_ids=inp, attention_mask=att, labels=lab)
             opt.zero_grad(); out.loss.backward(); opt.step()
         peft_model.eval()
         for code, label, kind in repo["items"]:
-            lora_preds.append((kind, label, classify(peft_model, code)))
-        # unwrap the LoRA so the next repo starts from the clean base
+            lora_preds.append((kind, label, classify(peft_model, code, doc=repo["doc"])))
         model = peft_model.unload()
         if ri == 0:
-            log(f"  [sample repo {repo['name']}] wrapper={repo['wrapper']} sink={repo['sink']}")
+            log(f"  [sample repo {repo['name']}] wrapper={repo['wrapper']} sink={repo['sink']}  "
+                f"final loss={float(out.loss):.3f}")
 
     b_fp, b_tp, b_acc = metrics(base_preds)
     l_fp, l_tp, l_acc = metrics(lora_preds)
@@ -210,8 +216,10 @@ if __name__ == "__main__":
     # offline: print one synthetic repo so the construction is inspectable
     r = make_repos(2, 0)[0]
     print("=== sample repo:", r["name"], "===")
-    print("--- context (what the repo-LoRA trains on) ---")
-    print(r["context"])
-    print("--- eval items ---")
+    print("doc:", r["doc"])
+    print("--- TRAIN examples (labelled; TRAIN sources) ---")
+    for code, verdict in r["train_examples"][:7]:
+        print(f"  [{verdict:4s}]  {code}")
+    print("--- EVAL items (held-out; EVAL sources) ---")
     for code, label, kind in r["items"]:
         print(f"  [{label:4s} / {kind:12s}]  {code}")
