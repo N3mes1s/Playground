@@ -154,6 +154,19 @@ effort, not a sweep. Total vast.ai spend ≈ $12.
 Modal harness added (`gpu/modal_app.py`) and validated (H100 function runs, returns
 results directly) as a cleaner loop for any future iteration.
 
+### Improvement attempt: per-layer (FiLM) adapters — instability finding
+Tried generating a *distinct* (A,B) per (layer, module) via a shared head
+modulated by a learned per-layer FiLM (`gpu/perlayer.py`) — more expressive than
+the paper's layer-shared design, at ~the same param count. On Modal H100 it
+**collapsed to 0.0% EM** even after stabilizing (clamp 0.15, lr 5e-5): 28
+**uncorrelated** per-layer adapters compound destructively down the residual
+stream (variance accumulates with depth), unlike the paper's coherent shared
+(identical-across-layers) adapter. **Finding: the paper shares adapters across
+layers for stability, not only parameter efficiency.** Making per-layer work would
+need per-layer magnitude ≈ shared/√depth plus careful tuning — a research effort,
+not a quick win. Net: the shared design remains the right call; our match (~52%)
+stands as the honest ceiling for this architecture class.
+
 ## Decisions / environment notes
 
 - Live model is **Qwen/Qwen3.5-4B** (Tinker's catalog lacks Qwen2.5-Coder-1.5B);
