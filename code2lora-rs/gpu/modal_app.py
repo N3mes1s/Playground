@@ -11,7 +11,7 @@ import modal
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install("torch==2.5.1", "transformers", "huggingface_hub", "pyarrow", "pandas",
-                 "accelerate", "sentence-transformers")
+                 "accelerate", "sentence-transformers", "peft")
     .add_local_dir("gpu", "/root/gpu")  # ships c2l_gpu.py + reference/code2lora_core.py
 )
 app = modal.App("code2lora-train")
@@ -25,6 +25,16 @@ def run(config: dict):
     sys.path.insert(0, "/root/gpu")
     import c2l_gpu
     return c2l_gpu.main()  # returns a plain-typed result dict
+
+
+@app.function(image=image, gpu="H100", timeout=3600)
+def run_vuln(config: dict):
+    import os, sys
+    for k, v in config.items():
+        os.environ[str(k)] = str(v)
+    sys.path.insert(0, "/root/gpu")
+    import vuln_repo_lora
+    return vuln_repo_lora.run()
 
 
 @app.local_entrypoint()
@@ -44,6 +54,14 @@ def main(mode: str = "perlayer"):
         if _os.environ.get("DEMO_REPO"):
             cfg["DEMO_REPO"] = _os.environ["DEMO_REPO"]
         print("RESULT:", run.remote(cfg))
+        return
+    elif mode == "vuln":
+        # Repo-LoRA vulnerability analysis: does a repo-specialized adapter cut
+        # false positives by learning the codebase's custom safe wrappers?
+        import os as _os
+        cfg = {k: _os.environ[k] for k in ("VULN_REPOS", "VULN_STEPS", "VULN_LR", "VULN_SEED")
+               if _os.environ.get(k)}
+        print("RESULT:", run_vuln.remote(cfg))
         return
     elif mode == "bakeoff":
         # Retriever SOTA bake-off (adapter fixed = their ckpt). RETRIEVERS overrides
