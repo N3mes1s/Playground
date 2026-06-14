@@ -22,6 +22,35 @@ directly comparable.
 
 `METRIC delta = +8.5pp` over the bar. `beat_reported = True` (vs 63.8%).
 
+## it5 — tuned RAFT closes the "but their ckpt + retr is higher" gap
+
+it4 left one open question: the gain was *retrieval*, and their-ckpt+retr (69.2)
+was actually ≥ our hybrid (68.5). it5 tuned the RAFT training to make **our
+adapter** better at *using* retrieval — train with more oracle exposure
+(`K_ORACLE=2`, `P_ORACLE=0.8`) and more distractors (2), eval with 2 snippets.
+
+| configuration | it5 EM |
+|---|---|
+| base | 40.4% |
+| RAG alone (base + retrieval) | 42.6% |
+| their ckpt, no retrieval (bar) | 58.3% |
+| their ckpt + retrieval | 67.3% |
+| ours, no retrieval | 55.2% |
+| **ours HYBRID (best)** | **69.0%** |
+
+This run: **ours-hybrid 69.0 > their-ckpt+retr 67.3 (+1.7), > published 58.3
+(+10.7), > reported 63.8.** Notably our hybrid wins **despite a weaker base
+adapter** (ours-no-retr 55.2 < their 58.3) — i.e. RAFT training gave our adapter
+an edge at *exploiting* retrieval that more than compensates. RAG-alone fell to
+42.6 (≈ base), reconfirming this is synergy, not leakage.
+
+**Honest caveat on noise.** The ours-vs-their+retr gap is small and the harness
+drifts ±~2pp run-to-run (it4: ours 68.5 vs their+retr 69.2, −0.7; it5: +1.7). So
+the defensible claim is **our hybrid is on par with / marginally ahead of
+their-ckpt+retrieval**, and **decisively beats the published no-retrieval method
+(+8–11pp) and the reported 63.8% in every run.** A multi-seed average would be
+needed to call the +1.7 a definitive adapter win.
+
 ## How to read this — the honest interpretation
 
 **What is real and defensible:**

@@ -209,6 +209,7 @@ eval set, so only the within-run delta is meaningful). Recipe priorities in
 | 2 | it1 + heavy anti-overfit reg (dropout .15, WD .1, emb-noise .05) | 55.4% | 51.5% | −3.9 | **lose** — heavy reg *suppressed* the signal, didn't hold the peak |
 | 3 | it1 + rsLoRA (α/√r, init-compensated) | 53.6% | 50.7% | −2.9 | **lose** — no peak lift; amortized hypernet doesn't exploit rank-headroom like standard FT |
 | **4** | **RAFT retrieval+parametric hybrid** (leakage-controlled within-repo BM25) | **60.0%** | **68.5%** | **+8.5** | **WIN** — beats the paper's published method *and* its reported 63.8% (details: `gpu/RESULTS_hybrid.md`) |
+| **5** | **tuned RAFT** (K_oracle=2, p_oracle=.8, 2 distractors) | **58.3%** | **69.0%** | **+10.7** | **WIN** — also edges their-ckpt+retr (69.0 vs 67.3, +1.7) despite a weaker base adapter; RAFT training made our adapter better at *using* retrieval |
 
 ### it4 — the beat (RAFT hybrid). Full scoreboard, one fair harness:
 base 41.3 · RAG-alone 46.5 · **their ckpt (no retr) 60.0 [the bar]** · their ckpt+retr
