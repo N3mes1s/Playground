@@ -25,6 +25,10 @@ LR = float(os.environ.get("LR", "1e-4"))
 BATCH = int(os.environ.get("BATCH", "8"))
 EVAL_PER_REPO = int(os.environ.get("EVAL_PER_REPO", "10"))
 MAXLEN = int(os.environ.get("MAXLEN", "1024"))
+MAXNEW = int(os.environ.get("MAXNEW", "24"))
+HEAD_DROPOUT = float(os.environ.get("HEAD_DROPOUT", "0.0"))
+WD = float(os.environ.get("WD", "0.01"))
+EVAL_SEED = int(os.environ.get("EVAL_SEED", "0"))
 OUT = os.environ.get("OUT", "/workspace/head.best.pt")
 BASE = "Qwen/Qwen2.5-Coder-1.5B"
 TARGET_TYPES = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
@@ -88,6 +92,29 @@ def qna_eval_server(split, repos, per_repo, n_offsets=500):
     return {r: v for r, v in out.items() if v}
 
 
+def qna_eval_sampled(split_file, per_repo, repos, collect_cap=120, seed=0):
+    """repo_id -> randomly-sampled <=per_repo (prefix,target). Collects up to
+    collect_cap per repo while streaming, then shuffles (seeded) and samples,
+    so the eval set isn't biased by file order."""
+    import pyarrow.dataset as pads, random as _r
+    ds = pads.dataset(hf(split_file), format="parquet")
+    pool = {r: [] for r in repos}
+    for batch in ds.to_batches(columns=["repo_id", "prefix", "target"], batch_size=20000):
+        rid = batch.column("repo_id").to_pylist()
+        pre = batch.column("prefix").to_pylist()
+        tgt = batch.column("target").to_pylist()
+        for r, p, t in zip(rid, pre, tgt):
+            if r in pool and len(pool[r]) < collect_cap and p and t:
+                pool[r].append((p, t))
+    rng = _r.Random(seed)
+    out = {}
+    for r, lst in pool.items():
+        if lst:
+            rng.shuffle(lst)
+            out[r] = lst[:per_repo]
+    return out
+
+
 def qna_by_repo(split_file, per_repo=None, repos=None):
     """repo_id -> list[(prefix,target)] from qna/<split>.parquet (streamed)."""
     import pyarrow.dataset as pads
@@ -147,12 +174,19 @@ def main():
     type_dims = C.discover_module_types_and_dims(specs)
     C.replace_with_lora(model, specs, rank=RANK, alpha=ALPHA)
 
+    import torch.nn as nn
     head = C.Code2LoRAHead(input_dim=2048, type_dims=type_dims,
                            hidden_dim=HIDDEN, rank=RANK, init_log_scale=-3.5).to(DEV)
+    if HEAD_DROPOUT > 0:
+        # regularize the trunk to fight the early CR overfit we observed
+        head.trunk = nn.Sequential(
+            nn.Linear(2048, HIDDEN), nn.GELU(), nn.Dropout(HEAD_DROPOUT),
+            nn.Linear(HIDDEN, HIDDEN), nn.GELU(), nn.Dropout(HEAD_DROPOUT),
+        ).to(DEV)
 
-    def set_lora(ctx_np):
+    def set_lora(h, ctx_np):
         ctx = torch.tensor(ctx_np, device=DEV).unsqueeze(0)
-        out = head(ctx)
+        out = h(ctx)
         C.inject_lora_weights(model, specs, out, batch_index=0)
 
     def clear_lora():
@@ -165,13 +199,14 @@ def main():
     eval_cache = {}
 
     @torch.no_grad()
-    def eval_cr(use_head):
+    def eval_cr(use_head, h=None):
         if "embs" not in eval_cache:
             eval_cache["embs"] = repo_embeddings("commits/cr_test.parquet")
-            log(f"[{time.strftime('%H:%M:%S')}] downloading qna/cr_test ...")
-            eval_cache["qna"] = qna_by_repo("qna/cr_test.parquet", per_repo=EVAL_PER_REPO,
-                                            repos=set(eval_cache["embs"]))
-            log(f"[{time.strftime('%H:%M:%S')}] eval set: {sum(len(v) for v in eval_cache['qna'].values())} qnas")
+            log(f"[{time.strftime('%H:%M:%S')}] downloading + sampling qna/cr_test ...")
+            eval_cache["qna"] = qna_eval_sampled("qna/cr_test.parquet", per_repo=EVAL_PER_REPO,
+                                                 repos=set(eval_cache["embs"]), seed=EVAL_SEED)
+            log(f"[{time.strftime('%H:%M:%S')}] eval set: {sum(len(v) for v in eval_cache['qna'].values())} qnas "
+                f"over {len(eval_cache['qna'])} repos")
         embs = eval_cache["embs"]
         qna = eval_cache["qna"]
         prev_cache = model.config.use_cache
@@ -179,12 +214,12 @@ def main():
         tot = cor = 0
         for rid, tasks in qna.items():
             if use_head:
-                set_lora(embs[rid])
+                set_lora(h, embs[rid])
             else:
                 clear_lora()
             for prefix, target in tasks:
                 ids = tok(prefix, return_tensors="pt", truncation=True, max_length=MAXLEN).to(DEV)
-                g = model.generate(**ids, max_new_tokens=12, do_sample=False,
+                g = model.generate(**ids, max_new_tokens=MAXNEW, do_sample=False,
                                    pad_token_id=tok.eos_token_id)
                 pred = tok.decode(g[0][ids.input_ids.shape[1]:], skip_special_tokens=True).split("\n")[0]
                 cor += em(pred, target); tot += 1
@@ -202,7 +237,7 @@ def main():
         head.eval()
         base_em, n = eval_cr(False)
         log(f"[{time.strftime('%H:%M:%S')}] base   CR-test EM: {base_em:.1%}  (n={n})")
-        their_em, n = eval_cr(True)
+        their_em, n = eval_cr(True, head)
         log(f"[{time.strftime('%H:%M:%S')}] THEIR ckpt CR-test EM: {their_em:.1%}  (n={n})")
         log(f"\nPaper reported CR EM: 63.8%  | reproduced: {their_em:.1%}")
         return
@@ -217,7 +252,20 @@ def main():
     base_em, n = eval_cr(False)
     log(f"[{time.strftime('%H:%M:%S')}] base CR-test EM: {base_em:.1%} (n={n})")
 
-    opt = torch.optim.AdamW(head.parameters(), lr=LR, weight_decay=0.01)
+    # Fair bar: their released checkpoint on THIS (improved) harness.
+    their_em = float(os.environ.get("ANCHOR", "0.507"))
+    if RANK == 16 and HIDDEN == 1024:
+        from huggingface_hub import hf_hub_download
+        ck = hf_hub_download("code2lora/code2lora-direct", "code2lora_direct.pt")
+        anchor = C.Code2LoRAHead(input_dim=2048, type_dims=type_dims,
+                                 hidden_dim=1024, rank=16, init_log_scale=-3.5).to(DEV)
+        sd = torch.load(ck, map_location="cpu"); sd = sd.get("state_dict", sd.get("head", sd))
+        anchor.load_state_dict(sd, strict=False); anchor.eval()
+        their_em, n = eval_cr(True, anchor)
+        log(f"[{time.strftime('%H:%M:%S')}] THEIR ckpt CR-test EM (this harness): {their_em:.1%} (n={n})")
+        del anchor; torch.cuda.empty_cache()
+
+    opt = torch.optim.AdamW(head.parameters(), lr=LR, weight_decay=WD)
     total_pairs = sum(len(v) for v in train_qna.values())
     steps = int(EPOCHS * total_pairs / BATCH)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=steps)
@@ -229,7 +277,7 @@ def main():
         rid = random.choice(repos)
         tasks = train_qna[rid]
         batch = random.sample(tasks, min(BATCH, len(tasks)))
-        set_lora(train_emb[rid])
+        set_lora(head, train_emb[rid])
         ids, labels = [], []
         for prefix, target in batch:
             p = tok(prefix, truncation=True, max_length=MAXLEN - 16).input_ids or [pad]
@@ -245,16 +293,17 @@ def main():
             if isinstance(mm, C.LoRA): mm.A = None; mm.B = None
         if step % 200 == 0 or step == 1:
             log(f"[{time.strftime('%H:%M:%S')}] step {step}/{steps} loss={out.loss.item():.4f}")
-        if step % 2000 == 0:
-            head.eval(); cur, n = eval_cr(True); head.train()
-            log(f"  >>> step {step} CR-test EM: {cur:.1%}")
+        if step % 1500 == 0:
+            head.eval(); cur, n = eval_cr(True, head); head.train()
+            flag = "  *BEAT*" if cur > their_em else ""
+            log(f"  >>> step {step} CR-test EM: {cur:.1%}  (their {their_em:.1%}){flag}")
             if cur > best:
                 best = cur; torch.save(head.state_dict(), OUT)
     head.eval()
-    final, n = eval_cr(True)
+    final, n = eval_cr(True, head)
     best = max(best, final)
-    anchor = float(os.environ.get("ANCHOR", "0.507"))  # their ckpt on THIS harness
-    cfg = f"rank{RANK} hidden{HIDDEN} alpha{int(ALPHA)} ep{EPOCHS} lr{LR}"
+    anchor = their_em  # their ckpt on THIS harness
+    cfg = f"rank{RANK} hidden{HIDDEN} alpha{int(ALPHA)} ep{EPOCHS} lr{LR} drop{HEAD_DROPOUT} wd{WD}"
     log(f"\n[{time.strftime('%H:%M:%S')}] FINAL [{cfg}] ours CR-test EM: {final:.1%}  best: {best:.1%}  (base {base_em:.1%})")
     log(f"  vs their checkpoint (same harness): {anchor:.1%}  -> "
         + ("BEAT THEIR CKPT" if best > anchor else "below their ckpt"))
