@@ -33,6 +33,19 @@ def main(mode: str = "perlayer"):
                 EVAL_EVERY=1000, EVAL_SEED=0, ANCHOR=0.55)
     if mode == "repro":
         configs = [dict(base, MODE="repro", LR="1e-4")]
+    elif mode == "measure":
+        # one short run for the pi-autoresearch loop: emits a single METRIC line.
+        cfg = dict(base, PER_LAYER=int(__import__("os").environ.get("PL", "1")),
+                   LORA_CLAMP="0.15", LR="5e-5", HEAD_DROPOUT=0.05, WD=0.02,
+                   EPOCHS=1, EVAL_EVERY=1500, RUNTAG="MEASURE")
+        res = run.remote(cfg)
+        best = res.get("best", 0.0) if isinstance(res, dict) else 0.0
+        their = res.get("their", 0.0) if isinstance(res, dict) else 0.0
+        print(f"METRIC em={best*100:.2f}")
+        print(f"METRIC their_ckpt={their*100:.2f}")
+        print(f"METRIC delta={ (best-their)*100:.2f}")
+        print("RESULT:", res)
+        return
     elif mode == "perlayer":
         # improvement attempt: per-layer (FiLM) adapters, stabilized (tight clamp
         # + lower LR since 28 independent adapters compound) vs the shared control.

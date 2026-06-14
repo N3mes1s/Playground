@@ -8,3 +8,7 @@
 # secrets & logs
 .env
 *.log
+
+# pi-autoresearch runtime state
+code2lora-rs/.auto/log.jsonl
+code2lora-rs/.auto/hooks/

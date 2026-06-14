@@ -1,0 +1,11 @@
+# Ideas backlog (from RESEARCH.md, ranked)
+- [ ] perlayer: FiLM -> concat[repo_emb, E_layer(l), E_module(m)] into trunk (T2L/Zhyper)
+- [ ] perlayer: Bias-HyperInit — zero-init output-head weights; bias = standard LoRA init
+- [ ] perlayer: Hyperfan-in init (scale output to MAINNET fan-in, not hypernet fan-in)
+- [ ] both: rsLoRA scaling alpha/sqrt(r) on generated dW
+- [ ] perlayer: Zhyper factorization — freeze A,B (orthonormal/SVD), generate r×r core only
+- [ ] both: generate DoRA — add per-output-column magnitude vector
+- [ ] train: embedding-noise + consistency loss on repo_emb
+- [ ] train: EMA of head weights; weight decay sweep
+- [ ] train: freeze A, generate only B (calibration/stability)
+- [ ] hybrid (big): + one retrieved snippet, RAFT distractor training
