@@ -31,6 +31,14 @@ HEAD_DROPOUT = float(os.environ.get("HEAD_DROPOUT", "0.0"))
 WD = float(os.environ.get("WD", "0.01"))
 EVAL_SEED = int(os.environ.get("EVAL_SEED", "0"))
 EMB_NOISE = float(os.environ.get("EMB_NOISE", "0.0"))
+RSLORA = os.environ.get("RSLORA", "0") == "1"   # rank-stable scaling alpha/sqrt(r)
+# When rsLoRA is on, alpha/sqrt(r) is ~sqrt(r)x larger than alpha/r, so the
+# *initial* generated delta would be that much bigger. Drop the head's init
+# log-scale by 0.5*ln(r) to cancel it, leaving the start-point delta identical
+# and letting the generator grow into the extra rank-headroom (the rsLoRA thesis).
+import math as _math
+INIT_LOG_SCALE = float(os.environ.get(
+    "INIT_LOG_SCALE", str(-3.5 - (0.5 * _math.log(max(1, RANK)) if RSLORA else 0.0))))
 OUT = os.environ.get("OUT", "/tmp/head.best.pt")
 BASE = "Qwen/Qwen2.5-Coder-1.5B"
 TARGET_TYPES = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
@@ -175,6 +183,13 @@ def main():
     specs = C.get_module_specs(model, TARGET_TYPES)
     type_dims = C.discover_module_types_and_dims(specs)
     C.replace_with_lora(model, specs, rank=RANK, alpha=ALPHA)
+    if RSLORA:
+        rs = ALPHA / (RANK ** 0.5)
+        for _, _m in model.named_modules():
+            if isinstance(_m, C.LoRA):
+                _m.scaling = rs
+        log(f"rsLoRA scaling on: alpha/sqrt(r)={rs:.3f} (was alpha/r={ALPHA/RANK:.3f}); "
+            f"init_log_scale={INIT_LOG_SCALE:.3f}")
 
     import torch.nn as nn
     PER_LAYER = os.environ.get("PER_LAYER", "0") == "1"
@@ -183,11 +198,11 @@ def main():
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
         from perlayer import PerLayerHead, perlayer_inject
         head = PerLayerHead(2048, type_dims, num_layers=num_layers, hidden_dim=HIDDEN,
-                            rank=RANK, init_log_scale=-3.5, dropout=HEAD_DROPOUT).to(DEV)
+                            rank=RANK, init_log_scale=INIT_LOG_SCALE, dropout=HEAD_DROPOUT).to(DEV)
         log(f"using PER-LAYER head (FiLM over {num_layers} layers), hidden={HIDDEN} rank={RANK}")
     else:
         head = C.Code2LoRAHead(input_dim=2048, type_dims=type_dims,
-                               hidden_dim=HIDDEN, rank=RANK, init_log_scale=-3.5).to(DEV)
+                               hidden_dim=HIDDEN, rank=RANK, init_log_scale=INIT_LOG_SCALE).to(DEV)
         if HEAD_DROPOUT > 0:
             head.trunk = nn.Sequential(
                 nn.Linear(2048, HIDDEN), nn.GELU(), nn.Dropout(HEAD_DROPOUT),
@@ -275,8 +290,19 @@ def main():
                                  hidden_dim=1024, rank=16, init_log_scale=-3.5).to(DEV)
         sd = torch.load(ck, map_location="cpu"); sd = sd.get("state_dict", sd.get("head", sd))
         anchor.load_state_dict(sd, strict=False); anchor.eval()
+        # Their head was trained with alpha/r. If we flipped the wrapper to rsLoRA
+        # scaling, restore alpha/r just for the anchor eval so the bar stays fair,
+        # then put rsLoRA back before our training begins.
+        if RSLORA:
+            ar = ALPHA / RANK
+            for _, _m in model.named_modules():
+                if isinstance(_m, C.LoRA): _m.scaling = ar
         their_em, n = eval_cr(True, anchor)
         log(f"[{time.strftime('%H:%M:%S')}] THEIR ckpt CR-test EM (this harness): {their_em:.1%} (n={n})")
+        if RSLORA:
+            rs = ALPHA / (RANK ** 0.5)
+            for _, _m in model.named_modules():
+                if isinstance(_m, C.LoRA): _m.scaling = rs
         del anchor; torch.cuda.empty_cache()
 
     opt = torch.optim.AdamW(head.parameters(), lr=LR, weight_decay=WD)
