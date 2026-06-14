@@ -24,7 +24,8 @@ EPOCHS = float(os.environ.get("EPOCHS", "3"))
 LR = float(os.environ.get("LR", "1e-4"))
 BATCH = int(os.environ.get("BATCH", "8"))
 EVAL_PER_REPO = int(os.environ.get("EVAL_PER_REPO", "10"))
-MAXLEN = int(os.environ.get("MAXLEN", "1024"))
+MAXLEN = int(os.environ.get("MAXLEN", "1024"))          # eval prefix budget
+TRAIN_MAXLEN = int(os.environ.get("TRAIN_MAXLEN", str(MAXLEN)))  # train (memory)
 MAXNEW = int(os.environ.get("MAXNEW", "24"))
 HEAD_DROPOUT = float(os.environ.get("HEAD_DROPOUT", "0.0"))
 WD = float(os.environ.get("WD", "0.01"))
@@ -280,9 +281,9 @@ def main():
         set_lora(head, train_emb[rid])
         ids, labels = [], []
         for prefix, target in batch:
-            p = tok(prefix, truncation=True, max_length=MAXLEN - 16).input_ids or [pad]
+            p = tok(prefix, truncation=True, max_length=TRAIN_MAXLEN - 16).input_ids or [pad]
             c = tok(target, add_special_tokens=False).input_ids + [tok.eos_token_id]
-            ids.append((p + c)[:MAXLEN]); labels.append(([-100]*len(p) + c)[:MAXLEN])
+            ids.append((p + c)[:TRAIN_MAXLEN]); labels.append(([-100]*len(p) + c)[:TRAIN_MAXLEN])
         m = max(len(x) for x in ids)
         att = torch.tensor([[1]*len(x)+[0]*(m-len(x)) for x in ids], device=DEV)
         inp = torch.tensor([x+[pad]*(m-len(x)) for x in ids], device=DEV)
