@@ -35,9 +35,12 @@ def main(mode: str = "perlayer"):
         configs = [dict(base, MODE="repro", LR="1e-4")]
     elif mode == "measure":
         # one short run for the pi-autoresearch loop: emits a single METRIC line.
+        # it2: per-layer stable arch + anti-overfit reg (it1 peaked 54.8%@1500 then
+        # decayed to ~50%). Push the early peak past the ~55.8% anchor by holding it:
+        # higher dropout + weight decay + embedding noise (consistency-style aug).
         cfg = dict(base, PER_LAYER=int(__import__("os").environ.get("PL", "1")),
-                   LORA_CLAMP="0.15", LR="5e-5", HEAD_DROPOUT=0.05, WD=0.02,
-                   EPOCHS=1, EVAL_EVERY=1500, RUNTAG="MEASURE")
+                   LORA_CLAMP="0.15", LR="5e-5", HEAD_DROPOUT=0.15, WD=0.1,
+                   EMB_NOISE=0.05, EPOCHS=2, EVAL_EVERY=1000, RUNTAG="MEASURE_IT2")
         res = run.remote(cfg)
         best = res.get("best", 0.0) if isinstance(res, dict) else 0.0
         their = res.get("their", 0.0) if isinstance(res, dict) else 0.0

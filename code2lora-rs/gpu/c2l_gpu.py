@@ -30,6 +30,7 @@ MAXNEW = int(os.environ.get("MAXNEW", "24"))
 HEAD_DROPOUT = float(os.environ.get("HEAD_DROPOUT", "0.0"))
 WD = float(os.environ.get("WD", "0.01"))
 EVAL_SEED = int(os.environ.get("EVAL_SEED", "0"))
+EMB_NOISE = float(os.environ.get("EMB_NOISE", "0.0"))
 OUT = os.environ.get("OUT", "/tmp/head.best.pt")
 BASE = "Qwen/Qwen2.5-Coder-1.5B"
 TARGET_TYPES = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
@@ -288,9 +289,13 @@ def main():
     best = -1.0
     for step in range(1, steps + 1):
         rid = random.choice(repos)
+        _emb = train_emb[rid]
+        if EMB_NOISE > 0:
+            import numpy as _np
+            _emb = _emb + _np.random.randn(*_emb.shape).astype('float32') * EMB_NOISE * float(_np.linalg.norm(_emb)) / (_emb.size ** 0.5)
         tasks = train_qna[rid]
         batch = random.sample(tasks, min(BATCH, len(tasks)))
-        set_lora(head, train_emb[rid])
+        set_lora(head, _emb)
         ids, labels = [], []
         for prefix, target in batch:
             p = tok(prefix, truncation=True, max_length=TRAIN_MAXLEN - 16).input_ids or [pad]
