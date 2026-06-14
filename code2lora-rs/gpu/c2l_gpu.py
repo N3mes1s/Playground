@@ -137,6 +137,12 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(BASE, torch_dtype=DT).to(DEV).eval()
     for p in model.parameters():
         p.requires_grad_(False)
+    # Memory: backprop reaches the hypernet-generated A,B only via the graph
+    # above each LoRA, so we still need activations through the frozen base.
+    # Gradient checkpointing recomputes them in backward instead of storing.
+    model.config.use_cache = False
+    model.gradient_checkpointing_enable()
+    model.enable_input_require_grads()
     specs = C.get_module_specs(model, TARGET_TYPES)
     type_dims = C.discover_module_types_and_dims(specs)
     C.replace_with_lora(model, specs, rank=RANK, alpha=ALPHA)
@@ -168,6 +174,8 @@ def main():
             log(f"[{time.strftime('%H:%M:%S')}] eval set: {sum(len(v) for v in eval_cache['qna'].values())} qnas")
         embs = eval_cache["embs"]
         qna = eval_cache["qna"]
+        prev_cache = model.config.use_cache
+        model.config.use_cache = True  # fast generation; no effect on training
         tot = cor = 0
         for rid, tasks in qna.items():
             if use_head:
@@ -181,6 +189,7 @@ def main():
                 pred = tok.decode(g[0][ids.input_ids.shape[1]:], skip_special_tokens=True).split("\n")[0]
                 cor += em(pred, target); tot += 1
         clear_lora()
+        model.config.use_cache = prev_cache
         return cor / max(1, tot), tot
 
     if MODE == "repro":
