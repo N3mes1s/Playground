@@ -104,6 +104,31 @@ weight decay + lower LR/alpha, more steps. That is a larger (costlier) GPU run a
 still requires tuning — consistent with why the paper's contribution is non-trivial.
 Infra works: vast.ai via onstart + `vastai logs` (SSH/exec blocked by egress).
 
+### Reproduce + train on the paper's OWN data (RepoPeftBench) — H100
+Found the released artifacts (`huggingface.co/code2lora`): data
+(`code2lora-data-snapshots`: 400 train repos, 44,149 train QnAs, precomputed
+2048-d `repo_state_embedding`), the exact `Code2LoRAHead` (vendored in
+`gpu/reference/code2lora_core.py`), and their trained checkpoint
+(`code2lora-direct`). `gpu/c2l_gpu.py` reproduces-then-trains on the SAME
+data/eval. Arch detail that fixed our earlier collapse: their head **clamps the
+LoRA scale to ≤0.3**.
+
+**Reproduced** their checkpoint on our harness (8 QnAs/repo subsample, prefix
+truncated to 1024 vs their 8192): base **33.6%**, their ckpt **50.7%** (+17.1pp,
+mirroring the paper's +18.1pp 45.7→63.8); their head loads `missing=0 unexpected=0`.
+
+**Trained** 3 configs on the full data (H100): rank16/h1024/3ep (control),
+rank32/h1024/3ep, rank32/h2048/4ep. Held-out CR-test EM **peaks ~49.5% at
+~step 2000 (~⅓ epoch) then declines** (overfits; train loss → 0.05, CR 49.5→45.8);
+higher rank/capacity did not help.
+
+**Honest result: matched their checkpoint** (~49.5% peak vs 50.7%, within the
+±2-3% noise of a 408-sample eval) on the identical harness, but **did NOT beat**
+it. Beating their *reported* 63.8% is capped by our truncated-context harness and
+would need full-context (8192) training+eval (~8× memory/time) + early-stopping/
+regularization + a larger search. GPU OOM fixed via gradient checkpointing + bf16
+LoRA delta + batch 4. Total GPU spend ≈ $5.
+
 ## Decisions / environment notes
 
 - Live model is **Qwen/Qwen3.5-4B** (Tinker's catalog lacks Qwen2.5-Coder-1.5B);
