@@ -37,6 +37,16 @@ def run_vuln(config: dict):
     return vuln_repo_lora.run()
 
 
+@app.function(image=image, gpu="H100", timeout=2 * 3600)
+def run_cve(config: dict):
+    import os, sys
+    for k, v in config.items():
+        os.environ[str(k)] = str(v)
+    sys.path.insert(0, "/root/gpu")
+    import cve_eval
+    return cve_eval.run()
+
+
 @app.local_entrypoint()
 def main(mode: str = "perlayer"):
     base = dict(MODE="train", RANK=16, HIDDEN=1024, ALPHA=32, MAXLEN=2048,
@@ -62,6 +72,13 @@ def main(mode: str = "perlayer"):
         cfg = {k: _os.environ[k] for k in ("VULN_REPOS", "VULN_STEPS", "VULN_LR", "VULN_SEED")
                if _os.environ.get(k)}
         print("RESULT:", run_vuln.remote(cfg))
+        return
+    elif mode == "cve":
+        # Real CVE before/after eval: base vs repo-LoRA on confirmed vuln/fix pairs.
+        import os as _os
+        cfg = {k: _os.environ[k] for k in ("CVE_STEPS", "CVE_LR", "CVE_MAXLEN")
+               if _os.environ.get(k)}
+        print("RESULT:", run_cve.remote(cfg))
         return
     elif mode == "bakeoff":
         # Retriever SOTA bake-off (adapter fixed = their ckpt). RETRIEVERS overrides
