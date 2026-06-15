@@ -74,7 +74,28 @@ code2lora evo-scan --repo colors.js --max-commits 40 --neural \
 code2lora evo-scan --repo xz --max-commits 40 --no-snapshot --flag cf44e4b7
 ```
 
-## Demonstrated: repo-LoRA cuts vulnerability-scanner false positives (`gpu/vuln_repo_lora.py`)
+## ⚠️ Honest verdict first: the repo-LoRA vuln-scanner claim FAILS on real data
+
+A synthetic experiment (below) suggested a repo-LoRA cuts scanner false positives
+100%→0%. **A real-data test refutes this.** On **40 real Python CVEs / 82
+before-fix(VULN) vs after-fix(SAFE) function pairs** mined from OSV fix-commits
+(`gpu/cve_mine.py` → `gpu/cve_eval.py`):
+
+| metric | base | repo-LoRA |
+|---|---|---|
+| false-positive rate (real fixes flagged VULN) | 100% | **95%** |
+| true-positive rate (real vulns caught) | 100% | 94% |
+| accuracy | 50% (chance) | **49%** |
+
+The base Qwen2.5-Coder-1.5B is a degenerate "everything is VULN" classifier — it
+**cannot tell a real vulnerability from its fix** (50% accuracy = chance), and a
+per-repo LoRA does **not** rescue it (FP 100%→95%, still chance). The synthetic
+100%→0% win only happened because that task was a trivial, memorizable rule that
+does **not** transfer to real code. **Conclusion: repo-LoRA-for-vuln-analysis is
+not a real win here.** The synthetic section is kept below only as a record of how
+the toy result misled — and why real CVE pairs are the right test.
+
+## (Record, do-not-trust) Synthetic demo: repo-LoRA cuts false positives (`gpu/vuln_repo_lora.py`)
 
 **Claim tested:** a repo-specialized LoRA knows the codebase's *custom safe
 wrappers*, so it stops flagging `sink(safe_wrapper(user_input))` as a vuln —
