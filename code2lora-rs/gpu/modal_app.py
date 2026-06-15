@@ -11,7 +11,7 @@ import modal
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install("torch==2.5.1", "transformers", "huggingface_hub", "pyarrow", "pandas",
-                 "accelerate", "sentence-transformers", "peft")
+                 "accelerate", "sentence-transformers", "peft", "datasets")
     .add_local_dir("gpu", "/root/gpu")  # ships c2l_gpu.py + reference/code2lora_core.py
 )
 app = modal.App("code2lora-train")
@@ -47,6 +47,16 @@ def run_cve(config: dict):
     return cve_eval.run()
 
 
+@app.function(image=image, gpu="H100", timeout=2 * 3600)
+def run_repobench(config: dict):
+    import os, sys
+    for k, v in config.items():
+        os.environ[str(k)] = str(v)
+    sys.path.insert(0, "/root/gpu")
+    import repobench_eval
+    return repobench_eval.run()
+
+
 @app.local_entrypoint()
 def main(mode: str = "perlayer"):
     base = dict(MODE="train", RANK=16, HIDDEN=1024, ALPHA=32, MAXLEN=2048,
@@ -79,6 +89,14 @@ def main(mode: str = "perlayer"):
         cfg = {k: _os.environ[k] for k in ("CVE_STEPS", "CVE_LR", "CVE_MAXLEN")
                if _os.environ.get(k)}
         print("RESULT:", run_cve.remote(cfg))
+        return
+    elif mode == "repobench":
+        # REAL public benchmark: RepoBench v1.1 next-line completion, in-file vs
+        # +BM25 cross-file vs +oracle cross-file (real repo code as retrieval).
+        import os as _os
+        cfg = {k: _os.environ[k] for k in ("RB_SPLIT", "RB_N", "RB_MAXLEN", "RB_MAXNEW")
+               if _os.environ.get(k)}
+        print("RESULT:", run_repobench.remote(cfg))
         return
     elif mode == "bakeoff":
         # Retriever SOTA bake-off (adapter fixed = their ckpt). RETRIEVERS overrides
