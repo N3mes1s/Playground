@@ -1,5 +1,27 @@
 # Beating Code2LoRA — the RAFT retrieval+parametric hybrid (it4)
 
+> ## ⚠️ READ THIS FIRST — the headline is NOT externally validated
+> The +8–9pp "beat" below was measured on our **custom RepoPeftBench harness**,
+> where the retrieval corpus is the **test set's own sibling assertions**. A real
+> public benchmark contradicts the size of that gain:
+>
+> **RepoBench v1.1** (`cross_file_first`, n=500, same Qwen2.5-Coder-1.5B), retrieval
+> from **real repo code**, standard metrics:
+>
+> | condition | exact-match | edit-sim |
+> |---|---|---|
+> | in-file only | 18.6% | 49.0% |
+> | +BM25 cross-file (realistic) | 18.2% | 49.0% |
+> | +ORACLE cross-file (upper bound) | 21.0% | 51.3% |
+>
+> On neutral ground, cross-file retrieval helps only **+2.4pp EM at the oracle upper
+> bound**, and **~0** with realistic BM25. The +8–9pp on RepoPeftBench is therefore
+> almost certainly **inflated by retrieving from test-adjacent sibling assertions**
+> (and a custom, non-standard harness). **Honest status: the "beat the paper" claim
+> does NOT replicate as a clean, externally-valid result.** Treat everything below
+> as in-harness analysis, not a benchmark win. (`gpu/repobench_eval.py`)
+
+
 **Result: a leakage-controlled retrieval+parametric hybrid beats the paper's
 published method by +8.5pp on a fair same-budget harness, and also clears the
 paper's *reported* 63.8%.**
