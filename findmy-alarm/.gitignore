@@ -1,0 +1,10 @@
+# Secrets & local state -- never commit these
+account.json
+alarm_state.json
+*.tmp
+ani_libs.bin
+config.yaml
+*.plist
+.env
+__pycache__/
+*.pyc

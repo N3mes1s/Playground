@@ -1,0 +1,47 @@
+# findmy-alarm configuration example.
+# Copy to config.yaml and edit. Secrets are best left OUT of this file and
+# supplied via environment variables instead:
+#   FINDMY_APPLE_PASSWORD  - your Apple ID (or app-specific) password
+#   FINDMY_SMTP_PASSWORD   - the app password used to send email
+
+# Your Apple ID email. Also the default "from" and "to" for notifications,
+# so in the simplest setup this one line is all the email you pass.
+apple_id: you@gmail.com
+
+# Optional: a remote anisette server. Omit to use FindMy.py's built-in local
+# generator (LocalAnisetteProvider).
+# anisette_server: http://localhost:6969
+
+# How often to poll, in seconds.
+poll_interval_s: 300
+
+# Re-alert every N seconds while an object stays outside its fence.
+# 0 = only alarm once, on the moment it crosses the fence (edge-triggered).
+renotify_after_s: 0
+
+# Where the cached Apple session and alarm state are stored.
+store_path: account.json
+state_path: alarm_state.json
+
+# Email delivery. For gmail/icloud/outlook/yahoo the SMTP host is inferred
+# from the address, so you usually only need FINDMY_SMTP_PASSWORD.
+notify:
+  to: you@gmail.com          # defaults to apple_id if omitted
+  # smtp_host: smtp.gmail.com # only needed for non-consumer domains
+  # smtp_port: 587
+  # smtp_user: you@gmail.com  # defaults to apple_id
+  # smtp_starttls: true
+
+# Objects to watch. Each needs EITHER a plist (dumped from the Find My app)
+# OR a base64 private key. anchor is optional -- omit it to auto-capture the
+# first location as "home".
+objects:
+  - name: keys-airtag
+    plist: keys-airtag.plist   # accessory keys dumped from Find My
+    radius_m: 150              # alarm once it's more than 150 m from anchor
+    # anchor: { lat: 45.4642, lon: 9.1900 }  # or auto-capture on first fix
+
+  - name: backpack-tag
+    key_b64: BASE64_PRIVATE_KEY_HERE
+    radius_m: 300
+    anchor: { lat: 45.4642, lon: 9.1900 }
