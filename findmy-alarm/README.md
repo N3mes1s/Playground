@@ -123,10 +123,71 @@ SMTP host for non-consumer domains, etc.).
 | `--anisette-server` | Remote anisette provider URL | local |
 | `--dry-run` | Console instead of email | off |
 
+## Security — how not to leak the world
+
+This tool handles three things worth protecting: your **Apple session**, the
+object's **private keys**, and your **live location**. Here's how to run it
+without leaking any of them.
+
+**What the sensitive files are**
+
+| File | Contains | Risk if leaked |
+|------|----------|----------------|
+| `account.json` | Apple session tokens (login-equivalent) | Full access to your Apple account's Find My |
+| `*.plist` / `--key-b64` | The accessory's decryption keys | Anyone with these can track that tag forever |
+| `alarm_state.json` | Your anchor coordinates ("home") | Reveals where you live/park |
+| `config.yaml` | May inline passwords if you put them there | Credentials |
+
+The tool writes `account.json` and `alarm_state.json` as **`0600`
+(owner-only)**, and all four names are in `.gitignore` — so a stray
+`git add .` won't commit them. Keep it that way; don't `git add -f` them.
+
+**Secrets stay out of the command line and out of git**
+
+- Pass passwords via environment variables, never as flags (flags show up in
+  `ps` and shell history):
+  ```bash
+  export FINDMY_APPLE_PASSWORD='...'
+  export FINDMY_SMTP_PASSWORD='...'
+  ```
+- Use an **app-specific password** for both Apple (appleid.apple.com → Sign-In
+  and Security) and your mail provider, not your real account password. Then a
+  leak is revocable and scoped, and it works with 2FA on.
+- Prefer keeping passwords in the env (or a `.env` you don't commit) rather than
+  inline in `config.yaml`. If you must inline them, `chmod 600 config.yaml`.
+
+**Don't send your location through a third party**
+
+- **Anisette**: by default the tool uses FindMy.py's *local* provider, so the
+  Apple validation data is generated on your machine. Only pass
+  `--anisette-server` if you run that server **yourself** — a public anisette
+  server sees device-identifying validation data. Don't point it at a random
+  host.
+- **Email**: alarms contain exact coordinates and a map link. They go over
+  TLS (STARTTLS/SSL) in transit, but your mail provider can read the body at
+  rest. Send alarms **only to yourself** (the default). If that's still too
+  much exposure, run with `--dry-run` (console only) or add a self-hosted
+  webhook/ntfy notifier instead of email.
+
+**Run it where only you can reach it**
+
+- Run on a single-user host or your own account; the `0600` files assume you're
+  not sharing the box. On a shared machine, put the working dir under a
+  `chmod 700` directory.
+- If you daemonize it (systemd), load secrets from an `EnvironmentFile` that is
+  itself `0600` and root/owner-only — not from the unit file.
+
+**If something leaks**
+
+- Leaked `account.json` or Apple password → change your Apple ID password /
+  revoke the app-specific password; the session tokens die with it.
+- Leaked `.plist` / key → that tag is compromised for tracking; re-pair the
+  AirTag to your account to roll its keys.
+
 ## Files it writes
 
-- `account.json` — cached Apple session (contains credentials/tokens).
-- `alarm_state.json` — per-object anchor and inside/outside state.
+- `account.json` — cached Apple session (contains credentials/tokens), `0600`.
+- `alarm_state.json` — per-object anchor and inside/outside state, `0600`.
 
 Both are git-ignored. **Treat `account.json` and any `.plist` as secrets.**
 

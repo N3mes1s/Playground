@@ -84,7 +84,7 @@ def do_login(cfg: config_mod.Config) -> int:
         code = input("Enter the 2FA code you received: ").strip()
         method.submit(code)
 
-    account.to_json(cfg.store_path)
+    save_account(account, cfg.store_path)
     print(f"Logged in. Session cached to {cfg.store_path!r}.")
     return 0
 
@@ -104,6 +104,28 @@ def build_source(obj: config_mod.ObjectConfig):
 
 
 # --------------------------------------------------------------------------- #
+# Secret-file handling
+# --------------------------------------------------------------------------- #
+
+def secure_file(path: str) -> None:
+    """Restrict a file to owner read/write (0600).
+
+    account.json holds Apple session tokens and alarm_state.json holds your
+    home coordinates -- neither should be group/world readable.
+    """
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass  # best-effort (e.g. exotic filesystems)
+
+
+def save_account(account, path: str) -> None:
+    """Persist the Apple session and lock the file down."""
+    account.to_json(path)
+    secure_file(path)
+
+
+# --------------------------------------------------------------------------- #
 # State persistence
 # --------------------------------------------------------------------------- #
 
@@ -117,9 +139,13 @@ def load_states(path: str) -> dict[str, GeofenceState]:
 
 def save_states(path: str, states: dict[str, GeofenceState]) -> None:
     tmp = f"{path}.tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
+    # Create the temp file with 0600 from the start so coordinates are never
+    # briefly world-readable between write and chmod.
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
         json.dump({name: s.to_dict() for name, s in states.items()}, fh, indent=2)
     os.replace(tmp, path)
+    secure_file(path)
 
 
 def seed_anchor(obj: config_mod.ObjectConfig, state: GeofenceState) -> None:
@@ -259,7 +285,7 @@ def do_status(cfg: config_mod.Config, dry_run: bool) -> int:
         except Exception as exc:
             print(f"{obj.name}: error: {exc}", file=sys.stderr)
     save_states(cfg.state_path, states)
-    account.to_json(cfg.store_path)
+    save_account(account, cfg.store_path)
     return 0
 
 
@@ -284,7 +310,7 @@ def do_watch(cfg: config_mod.Config, dry_run: bool) -> int:
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] "
                           f"{obj.name}: error: {exc}", file=sys.stderr)
             save_states(cfg.state_path, states)
-            account.to_json(cfg.store_path)
+            save_account(account, cfg.store_path)
             time.sleep(cfg.poll_interval_s)
     except KeyboardInterrupt:
         print("\nStopped.")
