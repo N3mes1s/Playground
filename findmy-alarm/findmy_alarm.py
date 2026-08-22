@@ -210,9 +210,14 @@ def check_object(
     obj: config_mod.ObjectConfig,
     state: GeofenceState,
     notifier,
+    source_factory=build_source,
 ) -> Optional[str]:
-    """Fetch one object, update state, alarm if needed. Returns a status line."""
-    source = build_source(obj)
+    """Fetch one object, update state, alarm if needed. Returns a status line.
+
+    ``source_factory`` is injected so --simulate can swap the Apple-backed
+    source for a scripted one while running this exact code path.
+    """
+    source = source_factory(obj)
     report = fetch_one(account, source)
     if report is None:
         return f"{obj.name}: no location report available yet"
@@ -273,24 +278,36 @@ def check_object(
 # Commands
 # --------------------------------------------------------------------------- #
 
-def do_status(cfg: config_mod.Config, dry_run: bool) -> int:
-    account = load_account(cfg)
+def _account_and_source(cfg: config_mod.Config, simulate: bool):
+    """Return (account, source_factory) for either real or simulated mode."""
+    if simulate:
+        from simulate import build_simulated_account, simulated_source
+
+        anchor = cfg.objects[0].anchor if cfg.objects else None
+        print("[simulate] no Apple login used; replaying a scripted track.")
+        return build_simulated_account(anchor), simulated_source
+    return load_account(cfg), build_source
+
+
+def do_status(cfg: config_mod.Config, dry_run: bool, simulate: bool = False) -> int:
+    account, source_factory = _account_and_source(cfg, simulate)
     states = load_states(cfg.state_path)
     notifier = build_notifier(cfg, dry_run=True)  # status never really alarms
     for obj in cfg.objects:
         state = states.setdefault(obj.name, GeofenceState())
         seed_anchor(obj, state)
         try:
-            print(check_object(account, cfg, obj, state, notifier))
+            print(check_object(account, cfg, obj, state, notifier, source_factory))
         except Exception as exc:
             print(f"{obj.name}: error: {exc}", file=sys.stderr)
     save_states(cfg.state_path, states)
-    save_account(account, cfg.store_path)
+    if not simulate:
+        save_account(account, cfg.store_path)
     return 0
 
 
-def do_watch(cfg: config_mod.Config, dry_run: bool) -> int:
-    account = load_account(cfg)
+def do_watch(cfg: config_mod.Config, dry_run: bool, simulate: bool = False) -> int:
+    account, source_factory = _account_and_source(cfg, simulate)
     notifier = build_notifier(cfg, dry_run=dry_run)
     states = load_states(cfg.state_path)
 
@@ -304,13 +321,16 @@ def do_watch(cfg: config_mod.Config, dry_run: bool) -> int:
                 state = states.setdefault(obj.name, GeofenceState())
                 seed_anchor(obj, state)
                 try:
-                    line = check_object(account, cfg, obj, state, notifier)
+                    line = check_object(
+                        account, cfg, obj, state, notifier, source_factory
+                    )
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] {line}")
                 except Exception as exc:
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] "
                           f"{obj.name}: error: {exc}", file=sys.stderr)
             save_states(cfg.state_path, states)
-            save_account(account, cfg.store_path)
+            if not simulate:
+                save_account(account, cfg.store_path)
             time.sleep(cfg.poll_interval_s)
     except KeyboardInterrupt:
         print("\nStopped.")
@@ -336,19 +356,34 @@ def _add_quick_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--smtp-host", dest="smtp_host", help="SMTP host (default: inferred from email)")
     p.add_argument("--smtp-port", dest="smtp_port", type=int, help="SMTP port (default 587)")
     p.add_argument("--anisette-server", dest="anisette_server", help="Remote anisette server URL")
+    p.add_argument("--simulate", action="store_true",
+                   help="Replay a scripted track instead of contacting Apple (no login/keys needed)")
+    # Also accepted after the subcommand, which is where people naturally type it.
+    p.add_argument("--dry-run", dest="dry_run_sub", action="store_true",
+                   help="Print alarms to the console instead of emailing")
     p.add_argument("--store-path", dest="store_path", default="account.json", help="Cached session path")
     p.add_argument("--state-path", dest="state_path", default="alarm_state.json", help="Alarm state path")
 
 
 def build_config(args, require_objects: bool = True) -> config_mod.Config:
+    simulate = getattr(args, "simulate", False)
     if getattr(args, "config", None):
         cfg = config_mod.load_yaml(args.config)
     else:
         if not args.email:
             raise SystemExit("Provide --config, or --email plus --plist/--key-b64.")
-        cfg = config_mod.from_cli_quickargs(args)
-    if require_objects:
+        # In simulate mode there is no real tag, so invent a key-less object.
+        if simulate and not args.plist and not args.key_b64:
+            args.key_b64 = None
+            cfg = config_mod.from_cli_quickargs(args)
+            cfg.objects[0].key_b64 = "SIMULATED"
+        else:
+            cfg = config_mod.from_cli_quickargs(args)
+    if require_objects and not simulate:
         cfg.validate()
+    elif require_objects:
+        if not cfg.apple_id:
+            raise SystemExit("apple_id (your Apple ID email) is required")
     elif not cfg.apple_id:
         raise SystemExit("apple_id (your Apple ID email) is required")
     return cfg
@@ -368,14 +403,16 @@ def main(argv: Optional[list[str]] = None) -> int:
         _add_quick_flags(sp)
 
     args = parser.parse_args(argv)
+    # --dry-run is accepted either before or after the subcommand.
+    args.dry_run = args.dry_run or getattr(args, "dry_run_sub", False)
     cfg = build_config(args, require_objects=(args.command != "login"))
 
     if args.command == "login":
         return do_login(cfg)
     if args.command == "status":
-        return do_status(cfg, dry_run=args.dry_run)
+        return do_status(cfg, dry_run=args.dry_run, simulate=args.simulate)
     if args.command == "watch":
-        return do_watch(cfg, dry_run=args.dry_run)
+        return do_watch(cfg, dry_run=args.dry_run, simulate=args.simulate)
     return 1
 
 

@@ -1,0 +1,52 @@
+# systemd unit for findmy-alarm.
+#
+# Install (as your own user, not root):
+#   mkdir -p ~/.config/systemd/user ~/.config/findmy-alarm
+#   cp deploy/findmy-alarm.service ~/.config/systemd/user/
+#   cp deploy/findmy-alarm.env.example ~/.config/findmy-alarm/env
+#   chmod 600 ~/.config/findmy-alarm/env      # <- secrets live here, not in this unit
+#   $EDITOR ~/.config/findmy-alarm/env
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now findmy-alarm
+#   loginctl enable-linger $USER              # keep running after you log out
+#
+# Log in interactively ONCE before enabling (2FA needs a human):
+#   python findmy_alarm.py login --email you@example.com
+#
+# Follow it:  journalctl --user -u findmy-alarm -f
+
+[Unit]
+Description=Find My geofence departure alarm
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/findmy-alarm
+
+# Secrets come from a 0600 file, never from this unit (unit files are readable).
+EnvironmentFile=%h/.config/findmy-alarm/env
+
+ExecStart=/usr/bin/python3 %h/findmy-alarm/findmy_alarm.py watch --config %h/.config/findmy-alarm/config.yaml
+
+Restart=always
+RestartSec=60
+
+# Don't let a crash-loop hammer Apple's servers.
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+# Hardening: the process only needs its own working dir and the network.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/findmy-alarm %h/.config/findmy-alarm
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+LockPersonality=true
+MemoryDenyWriteExecute=false
+
+[Install]
+WantedBy=default.target

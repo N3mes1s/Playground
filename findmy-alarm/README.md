@@ -39,6 +39,60 @@ wrap it in a small, config-driven alarm so you can *just pass your email*.
 - **Notifications**: email over SMTP. For gmail / icloud / outlook / yahoo the
   SMTP server is inferred from your address, so you only supply an app password.
 
+## Where this actually runs
+
+An alarm is only an alarm if it's running when the thing gets taken. That rules
+out laptops that sleep, CI runners, and cloud dev containers. Run it on
+**something you own that stays on** — a Raspberry Pi, a NAS, a home server, a
+small VPS.
+
+Three things make this awkward to run anywhere else:
+
+| Requirement | Why |
+|---|---|
+| **Stays powered on** | It's a polling loop. A machine that sleeps or gets reclaimed is a disarmed alarm. |
+| **A human present once** | The initial `login` needs a 2FA code sent to *your* trusted device. It cannot be automated. |
+| **Your keys, on your box** | The `.plist` comes off your Mac/iPhone. Copying it to a machine you don't control hands over permanent tracking ability for that tag. |
+
+After the one interactive `login`, the cached session runs unattended — so the
+only human step is at the start.
+
+### Deploying it
+
+`deploy/` has the two usual answers:
+
+- **`deploy/findmy-alarm.service`** — a systemd *user* unit. Secrets come from a
+  `0600` `EnvironmentFile`, not the unit file; `Restart=always` with a rate
+  limit so a crash-loop doesn't hammer Apple. Use `loginctl enable-linger` so it
+  survives logout.
+- **`deploy/Dockerfile`** — for a NAS/homelab. Runs non-root, state on a `/data`
+  volume, secrets passed as env vars rather than baked into the image.
+
+Both files carry their exact install steps in a header comment.
+
+### Trying it with no Apple account at all
+
+`--simulate` replays a scripted track — sits still, then walks away — through
+the **real** fetch → geofence → notify path, with no login, no tag, and no
+keys:
+
+```bash
+python findmy_alarm.py watch --email you@example.com --simulate --radius 100 --interval 2 --dry-run
+```
+
+```
+[simulate] no Apple login used; replaying a scripted track.
+find-my-object: anchor captured at 45.464200,9.190000 (radius 100 m) -- armed
+find-my-object: 45.464200,9.190000 (0 m from anchor, inside)
+[ALARM] find-my-object is moving (120 m away)
+find-my-object: 45.465281,9.190000 (120 m from anchor, OUTSIDE)  -> ALARM SENT
+find-my-object: 45.466362,9.190000 (240 m from anchor, OUTSIDE)
+```
+
+Drop `--dry-run` and it sends a **real email** through your actual SMTP settings
+— which is the point: verify your mail path works *before* arming it for real,
+rather than discovering a bad app password the day something gets stolen.
+
 ## Install
 
 ```bash
