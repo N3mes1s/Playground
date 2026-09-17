@@ -31,6 +31,11 @@ While this is primarily a coding agent workspace, contributions and suggestions 
 |-----------|-------------|
 | [`vulnllm-analyzer/`](vulnllm-analyzer/) | Automated vulnerability analysis for GitHub repos using [VulnLLM-R-7B](https://github.com/ucsb-mlsec/VulnLLM-R) on Modal GPUs |
 | [recursive-lm-security-audit](./recursive-lm-security-audit/) | Automated codebase security scanner using DSPy's Recursive Language Model (RLM) module. Accepts a GitHub repo URL or local path and produces a vulnerability report for ~$0.87. |
+| [`jev-triage/`](jev-triage/) | Fast, calibrated false-positive filter for security-scanner findings using [TypeSafe's Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev) System One model. Turns raw findings into typed, probability-scored keep/drop/re-rank decisions before expensive LLM validation. |
+
+## Publishing
+
+Before publishing any experiment or its output, see [`PUBLISHING.md`](PUBLISHING.md) — the tooling is publishable, but security **reports** are only publishable when the target is a deliberately-vulnerable teaching app. Reports against real production software require coordinated disclosure first.
 
 ## Note
 

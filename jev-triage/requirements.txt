@@ -1,0 +1,6 @@
+# Core: HTTP fallback transport for the Jev endpoint.
+requests>=2.31
+
+# Optional: official TypeSafe SDK. If installed, jev_client uses it
+# automatically; otherwise the raw-HTTP fallback is used. Uncomment to install.
+# typesafe-sdk>=0.1

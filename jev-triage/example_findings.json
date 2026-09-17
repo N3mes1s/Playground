@@ -1,0 +1,65 @@
+{
+  "_comment": "Example scanner findings for jev-triage. Targets are DELIBERATELY vulnerable teaching apps (OWASP DVSA / Juice Shop) plus one synthetic false positive, so this file is safe to publish. Do not put findings against real production software here.",
+  "findings": [
+    {
+      "id": "VULN-01",
+      "title": "Remote Code Execution via eval() in admin shell",
+      "severity": "Critical",
+      "file": "backend/functions/admin/admin_shell.js",
+      "cwe": "CWE-94",
+      "source": "rlm-auditor",
+      "description": "The admin shell Lambda reads `cmd` from the request body and passes it straight to JavaScript eval(). Any authenticated (and, given other findings, effectively unauthenticated) caller can execute arbitrary code in the function runtime.",
+      "code": "const cmd = body.cmd;\nif (cmd) { eval(cmd); res = 'ok'; }"
+    },
+    {
+      "id": "VULN-02",
+      "title": "SQL injection in login via string interpolation",
+      "severity": "Critical",
+      "file": "routes/login.ts",
+      "cwe": "CWE-89",
+      "source": "rlm-auditor",
+      "description": "User-supplied email is interpolated directly into a raw SQL query with no parameterization, allowing authentication bypass and UNION-based data extraction.",
+      "code": "models.sequelize.query(`SELECT * FROM Users WHERE email = '${req.body.email}' AND password = '${hash(req.body.password)}'`)"
+    },
+    {
+      "id": "VULN-03",
+      "title": "Insecure deserialization of user-controlled token",
+      "severity": "High",
+      "file": "routes/b2bOrder.ts",
+      "cwe": "CWE-502",
+      "source": "rlm-auditor",
+      "description": "A serialized order object taken from the request is passed to a Node deserialization helper that can invoke functions during parsing, enabling code execution.",
+      "code": "const order = deserialize(req.body.orderLinesData);"
+    },
+    {
+      "id": "VULN-04",
+      "title": "Hardcoded default JWT signing secret",
+      "severity": "Medium",
+      "file": "config/auth.ts",
+      "cwe": "CWE-798",
+      "source": "rlm-auditor",
+      "description": "The JWT signing key falls back to a hardcoded default string when the environment variable is unset, so tokens can be forged in any default deployment. Scanner rated this Medium; impact is closer to High/Critical.",
+      "code": "const secret = process.env.JWT_SECRET || 'defaultJwtSecretChangeMe';"
+    },
+    {
+      "id": "VULN-05",
+      "title": "Path traversal in file download",
+      "severity": "Critical",
+      "file": "routes/fileServer.ts",
+      "cwe": "CWE-22",
+      "source": "rlm-auditor",
+      "description": "Scanner flagged fileName from req.query as enabling directory traversal. In practice the value is passed through a cross-package basename() sanitizer and the route only serves within a fixed public directory, so this is a false positive. The reachable path is UUID-gated and the input is sanitized before use.",
+      "code": "const fileName = path.basename(req.query.file); // sanitized, not exploitable"
+    },
+    {
+      "id": "VULN-06",
+      "title": "Verbose error messages leak stack traces",
+      "severity": "Low",
+      "file": "app.ts",
+      "cwe": "CWE-209",
+      "source": "rlm-auditor",
+      "description": "Unhandled errors return full stack traces to the client. Informational hardening item; no direct exploitation, documentation-level issue.",
+      "code": "app.use((err, req, res, next) => res.status(500).send(err.stack));"
+    }
+  ]
+}
