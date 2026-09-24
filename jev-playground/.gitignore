@@ -1,3 +1,4 @@
 .env
 __pycache__/
 *.pyc
+security/edr_results.json

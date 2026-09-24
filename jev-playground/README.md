@@ -158,3 +158,31 @@ python -m security.guard            # agent hit by indirect injection -> chain b
 python -m security.scan --list
 python -m security.scan waf_request '{"request": "GET /?q=1 OR 1=1-- HTTP/1.1"}'
 ```
+
+### EDR / detection-engineering benchmark
+
+`security/edr.py` triages one endpoint telemetry event (Sysmon EID 1 / EDR / auditd shape) per Jev call into: malicious?, ATT&CK tactic, LOLBin abuse, obfuscation, severity, and SOC response. It is benchmarked against **real labelled data** — [Atomic Red Team](https://github.com/redcanaryco/atomic-red-team) attacker-technique commands (569 events, ground-truth technique ids) vs a hand-written admin/dev baseline (20 benign hard negatives), with the ATT&CK technique→tactic map harvested from [Sigma](https://github.com/SigmaHQ/sigma) rule tags.
+
+Full run (`python -m security.edr_bench --full`), model `jev-latest`:
+
+| Metric | Result |
+|---|---|
+| Recall (attacks flagged) @ threshold 0.5 | **72%** (410/569) |
+| False positives on benign baseline | **0–1 / 20** |
+| Recall @ threshold 0.3 | 84% (FP 20%) |
+| ATT&CK tactic top-1 (known tactic) | 39% |
+| Latency p50 / p95 | ~700 / ~1200 ms |
+| Cost for the whole 589-event run | ~$0.027 |
+
+Honest findings (see [`security/EDR_RESULTS.md`](security/EDR_RESULTS.md)):
+
+- The **binary "is this malicious" signal is strong and well-calibrated** — a clean recall/FP curve, 0 FP at 0.5 on hard negatives.
+- **Discovery is the weak spot (26% recall)** — single events like `ping`, `tasklist`, `gpresult` are genuinely indistinguishable from admin work without sequence/volume context. Being cautious there is correct, not a bug; that context belongs in a SIEM rule that Jev then reads as state.
+- **Fine-grained tactic labelling (39%) is far less reliable than the binary call** — e.g. Privilege Escalation events are flagged malicious 88% of the time but labelled with the right tactic only 8%. Use Jev to *rank and gate*, not as the authoritative ATT&CK mapper.
+- Jev is **not fully deterministic**: recall varied 71.7–72.1% and FP 0–1 across runs.
+
+```bash
+python -m security.datasets --art <art-clone> --sigma <sigma-clone>   # regenerate dataset
+python -m security.edr_bench --full        # full benchmark -> EDR_RESULTS.md
+python -m security.edr                     # ranked alert-card demo
+```

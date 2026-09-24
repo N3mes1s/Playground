@@ -52,11 +52,24 @@ doubles latency and cost.
 | Problem | Status | How it maps | Measured |
 |---|---|---|---|
 | Tier-1 alert triage (TP / benign TP / FP), alert fatigue | ✅ `soc_triage` | `choice` disposition + `score` severity | 18/18, including an SCCM job, a Nessus window and a VPN "impossible travel" |
-| MITRE ATT&CK tactic tagging of alerts | ✅ `soc_triage` | `choice` over 11 tactics | – |
+| **EDR / Sysmon process-event triage at the source** | ✅ `edr` | one call → malicious? + tactic + LOLBin + obfuscation + severity + response | **real data**: 72% recall / 0–1 FP over 569 Atomic Red Team techniques + 20 benign (see below) |
+| LOLBin abuse (certutil, rundll32, comsvcs.dll MiniDump, mshta…) | ✅ `edr` | `noul` lolbin_abuse | comsvcs LSASS dump flagged 0.93 |
+| Command-line obfuscation / encoded payload detection | ✅ `edr` | `noul` obfuscated | base64/xxd pipeline flagged 0.93 |
+| MITRE ATT&CK tactic tagging of alerts | ✅ `soc_triage` / `edr` | `choice` over tactics | binary call strong; fine-grained tactic only 39% (`edr` benchmark) |
 | Phishing-report mailbox triage (user-reported emails) | 🧪 | `phishing_email` | – |
 | Log line anomaly / "is this worth a human" filter before an LLM investigator | ⚠️ | `noul` per event; volume works, but correlating many events needs a second tier | – |
 | Incident routing to a playbook (contain / notify / queue / close) | 🧪 | `choice` (see Ken Huang's agentic SOC write-up) | – |
 | Threat-intel report relevance to *our* stack | 🧪 | `score` relevance with an asset inventory in the state | – |
+
+**EDR benchmark takeaways** ([`security/EDR_RESULTS.md`](security/EDR_RESULTS.md), generated from
+[`security/datasets.py`](security/datasets.py) + [`security/edr_bench.py`](security/edr_bench.py)):
+Jev's binary *is-this-malicious* call is strong and well-calibrated (clean recall/FP curve, 0 FP at
+threshold 0.5 on hard negatives); **Discovery is the honest weak spot** (26% recall — `ping`/`tasklist`
+are dual-use and need sequence context a SIEM supplies, not a single event); **fine-grained ATT&CK
+tactic labelling (39%) is much weaker than the binary signal**, so use Jev to *rank and gate* the
+event firehose ahead of a SIEM/LLM tier, not as the authoritative ATT&CK mapper. It is not fully
+deterministic. Where it fits perfectly: pre-filtering millions of endpoint events at ~$0.00002 each so
+the expensive tiers only see what matters.
 
 ### AppSec and supply chain
 
