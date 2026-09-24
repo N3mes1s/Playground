@@ -2,3 +2,5 @@
 __pycache__/
 *.pyc
 security/edr_results.json
+security/adv_results.json
+security/adv_edr_results.json

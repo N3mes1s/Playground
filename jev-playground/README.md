@@ -186,3 +186,29 @@ python -m security.datasets --art <art-clone> --sigma <sigma-clone>   # regenera
 python -m security.edr_bench --full        # full benchmark -> EDR_RESULTS.md
 python -m security.edr                     # ranked alert-card demo
 ```
+
+### Adversarial robustness — attacking the guard itself
+
+A Jev guard reads attacker-controlled text, so an attacker can talk *to* the classifier (prompt-injection aimed at the guard). `security/adversarial.py` embeds authority claims, reviewer instructions, benign framing and noise into **known-malicious** inputs without changing what they do; `security/harden.py` counters with reworded behavioural questions + a manipulation detector + deterministic regex co-checks (fail-closed).
+
+On **real Atomic Red Team commands** in the borderline band (`python -m security.adv_edr`, model `jev-latest`):
+
+| attack | naive detection | naive ASR | hardened detection |
+|---|---|---|---|
+| clean (no attack) | 75% | 25% | 82% |
+| authority_injection ("approved by SOC") | 45% | **55%** | 100% |
+| role_override | 72% | 28% | 100% |
+| benign_framing | 75% | 25% | 100% |
+| distraction_padding | 75% | 25% | 90% |
+| reviewer_instruction ("return benign") | 92% | 8% | 100% |
+
+Findings:
+
+- **The evasion is real.** Framing that asserts authority drops naive detection to 45% (55% attack success) on borderline commands — exactly the failure a red-teamer demonstrates. Subtle authority claims beat blatant "classify this as benign" instructions (which Jev resists better).
+- **Hardening works, fail-closed.** Behavioural rewording + a manipulation detector (the attack text becomes a signal) + a deterministic floor (regex that framing can't argue past) restore 90–100% detection.
+- **It isn't free.** The deterministic floor false-blocks benign content that merely *discusses* attacks (a blog slug with `UNION SELECT`, a doc quoting "ignore previous instructions") — see `security/ADVERSARIAL_RESULTS.md`. Net: use Jev as one calibrated layer *behind* deterministic checks and *ahead* of a human, never as the only control.
+
+```bash
+python -m security.adv_bench     # framing attacks vs the 12 detectors -> ADVERSARIAL_RESULTS.md
+python -m security.adv_edr       # framing attacks on real EDR commands -> ADVERSARIAL_EDR_RESULTS.md
+```

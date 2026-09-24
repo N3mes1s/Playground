@@ -131,6 +131,37 @@ def explain(event: Dict[str, Any], v: EdrVerdict) -> str:
     )
 
 
+def triage_hardened(client: Jev, event: Dict[str, Any], threshold: float = 0.5,
+                    manip_threshold: float = 0.5):
+    """EDR triage hardened against adversarial framing (see harden.py).
+
+    Returns (blocked: bool, detail: dict). blocked if the behavioural malicious
+    call, a manipulation signal, or a deterministic indicator fires (fail-closed).
+    """
+    import copy
+
+    from .harden import _CLAUSE, _MANIP_Q, deterministic_hit
+
+    q = copy.deepcopy(QUESTIONS)
+    q["malicious"]["instructions"] += _CLAUSE
+    q["_manipulation"] = _MANIP_Q
+    resp = client.ask(event, q)
+    a = resp.answers
+    mal_p = a["malicious"].noul
+    manip = a["_manipulation"].noul
+    det = deterministic_hit("edr", event)
+    reasons = []
+    if mal_p >= threshold:
+        reasons.append(f"behavioural({mal_p:.2f})")
+    if manip >= manip_threshold:
+        reasons.append(f"manipulation({manip:.2f})")
+    if det:
+        reasons.append(f"deterministic:{det}")
+    return bool(reasons), {"malicious_p": round(mal_p, 3), "manipulation": round(manip, 3),
+                           "deterministic": det, "blocked_by": reasons,
+                           "tactic": a["tactic"].choice}
+
+
 def _demo() -> None:
     """Triage a handful of events from the dataset as ranked alert cards."""
     import sys

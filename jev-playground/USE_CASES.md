@@ -34,6 +34,7 @@ doubles latency and cost.
 | Inter-agent message trust (ASI07) | 🧪 | `choice` trusted / suspicious / hostile per message | – |
 | Hallucinated / slopsquatted package names suggested by an LLM | ⚠️ | `noul` plausibility; still needs a registry lookup | – |
 | RAG context relevance / poisoning filter | 🧪 | `score` relevance + `noul` "contains instructions" per chunk | – |
+| **Attacking the guard: adversarial evasion of a Jev classifier** | ✅ `adversarial` + `harden` | framing/authority/reviewer-instruction attacks vs behavioural-rewording + manipulation-detector + deterministic regex | real ATT&CK cmds: authority framing 55% ASR naive → 0% hardened (see below) |
 
 ### Email, fraud and social engineering
 
@@ -103,7 +104,7 @@ fraud · fake reviews · bot-account signals from profile JSON · CSAM *text* si
 - **Counting, arithmetic and multi-event correlation.** "More than 5 failed logins in 10 minutes" belongs in your SIEM rule, and Jev gets the result as state.
 - **Images, binaries and pcaps.** It is text-only, so extract or caption first.
 - **Open-ended investigation.** The pattern people converge on is a cascade: Jev on 100% of traffic, and anything under the confidence threshold goes to an LLM or a human (`AgentGuard(min_confidence=...)`).
-- **Adversarial robustness is unmeasured.** Nobody (including us) has published results against adaptive attackers. Treat Jev as a layer, not the only control.
+- **Adversarial robustness must be engineered.** A naive guard *can* be moved by text that talks to the classifier — authority framing hit 55% attack success on borderline real attack commands (`security/ADVERSARIAL_EDR_RESULTS.md`). Hardening (behavioural rewording + a manipulation detector + a deterministic regex floor, fail-closed) restores 90–100% detection but adds false blocks on content that discusses attacks. Treat Jev as one calibrated layer behind deterministic checks and ahead of a human, never as the only control.
 
 ## Sources
 
