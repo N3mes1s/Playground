@@ -140,3 +140,21 @@ longest question; choice allows up to 255 options; score takes 2–10 ordered le
 Experimental, as everything in this repo is. The client talks to a live,
 paid API — each call costs input tokens (output is free), so the examples are
 deliberately small.
+
+## Security toolkit
+
+[`USE_CASES.md`](USE_CASES.md) catalogues the problems Jev can solve, security first, with sources. Twelve of the security ones are implemented in [`security/`](security/) and benchmarked:
+
+| Module | What it does |
+|---|---|
+| [`security/detectors.py`](security/detectors.py) | 12 detectors: prompt injection, tool-call guard, shell-command risk, DLP, phishing/BEC, scam DMs, lookalike URLs, login ATO, SOC triage, malicious install scripts, WAF request class, code vuln class |
+| [`security/guard.py`](security/guard.py) | `AgentGuard` middleware that screens agent input, tool calls and output, and sends low-confidence cases to an LLM or a human |
+| [`security/bench.py`](security/bench.py) | Labelled benchmark with hard negatives; writes [`security/RESULTS.md`](security/RESULTS.md) |
+| [`security/scan.py`](security/scan.py) | Run any detector on your own JSON / text |
+
+```bash
+python -m security.bench            # 228/237 correct over 3 runs, median 446 ms, $0.005 total
+python -m security.guard            # agent hit by indirect injection -> chain blocked
+python -m security.scan --list
+python -m security.scan waf_request '{"request": "GET /?q=1 OR 1=1-- HTTP/1.1"}'
+```
