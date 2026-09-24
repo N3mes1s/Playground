@@ -62,6 +62,15 @@ doubles latency and cost.
 | Incident routing to a playbook (contain / notify / queue / close) | 🧪 | `choice` (see Ken Huang's agentic SOC write-up) | – |
 | Threat-intel report relevance to *our* stack | 🧪 | `score` relevance with an asset inventory in the state | – |
 
+**The dual-use / LOLBin gap** ([`security/LOLBIN_GAP.md`](security/LOLBIN_GAP.md), via
+[`security/lolbin_gap.py`](security/lolbin_gap.py)): the decade-old blue-team problem no
+string-based tool could solve — attackers use the same signed binaries admins do, so signatures
+can't separate them (ROC AUC 0.645 ≈ coin flip; "any rule fired" hits 100% of benign dual-use),
+and LLMs are too costly to run on every event. Jev separates attack from admin on the same
+dual-use commands (AUC 0.935; 73% of attacks caught at a ≤1% false-positive budget vs 4% for
+signatures) at ~$0.00002/event, i.e. semantic detection at full coverage — the capability that
+did not exist before.
+
 **EDR benchmark takeaways** ([`security/EDR_RESULTS.md`](security/EDR_RESULTS.md), generated from
 [`security/datasets.py`](security/datasets.py) + [`security/edr_bench.py`](security/edr_bench.py)):
 Jev's binary *is-this-malicious* call is strong and well-calibrated (clean recall/FP curve, 0 FP at

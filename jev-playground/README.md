@@ -212,3 +212,24 @@ Findings:
 python -m security.adv_bench     # framing attacks vs the 12 detectors -> ADVERSARIAL_RESULTS.md
 python -m security.adv_edr       # framing attacks on real EDR commands -> ADVERSARIAL_EDR_RESULTS.md
 ```
+
+### The blue-team problem Jev uniquely solves: the dual-use / LOLBin gap
+
+Attackers "live off the land" — they use the same signed, built-in tools admins use daily (`certutil`, `rundll32`, `wmic`, `powershell`, `curl`, `PsExec`). This has been an unsolved blue-team problem for over a decade, because of a forced choice:
+
+- **Signatures/rules** (Sigma, YARA, SIEM) are cheap enough to run on every event but match *strings* — and on dual-use binaries the strings are identical for attacker and admin, so a rule fires on both (false-positive storm) or neither (blind).
+- **LLMs** can judge *intent*, but at seconds and cents per call you can't run one on every event, so you sample <1% and the rest goes uninspected.
+
+Jev is the first option that is **both semantic and cheap enough for full coverage** (~0.5 s, ~$0.00002/event). `security/lolbin_gap.py` proves the separation on the *same* events — real Atomic Red Team attacks vs a genuine dual-use admin/dev corpus (`security/benign_corpus.py`), signatures approximated from real Sigma rules (`security/sigma_extract.py`):
+
+| approach | ROC AUC (attack vs admin) | TPR @ FP≤1% | TPR @ FP≤5% |
+|---|---|---|---|
+| Sigma keyword signatures | **0.645** (≈ coin flip) | 4% | 25% |
+| Jev malicious probability | **0.935** | **73%** | **79%** |
+
+The naive "a signature fired" alert catches 97% of attacks — but also fires on **100%** of the benign dual-use activity. At a false-positive budget a SOC can actually staff (≤1%), string matching catches 4% of these attacks; Jev catches 73%. That gap — semantic separation of dual-use activity at full-coverage cost — is the capability that did not exist before. Full write-up and caveats: [`security/LOLBIN_GAP.md`](security/LOLBIN_GAP.md).
+
+```bash
+python -m security.sigma_extract --sigma <sigma-clone>   # regenerate signatures
+python -m security.lolbin_gap                            # signatures vs Jev -> LOLBIN_GAP.md
+```

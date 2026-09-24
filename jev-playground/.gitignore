@@ -4,3 +4,5 @@ __pycache__/
 security/edr_results.json
 security/adv_results.json
 security/adv_edr_results.json
+security/lolbin_results.json
+security/calibration_results.json
