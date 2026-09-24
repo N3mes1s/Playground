@@ -123,6 +123,30 @@ def matches(command_text: str, sig: dict) -> str | None:
     return None
 
 
+def matched_patterns(command_text: str, sig: dict) -> list:
+    """All (title, pattern) whose keyword pattern matches -- the rules that cover this command."""
+    t = command_text.lower()
+    out = []
+    for rule in sig["rules"]:
+        for pat in rule["patterns"]:
+            if all(tok in t for tok in pat):
+                out.append((rule["title"] or "(untitled)", pat))
+    return out
+
+
+def tightest_pattern(patterns: list):
+    """The most specific matched pattern (longest total literal) -- what a precise,
+    low-false-positive rule would key on. `patterns` is a list of (title, pattern)."""
+    if not patterns:
+        return None
+    return max(patterns, key=lambda tp: (sum(len(x) for x in tp[1]), len(tp[1])))
+
+
+def pattern_matches(pattern: list, command_text: str) -> bool:
+    t = command_text.lower()
+    return all(tok in t for tok in pattern)
+
+
 def match_count(command_text: str, sig: dict) -> int:
     """Number of distinct Sigma rules whose signature matches -- a graded score
     that is fair to signatures for ROC/AUC (more rules firing = more 'suspicious')."""

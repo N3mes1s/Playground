@@ -6,3 +6,4 @@ security/adv_results.json
 security/adv_edr_results.json
 security/lolbin_results.json
 security/calibration_results.json
+security/mutation_results.json

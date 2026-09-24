@@ -69,7 +69,10 @@ can't separate them (ROC AUC 0.645 ≈ coin flip; "any rule fired" hits 100% of 
 and LLMs are too costly to run on every event. Jev separates attack from admin on the same
 dual-use commands (AUC 0.935; 73% of attacks caught at a ≤1% false-positive budget vs 4% for
 signatures) at ~$0.00002/event, i.e. semantic detection at full coverage — the capability that
-did not exist before.
+did not exist before. **Honest counter-check** ([`security/MUTATION_RESULTS.md`](security/MUTATION_RESULTS.md)):
+mild behaviour-preserving mutations do *not* collapse precise signatures (they key on durable
+artifacts), and on signature-covered attacks Jev under-performs them — so Jev is **complementary,
+not a replacement**: signatures for the known-and-durable, Jev for the dual-use-and-novel.
 
 **EDR benchmark takeaways** ([`security/EDR_RESULTS.md`](security/EDR_RESULTS.md), generated from
 [`security/datasets.py`](security/datasets.py) + [`security/edr_bench.py`](security/edr_bench.py)):

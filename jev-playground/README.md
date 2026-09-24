@@ -233,3 +233,21 @@ The naive "a signature fired" alert catches 97% of attacks — but also fires on
 python -m security.sigma_extract --sigma <sigma-clone>   # regenerate signatures
 python -m security.lolbin_gap                            # signatures vs Jev -> LOLBIN_GAP.md
 ```
+
+### Companion / honest counter-result: mutation robustness
+
+To pressure-test the LOLBin story I checked the folklore that *any* mutation defeats signatures. It doesn't. On real attacks that a **precise signature covers**, mild behaviour-preserving mutations (`security/mutations.py`: case-flip, flag aliasing, whitespace, empty-quote insertion) barely dent the tight signature — because it keys on a **durable artifact** (a path, a binary, an API like `comsvcs.dll MiniDump`) the mutation doesn't touch:
+
+| mutation | precise signature | Jev |
+|---|---|---|
+| clean | 100% | 65% |
+| case_flip (control) | 100% | 70% |
+| flag_alias | 93% | 79% |
+| whitespace_pad | 95% | 65% |
+| quote_insert | 97% | 69% |
+
+On these signature-*covered* attacks, Jev's recall is actually *below* the precise signature — as it should be, since these are exactly what signatures are for. **The honest synthesis: Jev doesn't replace good signatures; it's complementary.** Where a precise, durable signature exists, keep it — it's cheap, exact and mutation-robust. Jev earns its place on what signatures *cannot* express: the dual-use / LOLBin space where attacker and admin strings are identical (AUC 0.65 vs 0.94) and novel behaviour with no rule yet. Signatures for the known-and-durable, Jev for the ambiguous-and-novel — both at full coverage. Details + caveats: [`security/MUTATION_RESULTS.md`](security/MUTATION_RESULTS.md).
+
+```bash
+python -m security.mutation_bench    # signatures vs Jev under mutation -> MUTATION_RESULTS.md
+```
